@@ -37,8 +37,10 @@ packages = ["generator/src/sherpa_generator"]
 
 [tool.pytest.ini_options]
 testpaths = ["generator/tests"]
+addopts = '-m "not slow"'  # an explicit -m on the command line replaces this
 markers = [
     "integration: needs Postgres",
+    "slow: full-year runs",
 ]
 
 [tool.ruff]

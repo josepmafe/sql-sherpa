@@ -32,6 +32,11 @@ RUN_SCALE = 0.1
 RUN_DAYS = 10
 RUN_START = date(2025, 3, 1)
 RUN_TODAY = date(2025, 4, 1)
+# The full-year run (conftest `full_year`): 365 days ending yesterday, seed 42, scale 1.0.
+FULL_YEAR_SEED = 42
+FULL_YEAR_SCALE = 1.0
+FULL_YEAR_DAYS = 365
+FULL_YEAR_TODAY = date(2026, 1, 1)
 _EMPTY_SNAPSHOT: dict[str, object] = {
     "variants": [],
     "variant_popularity": {},

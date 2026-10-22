@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import timedelta
@@ -11,6 +12,10 @@ from helpers import (
     AFTER_SALES_DAYS,
     AFTER_SALES_SCALE,
     AFTER_SALES_START,
+    FULL_YEAR_DAYS,
+    FULL_YEAR_SCALE,
+    FULL_YEAR_SEED,
+    FULL_YEAR_TODAY,
     RUN_DAYS,
     RUN_SCALE,
     RUN_SEED,
@@ -82,6 +87,15 @@ def simulator_reference() -> dict[str, object]:
     with temporary_database() as db:
         Simulator(db, seed=RUN_SEED, scale=RUN_SCALE, today=RUN_TODAY).run(RUN_DAYS, RUN_START)
         return fingerprint(db)
+
+
+@pytest.fixture(scope="module")
+def full_year() -> Iterator[tuple[Database, float]]:
+    """One Simulator run of a whole year at scale 1.0 and its runtime in seconds. Tests must not commit changes."""
+    with temporary_database() as db:
+        started = time.perf_counter()
+        Simulator(db, seed=FULL_YEAR_SEED, scale=FULL_YEAR_SCALE, today=FULL_YEAR_TODAY).run(FULL_YEAR_DAYS)
+        yield db, time.perf_counter() - started
 
 
 @contextmanager
