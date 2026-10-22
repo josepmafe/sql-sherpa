@@ -163,6 +163,16 @@ class TestVisitorTrafficSimulator:
         assert all(datetime.fromisoformat(e.occurred_at) < end for e in [*landed, *pending])
         assert len({e.event_id for e in landed}) < len(landed)  # R1 duplicates land with the originals
 
+    def test_session_starts_do_not_pile_up_on_one_second(self) -> None:
+        changes = DayChanges()
+
+        _simulator().simulate_day(_snapshot(), changes)
+
+        page_views = {e.event_id: e for e in _events(changes) if e.event_type == EventType.PAGE_VIEW}
+        starts = Counter(datetime.fromisoformat(e.occurred_at) for e in page_views.values())
+        assert len(page_views) > 300
+        assert max(starts.values()) <= 3
+
     def test_simulate_day_is_deterministic(self) -> None:
         first, second = DayChanges(), DayChanges()
 

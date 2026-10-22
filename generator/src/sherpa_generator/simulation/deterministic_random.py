@@ -49,6 +49,8 @@ class DeterministicRandom:
 
     def faker_for_day(self, day: date, stream: str | None = None) -> Faker:
         # Building a Faker scans its provider modules (~90 ms); a copy of an unused template is ~20x cheaper.
+        # In the copy all locale generators share one random.Random, so interleaved draws across locales differ from
+        # a freshly built Faker with the same seed. Output is still fully determined by (seed, day, stream).
         if self._faker_template is None:
             self._faker_template = Faker(list(FAKER_LOCALES))
 

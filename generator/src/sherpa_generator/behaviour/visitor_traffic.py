@@ -438,9 +438,11 @@ class VisitorTrafficSimulator:
 
     @staticmethod
     def _start_offset(rng: random.Random, latest: timedelta) -> timedelta:
+        """A weighted hour, then a uniform second within that hour's part before `latest` (no clamping spike)."""
         hour = rng.choices(range(len(HOUR_WEIGHTS)), weights=HOUR_WEIGHTS)[0]
-        offset = timedelta(seconds=hour * SECONDS_PER_HOUR + rng.randrange(SECONDS_PER_HOUR))
-        return min(offset, latest - timedelta(seconds=1))
+        hour_start = hour * SECONDS_PER_HOUR
+        hour_end = min(hour_start + SECONDS_PER_HOUR, int(latest.total_seconds()))
+        return timedelta(seconds=rng.randrange(hour_start, hour_end))
 
     @staticmethod
     def _gap(rng: random.Random) -> timedelta:
@@ -481,7 +483,7 @@ class _TrafficDay:
     devices: dict[int, list[str]] = field(default_factory=dict)
     paid_sessions: Counter[int] = field(default_factory=Counter)
     landed: list[TrackedEvent] = field(default_factory=list)
-    pending: list[TrackedEvent] = field(default_factory=list)
+    pending: list[TrackedEvent] = field(default_factory=list)  # PendingEvent instances
     web_intents: list[PurchaseIntent] = field(default_factory=list)
     new_customers: list[Customer] = field(default_factory=list)
 
