@@ -20,6 +20,8 @@ generator = [
     "pydantic",
     "pydantic-settings",
     "psycopg[binary]",
+    "faker>=40.43.0",
+    "tzdata>=2026.5",
 ]
 
 [tool.uv]
