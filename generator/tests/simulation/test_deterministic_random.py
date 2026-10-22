@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import random
 import subprocess
 import sys
 from datetime import date
 
-from sherpa_generator.simulation.deterministic_random import DeterministicRandom, stable_int
+from sherpa_generator.simulation.deterministic_random import DeterministicRandom, poisson, stable_int
 
 SEED = 42
 DAY = date(2025, 1, 1)
@@ -98,3 +99,39 @@ class TestDeterministicRandom:
         faker_a, faker_b = rnd.faker_for_day(DAY), rnd.faker_for_day(date(2025, 1, 2))
 
         assert [faker_a.name() for _ in range(5)] != [faker_b.name() for _ in range(5)]
+
+    def test_streams_of_one_day_are_independent_and_reproducible(self) -> None:
+        rnd = DeterministicRandom(SEED)
+
+        traffic, crm = rnd.for_day(DAY, "traffic").random(), rnd.for_day(DAY, "crm").random()
+        traffic_faker, crm_faker = rnd.faker_for_day(DAY, "traffic"), rnd.faker_for_day(DAY, "crm")
+        traffic_names = [traffic_faker["de_DE"].user_name() for _ in range(5)]
+        crm_names = [crm_faker["de_DE"].user_name() for _ in range(5)]
+
+        assert traffic != crm
+        assert traffic != rnd.for_day(DAY).random()
+        assert traffic == DeterministicRandom(SEED).for_day(DAY, "traffic").random()
+        assert traffic_names != crm_names
+
+
+def test_poisson_mean_and_variance_match_the_rate() -> None:
+    r = random.Random(1)
+
+    draws = [poisson(r, 80.0) for _ in range(4000)]
+    mean = sum(draws) / len(draws)
+    variance = sum((d - mean) ** 2 for d in draws) / len(draws)
+
+    assert 78.0 < mean < 82.0
+    assert 72.0 < variance < 88.0
+
+
+def test_poisson_of_large_mean_does_not_underflow() -> None:
+    r = random.Random(1)
+
+    draws = [poisson(r, 1500.0) for _ in range(200)]
+
+    assert 1480 < sum(draws) / len(draws) < 1520
+
+
+def test_poisson_of_zero_mean_is_zero() -> None:
+    assert poisson(random.Random(1), 0.0) == 0

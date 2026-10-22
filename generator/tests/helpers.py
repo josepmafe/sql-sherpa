@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sherpa_generator.records import Customer, Order, OrderStatus, RawRecord, SalesChannel
 
 NOW = datetime(2025, 1, 1, 12, tzinfo=UTC)
+
+# The shared statistical run (conftest `traffic_month`): Spec A §5.4, a 30-day run at scale 0.2.
+SIMULATION_SEED = 42
+TRAFFIC_MONTH_DAYS = 30
+TRAFFIC_MONTH_SCALE = 0.2
+TRAFFIC_MONTH_START = date(2025, 3, 1)
+TRAFFIC_MONTH_END = date(2025, 3, 31)  # exclusive: the day after the last simulated day
 
 
 def all_record_types() -> list[type[RawRecord]]:
