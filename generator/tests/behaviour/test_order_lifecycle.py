@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -17,11 +17,13 @@ from sherpa_generator.behaviour.visitor_traffic import PurchaseIntent
 from sherpa_generator.records import (
     Address,
     AddressType,
+    CouponCode,
     DeviceType,
     EventContext,
     EventProperties,
     EventType,
     Order,
+    OrderDiscount,
     OrderItem,
     OrderStatus,
     OrderStatusChange,
@@ -220,6 +222,21 @@ class TestOrderLifecycleSimulator:
         assert 0.18 <= discounted / orders <= 0.32
 
     @pytest.mark.integration
+    def test_r8_orders_stack_a_coupon_of_another_promotion(self, order_month: Database) -> None:
+        with order_month.connect() as conn:
+            rows = _rows(conn, _STACKED_DISCOUNTS)
+
+        assert rows
+        for subtotal, discount_total, amounts, promotion_ids, coupon_ids, coupon_promotion_ids in rows:
+            assert len(amounts) == 2
+            assert promotion_ids[0] != promotion_ids[1]
+            assert coupon_ids[0] is None
+            assert coupon_ids[1] is not None
+            assert coupon_promotion_ids[1] == promotion_ids[1]
+            assert discount_total == sum(amounts)
+            assert discount_total <= subtotal
+
+    @pytest.mark.integration
     def test_app_share(self, order_month: Database) -> None:
         with order_month.connect() as conn:
             [(orders, app)] = _rows(
@@ -346,6 +363,31 @@ class TestOrderLifecycleSimulator:
         ]
         assert {p.order_id for p in changes.inserted(Payment)} == {1, 2, 3}
 
+    def test_r8_stacks_a_coupon_of_another_promotion_on_the_remaining_amount(self) -> None:
+        changes = DayChanges()
+        automatic = _promotion(PromotionType.PERCENT, "50", promotion_id=1)
+        couponed = _promotion(PromotionType.PERCENT, "50", promotion_id=2)
+        coupon = CouponCode(id=9, promotion_id=2, code="SPRING25", is_single_use=False)
+        snapshot = _snapshot(promotions=[automatic, couponed], coupon_codes=[coupon])
+        intents = [_app_intent(1 + index % 50, DAY_START + timedelta(seconds=index)) for index in range(400)]
+
+        orders = _simulator().place_orders(snapshot, changes, intents)
+
+        by_order: dict[int, list[OrderDiscount]] = defaultdict(list)
+        for discount in changes.inserted(OrderDiscount):
+            by_order[discount.order_id].append(discount)
+        stacked = [o for o in orders if len(by_order.get(o.id, [])) == 2]
+        assert stacked
+        assert all(len(rows) <= 2 for rows in by_order.values())
+        assert all(rows[0].coupon_code_id is None for rows in by_order.values())
+        for order in stacked:
+            first, second = by_order[order.id]
+            assert (first.promotion_id, second.promotion_id, second.coupon_code_id) == (1, 2, 9)
+            assert first.amount == (order.subtotal / 2).quantize(CENT, rounding=ROUND_HALF_UP)
+            assert second.amount == ((order.subtotal - first.amount) / 2).quantize(CENT, rounding=ROUND_HALF_UP)
+            assert order.discount_total == first.amount + second.amount
+            assert order.discount_total < order.subtotal
+
     def test_order_placed_just_before_midnight_is_paid_the_same_day(self) -> None:
         changes = DayChanges()
         placed_at = DAY_START + timedelta(days=1) - timedelta(seconds=30)
@@ -462,6 +504,8 @@ def _snapshot(
     open_orders: list[Order] | None = None,
     open_shipments: list[Shipment] | None = None,
     captured_payments: list[Payment] | None = None,
+    promotions: list[Promotion] | None = None,
+    coupon_codes: list[CouponCode] | None = None,
 ) -> StoreSnapshot:
     catalog = DayChanges()
     CatalogBuilder(DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({})).build(catalog, DAY, DAY)
@@ -477,8 +521,8 @@ def _snapshot(
         leads=[],
         active_campaigns={},
         recent_email_sends=[],
-        active_promotions=catalog.inserted(Promotion),
-        coupon_codes=[],
+        active_promotions=catalog.inserted(Promotion) if promotions is None else promotions,
+        coupon_codes=coupon_codes or [],
         shipping_address_ids={c.id: 1000 + c.id for c in people},
         open_orders=open_orders or [],
         open_shipments=open_shipments or [],
@@ -520,9 +564,9 @@ def _payment(payment_id: int, order_id: int, method: PaymentMethod, amount: str)
     )
 
 
-def _promotion(promotion_type: PromotionType, value: str) -> Promotion:
+def _promotion(promotion_type: PromotionType, value: str, promotion_id: int = 1) -> Promotion:
     return Promotion(
-        id=1,
+        id=promotion_id,
         name="Test",
         type=promotion_type,
         value=Decimal(value),
@@ -629,6 +673,14 @@ SELECT o.id, o.status, o.placed_at,
 FROM raw_shop.orders o
 WHERE NOT EXISTS (SELECT 1 FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'paid')
 ORDER BY o.id
+"""
+
+_STACKED_DISCOUNTS = """
+SELECT o.subtotal, o.discount_total, array_agg(d.amount ORDER BY d.id), array_agg(d.promotion_id ORDER BY d.id),
+       array_agg(d.coupon_code_id ORDER BY d.id), array_agg(c.promotion_id ORDER BY d.id)
+FROM raw_shop.orders o JOIN raw_shop.order_discounts d ON d.order_id = o.id
+LEFT JOIN raw_shop.coupon_codes c ON c.id = d.coupon_code_id
+GROUP BY o.id HAVING count(*) > 1 ORDER BY o.id
 """
 
 _PAID_CANCELLATIONS = """

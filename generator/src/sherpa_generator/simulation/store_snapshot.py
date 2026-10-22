@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Final
 from pydantic import BaseModel, ConfigDict
 
 from sherpa_generator.records import (
+    Address,
     Campaign,
     CampaignChannel,
     CouponCode,
@@ -146,7 +147,7 @@ class StoreSnapshotLoader:
 
     def _shipping_address_ids(self) -> dict[int, int]:
         rows = self._conn.execute(
-            "SELECT customer_id, id FROM raw_shop.addresses WHERE type = 'shipping' AND is_default ORDER BY customer_id"
+            f"SELECT customer_id, id FROM {Address.TABLE} WHERE type = 'shipping' AND is_default ORDER BY customer_id"  # type: ignore[arg-type]  # static SQL only
         ).fetchall()
         return dict(rows)
 

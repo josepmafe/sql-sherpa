@@ -88,6 +88,17 @@ class TestDayChanges:
 
         assert [o.id for o in changes.inserted(Order)] == [1]
 
+    def test_replace_rejects_record_of_another_type(self) -> None:
+        changes = DayChanges()
+        order = make_order(1)
+        changes.insert(order)
+
+        with pytest.raises(ValueError, match="Customer"):
+            changes.replace(order, make_customer(1))
+
+        assert changes.inserted(Order) == [order]
+        assert changes.inserted(Customer) == []
+
     def test_insert_counts_by_table(self) -> None:
         changes = DayChanges()
         changes.insert(make_customer(1))

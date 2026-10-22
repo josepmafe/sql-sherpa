@@ -45,6 +45,10 @@ class DayChanges:
 
     def replace(self, old: RawRecord, new: RawRecord) -> None:
         """Swap a queued insert for an amended copy (records are frozen), keeping its position."""
+        if type(new) is not type(old):
+            msg = f"cannot replace a {type(old).__name__} with a {type(new).__name__}"
+            raise ValueError(msg)
+
         records = self._inserts.get(type(old), [])
         for index, record in enumerate(records):
             if record is old:  # identity: an R1 duplicate may equal its original
