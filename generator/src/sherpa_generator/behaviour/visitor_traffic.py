@@ -122,7 +122,9 @@ LAST_SESSION_START: Final = timedelta(days=1) - timedelta(seconds=EVENT_GAP_SECO
 LANDING_PAGE: Final = "/"
 CHECKOUT_PAGE: Final = "/checkout"
 
-BASE_DAILY_SIGNUPS: Final = 14  # Spec A §5.2 step 4
+# Spec A §5.2 step 4 says ~14 a day before seasonality, but the calendar averages ~1.13x over a year, so 14 lands
+# ~5.8k customers against the ~5k the same section expects for 365 days; 12 lands ~5k.
+BASE_DAILY_SIGNUPS: Final = 12
 LEAD_EMAIL_REUSE_RATE: Final = 0.35  # Spec A §5.2 step 4
 MARKETING_OPT_IN_RATE: Final = 0.55
 ADDRESS_SLOTS: Final = ((AddressType.SHIPPING, True), (AddressType.BILLING, True), (AddressType.SHIPPING, False))
