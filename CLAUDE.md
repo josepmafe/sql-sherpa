@@ -7,9 +7,15 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Data platform spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md`. The data model, metric definitions, realism rules and dbt feature roadmap live there.
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, and the agent in `agent-design-1` … `agent-design-9` (each spec's §8). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md` or `<date>-agent-design-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. Current plan: `2026-10-22-data-platform-1-foundation.md`.
-- Sequencing: data-platform-1 → data-platform-2 (defines the agent-facing interface) → agent-design-1 to agent-design-3 alongside data-platform-3 → data-platform-4 → data-platform-5, with agent-design-4 onwards after the baseline.
-- **Every plan ends with a documentation task:** check `CLAUDE.md` and `README.md` against what the milestone changed (commands, layout, status, conventions) and update them. Writing a plan includes writing that task.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, and the agent in `agent-design-1` … `agent-design-10` (each spec's §8). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md` or `<date>-agent-design-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. Current plan: `2026-10-22-data-platform-1-foundation.md`.
+- Sequencing: data-platform-1 → data-platform-2 (defines the agent-facing interface) → agent-design-1 to agent-design-3 alongside data-platform-3 → data-platform-4 → agent-design-4 (gold set batch 2) → agent-design-5 to agent-design-9; data-platform-5 → agent-design-10.
+- **Every plan ends with a documentation task**, and writing a plan includes writing it. The task does two things:
+  - **Checks `CLAUDE.md` and `README.md`** against what the milestone changed (commands, layout, status, conventions) and updates them.
+  - **Writes or updates how-to guides** in `docs/guides/`:
+    - `basic/`: how to *use* what the milestone built, with easy and complete, copy-pasteable examples.
+    - `advanced/`: how to *extend or modify* it, i.e. which files to touch, in which order, and which tests prove the change.
+
+    Every milestone that adds something a person runs or extends gets at least one guide of each kind, or updates existing guides. Guides follow the current-state rule like every other doc.
 - **Docs describe the current state only.** `CLAUDE.md`, the README, the specs and the plans say what *is*, not what used to be. When something changes, rewrite the affected text in place. Don't add "previously…", "no longer…", "was replaced by…" or notes about discarded approaches; git history is the archive. Anything removed was removed on purpose, so don't carry it over.
 
 ## Principles

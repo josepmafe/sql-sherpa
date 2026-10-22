@@ -354,7 +354,7 @@ Severity: key/integrity tests `error`; distribution and freshness tests `warn`. 
 
 ## 8. dbt Feature Roadmap (milestones)
 
-Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-platform-<n>-<name>.md`. Each milestone ends with `dbt build` green on a fresh database and its acceptance criteria met. **Every plan's last task is a documentation check:** update `CLAUDE.md` and `README.md` wherever the milestone changed what they describe (commands, layout, status, conventions), so they always reflect the current state.
+Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-platform-<n>-<name>.md`. Each milestone ends with `dbt build` green on a fresh database and its acceptance criteria met. **Every plan's last task is a documentation task.** It updates `CLAUDE.md` and `README.md` wherever the milestone changed what they describe (commands, layout, status, conventions). It also writes or updates how-to guides in `docs/guides/basic/` (using what was built, with easy and complete examples) and `docs/guides/advanced/` (extending or modifying it). The guides list per milestone is part of the plan.
 
 ### data-platform-1 — Foundation
 **Builds:** Docker Compose, roles, generator (full §5), dbt project, sources, seeds, all staging models, `dim_date`.

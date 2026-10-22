@@ -38,7 +38,7 @@ It is a learning project, built to production standards: a realistic synthetic e
 | **data-platform-3 · Time** | Snapshots (price history), incremental models (microbatch, merge, delete+insert), sessionization, unit tests |
 | **data-platform-4 · Governance & CI** | Marketing marts, groups and access, model versions, exposures, selectors, slim builds, GitHub Actions CI |
 | **data-platform-5 · Semantic layer** | MetricFlow semantic models, metrics and saved queries |
-| **agent-design-1 … 9 · Agent** | MCP server, eval harness, a baseline agent, then grounding, schema linking and self-correction, one at a time, measured |
+| **agent-design-1 … 10 · Agent** | MCP server, eval harness, a baseline agent, then grounding, schema linking and self-correction, one at a time, measured |
 
 ## Repository layout
 
