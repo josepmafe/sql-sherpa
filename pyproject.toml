@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "sql-sherpa"
 version = "0.1.0"
@@ -9,8 +13,20 @@ dev = [
     "pytest",
     "psycopg[binary]",
     "ruff",
+    "mypy",
     "pre-commit",
 ]
+generator = [
+    "pydantic",
+    "pydantic-settings",
+    "psycopg[binary]",
+]
+
+[tool.uv]
+default-groups = ["dev", "generator"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["generator/src/sherpa_generator"]
 
 [tool.pytest.ini_options]
 testpaths = ["generator/tests"]
@@ -26,4 +42,13 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "T20", "LOG", "G", "C4", "TC", "PT", "RUF"]
 
 [tool.ruff.lint.flake8-type-checking]
-runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sherpa_generator.records.base.RawRecord",
+]
+
+[tool.mypy]
+files = ["generator/src"]
+python_version = "3.12"
+disallow_untyped_defs = true
