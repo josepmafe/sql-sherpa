@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: stg_crm__leads
+    description: >
+      One row per CRM lead. The email is normalized (lower-cased, trimmed, R3) because leads have
+      no key shared with customers and are matched on email.
+    columns:
+      - name: lead_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: email
+        description: Email address in lower case without surrounding whitespace. PII.
+        data_tests: [not_null]
+      - name: lead_source
+        description: How the lead was captured.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [newsletter, popup, giveaway, referral]
+      - name: utm_campaign
+        description: Campaign slug the lead came from; null if unknown.
+      - name: lifecycle_stage
+        description: Funnel stage.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [subscriber, lead, mql, customer]
+      - name: created_at
+        description: When the lead was captured (UTC).
+      - name: updated_at
+        description: When the row last changed (UTC).
+
+  - name: stg_crm__email_sends
+    description: One row per marketing email sent to a lead.
+    columns:
+      - name: email_send_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: lead_id
+        description: Lead who received the email.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__leads')
+                field: lead_id
+      - name: campaign_id
+        description: Marketing campaign the email belongs to; null if none.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_marketing__campaigns')
+                field: campaign_id
+      - name: sent_at
+        description: When the email was sent (UTC).
+      - name: opened_at
+        description: When the lead first opened it (UTC); null if never.
+      - name: clicked_at
+        description: When the lead first clicked a link (UTC); null if never.

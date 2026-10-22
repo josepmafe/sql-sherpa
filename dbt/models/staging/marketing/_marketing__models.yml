@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: stg_marketing__campaigns
+    description: One row per marketing campaign.
+    columns:
+      - name: campaign_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: campaign_name
+        description: Campaign name.
+      - name: utm_campaign
+        description: Slug used as utm_campaign in tracked links.
+      - name: channel
+        description: Campaign channel.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid_search, paid_social, email, affiliate, display]
+      - name: starts_at
+        description: Campaign start (UTC).
+      - name: ends_at
+        description: Campaign end (UTC).
+      - name: budget
+        description: Planned budget, EUR.
+
+  - name: stg_marketing__ad_spend_daily
+    description: >
+      Spend and traffic per paid campaign and day, as reported by the ad platforms. Platform clicks
+      are not tracked sessions (R11).
+    data_tests:
+      # Composite key: the table has no id, a row is identified by day + campaign.
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [spend_date, campaign_id]
+    columns:
+      - name: spend_date
+        description: Day the spend belongs to.
+        data_tests: [not_null]
+      - name: campaign_id
+        description: Campaign that spent the money.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_marketing__campaigns')
+                field: campaign_id
+      - name: spend
+        description: Amount spent, EUR.
+      - name: impressions
+        description: Ad impressions reported by the platform.
+      - name: clicks
+        description: Ad clicks reported by the platform.

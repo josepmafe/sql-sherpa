@@ -1,0 +1,294 @@
+version: 2
+
+# A source declares a raw table that dbt did not build (here: written by the generator).
+# Models read it with {{ source('shop', 'orders') }}, which lets dbt draw lineage from the
+# raw table onwards and check how fresh it is (`dbt source freshness`).
+sources:
+  - name: shop
+    description: Shopify-like OLTP database of the online shop. Written by the generator, never by dbt.
+    schema: raw_shop
+    config:
+      # Freshness is opt-in per table: a table with `freshness: null` is not checked.
+      freshness: null
+    tables:
+      - name: customers
+        description: One row per registered customer. Soft-deleted customers keep their row and get deleted_at set.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: email
+            description: Email as typed by the customer; may contain mixed case and surrounding whitespace.
+          - name: first_name
+            description: Given name (PII).
+          - name: last_name
+            description: Family name (PII).
+          - name: country_code
+            description: Country as stored by the shop; may be noisy (lowercase, UK instead of GB).
+          - name: marketing_opt_in
+            description: Whether the customer agreed to receive marketing emails.
+          - name: is_test_account
+            description: Flag set by the shop for internal test accounts.
+          - name: created_at
+            description: When the customer signed up (UTC).
+          - name: updated_at
+            description: When the row last changed (UTC).
+          - name: deleted_at
+            description: When the customer was soft-deleted (GDPR request); null if active.
+
+      - name: addresses
+        description: Shipping and billing addresses, 1 to 3 per customer.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: customer_id
+            description: Customer the address belongs to.
+          - name: type
+            description: Address type, shipping or billing.
+          - name: country_code
+            description: Country as stored by the shop; may be noisy (lowercase, UK instead of GB).
+          - name: city
+            description: City.
+          - name: postal_code
+            description: Postal code.
+          - name: is_default
+            description: Whether this is the default address of its type for the customer.
+
+      - name: categories
+        description: Product category tree, 2 to 3 levels deep.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: parent_id
+            description: Parent category; null for top-level categories.
+          - name: name
+            description: Category name.
+
+      - name: products
+        description: Catalogue products. Prices live on the variants.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: category_id
+            description: Leaf category of the product.
+          - name: name
+            description: Product name.
+          - name: brand
+            description: Brand name.
+          - name: is_active
+            description: Whether the product is currently on sale.
+          - name: created_at
+            description: When the product was created (UTC).
+          - name: updated_at
+            description: When the row last changed (UTC).
+
+      - name: product_variants
+        description: Sellable variants (size and colour) of a product. Prices change over time.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: product_id
+            description: Product the variant belongs to.
+          - name: sku
+            description: Stock keeping unit.
+          - name: size
+            description: Size label.
+          - name: color
+            description: Colour name.
+          - name: cost_price
+            description: What the variant costs the shop, EUR, net of tax.
+          - name: list_price
+            description: Selling price, EUR, net of tax.
+          - name: created_at
+            description: When the variant was created (UTC).
+          - name: updated_at
+            description: When the row last changed; bumps on every price change (UTC).
+
+      - name: orders
+        description: One row per order, holding its current status and monetary totals.
+        config:
+          # Warn when the newest updated_at is older than 36 h, fail beyond 72 h.
+          freshness:
+            warn_after: {count: 36, period: hour}
+            error_after: {count: 72, period: hour}
+          loaded_at_field: updated_at
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_number
+            description: Human-readable order number such as SS-000123.
+          - name: customer_id
+            description: Customer who placed the order.
+          - name: shipping_address_id
+            description: Address the order ships to.
+          - name: status
+            description: Current order status (placed, paid, shipped, delivered, cancelled).
+          - name: subtotal
+            description: Sum of line prices before discounts, EUR, net of tax.
+          - name: discount_total
+            description: Total discount applied to the order, EUR.
+          - name: shipping_amount
+            description: Shipping charged to the customer, EUR.
+          - name: tax_amount
+            description: Tax charged, EUR.
+          - name: order_total
+            description: subtotal - discount_total + shipping_amount + tax_amount, EUR.
+          - name: sales_channel
+            description: Channel the order came from, web or app.
+          - name: placed_at
+            description: When the order was placed (UTC).
+          - name: updated_at
+            description: When the row last changed (UTC).
+
+      - name: order_items
+        description: Order lines.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order the line belongs to.
+          - name: variant_id
+            description: Variant sold.
+          - name: quantity
+            description: Units sold.
+          - name: unit_price
+            description: Variant list price at the time of the order, net of tax, before discounts.
+
+      - name: order_status_history
+        description: One row per order status transition, including the initial placed status.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order that changed status.
+          - name: status
+            description: Status the order moved to.
+          - name: changed_at
+            description: When the transition happened (UTC).
+
+      - name: payments
+        description: Payment attempts. An order can have several (failed retries, split payments).
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order being paid.
+          - name: method
+            description: Payment method (card, paypal, gift_card).
+          - name: amount
+            description: Amount of this payment, EUR.
+          - name: status
+            description: Payment status (authorized, captured, failed).
+          - name: created_at
+            description: When the payment was attempted (UTC).
+
+      - name: shipments
+        description: One row per shipment of an order.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order shipped.
+          - name: carrier
+            description: Carrier name.
+          - name: shipping_cost
+            description: What the shipment costs the shop (not what the customer paid), EUR.
+          - name: shipped_at
+            description: When the shipment left the warehouse (UTC).
+          - name: delivered_at
+            description: When the shipment was delivered (UTC); null while in transit.
+
+      - name: promotions
+        description: Discount campaigns run by the shop.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: name
+            description: Promotion name.
+          - name: type
+            description: Discount type (percent, fixed, free_shipping).
+          - name: value
+            description: Discount value; a percentage for percent, EUR otherwise.
+          - name: min_order_value
+            description: Minimum order value needed to qualify, EUR.
+          - name: campaign_id
+            description: Marketing campaign that promotes it; null if none. Refers to raw_marketing.campaigns.
+          - name: starts_at
+            description: Start of validity (UTC).
+          - name: ends_at
+            description: End of validity (UTC).
+
+      - name: coupon_codes
+        description: Redeemable codes that belong to a promotion.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: promotion_id
+            description: Promotion the code activates.
+          - name: code
+            description: The code the customer types.
+          - name: max_redemptions
+            description: Maximum number of redemptions; null if unlimited.
+          - name: is_single_use
+            description: Whether each customer can use the code only once.
+
+      - name: order_discounts
+        description: Discounts applied to an order. Order-level only; allocation to lines happens in dbt.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order the discount applies to.
+          - name: promotion_id
+            description: Promotion that granted the discount.
+          - name: coupon_code_id
+            description: Coupon code used; null if the promotion applied automatically.
+          - name: amount
+            description: Discount amount, EUR.
+
+      - name: returns
+        description: Return requests for an order.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order being returned.
+          - name: reason
+            description: Why the customer returns (size, damaged, not_as_described, changed_mind).
+          - name: status
+            description: Return status (requested, approved, received, rejected).
+          - name: requested_at
+            description: When the customer requested the return (UTC).
+          - name: updated_at
+            description: When the row last changed (UTC).
+
+      - name: return_items
+        description: Order lines included in a return.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: return_id
+            description: Return the line belongs to.
+          - name: order_item_id
+            description: Order line being returned.
+          - name: quantity
+            description: Units returned.
+          - name: is_restockable
+            description: Whether the units can go back on sale.
+
+      - name: refunds
+        description: Money paid back to customers. May exist without a return (goodwill, cancellation).
+        columns:
+          - name: id
+            description: Primary key.
+          - name: order_id
+            description: Order refunded.
+          - name: return_id
+            description: Return that triggered the refund; null for goodwill and cancellation refunds.
+          - name: payment_id
+            description: Payment the money went back to.
+          - name: amount
+            description: Amount paid back, EUR, including tax.
+          - name: reason
+            description: Why the refund was issued (return, cancellation, goodwill).
+          - name: refunded_at
+            description: When the refund was issued (UTC).

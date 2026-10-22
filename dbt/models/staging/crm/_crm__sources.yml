@@ -1,0 +1,47 @@
+version: 2
+
+sources:
+  - name: crm
+    description: CRM / email-marketing tool. Has no key shared with the shop; leads match customers by email.
+    schema: raw_crm
+    config:
+      freshness: null
+    tables:
+      - name: leads
+        description: People who left their email (newsletter, popup, giveaway, referral).
+        config:
+          freshness:
+            warn_after: {count: 36, period: hour}
+            error_after: {count: 72, period: hour}
+          loaded_at_field: updated_at
+        columns:
+          - name: id
+            description: Primary key.
+          - name: email
+            description: Email as captured; may contain mixed case and surrounding whitespace.
+          - name: source
+            description: How the lead was captured (newsletter, popup, giveaway, referral).
+          - name: utm_campaign
+            description: Campaign slug the lead came from; null if unknown.
+          - name: lifecycle_stage
+            description: Funnel stage (subscriber, lead, mql, customer).
+          - name: created_at
+            description: When the lead was captured (UTC).
+          - name: updated_at
+            description: When the row last changed (UTC).
+
+      - name: email_sends
+        description: One row per marketing email sent to a lead.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: lead_id
+            description: Lead who received the email.
+          - name: campaign_id
+            description: Marketing campaign the email belongs to; null if none. Refers to raw_marketing.campaigns.
+          - name: sent_at
+            description: When the email was sent (UTC).
+          - name: opened_at
+            description: When the lead first opened it (UTC); null if never.
+          - name: clicked_at
+            description: When the lead first clicked a link (UTC); null if never.

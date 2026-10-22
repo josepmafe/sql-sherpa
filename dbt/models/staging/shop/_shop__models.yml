@@ -1,0 +1,496 @@
+version: 2
+
+# Staging models are 1:1 with a source table: rename, cast, normalize, nothing more.
+# `data_tests` run after the model is built (`dbt build` = run + test, in dependency order):
+#   - unique / not_null: the column is a usable primary key
+#   - relationships: every value exists in another model's column (a foreign-key check, since
+#     the raw tables have no enforced constraints)
+#   - accepted_values: the column only holds the listed values
+models:
+  - name: stg_shop__customers
+    description: >
+      One row per customer. Emails are normalized (lower-cased, trimmed, realism rule R3) and
+      country codes mapped to ISO alpha-2 through the country_codes seed (R4). Test accounts and
+      soft-deleted customers are kept and flagged; marts decide what to do with them.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: email
+        description: Email address in lower case without surrounding whitespace. PII.
+        data_tests: [not_null]
+      - name: first_name
+        description: Given name. PII.
+      - name: last_name
+        description: Family name. PII.
+      - name: country_code
+        description: >
+          Canonical upper-case ISO 3166-1 alpha-2 code. A raw value missing from the country_codes
+          seed is passed through unchanged so the relationships test fails instead of hiding it.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('country_codes')
+                field: code
+      - name: marketing_opt_in
+        description: Whether the customer agreed to receive marketing emails.
+      - name: is_test_account
+        description: True for internal test accounts, flagged by the shop or recognised by a @sqlsherpa-test.com email.
+      - name: is_deleted
+        description: True when the customer was soft-deleted (GDPR); PII is anonymized downstream in marts.
+      - name: signup_at
+        description: When the customer signed up (UTC).
+      - name: updated_at
+        description: When the row last changed (UTC).
+      - name: deleted_at
+        description: When the customer was soft-deleted (UTC); null if active.
+
+  - name: stg_shop__addresses
+    description: One row per customer address, with country codes mapped to ISO alpha-2 through the country_codes seed (R4).
+    columns:
+      - name: address_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Customer the address belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__customers')
+                field: customer_id
+      - name: address_type
+        description: Address type, shipping or billing.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [shipping, billing]
+      - name: country_code
+        description: >
+          Canonical upper-case ISO 3166-1 alpha-2 code. A raw value missing from the country_codes
+          seed is passed through unchanged so the relationships test fails instead of hiding it.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('country_codes')
+                field: code
+      - name: city
+        description: City.
+      - name: postal_code
+        description: Postal code.
+      - name: is_default
+        description: Whether this is the default address of its type for the customer.
+
+  - name: stg_shop__categories
+    description: Product category tree. Top-level categories have no parent.
+    columns:
+      - name: category_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: parent_category_id
+        description: Parent category; null for top-level categories.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__categories')
+                field: category_id
+      - name: category_name
+        description: Category name.
+
+  - name: stg_shop__products
+    description: One row per catalogue product.
+    columns:
+      - name: product_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: category_id
+        description: Leaf category of the product.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__categories')
+                field: category_id
+      - name: product_name
+        description: Product name.
+      - name: brand
+        description: Brand name.
+      - name: is_active
+        description: Whether the product is currently on sale.
+      - name: created_at
+        description: When the product was created (UTC).
+      - name: updated_at
+        description: When the row last changed (UTC).
+
+  - name: stg_shop__product_variants
+    description: One row per sellable variant (size and colour). Prices are the current ones; history comes from a snapshot.
+    columns:
+      - name: variant_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: product_id
+        description: Product the variant belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__products')
+                field: product_id
+      - name: sku
+        description: Stock keeping unit.
+      - name: size
+        description: Size label.
+      - name: color
+        description: Colour name.
+      - name: cost_price
+        description: What the variant costs the shop, EUR, net of tax.
+      - name: list_price
+        description: Selling price, EUR, net of tax.
+      - name: created_at
+        description: When the variant was created (UTC).
+      - name: updated_at
+        description: When the row last changed; bumps on every price change (UTC).
+
+  - name: stg_shop__orders
+    description: One row per order with its current status and totals.
+    data_tests:
+      # Model-level test: a boolean SQL expression that must hold for every row.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "order_total = subtotal - discount_total + shipping_amount + tax_amount"
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_number
+        description: Human-readable order number such as SS-000123.
+      - name: customer_id
+        description: Customer who placed the order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__customers')
+                field: customer_id
+      - name: shipping_address_id
+        description: Address the order ships to.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__addresses')
+                field: address_id
+      - name: order_status
+        description: Current order status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [placed, paid, shipped, delivered, cancelled]
+      - name: subtotal
+        description: Sum of line prices before discounts, EUR, net of tax.
+      - name: discount_total
+        description: Total discount applied to the order, EUR.
+      - name: shipping_amount
+        description: Shipping charged to the customer, EUR.
+      - name: tax_amount
+        description: Tax charged, EUR.
+      - name: order_total
+        description: subtotal - discount_total + shipping_amount + tax_amount, EUR.
+      - name: sales_channel
+        description: Channel the order came from.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [web, app]
+      - name: placed_at
+        description: When the order was placed (UTC).
+      - name: updated_at
+        description: When the row last changed (UTC).
+
+  - name: stg_shop__order_items
+    description: One row per order line.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order the line belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: variant_id
+        description: Variant sold.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__product_variants')
+                field: variant_id
+      - name: quantity
+        description: Units sold.
+      - name: unit_price
+        description: Variant list price at the time of the order, net of tax, before discounts.
+
+  - name: stg_shop__order_status_history
+    description: One row per order status transition, including the initial placed status.
+    columns:
+      - name: status_change_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order that changed status.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: status
+        description: Status the order moved to.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [placed, paid, shipped, delivered, cancelled]
+      - name: changed_at
+        description: When the transition happened (UTC).
+
+  - name: stg_shop__payments
+    description: One row per payment attempt. An order can have failed attempts and split payments (R7); sum only captured ones.
+    columns:
+      - name: payment_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order being paid.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: method
+        description: Payment method.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [card, paypal, gift_card]
+      - name: amount
+        description: Amount of this payment, EUR.
+      - name: payment_status
+        description: Payment status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [authorized, captured, failed]
+      - name: created_at
+        description: When the payment was attempted (UTC).
+
+  - name: stg_shop__shipments
+    description: One row per shipment of an order.
+    columns:
+      - name: shipment_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order shipped.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: carrier
+        description: Carrier name.
+      - name: shipping_cost
+        description: What the shipment costs the shop (not what the customer paid), EUR.
+      - name: shipped_at
+        description: When the shipment left the warehouse (UTC).
+      - name: delivered_at
+        description: When the shipment was delivered (UTC); null while in transit.
+
+  - name: stg_shop__promotions
+    description: One row per discount promotion.
+    columns:
+      - name: promotion_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: promotion_name
+        description: Promotion name.
+      - name: promotion_type
+        description: Discount type.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [percent, fixed, free_shipping]
+      - name: value
+        description: Discount value; a percentage for percent, EUR otherwise.
+      - name: min_order_value
+        description: Minimum order value needed to qualify, EUR.
+      - name: campaign_id
+        description: Marketing campaign that promotes it; null if none.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_marketing__campaigns')
+                field: campaign_id
+      - name: starts_at
+        description: Start of validity (UTC).
+      - name: ends_at
+        description: End of validity (UTC).
+
+  - name: stg_shop__coupon_codes
+    description: One row per redeemable coupon code.
+    columns:
+      - name: coupon_code_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: promotion_id
+        description: Promotion the code activates.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__promotions')
+                field: promotion_id
+      - name: code
+        description: The code the customer types.
+      - name: max_redemptions
+        description: Maximum number of redemptions; null if unlimited.
+      - name: is_single_use
+        description: Whether each customer can use the code only once.
+
+  - name: stg_shop__order_discounts
+    description: One row per discount applied to an order (order level; a few orders have several, R8).
+    columns:
+      - name: order_discount_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order the discount applies to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: promotion_id
+        description: Promotion that granted the discount.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__promotions')
+                field: promotion_id
+      - name: coupon_code_id
+        description: Coupon code used; null if the promotion applied automatically.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__coupon_codes')
+                field: coupon_code_id
+      - name: amount
+        description: Discount amount, EUR.
+
+  - name: stg_shop__returns
+    description: One row per return request.
+    columns:
+      - name: return_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order being returned.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: return_reason
+        description: Why the customer returns.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [size, damaged, not_as_described, changed_mind]
+      - name: return_status
+        description: Return status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [requested, approved, received, rejected]
+      - name: requested_at
+        description: When the customer requested the return (UTC).
+      - name: updated_at
+        description: When the row last changed (UTC).
+
+  - name: stg_shop__return_items
+    description: One row per order line included in a return.
+    columns:
+      - name: return_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: return_id
+        description: Return the line belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__returns')
+                field: return_id
+      - name: order_item_id
+        description: Order line being returned.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__order_items')
+                field: order_item_id
+      - name: quantity
+        description: Units returned.
+      - name: is_restockable
+        description: Whether the units can go back on sale.
+
+  - name: stg_shop__refunds
+    description: >
+      One row per refund. Refunds can exist without a return (goodwill, cancellation, R9). A refund
+      can exceed a single split payment; only per-order totals are capped.
+    columns:
+      - name: refund_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Order refunded.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+      - name: return_id
+        description: Return that triggered the refund; null for goodwill and cancellation refunds.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__returns')
+                field: return_id
+      - name: payment_id
+        description: Payment the money went back to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_shop__payments')
+                field: payment_id
+      - name: amount
+        description: Amount paid back, EUR, including tax.
+      - name: refund_reason
+        description: Why the refund was issued.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [return, cancellation, goodwill]
+      - name: refunded_at
+        description: When the refund was issued (UTC).
