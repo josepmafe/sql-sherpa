@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 from helpers import SIMULATION_SEED
+from sherpa_generator.records import OrderStatus, PaymentStatus
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.store_snapshot import StoreSnapshotLoader, lognormal_propensity
 
@@ -51,6 +52,40 @@ class TestStoreSnapshotLoader:
         assert campaign_ids
         assert all(ids == sorted(ids) for ids in campaign_ids)
 
+    def test_order_state_is_ordered_by_key_and_holds_only_what_can_still_change(self, order_month: Database) -> None:
+        with order_month.connect() as conn:
+            snapshot = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(LAST_DAY)
+            [(orders, addresses)] = conn.execute(
+                "SELECT (SELECT count(*) FROM raw_shop.orders),"
+                " (SELECT count(*) FROM raw_shop.addresses WHERE type = 'shipping' AND is_default)"
+            ).fetchall()
+
+        start = datetime(2025, 3, 30, tzinfo=UTC)
+        open_ids = {o.id for o in snapshot.open_orders}
+        paid_ids = {o.id for o in snapshot.open_orders if o.status == OrderStatus.PAID}
+        promotion_ids = {p.id for p in snapshot.active_promotions}
+        lists = [
+            snapshot.open_orders,
+            snapshot.open_shipments,
+            snapshot.captured_payments,
+            snapshot.active_promotions,
+            snapshot.coupon_codes,
+        ]
+
+        assert all(ids == sorted(ids) for ids in ([r.id for r in records] for records in lists))
+        assert 0 < len(open_ids) < orders
+        assert {o.status for o in snapshot.open_orders} == {OrderStatus.PLACED, OrderStatus.PAID, OrderStatus.SHIPPED}
+        assert {s.order_id for s in snapshot.open_shipments} <= open_ids
+        assert all(s.delivered_at is None for s in snapshot.open_shipments)
+        assert {p.order_id for p in snapshot.captured_payments} == paid_ids
+        assert all(p.status == PaymentStatus.CAPTURED for p in snapshot.captured_payments)
+        assert snapshot.active_promotions
+        assert all(p.starts_at < start + timedelta(days=1) and p.ends_at > start for p in snapshot.active_promotions)
+        assert snapshot.coupon_codes
+        assert {c.promotion_id for c in snapshot.coupon_codes} <= promotion_ids
+        assert len(snapshot.shipping_address_ids) == addresses
+        assert list(snapshot.shipping_address_ids) == sorted(snapshot.shipping_address_ids)
+
     def test_variant_popularity_sums_to_one_and_skips_inactive_products(self, traffic_month: Database) -> None:
         with traffic_month.connect() as conn:
             inactive_product = 1
@@ -90,6 +125,12 @@ class TestStoreSnapshotLoader:
         assert snapshot.leads == []
         assert snapshot.active_campaigns == {}
         assert snapshot.recent_email_sends == []
+        assert snapshot.active_promotions == []
+        assert snapshot.coupon_codes == []
+        assert snapshot.shipping_address_ids == {}
+        assert snapshot.open_orders == []
+        assert snapshot.open_shipments == []
+        assert snapshot.captured_payments == []
 
 
 def test_lognormal_propensity_median_and_sigma() -> None:

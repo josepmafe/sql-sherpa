@@ -43,6 +43,17 @@ class DayChanges:
     def insert(self, record: RawRecord) -> None:
         self._inserts.setdefault(type(record), []).append(record)
 
+    def replace(self, old: RawRecord, new: RawRecord) -> None:
+        """Swap a queued insert for an amended copy (records are frozen), keeping its position."""
+        records = self._inserts.get(type(old), [])
+        for index, record in enumerate(records):
+            if record is old:  # identity: an R1 duplicate may equal its original
+                records[index] = new
+                return
+
+        msg = f"{type(old).__name__} to replace was never inserted"
+        raise ValueError(msg)
+
     def update(self, record_type: type[RawRecord], key: int | tuple[object, ...], **values: object) -> None:
         """Queue a column update; unknown columns and invalid values raise ValueError immediately."""
         if not values:

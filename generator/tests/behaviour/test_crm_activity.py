@@ -186,6 +186,12 @@ def _snapshot(
         leads=leads or [],
         active_campaigns={CampaignChannel.EMAIL: [campaign]} if campaign else {},
         recent_email_sends=[],
+        active_promotions=[],
+        coupon_codes=[],
+        shipping_address_ids={},
+        open_orders=[],
+        open_shipments=[],
+        captured_payments=[],
     )
 
 

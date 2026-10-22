@@ -231,6 +231,12 @@ def _snapshot(customers: int = 50, campaigns: dict[CampaignChannel, list[Campaig
         leads=[],
         active_campaigns=_campaigns() if campaigns is None else campaigns,
         recent_email_sends=[],
+        active_promotions=[],
+        coupon_codes=[],
+        shipping_address_ids={},
+        open_orders=[],
+        open_shipments=[],
+        captured_payments=[],
     )
 
 

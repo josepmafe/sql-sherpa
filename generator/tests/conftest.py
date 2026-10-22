@@ -11,6 +11,7 @@ from helpers import SIMULATION_SEED, TRAFFIC_MONTH_DAYS, TRAFFIC_MONTH_SCALE, TR
 from psycopg import sql
 from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
 from sherpa_generator.behaviour.crm_activity import CrmActivitySimulator
+from sherpa_generator.behaviour.order_lifecycle import OrderLifecycleSimulator
 from sherpa_generator.behaviour.visitor_traffic import VisitorTrafficSimulator
 from sherpa_generator.database.connection import Database
 from sherpa_generator.database.raw_schema import RawSchema
@@ -44,6 +45,14 @@ def traffic_month() -> Iterator[Database]:
         yield db
 
 
+@pytest.fixture(scope="session")
+def order_month() -> Iterator[Database]:
+    """The `traffic_month` run with orders placed and progressed. Tests must not commit changes to it."""
+    with temporary_database() as db:
+        simulated_days(db, TRAFFIC_MONTH_DAYS, TRAFFIC_MONTH_SCALE, TRAFFIC_MONTH_START, through="orders")
+        yield db
+
+
 @contextmanager
 def temporary_database() -> Iterator[Database]:
     settings = GeneratorSettings()
@@ -60,7 +69,7 @@ def temporary_database() -> Iterator[Database]:
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
-def simulated_days(db: Database, days: int, scale: float, start: date, through: Literal["traffic"]) -> None:
+def simulated_days(db: Database, days: int, scale: float, start: date, through: Literal["traffic", "orders"]) -> None:
     """Setup plus the simulators up to `through`, one transaction per day (a test stand-in for the Simulator)."""
     random = DeterministicRandom(SIMULATION_SEED)
     keys = PrimaryKeyAllocator({})
@@ -72,14 +81,18 @@ def simulated_days(db: Database, days: int, scale: float, start: date, through: 
 
     traffic = VisitorTrafficSimulator(random, keys, rules, calendar, scale)
     crm = CrmActivitySimulator(random, keys, rules, scale)
+    orders = OrderLifecycleSimulator(random, keys, rules, calendar)
     for offset in range(days):
         day = start + timedelta(days=offset)
         with db.transaction() as conn:
             snapshot = StoreSnapshotLoader(conn, random).load(day)
             changes = DayChanges()
             _flush_pending_events(conn, changes, calendar.day_bounds(day))
-            traffic.simulate_day(snapshot, changes)
+            outcome = traffic.simulate_day(snapshot, changes)
             crm.simulate_day(snapshot, changes)
+            if through == "orders":
+                orders.place_orders(snapshot, changes, outcome.purchase_intents)
+                orders.progress_orders(snapshot, changes)
             RecordWriter(conn).write(changes)
 
 

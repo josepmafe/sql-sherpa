@@ -7,7 +7,20 @@ from typing import TYPE_CHECKING, Final
 
 from pydantic import BaseModel, ConfigDict
 
-from sherpa_generator.records import Campaign, CampaignChannel, Customer, EmailSend, Lead, ProductVariant, RawRecord
+from sherpa_generator.records import (
+    Campaign,
+    CampaignChannel,
+    CouponCode,
+    Customer,
+    EmailSend,
+    Lead,
+    Order,
+    Payment,
+    ProductVariant,
+    Promotion,
+    RawRecord,
+    Shipment,
+)
 from sherpa_generator.simulation.calendar import SimulationCalendar
 
 if TYPE_CHECKING:
@@ -19,6 +32,7 @@ PROPENSITY_MU: Final = 0.0  # Spec A §4.4: lognormal customer propensity (Paret
 PROPENSITY_SIGMA: Final = 1.1  # Spec A §4.4
 POPULARITY_ZIPF_EXPONENT: Final = 1.0  # product popularity falls off as 1 / rank
 RECENT_EMAIL_SEND_DAYS: Final = 3  # covers the 48 h open window plus the click delay
+ACTIVE_PROMOTION: Final = "starts_at < %s AND ends_at > %s"  # overlaps the day; params: day end, day start
 # entity_fraction is a multiple of 2**-53 in [0, 1); shifting by half a step keeps it strictly inside (0, 1).
 _HALF_FRACTION_STEP: Final = 2.0**-54
 _PROPENSITY_DISTRIBUTION: Final = NormalDist(PROPENSITY_MU, PROPENSITY_SIGMA)
@@ -43,6 +57,12 @@ class StoreSnapshot(BaseModel):
     leads: list[Lead]
     active_campaigns: dict[CampaignChannel, list[Campaign]]
     recent_email_sends: list[EmailSend]  # sent in the last days and not yet fully engaged
+    active_promotions: list[Promotion]  # running at some point of the day
+    coupon_codes: list[CouponCode]  # of the active promotions
+    shipping_address_ids: dict[int, int]  # customer id -> default shipping address id
+    open_orders: list[Order]  # placed, paid or shipped
+    open_shipments: list[Shipment]  # not delivered yet
+    captured_payments: list[Payment]  # of paid orders, which a cancellation refunds
 
     def propensity(self, customer_id: int) -> float:
         return self.customer_propensity[customer_id]
@@ -83,6 +103,16 @@ class StoreSnapshotLoader:
                 start - timedelta(days=RECENT_EMAIL_SEND_DAYS),
                 start,
             ),
+            active_promotions=self._records(Promotion, ACTIVE_PROMOTION, end, start),
+            coupon_codes=self._records(
+                CouponCode, f"promotion_id IN (SELECT id FROM {Promotion.TABLE} WHERE {ACTIVE_PROMOTION})", end, start
+            ),
+            shipping_address_ids=self._shipping_address_ids(),
+            open_orders=self._records(Order, "status IN ('placed', 'paid', 'shipped')"),
+            open_shipments=self._records(Shipment, "delivered_at IS NULL"),
+            captured_payments=self._records(
+                Payment, f"status = 'captured' AND order_id IN (SELECT id FROM {Order.TABLE} WHERE status = 'paid')"
+            ),
         )
 
     def _records[T: RawRecord](self, record_type: type[T], where: str = "TRUE", *params: object) -> list[T]:
@@ -113,6 +143,12 @@ class StoreSnapshotLoader:
         }
         total = sum(weights.values())
         return {variant_id: weight / total for variant_id, weight in weights.items()}
+
+    def _shipping_address_ids(self) -> dict[int, int]:
+        rows = self._conn.execute(
+            "SELECT customer_id, id FROM raw_shop.addresses WHERE type = 'shipping' AND is_default ORDER BY customer_id"
+        ).fetchall()
+        return dict(rows)
 
     def _customer_devices(self) -> dict[int, list[str]]:
         rows = self._conn.execute(
