@@ -47,6 +47,29 @@ class TestDeterministicRandom:
 
         assert results == [expected, expected]
 
+    def test_faker_output_is_independent_of_pythonhashseed(self) -> None:
+        """Every locale and provider the generator draws names, emails and addresses from (Spec A §5.1)."""
+        code = (
+            "from datetime import date; "
+            "from sherpa_generator.simulation.deterministic_random import FAKER_LOCALES, DeterministicRandom; "
+            "faker = DeterministicRandom(42).faker_for_day(date(2025, 1, 1), 'traffic'); "
+            "methods = ('first_name', 'last_name', 'user_name', 'free_email_domain', 'city', 'postcode'); "
+            "print([getattr(faker[loc], m)() for loc in FAKER_LOCALES for m in methods for _ in range(20)])"
+        )
+
+        outputs = [
+            subprocess.run(
+                [sys.executable, "-c", code],
+                env={**os.environ, "PYTHONHASHSEED": hashseed},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            for hashseed in ("1", "2")
+        ]
+
+        assert outputs[0] == outputs[1]
+
     def test_for_day_differs_by_day_and_seed(self) -> None:
         base = DeterministicRandom(SEED).for_day(DAY).random()
 

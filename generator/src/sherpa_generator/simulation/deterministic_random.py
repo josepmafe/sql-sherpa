@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from faker import Faker
+from faker.providers.address.it_IT import Provider as ItalianAddressProvider
 
 if TYPE_CHECKING:
     from datetime import date
@@ -63,7 +64,7 @@ class DeterministicRandom:
         """
         if stream not in self._fakers:
             if self._faker_template is None:
-                self._faker_template = Faker(list(FAKER_LOCALES))
+                self._faker_template = _without_set_ordering(Faker(list(FAKER_LOCALES)))
 
             self._fakers[stream] = copy.deepcopy(self._faker_template)
 
@@ -83,6 +84,15 @@ class DeterministicRandom:
     def _with_stream(parts: tuple[object, ...], stream: str | None) -> tuple[object, ...]:
         """Without a stream the parts are the Spec A §5.1 day seed `{seed}:{day}` unchanged."""
         return parts if stream is None else (*parts, stream)
+
+
+def _without_set_ordering(faker: Faker) -> Faker:
+    """Faker's it_IT address provider lists its cities from a set, so their order, and so every Italian city() draw,
+    would follow PYTHONHASHSEED. Sorting them makes the draws depend on the seed alone (Spec A §5.1)."""
+    for provider in faker["it_IT"].providers:
+        if isinstance(provider, ItalianAddressProvider):
+            provider.cities = sorted(provider.cities)
+    return faker
 
 
 def _knuth_poisson(r: random.Random, mean: float) -> int:
