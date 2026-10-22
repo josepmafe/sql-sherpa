@@ -1,2 +1,9 @@
 # Local tooling
 .superpowers/
+
+# Secrets and caches
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

@@ -1,0 +1,29 @@
+[project]
+name = "sql-sherpa"
+version = "0.1.0"
+description = "Synthetic e-commerce warehouse (generator + dbt on Postgres) and a text-to-SQL agent on top of it."
+requires-python = ">=3.12,<3.13"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "psycopg[binary]",
+    "ruff",
+    "pre-commit",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["generator/tests"]
+markers = [
+    "integration: needs Postgres",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "T20", "LOG", "G", "C4", "TC", "PT", "RUF"]
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
