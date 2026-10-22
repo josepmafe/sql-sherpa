@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from psycopg import sql
+
 if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
 
@@ -281,3 +283,14 @@ class RawSchema:
         for schema, table, column in rows:
             columns.setdefault(f"{schema}.{table}", []).append(column)
         return {table: tuple(cols) for table, cols in columns.items()}
+
+    def row_counts(self) -> dict[str, int]:
+        """Schema-qualified table name -> row count, in table name order."""
+        tables = self.tables()
+        with self._db.connect() as conn:
+            return {
+                table: conn.execute(
+                    sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(*table.split(".")))
+                ).fetchone()[0]  # type: ignore[index]  # count(*) always returns one row
+                for table in tables
+            }

@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Synthetic e-commerce warehouse (generator + dbt on Postgres) and a text-to-SQL agent on top of it."
 requires-python = ">=3.12,<3.13"
 
+[project.scripts]
+sherpa-generate = "sherpa_generator.cli:app"
+
 [dependency-groups]
 dev = [
     "pytest",
@@ -23,6 +26,7 @@ generator = [
     "psycopg[binary]",
     "faker>=40.43.0",
     "tzdata>=2026.5",
+    "typer>=0.27.3",
 ]
 
 [tool.uv]
@@ -55,6 +59,7 @@ runtime-evaluated-base-classes = [
 files = ["generator/src"]
 python_version = "3.12"
 disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]  # lets GeneratorSettings() be built from the environment without arguments
 
 [tool.mutmut]
 # `make mutate MODULE=<file>` narrows each run to one module by mutant-name glob

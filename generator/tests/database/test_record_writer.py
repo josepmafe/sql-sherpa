@@ -110,6 +110,21 @@ class TestRecordWriter:
             rows = conn.execute("SELECT campaign_id, clicks FROM raw_marketing.ad_spend_daily ORDER BY 1").fetchall()
         assert rows == [(1, 10), (2, 99)]
 
+    def test_write_update_of_missing_row_fails_and_leaves_nothing(self, temp_database: Database) -> None:
+        changes = DayChanges()
+        changes.insert(make_order(1))
+        changes.update(Order, 1, status="paid")
+        changes.update(Order, 2, status="paid")
+
+        with (
+            pytest.raises(LookupError, match=r"1 of 2 updates of raw_shop\.orders matched no row"),
+            temp_database.transaction() as conn,
+        ):
+            RecordWriter(conn).write(changes)
+
+        with temp_database.connect() as conn:
+            assert conn.execute("SELECT count(*) FROM raw_shop.orders").fetchone() == (0,)
+
     def test_write_deletes_pending_events_after_inserts(self, temp_database: Database) -> None:
         seed = DayChanges()
         seed.insert(make_event("p1", PendingEvent))

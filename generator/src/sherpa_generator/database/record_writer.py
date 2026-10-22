@@ -55,6 +55,12 @@ class RecordWriter:
             ]
             with self._conn.cursor() as cur:
                 cur.executemany(statement, params)
+                matched = cur.rowcount  # psycopg sums rowcount over executemany; keys are unique
+
+            # A lost update would silently corrupt the history, so it fails the day instead.
+            if matched != len(batch):
+                msg = f"{len(batch) - matched} of {len(batch)} updates of {record_type.TABLE} matched no row"
+                raise LookupError(msg)
 
     def _delete_pending(self, event_ids: list[str]) -> None:
         if event_ids:
