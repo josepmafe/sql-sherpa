@@ -15,6 +15,7 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
+    "mutmut>=3.8.0",
 ]
 generator = [
     "pydantic",
@@ -54,3 +55,7 @@ runtime-evaluated-base-classes = [
 files = ["generator/src"]
 python_version = "3.12"
 disallow_untyped_defs = true
+
+[tool.mutmut]
+# paths_to_mutate is passed per run (make mutate MODULE=...)
+tests_dir = ["generator/tests/"]
