@@ -20,6 +20,12 @@ dev = [
     "pre-commit",
     "mutmut>=3.8.0",
 ]
+dbt = [
+    "dbt-core==1.12.6",
+    "dbt-postgres==1.11.0",
+    "sqlfluff",
+    "sqlfluff-templater-dbt",
+]
 generator = [
     "pydantic",
     "pydantic-settings",
@@ -30,13 +36,13 @@ generator = [
 ]
 
 [tool.uv]
-default-groups = ["dev", "generator"]
+default-groups = ["dev", "generator", "dbt"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["generator/src/sherpa_generator"]
 
 [tool.pytest.ini_options]
-testpaths = ["generator/tests"]
+testpaths = ["generator/tests", "tests"]
 addopts = '-m "not slow"'  # an explicit -m on the command line replaces this
 markers = [
     "integration: needs Postgres",

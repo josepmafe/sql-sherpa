@@ -11,3 +11,10 @@ __pycache__/
 
 # mutmut
 mutants/
+
+# dbt
+dbt/target/
+dbt/target-prod/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml

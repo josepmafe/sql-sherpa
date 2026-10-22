@@ -1,0 +1,38 @@
+name: sherpa
+version: "1.0.0"
+profile: sherpa # which entry of profiles.yml to use
+
+# Folders dbt reads. Models are SELECT statements dbt materializes; seeds are small CSVs
+# loaded as tables; macros are reusable Jinja; snapshots capture history.
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets: ["target", "target-prod", "dbt_packages"]
+
+# Project variables, read in models with {{ var('tax_rate') }}.
+vars:
+  tax_rate: 0.20
+  session_timeout_minutes: 30
+  date_spine_start: "2024-01-01"
+  date_spine_end: "2028-12-31"
+
+# Folder-level defaults. "+schema" is a *custom* schema; the generate_schema_name macro
+# turns it into the real schema name (dev_<name> on dev, <name> on prod/ci).
+models:
+  sherpa:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+seeds:
+  sherpa:
+    +schema: seeds
+
+snapshots:
+  sherpa:
+    +schema: snapshots

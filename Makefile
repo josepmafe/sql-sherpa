@@ -1,4 +1,7 @@
-.PHONY: up down generate backfill status reset mutate
+.PHONY: up down generate backfill status reset mutate deps seed
+
+# dbt runs from dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
+DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
 
 up:
 	docker compose up -d --wait
@@ -25,3 +28,9 @@ MUTANT_GLOB = *$(subst /,.,$(patsubst %.py,%,$(patsubst generator/src/%,%,$(MODU
 
 mutate:
 	uv run mutmut run "$(MUTANT_GLOB)" && uv run mutmut results
+
+deps:
+	$(DBT) deps
+
+seed:
+	$(DBT) seed
