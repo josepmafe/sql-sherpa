@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import cache
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
@@ -80,16 +81,12 @@ class DayChanges:
 
     @staticmethod
     def _validate(record_type: type[RawRecord], name: str, value: object) -> object:
-        field = record_type.model_fields.get(name)
-        if field is None:
+        if name not in record_type.model_fields:
             msg = f"{record_type.__name__} has no column {name!r}"
             raise ValueError(msg)
 
-        # field.annotation drops Annotated metadata (e.g. Money's rounding), so re-attach it.
-        annotation: Any = Annotated[field.annotation, *field.metadata] if field.metadata else field.annotation
-        adapter: TypeAdapter[object] = TypeAdapter(annotation)
         try:
-            return adapter.validate_python(value)
+            return _column_adapter(record_type, name).validate_python(value)
         except ValidationError as exc:
             msg = f"invalid value for {record_type.__name__}.{name}: {value!r}"
             raise ValueError(msg) from exc
@@ -102,3 +99,11 @@ class DayChanges:
             raise ValueError(msg)
 
         return dict(zip(record_type.KEY, parts, strict=True))
+
+
+@cache  # building a TypeAdapter compiles a validator, far slower than using it; a day queues thousands of updates
+def _column_adapter(record_type: type[RawRecord], name: str) -> TypeAdapter[object]:
+    field = record_type.model_fields[name]
+    # field.annotation drops Annotated metadata (e.g. Money's rounding), so re-attach it.
+    annotation: Any = Annotated[field.annotation, *field.metadata] if field.metadata else field.annotation
+    return TypeAdapter(annotation)

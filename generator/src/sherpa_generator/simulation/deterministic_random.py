@@ -49,18 +49,25 @@ class DeterministicRandom:
     def __init__(self, seed: int) -> None:
         self._seed = seed
         self._faker_template: Faker | None = None
+        self._fakers: dict[str | None, Faker] = {}
 
     def for_day(self, day: date, stream: str | None = None) -> random.Random:
         return random.Random(stable_int(*self._with_stream((self._seed, day.isoformat()), stream)))
 
     def faker_for_day(self, day: date, stream: str | None = None) -> Faker:
-        # Building a Faker scans its provider modules (~90 ms); a copy of an unused template is ~20x cheaper.
-        # In the copy all locale generators share one random.Random, so interleaved draws across locales differ from
-        # a freshly built Faker with the same seed. Output is still fully determined by (seed, day, stream).
-        if self._faker_template is None:
-            self._faker_template = Faker(list(FAKER_LOCALES))
+        """The stream's Faker, re-seeded for the day: a later call for the same stream invalidates the previous one.
 
-        faker = copy.deepcopy(self._faker_template)
+        Building a Faker scans its provider modules and even a deep copy takes tens of milliseconds, so each stream
+        keeps one copy of an unused template. In the copy all locale generators share one random.Random, which
+        re-seeding resets completely, so the output is fully determined by (seed, day, stream).
+        """
+        if stream not in self._fakers:
+            if self._faker_template is None:
+                self._faker_template = Faker(list(FAKER_LOCALES))
+
+            self._fakers[stream] = copy.deepcopy(self._faker_template)
+
+        faker = self._fakers[stream]
         faker.seed_instance(stable_int(*self._with_stream((self._seed, "faker", day.isoformat()), stream)))
         return faker
 

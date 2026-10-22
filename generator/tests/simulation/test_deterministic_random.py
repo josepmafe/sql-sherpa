@@ -90,15 +90,33 @@ class TestDeterministicRandom:
 
     def test_faker_for_day_is_reproducible(self) -> None:
         rnd = DeterministicRandom(SEED)
-        faker_a, faker_b = rnd.faker_for_day(DAY), rnd.faker_for_day(DAY)
+        faker = rnd.faker_for_day(DAY)
+        first = [faker.name() for _ in range(5)]
 
-        assert [faker_a.name() for _ in range(5)] == [faker_b.name() for _ in range(5)]
+        again = rnd.faker_for_day(DAY)
+
+        assert [again.name() for _ in range(5)] == first
+
+    def test_reused_faker_matches_a_fresh_one(self) -> None:
+        """A resumed run starts from a fresh DeterministicRandom, so the reused instance must not carry state over."""
+        rnd = DeterministicRandom(SEED)
+        used = rnd.faker_for_day(date(2025, 1, 2))
+        for _ in range(50):
+            used.name()
+
+        reused = rnd.faker_for_day(DAY)
+
+        fresh = DeterministicRandom(SEED).faker_for_day(DAY)
+        assert [reused["de_DE"].user_name() for _ in range(5)] == [fresh["de_DE"].user_name() for _ in range(5)]
 
     def test_faker_for_day_differs_by_day(self) -> None:
         rnd = DeterministicRandom(SEED)
-        faker_a, faker_b = rnd.faker_for_day(DAY), rnd.faker_for_day(date(2025, 1, 2))
+        faker = rnd.faker_for_day(DAY)
+        first = [faker.name() for _ in range(5)]
 
-        assert [faker_a.name() for _ in range(5)] != [faker_b.name() for _ in range(5)]
+        other = rnd.faker_for_day(date(2025, 1, 2))
+
+        assert [other.name() for _ in range(5)] != first
 
     def test_streams_of_one_day_are_independent_and_reproducible(self) -> None:
         rnd = DeterministicRandom(SEED)
