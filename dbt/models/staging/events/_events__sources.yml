@@ -9,8 +9,8 @@ sources:
     tables:
       - name: events
         description: >
-          One row per tracked event. Duplicates (realism rule R1) share the same event_id and received_at day;
-          the table has no primary key.
+          One row per tracked event. Duplicates (realism rule R1) share the same event_id and the copy's
+          received_at is 0-300 s later (same UTC day); the table has no primary key.
         config:
           freshness:
             warn_after: {count: 36, period: hour}
