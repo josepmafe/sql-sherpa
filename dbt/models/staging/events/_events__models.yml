@@ -1,0 +1,69 @@
+version: 2
+
+models:
+  - name: stg_events__events
+    description: >
+      One row per tracked event. Duplicates from the tracker (R1) are removed, the text timestamp
+      occurred_at is parsed to timestamptz honouring the client's UTC offset, and the context and
+      properties JSON are flattened into columns.
+    columns:
+      - name: event_id
+        description: Primary key (UUID as text), unique after the R1 dedupe.
+        data_tests: [unique, not_null]
+      - name: anonymous_id
+        description: Browser or device identifier; present on every event.
+        data_tests: [not_null]
+      - name: customer_id
+        description: Customer who triggered the event; null while the visitor is anonymous.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__customers')
+                field: customer_id
+      - name: event_type
+        description: Kind of event.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - page_view
+                  - product_view
+                  - add_to_cart
+                  - remove_from_cart
+                  - begin_checkout
+                  - purchase
+                  - signup
+                  - login
+      - name: occurred_at
+        description: When the event happened on the client, as a timestamptz (the client's UTC offset is honoured).
+        data_tests: [not_null]
+      - name: received_at
+        description: When the tracker received the event (UTC).
+        data_tests: [not_null]
+      - name: device_type
+        description: desktop, mobile or tablet.
+      - name: utm_source
+        description: UTM source on the visit; null if none.
+      - name: utm_medium
+        description: UTM medium on the visit; null if none.
+      - name: utm_campaign
+        description: UTM campaign slug on the visit; null if none.
+      - name: referrer
+        description: Referring site; null if none.
+      - name: page_path
+        description: Page path viewed; null for events without a page.
+      - name: product_id
+        description: Product involved in the event; null otherwise.
+      - name: variant_id
+        description: Product variant involved in the event; null otherwise.
+      - name: order_id
+        description: Order created by a purchase event; null otherwise.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_shop__orders')
+                field: order_id
+              config:
+                where: "order_id is not null"
+      - name: cart_value
+        description: Cart value in EUR at the time of the event, numeric(12,2); null if not applicable.

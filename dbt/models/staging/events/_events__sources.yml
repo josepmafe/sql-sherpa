@@ -1,0 +1,37 @@
+version: 2
+
+sources:
+  - name: events
+    description: Segment-like web/app event tracker. Events carry an anonymous id and, once identified, a customer id.
+    schema: raw_events
+    config:
+      freshness: null
+    tables:
+      - name: events
+        description: >
+          One row per tracked event. Duplicates (realism rule R1) share the same event_id and received_at day;
+          the table has no primary key.
+        config:
+          freshness:
+            warn_after: {count: 36, period: hour}
+            error_after: {count: 72, period: hour}
+          loaded_at_field: received_at
+        columns:
+          - name: event_id
+            description: UUID of the event as text; duplicated rows share it.
+          - name: anonymous_id
+            description: Browser or device identifier; present on every event.
+          - name: user_id
+            description: Customer id as text; null until the visitor signs up or logs in.
+          - name: event_type
+            description: >
+              Kind of event (page_view, product_view, add_to_cart, remove_from_cart, begin_checkout,
+              purchase, signup, login).
+          - name: occurred_at
+            description: ISO-8601 text with the client's UTC offset (e.g. 2025-01-15T10:00:00+01:00).
+          - name: received_at
+            description: When the tracker received the event (UTC); may be 1-3 days after occurred_at (R2).
+          - name: context
+            description: jsonb with device_type, utm_source, utm_medium, utm_campaign and referrer.
+          - name: properties
+            description: jsonb with page_path, product_id, variant_id, order_id and cart_value (a JSON string such as "20.00").
