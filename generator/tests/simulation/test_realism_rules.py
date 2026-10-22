@@ -9,7 +9,8 @@ from sherpa_generator.simulation.realism_rules import RealismRules
 
 DRAWS = 20_000
 TOLERANCE = 0.20
-# 0.5 % of 20,000 draws is ~100 hits (sd ~10), so +/-20 % is only 2 sd and Random(1) lands at 3 sd.
+# A 0.5 % rate needs more draws: 20,000 give ~100 hits (sd ~10), so +/-20 % is only 2 sd. With 200,000 draws
+# it is ~1,000 hits (sd ~32), so the tolerance is ~6 sd.
 RARE_DRAWS = 200_000
 AD_CLICK_DRAWS = 2_000
 

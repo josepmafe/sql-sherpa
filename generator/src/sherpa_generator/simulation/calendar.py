@@ -4,8 +4,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Final
 from zoneinfo import ZoneInfo
 
-FRIDAY = 4  # date.weekday()
-SATURDAY = 5
+FRIDAY = 4  # date.weekday() value
+WEEKEND_START = 5  # date.weekday() of Saturday; Sunday is 6
 
 
 class SimulationCalendar:
@@ -35,7 +35,7 @@ class SimulationCalendar:
     def seasonality(self, day: date) -> float:
         """Volume multiplier for a day; the weekend, Black Friday week and month factors multiply."""
         factor = 1.0
-        if day.weekday() >= SATURDAY:
+        if day.weekday() >= WEEKEND_START:
             factor *= self.WEEKEND_FACTOR
         first, last = self.black_friday_week(day.year)
         if first <= day <= last:

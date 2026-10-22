@@ -40,7 +40,9 @@ class TestSimulationCalendar:
             (2024, (date(2024, 11, 18), date(2024, 11, 24))),
         ],
     )
-    def test_black_friday_week_2025_and_2026(self, year: int, expected: tuple[date, date]) -> None:
+    def test_black_friday_week_is_monday_to_sunday_of_the_fourth_friday(
+        self, year: int, expected: tuple[date, date]
+    ) -> None:
         assert self.calendar.black_friday_week(year) == expected
 
     def test_day_bounds_is_half_open_utc_day(self) -> None:

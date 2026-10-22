@@ -57,5 +57,6 @@ python_version = "3.12"
 disallow_untyped_defs = true
 
 [tool.mutmut]
-# paths_to_mutate is passed per run (make mutate MODULE=...)
-tests_dir = ["generator/tests/"]
+# `make mutate MODULE=<file>` narrows each run to one module by mutant-name glob
+source_paths = ["generator/src/sherpa_generator"]
+pytest_add_cli_args_test_selection = ["generator/tests/"]
