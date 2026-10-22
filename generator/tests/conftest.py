@@ -7,10 +7,22 @@ from typing import TYPE_CHECKING, Literal
 
 import psycopg
 import pytest
-from helpers import SIMULATION_SEED, TRAFFIC_MONTH_DAYS, TRAFFIC_MONTH_SCALE, TRAFFIC_MONTH_START
+from helpers import (
+    AFTER_SALES_DAYS,
+    AFTER_SALES_SCALE,
+    AFTER_SALES_START,
+    SIMULATION_SEED,
+    TRAFFIC_MONTH_DAYS,
+    TRAFFIC_MONTH_SCALE,
+    TRAFFIC_MONTH_START,
+)
 from psycopg import sql
+from sherpa_generator.behaviour.ad_spend import AdSpendSimulator
+from sherpa_generator.behaviour.after_sales import AfterSalesSimulator
+from sherpa_generator.behaviour.catalog_drift import CatalogDriftSimulator
 from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
 from sherpa_generator.behaviour.crm_activity import CrmActivitySimulator
+from sherpa_generator.behaviour.customer_deletions import CustomerDeletionSimulator
 from sherpa_generator.behaviour.order_lifecycle import OrderLifecycleSimulator
 from sherpa_generator.behaviour.visitor_traffic import VisitorTrafficSimulator
 from sherpa_generator.database.connection import Database
@@ -53,6 +65,14 @@ def order_month() -> Iterator[Database]:
         yield db
 
 
+@pytest.fixture(scope="session")
+def after_sales_season() -> Iterator[Database]:
+    """Every behaviour for long enough that returns get through to receipt. Tests must not commit changes to it."""
+    with temporary_database() as db:
+        simulated_days(db, AFTER_SALES_DAYS, AFTER_SALES_SCALE, AFTER_SALES_START, through="all")
+        yield db
+
+
 @contextmanager
 def temporary_database() -> Iterator[Database]:
     settings = GeneratorSettings()
@@ -69,7 +89,9 @@ def temporary_database() -> Iterator[Database]:
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
-def simulated_days(db: Database, days: int, scale: float, start: date, through: Literal["traffic", "orders"]) -> None:
+def simulated_days(
+    db: Database, days: int, scale: float, start: date, through: Literal["traffic", "orders", "all"]
+) -> None:
     """Setup plus the simulators up to `through`, one transaction per day (a test stand-in for the Simulator)."""
     random = DeterministicRandom(SIMULATION_SEED)
     keys = PrimaryKeyAllocator({})
@@ -79,20 +101,30 @@ def simulated_days(db: Database, days: int, scale: float, start: date, through: 
         CatalogBuilder(random, keys).build(changes, start, start + timedelta(days=days - 1))
         RecordWriter(conn).write(changes)
 
+    drift = CatalogDriftSimulator(random, rules)
     traffic = VisitorTrafficSimulator(random, keys, rules, calendar, scale)
     crm = CrmActivitySimulator(random, keys, rules, scale)
     orders = OrderLifecycleSimulator(random, keys, rules, calendar)
+    after_sales = AfterSalesSimulator(random, keys, calendar)
+    ad_spend = AdSpendSimulator(random, rules)
+    deletions = CustomerDeletionSimulator(random)
     for offset in range(days):
         day = start + timedelta(days=offset)
         with db.transaction() as conn:
             snapshot = StoreSnapshotLoader(conn, random).load(day)
             changes = DayChanges()
             _flush_pending_events(conn, changes, calendar.day_bounds(day))
+            if through == "all":
+                drift.simulate_day(snapshot, changes)
             outcome = traffic.simulate_day(snapshot, changes)
             crm.simulate_day(snapshot, changes)
-            if through == "orders":
+            if through in {"orders", "all"}:
                 orders.place_orders(snapshot, changes, outcome.purchase_intents)
                 orders.progress_orders(snapshot, changes)
+            if through == "all":
+                after_sales.simulate_day(snapshot, changes)
+                ad_spend.simulate_day(snapshot, changes, outcome.paid_sessions_by_campaign)
+                deletions.simulate_day(snapshot, changes)
             RecordWriter(conn).write(changes)
 
 

@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sherpa_generator.records import Customer, Order, OrderStatus, RawRecord, SalesChannel
+from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 NOW = datetime(2025, 1, 1, 12, tzinfo=UTC)
 
@@ -13,6 +14,33 @@ TRAFFIC_MONTH_DAYS = 30
 TRAFFIC_MONTH_SCALE = 0.2
 TRAFFIC_MONTH_START = date(2025, 3, 1)
 TRAFFIC_MONTH_END = date(2025, 3, 31)  # exclusive: the day after the last simulated day
+# The shared after-sales run (conftest `after_sales_season`): the smallest that yields returns in every status and
+# goodwill refunds (~285 orders, ~18 returns).
+AFTER_SALES_DAYS = 45
+AFTER_SALES_SCALE = 0.3
+AFTER_SALES_START = date(2025, 3, 1)
+_EMPTY_SNAPSHOT: dict[str, object] = {
+    "variants": [],
+    "variant_popularity": {},
+    "products": [],
+    "product_category_l1": {},
+    "customers": [],
+    "customer_propensity": {},
+    "customer_devices": {},
+    "leads": [],
+    "active_campaigns": {},
+    "recent_email_sends": [],
+    "active_promotions": [],
+    "coupon_codes": [],
+    "shipping_address_ids": {},
+    "open_orders": [],
+    "open_shipments": [],
+    "captured_payments": [],
+    "recently_delivered_orders": [],
+    "recently_delivered_items": [],
+    "recently_delivered_payments": [],
+    "open_returns": [],
+}
 
 
 def all_record_types() -> list[type[RawRecord]]:
@@ -49,6 +77,11 @@ def make_order(order_id: int) -> Order:
         placed_at=NOW,
         updated_at=NOW,
     )
+
+
+def make_snapshot(day: date, **fields: object) -> StoreSnapshot:
+    """An empty shop on `day`; a test passes only the parts it needs."""
+    return StoreSnapshot.model_validate({**_EMPTY_SNAPSHOT, "day": day, **fields})
 
 
 def _subclasses(cls: type[RawRecord]) -> list[type[RawRecord]]:

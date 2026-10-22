@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import SIMULATION_SEED
-from sherpa_generator.records import OrderStatus, PaymentStatus
+from helpers import AFTER_SALES_DAYS, AFTER_SALES_START, SIMULATION_SEED
+from sherpa_generator.records import OrderStatus, PaymentStatus, ReturnStatus
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.store_snapshot import StoreSnapshotLoader, lognormal_propensity
 
@@ -86,6 +87,50 @@ class TestStoreSnapshotLoader:
         assert len(snapshot.shipping_address_ids) == addresses
         assert list(snapshot.shipping_address_ids) == sorted(snapshot.shipping_address_ids)
 
+    def test_after_sales_state_holds_forty_days_of_deliveries_and_the_open_returns(
+        self, after_sales_season: Database
+    ) -> None:
+        next_day = AFTER_SALES_START + timedelta(days=AFTER_SALES_DAYS)  # the day after the run
+        later_day = next_day + timedelta(days=20)  # its window misses the run's first deliveries
+        with after_sales_season.connect() as conn:
+            loader = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED))
+            snapshot, later = loader.load(next_day), loader.load(later_day)
+            [(delivered, delivered_at_mismatches)] = conn.execute(
+                "SELECT count(*), count(*) FILTER (WHERE o.updated_at <> s.delivered_at)"
+                " FROM raw_shop.orders o JOIN raw_shop.shipments s ON s.order_id = o.id WHERE o.status = 'delivered'"
+            ).fetchall()
+
+        later_start = datetime(later_day.year, later_day.month, later_day.day, tzinfo=UTC)
+        orders = snapshot.recently_delivered_orders
+        order_ids = {o.id for o in orders}
+        lists = [
+            snapshot.products,
+            orders,
+            snapshot.recently_delivered_items,
+            snapshot.recently_delivered_payments,
+            snapshot.open_returns,
+        ]
+
+        assert all(ids == sorted(ids) for ids in ([r.id for r in records] for records in lists))
+        assert orders
+        assert 0 < len(later.recently_delivered_orders) < delivered
+        assert all(later_start - timedelta(days=40) <= o.updated_at for o in later.recently_delivered_orders)
+        assert delivered_at_mismatches == 0  # a delivered order's updated_at is its delivery time
+        assert all(o.status == OrderStatus.DELIVERED for o in orders)
+        assert {i.order_id for i in snapshot.recently_delivered_items} == order_ids
+        assert {p.order_id for p in snapshot.recently_delivered_payments} == order_ids
+        assert all(p.status == PaymentStatus.CAPTURED for p in snapshot.recently_delivered_payments)
+        assert snapshot.open_returns
+        assert {r.status for r in snapshot.open_returns} <= {ReturnStatus.REQUESTED, ReturnStatus.APPROVED}
+        assert {r.order_id for r in snapshot.open_returns} <= order_ids
+        assert list(snapshot.product_category_l1) == [p.id for p in snapshot.products]
+        assert Counter(snapshot.product_category_l1.values()) == {
+            "Footwear": 25,
+            "Apparel": 45,
+            "Accessories": 115,
+            "Equipment": 115,
+        }
+
     def test_variant_popularity_sums_to_one_and_skips_inactive_products(self, traffic_month: Database) -> None:
         with traffic_month.connect() as conn:
             inactive_product = 1
@@ -131,6 +176,12 @@ class TestStoreSnapshotLoader:
         assert snapshot.open_orders == []
         assert snapshot.open_shipments == []
         assert snapshot.captured_payments == []
+        assert snapshot.products == []
+        assert snapshot.product_category_l1 == {}
+        assert snapshot.recently_delivered_orders == []
+        assert snapshot.recently_delivered_items == []
+        assert snapshot.recently_delivered_payments == []
+        assert snapshot.open_returns == []
 
 
 def test_lognormal_propensity_median_and_sigma() -> None:

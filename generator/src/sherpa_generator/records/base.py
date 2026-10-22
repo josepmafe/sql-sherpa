@@ -9,11 +9,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict
 MONEY_QUANTUM = Decimal("0.01")  # Spec A §4: numeric(12,2), ROUND_HALF_UP
 
 
-def _quantize_money(value: Decimal) -> Decimal:
+def quantize_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
-Money = Annotated[Decimal, AfterValidator(_quantize_money)]
+Money = Annotated[Decimal, AfterValidator(quantize_money)]
 
 
 class RawRecord(BaseModel):

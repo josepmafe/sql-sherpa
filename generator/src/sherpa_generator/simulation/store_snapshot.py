@@ -11,15 +11,19 @@ from sherpa_generator.records import (
     Address,
     Campaign,
     CampaignChannel,
+    Category,
     CouponCode,
     Customer,
     EmailSend,
     Lead,
     Order,
+    OrderItem,
     Payment,
+    Product,
     ProductVariant,
     Promotion,
     RawRecord,
+    Return,
     Shipment,
 )
 from sherpa_generator.simulation.calendar import SimulationCalendar
@@ -34,6 +38,17 @@ PROPENSITY_SIGMA: Final = 1.1  # Spec A §4.4
 POPULARITY_ZIPF_EXPONENT: Final = 1.0  # product popularity falls off as 1 / rank
 RECENT_EMAIL_SEND_DAYS: Final = 3  # covers the 48 h open window plus the click delay
 ACTIVE_PROMOTION: Final = "starts_at < %s AND ends_at > %s"  # overlaps the day; params: day end, day start
+# Spec A §5.2 step 7: a return is requested at most 30 days after delivery and received at most 10 days later.
+RECENT_DELIVERY_DAYS: Final = 40
+RECENTLY_DELIVERED: Final = "status = 'delivered' AND updated_at >= %s"  # params: start of the delivery window
+PRODUCT_CATEGORY_L1: Final = f"""
+WITH RECURSIVE tree (id, l1) AS (
+    SELECT id, name FROM {Category.TABLE} WHERE parent_id IS NULL
+    UNION ALL
+    SELECT c.id, tree.l1 FROM {Category.TABLE} c JOIN tree ON c.parent_id = tree.id
+)
+SELECT p.id, tree.l1 FROM {Product.TABLE} p JOIN tree ON tree.id = p.category_id ORDER BY p.id
+"""
 # entity_fraction is a multiple of 2**-53 in [0, 1); shifting by half a step keeps it strictly inside (0, 1).
 _HALF_FRACTION_STEP: Final = 2.0**-54
 _PROPENSITY_DISTRIBUTION: Final = NormalDist(PROPENSITY_MU, PROPENSITY_SIGMA)
@@ -64,6 +79,14 @@ class StoreSnapshot(BaseModel):
     open_orders: list[Order]  # placed, paid or shipped
     open_shipments: list[Shipment]  # not delivered yet
     captured_payments: list[Payment]  # of paid orders, which a cancellation refunds
+    products: list[Product]
+    product_category_l1: dict[int, str]  # product id -> name of its top-level category
+    # Delivered in the last RECENT_DELIVERY_DAYS, so returns and goodwill may still fall due. Nothing updates a
+    # delivered order, so its updated_at is the delivery time.
+    recently_delivered_orders: list[Order]
+    recently_delivered_items: list[OrderItem]  # of the recently delivered orders
+    recently_delivered_payments: list[Payment]  # captured, of the recently delivered orders
+    open_returns: list[Return]  # requested or approved
 
     def propensity(self, customer_id: int) -> float:
         return self.customer_propensity[customer_id]
@@ -80,12 +103,15 @@ class StoreSnapshotLoader:
     def load(self, day: date) -> StoreSnapshot:
         start, end = self._calendar.day_bounds(day)
         variants = self._records(ProductVariant)
+        products = self._records(Product)
         customers = self._records(Customer, "deleted_at IS NULL")
         customer_ids = {c.id for c in customers}
+        delivered_since = start - timedelta(days=RECENT_DELIVERY_DAYS)
+        recently_delivered_ids = f"order_id IN (SELECT id FROM {Order.TABLE} WHERE {RECENTLY_DELIVERED})"
         return StoreSnapshot(
             day=day,
             variants=variants,
-            variant_popularity=self._variant_popularity(variants),
+            variant_popularity=self._variant_popularity(variants, products),
             customers=customers,
             customer_propensity={
                 c.id: lognormal_propensity(self._random.entity_fraction("customer", c.id, "propensity"))
@@ -114,6 +140,14 @@ class StoreSnapshotLoader:
             captured_payments=self._records(
                 Payment, f"status = 'captured' AND order_id IN (SELECT id FROM {Order.TABLE} WHERE status = 'paid')"
             ),
+            products=products,
+            product_category_l1=self._product_category_l1(),
+            recently_delivered_orders=self._records(Order, RECENTLY_DELIVERED, delivered_since),
+            recently_delivered_items=self._records(OrderItem, recently_delivered_ids, delivered_since),
+            recently_delivered_payments=self._records(
+                Payment, f"status = 'captured' AND {recently_delivered_ids}", delivered_since
+            ),
+            open_returns=self._records(Return, "status IN ('requested', 'approved')"),
         )
 
     def _records[T: RawRecord](self, record_type: type[T], where: str = "TRUE", *params: object) -> list[T]:
@@ -124,14 +158,13 @@ class StoreSnapshotLoader:
         rows = self._conn.execute(query, list(params)).fetchall()  # type: ignore[arg-type]  # static SQL only
         return [record_type.model_validate(dict(zip(columns, row, strict=True))) for row in rows]
 
-    def _variant_popularity(self, variants: list[ProductVariant]) -> dict[int, float]:
+    def _variant_popularity(self, variants: list[ProductVariant], products: list[Product]) -> dict[int, float]:
         """Zipf over all products ranked by a fixed per-product fraction, split evenly over each product's variants."""
-        products = self._conn.execute("SELECT id, is_active FROM raw_shop.products").fetchall()
-        ranked = sorted(products, key=lambda p: self._random.entity_fraction("product", p[0], "popularity"))
+        ranked = sorted(products, key=lambda p: self._random.entity_fraction("product", p.id, "popularity"))
         active_weight = {
-            product_id: 1 / rank**POPULARITY_ZIPF_EXPONENT
-            for rank, (product_id, is_active) in enumerate(ranked, start=1)
-            if is_active
+            product.id: 1 / rank**POPULARITY_ZIPF_EXPONENT
+            for rank, product in enumerate(ranked, start=1)
+            if product.is_active
         }
         variants_per_product: dict[int, int] = {}
         for variant in variants:
@@ -150,6 +183,9 @@ class StoreSnapshotLoader:
             f"SELECT customer_id, id FROM {Address.TABLE} WHERE type = 'shipping' AND is_default ORDER BY customer_id"  # type: ignore[arg-type]  # static SQL only
         ).fetchall()
         return dict(rows)
+
+    def _product_category_l1(self) -> dict[int, str]:
+        return dict(self._conn.execute(PRODUCT_CATEGORY_L1).fetchall())  # type: ignore[arg-type]  # static SQL only
 
     def _customer_devices(self) -> dict[int, list[str]]:
         rows = self._conn.execute(

@@ -527,6 +527,12 @@ def _snapshot(
         open_orders=open_orders or [],
         open_shipments=open_shipments or [],
         captured_payments=captured_payments or [],
+        products=[],
+        product_category_l1={},
+        recently_delivered_orders=[],
+        recently_delivered_items=[],
+        recently_delivered_payments=[],
+        open_returns=[],
     )
 
 

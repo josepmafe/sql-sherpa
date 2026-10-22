@@ -4,6 +4,7 @@ import copy
 import hashlib
 import math
 import random
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from faker import Faker
@@ -32,6 +33,11 @@ def poisson(r: random.Random, mean: float) -> int:
         remaining -= chunk
         count += _knuth_poisson(r, chunk)
     return count
+
+
+def uniform_decimal(r: random.Random, low: float, high: float) -> Decimal:
+    """A uniform draw as a Decimal, so the money arithmetic it feeds never runs on floats."""
+    return Decimal(str(r.uniform(low, high)))
 
 
 class DeterministicRandom:
