@@ -16,6 +16,7 @@ from sherpa_generator.records import (
     EventProperties,
     EventType,
     Order,
+    OrderStatus,
     PendingEvent,
     TrackedEvent,
 )
@@ -95,6 +96,38 @@ class TestRecordWriter:
         with temp_database.connect() as conn:
             rows = conn.execute("SELECT id, status, updated_at FROM raw_shop.orders ORDER BY id").fetchall()
         assert rows == [(1, "shipped", datetime(2025, 1, 3, tzinfo=UTC)), (2, "placed", NOW)]
+
+    def test_write_applies_repeated_updates_of_one_row_in_order(self, temp_database: Database) -> None:
+        changes = DayChanges()
+        changes.insert(make_order(1))
+        changes.insert(make_order(2))
+        changes.update(Order, 1, status="paid")
+        changes.update(Order, 2, status="paid")
+        changes.update(Order, 1, status="cancelled")
+
+        with temp_database.transaction() as conn:
+            RecordWriter(conn).write(changes)
+
+        with temp_database.connect() as conn:
+            rows = conn.execute("SELECT id, status FROM raw_shop.orders ORDER BY id").fetchall()
+        assert rows == [(1, "cancelled"), (2, "paid")]
+
+    def test_write_update_keeps_exact_values_and_nulls(self, temp_database: Database) -> None:
+        updated_at = datetime(2025, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
+        changes = DayChanges()
+        changes.insert(make_order(1))
+        changes.insert(make_customer(1).model_copy(update={"deleted_at": NOW}))
+        changes.update(Order, 1, status=OrderStatus.PAID, discount_total=Decimal("1.10"), updated_at=updated_at)
+        changes.update(Customer, 1, deleted_at=None, marketing_opt_in=False)
+
+        with temp_database.transaction() as conn:
+            RecordWriter(conn).write(changes)
+
+        with temp_database.connect() as conn:
+            order = conn.execute("SELECT status, discount_total, updated_at FROM raw_shop.orders").fetchone()
+            customer = conn.execute("SELECT deleted_at, marketing_opt_in FROM raw_shop.customers").fetchone()
+        assert order == ("paid", Decimal("1.10"), updated_at)
+        assert customer == (None, False)
 
     def test_write_update_with_tuple_key_matches_composite_key(self, temp_database: Database) -> None:
         spend = AdSpendDay(spend_date=NOW.date(), campaign_id=1, spend=Decimal("5.00"), impressions=100, clicks=10)

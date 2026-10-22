@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from enum import Enum
+import json
+from datetime import date, datetime
+from decimal import Decimal
 from itertools import groupby
 from typing import TYPE_CHECKING
 
@@ -44,23 +46,43 @@ class RecordWriter:
         # Consecutive updates of the same shape are batched; order across shapes is preserved.
         for (record_type, value_columns), group in groupby(updates, key=lambda u: (u.record_type, tuple(u.values))):
             batch = list(group)
-            key_columns = tuple(batch[0].key)
-            statement = sql.SQL("UPDATE {} SET {} WHERE {}").format(
-                self._table(record_type.TABLE),
-                sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in value_columns),
-                sql.SQL(" AND ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in key_columns),
-            )
-            params = [
-                [self._db_value(u.values[c]) for c in value_columns] + [u.key[c] for c in key_columns] for u in batch
-            ]
-            with self._conn.cursor() as cur:
-                cur.executemany(statement, params)
-                matched = cur.rowcount  # psycopg sums rowcount over executemany; keys are unique
+            matched = sum(self._update(record_type.TABLE, value_columns, run) for run in self._distinct_key_runs(batch))
 
             # A lost update would silently corrupt the history, so it fails the day instead.
             if matched != len(batch):
                 msg = f"{len(batch) - matched} of {len(batch)} updates of {record_type.TABLE} matched no row"
                 raise LookupError(msg)
+
+    def _update(self, table: str, value_columns: tuple[str, ...], updates: list[RecordUpdate]) -> int:
+        """One set-based UPDATE (a pipelined executemany stalls ~40 ms per call). The table's own row type casts the
+        JSON values, so every column keeps its type; the keys must be distinct. Returns the rows matched."""
+        key_columns = tuple(updates[0].key)
+        statement = sql.SQL(
+            "UPDATE {table} AS t SET {values} FROM jsonb_populate_recordset(NULL::{table}, %s) AS v WHERE {keys}"
+        ).format(
+            table=self._table(table),
+            values=sql.SQL(", ").join(sql.SQL("{0} = v.{0}").format(sql.Identifier(c)) for c in value_columns),
+            keys=sql.SQL(" AND ").join(sql.SQL("t.{0} = v.{0}").format(sql.Identifier(c)) for c in key_columns),
+        )
+        rows = [{**u.key, **{c: u.values[c] for c in value_columns}} for u in updates]
+        with self._conn.cursor() as cur:
+            cur.execute(statement, [Jsonb(rows, dumps=_dumps)])
+            return cur.rowcount
+
+    @staticmethod
+    def _distinct_key_runs(updates: list[RecordUpdate]) -> list[list[RecordUpdate]]:
+        """Splits where a key repeats: one UPDATE ... FROM applies only one of two rows for the same key."""
+        runs: list[list[RecordUpdate]] = [[]]
+        seen: set[tuple[object, ...]] = set()
+        for update in updates:
+            key = tuple(update.key.values())
+            if key in seen:
+                runs.append([])
+                seen.clear()
+
+            runs[-1].append(update)
+            seen.add(key)
+        return runs
 
     def _delete_pending(self, event_ids: list[str]) -> None:
         if event_ids:
@@ -78,12 +100,20 @@ class RecordWriter:
     def _row(values: tuple[object, ...]) -> tuple[object, ...]:
         return tuple(Jsonb(v) if isinstance(v, dict) else v for v in values)
 
-    @staticmethod
-    def _db_value(value: object) -> object:
-        match value:
-            case BaseModel():
-                return Jsonb(value.model_dump(mode="json", exclude_none=True))
-            case Enum():
-                return value.value
-            case _:
-                return value
+
+def _dumps(obj: object) -> str:
+    return json.dumps(obj, default=_json_value)
+
+
+def _json_value(value: object) -> object:
+    """Update values as JSON; jsonb_populate_recordset parses the strings back with each column's type."""
+    match value:
+        case BaseModel():
+            return value.model_dump(mode="json", exclude_none=True)
+        case datetime() | date():
+            return value.isoformat()
+        case Decimal():
+            return str(value)
+        case _:
+            msg = f"cannot write {type(value).__name__} in an update"
+            raise TypeError(msg)
