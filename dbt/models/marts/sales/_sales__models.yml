@@ -1,0 +1,59 @@
+version: 2
+
+models:
+  - name: dim_promotions
+    description: >
+      Promotion dimension, one row per promotion, with how many coupon codes it has and how
+      often it was redeemed. Redemptions count discounts applied to non-test orders, cancelled
+      orders included.
+    config:
+      meta:
+        domain: sales
+        grain: one row per promotion
+        primary_key: promotion_id
+    columns:
+      - name: promotion_id
+        description: The promotion. Primary key.
+        data_type: bigint
+        data_tests: [unique, not_null]
+      - name: promotion_name
+        description: Name of the promotion.
+        data_type: text
+      - name: promotion_type
+        description: How the promotion discounts, percent, fixed or free_shipping.
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [percent, fixed, free_shipping]
+      - name: value
+        description: Discount value, a percentage for percent promotions and EUR for fixed ones.
+        data_type: numeric(12,2)
+      - name: min_order_value
+        description: Minimum order subtotal in EUR for the promotion to apply.
+        data_type: numeric(12,2)
+      - name: campaign_id
+        description: Marketing campaign the promotion belongs to; null when it has none.
+        data_type: bigint
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_marketing__campaigns')
+                field: campaign_id
+              config:
+                where: "campaign_id is not null"
+      - name: starts_at
+        description: When the promotion starts (UTC).
+        data_type: timestamptz
+      - name: ends_at
+        description: When the promotion ends (UTC).
+        data_type: timestamptz
+      - name: coupon_code_count
+        description: Number of coupon codes of the promotion.
+        data_type: integer
+      - name: redemption_count
+        description: Number of times the promotion was applied to a non-test order.
+        data_type: integer
+      - name: total_discount_amount
+        description: Total discount in EUR granted by the promotion on non-test orders.
+        data_type: numeric(12,2)

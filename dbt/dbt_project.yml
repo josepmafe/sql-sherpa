@@ -20,6 +20,9 @@ vars:
   # Required by dbt_date (used by dbt_expectations); all timestamps are UTC.
   "dbt_date:time_zone": "UTC"
 
+# Runs once at the start of every dbt invocation.
+on-run-start: "{{ ensure_extensions() }}"
+
 # Folder-level defaults. "+schema" is a *custom* schema; the generate_schema_name macro
 # turns it into the real schema name (dev_<name> on dev, <name> on prod).
 models:
@@ -33,6 +36,14 @@ models:
     marts:
       +schema: marts
       +materialized: table
+      # Contracts make dbt check column names and types against the YAML before building.
+      +contract:
+        enforced: true
+      # persist_docs copies descriptions into Postgres comments, where the agent can read them.
+      +persist_docs:
+        relation: true
+        columns: true
+      +post-hook: "analyze {{ this }}"
 
 seeds:
   sherpa:

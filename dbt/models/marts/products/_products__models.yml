@@ -1,0 +1,78 @@
+version: 2
+
+models:
+  - name: dim_products
+    description: >
+      Product dimension, one row per product variant (size and colour of a product), with its
+      three-level category hierarchy and current prices. Join facts to it on variant_id.
+    config:
+      meta:
+        domain: products
+        grain: one row per product variant
+        primary_key: variant_id
+    data_tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          arguments:
+            min_value: 1275
+            max_value: 1725
+          config:
+            severity: warn
+    columns:
+      - name: variant_id
+        description: The product variant. Primary key.
+        data_type: bigint
+        data_tests: [unique, not_null]
+      - name: sku
+        description: Stock keeping unit, unique per variant.
+        data_type: text
+        data_tests: [unique]
+      - name: product_id
+        description: The product the variant belongs to.
+        data_type: bigint
+        data_tests: [not_null]
+      - name: product_name
+        description: Name of the product.
+        data_type: text
+        config:
+          meta:
+            synonyms: [product, item]
+      - name: brand
+        description: Brand of the product.
+        data_type: text
+        config:
+          meta:
+            synonyms: [make, label]
+      - name: size
+        description: Size of the variant.
+        data_type: text
+      - name: color
+        description: Colour of the variant.
+        data_type: text
+      - name: category_l1
+        description: Top-level category (department).
+        data_type: text
+        config:
+          meta:
+            synonyms: [department, category]
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Footwear, Apparel, Accessories, Equipment]
+      - name: category_l2
+        description: Second-level category.
+        data_type: text
+      - name: category_l3
+        description: Third-level category; null when the product's leaf category is at level 2.
+        data_type: text
+      - name: is_active
+        description: Whether the product is currently on sale.
+        data_type: boolean
+      - name: current_list_price
+        description: Current list price of the variant in EUR.
+        data_type: numeric(12,2)
+      - name: current_cost_price
+        description: Current unit cost of the variant in EUR.
+        data_type: numeric(12,2)
+      - name: product_created_at
+        description: When the product was created (UTC).
+        data_type: timestamptz
