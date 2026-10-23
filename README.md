@@ -55,6 +55,8 @@ make docs                # generate and serve the dbt docs
 
 `make test` runs the tests and `make lint` runs ruff, mypy and sqlfluff.
 
+**Behind a TLS-intercepting proxy**, `make deps` (and `uv` downloads) fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and point `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) at it in `.env`; `.env.example` shows the lines.
+
 ## Repository layout
 
 ```

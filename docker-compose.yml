@@ -2,12 +2,12 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
       POSTGRES_DB: ${SHERPA_DB_NAME:-sherpa}
       SHERPA_ADMIN_USER: ${SHERPA_ADMIN_USER:-sherpa_admin}
-      SHERPA_ADMIN_PASSWORD: ${SHERPA_ADMIN_PASSWORD}
+      SHERPA_ADMIN_PASSWORD: ${SHERPA_ADMIN_PASSWORD:?set it in .env}
       SHERPA_AGENT_USER: ${SHERPA_AGENT_USER:-sherpa_agent}
-      SHERPA_AGENT_PASSWORD: ${SHERPA_AGENT_PASSWORD}
+      SHERPA_AGENT_PASSWORD: ${SHERPA_AGENT_PASSWORD:?set it in .env}
     ports:
       # Localhost only: the .env passwords are dev placeholders, so the database must not be reachable from the LAN.
       - "127.0.0.1:${SHERPA_DB_PORT:-5432}:5432"

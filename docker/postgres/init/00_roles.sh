@@ -12,6 +12,9 @@ CREATE ROLE :"admin_user" LOGIN CREATEDB PASSWORD :'admin_password';
 ALTER DATABASE :"db_name" OWNER TO :"admin_user";
 
 CREATE ROLE :"agent_user" LOGIN PASSWORD :'agent_password';
+-- default_transaction_read_only and statement_timeout are role defaults that a session can override with SET, so
+-- they are defence in depth. The real enforcement is the privileges (SELECT only on the marts, granted in a later
+-- milestone), a SQL guard and a read-only connection option in the MCP server.
 ALTER ROLE :"agent_user" SET default_transaction_read_only = on;
 ALTER ROLE :"agent_user" SET statement_timeout = '5s';
 

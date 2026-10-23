@@ -25,8 +25,8 @@ status:
 
 # The dbt schemas go first: their views read from the raw schemas.
 reset:
-	docker compose exec -T postgres psql -U sherpa_admin -d sherpa -v ON_ERROR_STOP=1 \
-		-c "DROP SCHEMA IF EXISTS $(DBT_SCHEMAS) CASCADE"
+	docker compose exec -T postgres sh -c \
+		'psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $(DBT_SCHEMAS) CASCADE"'
 	uv run sherpa-generate reset
 
 deps:
