@@ -261,7 +261,7 @@ models:
   - name: fct_order_items
     description: >
       Order line fact, one row per line of an order in fct_orders: the variant sold, its quantity,
-      price, allocated discount, cost and returns. Line refunded_revenue covers return refunds only;
+      price, allocated discount, cost, returns and gross margin. Line refunded_revenue covers return refunds only;
       goodwill and cancellation refunds exist only on fct_orders. The order's refunded_revenue is
       authoritative: each line is rounded to cents on its own, so the lines can add up to more than
       the order's by at most a cent per refunded line. {{ doc('cancelled_orders') }}
@@ -297,6 +297,15 @@ models:
             compare_model: ref('fct_orders')
             compare_column: cogs
             group_by: order_id
+      - column_sums_match:
+          arguments:
+            column_name: returned_cogs
+            compare_model: ref('fct_orders')
+            compare_column: returned_cogs
+            group_by: order_id
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "restockable_returned_quantity <= returned_quantity"
     columns:
       - name: order_item_id
         description: The order line. Primary key.
@@ -372,11 +381,29 @@ models:
       - name: returned_quantity
         description: Units of the line on received returns; 0 when none.
         data_type: integer
+      - name: restockable_returned_quantity
+        description: >
+          Units of the line on received returns that can be put back in stock; 0 when none. Part of
+          returned_quantity.
+        data_type: integer
       - name: refunded_revenue
         description: >
           Revenue refunded for the line's returned units in EUR, excluding tax: the line's net amount
           pro-rated by returned quantity, rounded to cents per line; 0 when none. For order totals use
           fct_orders.refunded_revenue, which also includes goodwill refunds.
+        data_type: numeric(12,2)
+      - name: returned_cogs
+        description: >
+          restockable_returned_quantity × unit_cost_at_sale in EUR; 0 when the order is cancelled. The
+          lines add up exactly to the order's returned_cogs. {{ doc('metric_cogs') }}
+        data_type: numeric(12,2)
+      - name: gross_margin
+        description: >
+          The line's gross margin, net_amount − refunded_revenue − (cogs − returned_cogs) in EUR; 0 when
+          the order is cancelled. Use it for margin by product, brand or category. Its refunded_revenue
+          covers return refunds only, so the lines of an order with a goodwill refund add up to more than
+          the order's gross_margin by that refund's revenue; otherwise they match it to within a cent per
+          refunded line (each line's refunded_revenue is rounded on its own). {{ doc('metric_gross_margin') }}
         data_type: numeric(12,2)
 
   - name: fct_returns
