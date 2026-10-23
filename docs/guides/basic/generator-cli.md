@@ -31,45 +31,45 @@ Postgres listens on `127.0.0.1:5432` (the port is published on the loopback addr
 make backfill DAYS=365
 ```
 
-This simulates the 365 days ending yesterday (UTC). It took 4.5 minutes on a laptop; the log prints one line per day on stderr and a summary at the end:
+This simulates the 365 days ending yesterday (UTC). It took 2.5 minutes on a laptop; the log prints one line per day on stderr and a summary at the end:
 
 ```
 uv run sherpa-generate generate --days 365
-2026-10-23 09:59:43,482 INFO sherpa_generator.simulation.simulator: set up the catalog from 2025-10-23: 1848 rows
-2026-10-23 09:59:54,756 INFO sherpa_generator.simulation.simulator: simulated 2025-10-23: 1657 rows
+2026-10-23 11:21:43,362 INFO sherpa_generator.simulation.simulator: set up the catalog from 2025-10-23: 1878 rows
+2026-10-23 11:21:45,024 INFO sherpa_generator.simulation.simulator: simulated 2025-10-23: 1589 rows
 ...
-2026-10-23 10:04:10,256 INFO sherpa_generator.simulation.simulator: simulated 2026-10-22: 1922 rows
-simulated 2025-10-23 .. 2026-10-22: 923036 rows written
+2026-10-23 11:24:11,749 INFO sherpa_generator.simulation.simulator: simulated 2026-10-22: 2219 rows
+simulated 2025-10-23 .. 2026-10-22: 947863 rows written
 ```
 
-The first run creates the five raw schemas, builds the catalog (categories, products, variants, campaigns, promotions and coupons) and then simulates every day in its own transaction. A year at the default scale gives about 5,000 customers, 8,000 orders, 650,000 events and 5,800 leads. See them with `make status`:
+The first run creates the five raw schemas, builds the catalog (categories, products, variants, campaigns, promotions and coupons) and then simulates every day in its own transaction. A year at the default scale gives about 5,000 customers (43 % of whom never order), 8,100 orders, 670,000 events and 5,800 leads. See them with `make status`:
 
 ```
 uv run sherpa-generate status
 simulated 2025-10-23 .. 2026-10-22 (seed 42, scale 1.0)
 raw_crm.email_sends: 164646
 raw_crm.leads: 5815
-raw_events.events: 646446
+raw_events.events: 670748
 raw_marketing.ad_spend_daily: 1307
 raw_marketing.campaigns: 15
-raw_meta.pending_events: 70
+raw_meta.pending_events: 96
 raw_meta.simulation_state: 1
-raw_shop.addresses: 9934
+raw_shop.addresses: 9808
 raw_shop.categories: 41
-raw_shop.coupon_codes: 17
-raw_shop.customers: 4985
-raw_shop.order_discounts: 1969
-raw_shop.order_items: 14046
-raw_shop.order_status_history: 31460
-raw_shop.orders: 8039
-raw_shop.payments: 8642
-raw_shop.product_variants: 1457
+raw_shop.coupon_codes: 16
+raw_shop.customers: 4951
+raw_shop.order_discounts: 1842
+raw_shop.order_items: 14123
+raw_shop.order_status_history: 31629
+raw_shop.orders: 8090
+raw_shop.payments: 8703
+raw_shop.product_variants: 1488
 raw_shop.products: 300
 raw_shop.promotions: 18
-raw_shop.refunds: 1165
-raw_shop.return_items: 1373
-raw_shop.returns: 969
-raw_shop.shipments: 7613
+raw_shop.refunds: 1172
+raw_shop.return_items: 1339
+raw_shop.returns: 952
+raw_shop.shipments: 7635
 ```
 
 `raw_meta.pending_events` holds late events (realism rule R2) whose `received_at` is after the last simulated day; they land in `raw_events.events` when that day is simulated.
@@ -118,12 +118,12 @@ uv run sherpa-generate generate --days 30 --scale 0.1
 ```
 
 ```
-2026-10-23 10:11:13,113 INFO sherpa_generator.simulation.simulator: set up the catalog from 2026-09-23: 1796 rows
+2026-10-23 11:30:24,232 INFO sherpa_generator.simulation.simulator: set up the catalog from 2026-09-23: 1790 rows
 ...
-simulated 2026-09-23 .. 2026-10-22: 7844 rows written
+simulated 2026-09-23 .. 2026-10-22: 7934 rows written
 ```
 
-About 6 seconds, ~40 customers, ~65 orders and ~5,000 events. That is enough to run every dbt model and test. Later runs must keep `--scale 0.1`.
+About 5 seconds, ~30 customers, ~65 orders and ~5,100 events. That is enough to run every dbt model and test. Later runs must keep `--scale 0.1`.
 
 ### A reproducible dataset
 
@@ -140,12 +140,12 @@ diff run1.txt run2.txt && echo identical
 ```
 
 ```
-simulated 2026-09-01 .. 2026-09-30: 7648 rows written
+simulated 2026-09-01 .. 2026-09-30: 7884 rows written
 ...
 identical
 ```
 
-The setup creates campaigns and promotions for at most one year from the start date (or up to yesterday if sooner), so the same seed, start date, scale and number of days give identical data on any later calendar day, as long as the range is already in the past.
+The setup creates campaigns and promotions for at most the first 365 days from the start date, or up to yesterday of the first run if that is sooner. The same seed, start date, scale and number of days therefore give identical data on any later calendar day when the range is in the past and the start date is at least a year back (for example `--start-date 2025-09-01`). With a more recent start date, as in this recipe, the two runs above match because they use the same yesterday; a run on another day gets a longer catalog.
 
 ### Topping up to yesterday after a few days off
 
@@ -156,12 +156,12 @@ uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
 ```
 
 ```
-2026-10-23 10:17:30,801 INFO sherpa_generator.simulation.simulator: simulated 2026-10-01: 238 rows
+2026-10-23 11:31:19,444 INFO sherpa_generator.simulation.simulator: simulated 2026-10-01: 231 rows
 ...
-simulated 2026-10-01 .. 2026-10-22: 4611 rows written
+simulated 2026-10-01 .. 2026-10-22: 4630 rows written
 ```
 
-With the default seed and scale, `make generate DAYS=7` does the same. Topping up keeps `dbt source freshness` green (see [Building the warehouse](building-the-warehouse.md)). Campaigns and promotions end one year after the start date, or on the yesterday of the first run if that is sooner, so days added after that have no campaigns, promotions or ad spend, and the freshness check on `ad_spend_daily` warns after 48 hours. To get a full catalog again, start over.
+With the default seed and scale, `make generate DAYS=7` does the same. Topping up keeps `dbt source freshness` green (see [Building the warehouse](building-the-warehouse.md)). Campaigns and promotions cover the first 365 days from the start date, or end on the yesterday of the first run if that is sooner, so days added after that have no campaigns, promotions or ad spend, and the freshness check on `ad_spend_daily` warns after 48 hours. To get a full catalog again, start over.
 
 ### Starting over
 
@@ -210,7 +210,7 @@ error: start date 2026-10-23 is after yesterday (2026-10-22)
 
 ```
 $ uv run sherpa-generate generate --days 1 --scale 0.1
-2026-10-23 10:11:30,629 INFO sherpa_generator.simulation.simulator: nothing to simulate: already at 2026-10-22
+2026-10-23 11:30:41,460 INFO sherpa_generator.simulation.simulator: nothing to simulate: already at 2026-10-22
 nothing to simulate: already caught up to yesterday
 ```
 
@@ -257,14 +257,14 @@ ORDER BY status, sales_channel;
 ```
   status   | sales_channel | orders | order_total
 -----------+---------------+--------+-------------
- cancelled | app           |    143 |    32042.72
- cancelled | web           |    254 |    60184.45
- delivered | app           |   2624 |   620244.12
- delivered | web           |   4899 |  1138999.59
- paid      | app           |     10 |     2488.71
- paid      | web           |     19 |     3740.63
- shipped   | app           |     29 |     6446.25
- shipped   | web           |     61 |    12379.07
+ cancelled | app           |    143 |    16756.31
+ cancelled | web           |    275 |    29810.02
+ delivered | app           |   2648 |   282118.19
+ delivered | web           |   4910 |   530568.58
+ paid      | app           |     13 |     1304.02
+ paid      | web           |     24 |     2626.04
+ shipped   | app           |     25 |     2725.85
+ shipped   | web           |     52 |     6144.99
 ```
 
 Orders per month show the seasonality (Black Friday week and December up, January down):
@@ -279,11 +279,11 @@ ORDER BY 1;
 ```
    month    | orders
 ------------+--------
- 2025-10-01 |    179
- 2025-11-01 |    926
- 2025-12-01 |    975
- 2026-01-01 |    474
- 2026-02-01 |    595
+ 2025-10-01 |    172
+ 2025-11-01 |    962
+ 2025-12-01 |   1020
+ 2026-01-01 |    463
+ 2026-02-01 |    605
 ...
 ```
 
@@ -303,13 +303,13 @@ ORDER BY events DESC;
 ```
    event_type   | events
 ----------------+--------
- product_view   | 403688
- page_view      | 164967
- add_to_cart    |  34950
- login          |  16866
- begin_checkout |  15661
- purchase       |   5281
- signup         |   5033
+ product_view   | 404041
+ page_view      | 164875
+ login          |  40728
+ add_to_cart    |  35008
+ begin_checkout |  15799
+ purchase       |   5299
+ signup         |   4998
 ```
 
 `context` and `properties` are `jsonb`; `->>` extracts a key as text:
@@ -317,7 +317,7 @@ ORDER BY events DESC;
 ```sql
 SELECT event_type, context ->> 'utm_source' AS utm_source, properties ->> 'order_id' AS order_id
 FROM raw_events.events
-WHERE event_type = 'purchase'
+WHERE event_type = 'purchase' AND context ->> 'utm_source' IS NOT NULL
 ORDER BY received_at
 LIMIT 3;
 ```
@@ -325,9 +325,9 @@ LIMIT 3;
 ```
  event_type | utm_source | order_id
 ------------+------------+----------
- purchase   | instagram  | 1
- purchase   |            | 2
- purchase   |            | 3
+ purchase   | google     | 4
+ purchase   | google     | 12
+ purchase   | newsletter | 21
 ```
 
 ### Marketing (`raw_marketing`)
@@ -343,11 +343,11 @@ ORDER BY spend DESC;
 ```
 
 ```
-   channel   |  spend   | clicks
--------------+----------+--------
- paid_search | 99518.79 |  29462
- paid_social | 92556.61 |  19421
- affiliate   |  8354.66 |   8087
+   channel   |   spend   | clicks
+-------------+-----------+--------
+ paid_social | 104330.15 |  19643
+ paid_search |  76951.17 |  29149
+ affiliate   |   9647.59 |   8072
 ```
 
 ### CRM (`raw_crm`)
@@ -369,10 +369,10 @@ FROM raw_crm.email_sends;
 ```
  lifecycle_stage | leads
 -----------------+-------
- lead            |  1874
- mql             |  1824
- customer        |  1781
- subscriber      |   336
+ lead            |  1912
+ mql             |  1862
+ customer        |  1709
+ subscriber      |   332
 
  sends  | open_rate | click_rate
 --------+-----------+------------
@@ -396,11 +396,11 @@ WHERE event_id = (
 ```
                event_id               |  event_type  |        occurred_at        |          received_at
 --------------------------------------+--------------+---------------------------+-------------------------------
- 00006e20-46d4-49ea-964d-ca7a21efae8e | product_view | 2026-08-08T15:22:27+02:00 | 2026-08-08 13:23:26.401044+00
- 00006e20-46d4-49ea-964d-ca7a21efae8e | product_view | 2026-08-08T15:22:27+02:00 | 2026-08-08 13:22:30.401044+00
+ 00022b1c-8330-4894-87a0-1bacbb0bf235 | product_view | 2026-01-20T15:48:49+01:00 | 2026-01-20 14:48:52.344334+00
+ 00022b1c-8330-4894-87a0-1bacbb0bf235 | product_view | 2026-01-20T15:48:49+01:00 | 2026-01-20 14:49:20.344334+00
 ```
 
-`occurred_at` is text with the client's UTC offset; `received_at` is a UTC `timestamptz`. 646,446 rows hold 640,252 distinct events.
+`occurred_at` is text with the client's UTC offset; `received_at` is a UTC `timestamptz`. 670,748 rows hold 664,326 distinct events.
 
 **R2, late events:** received more than a day after they occurred.
 
@@ -415,8 +415,8 @@ LIMIT 3;
 ```
                event_id               |        occurred_at        |          received_at
 --------------------------------------+---------------------------+-------------------------------
- 48e73f56-b213-4ee7-b5ff-19b35cf7c6da | 2025-10-23T08:22:15+02:00 | 2025-10-24 08:32:06.187802+00
  c6855276-8fb7-4a88-bde3-8af18fa6b218 | 2025-10-23T12:03:56+02:00 | 2025-10-24 10:32:04.526742+00
+ c9b74b24-d807-4f4c-9eb5-66c6cb92aee0 | 2025-10-23T14:44:47+02:00 | 2025-10-24 14:20:02.774598+00
  abeb766e-bd76-4615-9588-4ee9e61b318d | 2025-10-23T09:22:05+02:00 | 2025-10-24 17:21:03.760813+00
 ```
 
@@ -431,16 +431,16 @@ LIMIT 5;
 ```
 
 ```
- id |            email             |         normalized
-----+------------------------------+-----------------------------
-  7 | DANTERESPIGHI7@POSTE.IT      | danterespighi7@poste.it
- 18 |  damian6918@hotmail.com      | damian6918@hotmail.com
- 25 | Zgonzalez25@gmail.com        | zgonzalez25@gmail.com
- 35 | virgilioalmagro35@yahoo.com  | virgilioalmagro35@yahoo.com
- 49 | Nicolasmarcia27@hotmail.com  | nicolasmarcia27@hotmail.com
+ id |             email             |          normalized
+----+-------------------------------+------------------------------
+  5 | CCAFARCHIA5@TIM.IT            | ccafarchia5@tim.it
+  7 |  SPEERJUERGEN7@WEB.DE         | speerjuergen7@web.de
+ 16 | tbuisson16@orange.fr          | tbuisson16@orange.fr
+ 56 |  brunildacorral4@yahoo.com    | brunildacorral4@yahoo.com
+ 70 | cassandragottardi50@poste.it  | cassandragottardi50@poste.it
 ```
 
-Customer 18 has a leading space and customer 35 a trailing one.
+Customers 7 and 56 have a leading space and customers 16 and 70 a trailing one.
 
 **R4, country code noise:** lowercase codes and `UK` for `GB`.
 
@@ -454,14 +454,16 @@ ORDER BY customers DESC;
 ```
  country_code | customers
 --------------+-----------
- DE           |      1478
- FR           |       969
+ DE           |      1445
+ FR           |       952
 ...
- de           |        49
+ de           |        55
 ...
+ at           |         8
  uk           |         5
- at           |         5
- UK           |         5
+ UK           |         4
+ be           |         3
+ gb           |         2
 ```
 
 **R5, test accounts:** internal `@sqlsherpa-test.com` customers that place real orders.
@@ -477,13 +479,13 @@ LIMIT 5;
 ```
 
 ```
- id  |              email              | is_test_account | orders
------+---------------------------------+-----------------+--------
-  58 | maurits2458@sqlsherpa-test.com  | t               |      3
- 197 | pjover197@sqlsherpa-test.com    | t               |      2
- 362 | evamercks362@sqlsherpa-test.com | t               |      1
- 462 | james28462@sqlsherpa-test.com   | t               |      3
- 479 | juliana06479@sqlsherpa-test.com | t               |      1
+ id  |                   email                   | is_test_account | orders
+-----+-------------------------------------------+-----------------+--------
+  58 | maurits2458@sqlsherpa-test.com            | t               |      4
+  75 | gertrudisquintanilla75@sqlsherpa-test.com | t               |      2
+ 432 | postashley432@sqlsherpa-test.com          | t               |      3
+ 634 | manriquefulgencio634@sqlsherpa-test.com   | t               |      3
+ 704 | ggemito704@sqlsherpa-test.com             | t               |     14
 ```
 
 **R7, a split payment and a failed attempt:** an order paid with a gift card plus a card, and one whose first attempt failed before it was captured.
@@ -508,14 +510,17 @@ ORDER BY id;
 ```
  order_id |  method   | amount |  status  |       created_at
 ----------+-----------+--------+----------+------------------------
-       22 | gift_card |  84.65 | captured | 2025-10-24 20:07:03+00
-       22 | card      | 116.90 | captured | 2025-10-24 20:07:03+00
+       16 | gift_card |  23.21 | captured | 2025-10-24 17:00:42+00
+       16 | card      |  32.04 | captured | 2025-10-24 17:00:42+00
 
- order_id | method | amount |  status  |       created_at
-----------+--------+--------+----------+------------------------
-       87 | paypal | 431.70 | failed   | 2025-10-26 22:36:00+00
-       87 | paypal | 431.70 | captured | 2025-10-26 23:05:33+00
+ order_id |  method   | amount |  status  |       created_at
+----------+-----------+--------+----------+------------------------
+       80 | card      |  18.63 | failed   | 2025-10-27 12:17:45+00
+       80 | gift_card |  33.11 | captured | 2025-10-27 12:21:00+00
+       80 | card      |  18.63 | captured | 2025-10-27 12:21:00+00
 ```
+
+The failed order here is also a split payment: the card attempt failed and was retried together with the gift card.
 
 Revenue sums only `captured` payments, never every row.
 
@@ -532,8 +537,8 @@ WHERE order_id = (
 ```
  order_id | promotion_id | coupon_code_id | amount
 ----------+--------------+----------------+--------
-      702 |           11 |                |   5.00
-      702 |            2 |              4 |  51.18
+      646 |           12 |                |  10.00
+      646 |            2 |              5 |  20.58
 ```
 
 The simulation state itself is one row:

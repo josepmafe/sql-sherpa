@@ -77,7 +77,7 @@ FAILED generator/tests/database/test_raw_schema.py::TestRawSchema::test_table_co
             preferred_language=Language(LOCALE_BY_COUNTRY[session.country].split("_")[0]),
 ```
 
-Deriving instead of drawing keeps every other row identical: the 30-day run at scale 0.1 wrote 7,844 rows before and after the change. A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
+Deriving instead of drawing keeps every other row identical: the 30-day run at scale 0.1 wrote 7,934 rows before and after the change. A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
 
 **4. The test fixtures and a test.** Every `Customer(...)` must pass the new field, so add `preferred_language=Language.DE` to `make_customer` in `generator/tests/helpers.py`. Then test the rule in `generator/tests/behaviour/test_visitor_traffic.py`:
 
@@ -145,9 +145,9 @@ make docs-check
 ```
 
 ```
-08:21:46  138 of 147 PASS accepted_values_stg_shop__customers_preferred_language__de__en__es__fr__it__nl  [PASS in 0.26s]
-08:21:46  142 of 147 PASS not_null_stg_shop__customers_preferred_language ................ [PASS in 0.26s]
-08:21:46  Done. PASS=147 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=147
+09:36:13  132 of 148 PASS accepted_values_stg_shop__customers_preferred_language__de__en__es__fr__it__nl  [PASS in 0.08s]
+09:36:13  136 of 148 PASS not_null_stg_shop__customers_preferred_language ................ [PASS in 0.05s]
+09:36:13  Done. PASS=148 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=148
 ```
 
 Finish with `make test`, `make lint` and `make reset && make backfill DAYS=365 && make build`.
@@ -242,7 +242,7 @@ class WishlistSimulator:
             )
 ```
 
-Its own `STREAM` name gives it a random sequence no other simulator consumes, so adding it leaves every other table unchanged (7,853 rows written instead of 7,844: the 9 wishlist items).
+Its own `STREAM` name gives it a random sequence no other simulator consumes, so adding it leaves every other table unchanged: the 30-day run at scale 0.1 writes the same 7,934 rows plus the wishlist items.
 
 **6. Wire it into the day** (`_DaySimulator` in `simulation/simulator.py`):
 
@@ -312,10 +312,8 @@ make docs-check
 ```
 
 ```
-08:30:15  21 of 152 OK created sql view model dev_staging.stg_shop__wishlist_items ....... [CREATE VIEW in 0.45s]
 ...
-08:30:23  151 of 152 PASS relationships_stg_shop__wishlist_items_customer_id__customer_id__ref_stg_shop__customers_  [PASS in 0.17s]
-08:30:24  Done. PASS=152 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=152
+Done. PASS=153 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=153
 ```
 
 If the table should be checked for freshness, add a `freshness` block and `loaded_at_field` to its source entry, as `orders` has.
@@ -350,9 +348,9 @@ The draw is still one `choices` call per order, so the other tables keep their r
 **3. The staging `accepted_values` test.** It lists the allowed values, so the new data fails it until it is updated. With a 30-day run at scale 0.5 (at scale 0.1 a 5 % method may not show up at all):
 
 ```
-08:33:50  79 of 145 FAIL 1 accepted_values_stg_shop__payments_method__card__paypal__gift_card  [FAIL 1 in 0.27s]
+09:37:34  80 of 146 FAIL 1 accepted_values_stg_shop__payments_method__card__paypal__gift_card  [FAIL 1 in 0.13s]
 ...
-08:33:54  Done. PASS=144 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=145
+09:37:36  Done. PASS=145 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=146
 ```
 
 `FAIL 1` is one unexpected value. Add it in `_shop__models.yml`:
@@ -367,8 +365,8 @@ The draw is still one `choices` call per order, so the other tables keep their r
 ```
 
 ```
-08:34:19  2 of 8 PASS accepted_values_stg_shop__payments_method__card__paypal__gift_card__klarna  [PASS in 0.40s]
-08:34:20  Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=8
+09:38:41  2 of 8 PASS accepted_values_stg_shop__payments_method__card__paypal__gift_card__klarna  [PASS in 0.14s]
+09:38:41  Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=8
 ```
 
 The generator tests that cover payments still pass (`uv run --env-file .env pytest generator/tests/behaviour/test_order_lifecycle.py generator/tests/behaviour/test_after_sales.py`: 51 passed). Renaming or removing a value works the same way, and also breaks every downstream model that filters on the old value; search `dbt/` for it.
@@ -424,7 +422,7 @@ The daily volumes and behaviour rates of spec §5.2 are module-level `Final` con
 | Signups per day | `BASE_DAILY_SIGNUPS` (12) | `behaviour/visitor_traffic.py` |
 | Channel mix | `CHANNEL_WEIGHTS` | `behaviour/visitor_traffic.py` |
 | Funnel | `PRODUCT_VIEW_RATE`, `ADD_TO_CART_RATE`, `BEGIN_CHECKOUT_RATE`, `PURCHASE_RATE` | `behaviour/visitor_traffic.py` |
-| Returning visitors | `RETURNING_VISITOR_SHARE` | `behaviour/visitor_traffic.py` |
+| Returning visitors, new-visitor purchases | `RETURNING_VISITOR_SHARE`, `NEW_VISITOR_PURCHASE_RATE` | `behaviour/visitor_traffic.py` |
 | Leads per day, email engagement | `BASE_DAILY_LEADS`, `OPEN_RATE`, `CLICK_RATE` | `behaviour/crm_activity.py` |
 | Order lines, discounts, payment methods | `LINE_COUNT_WEIGHTS`, `DISCOUNTED_ORDER_RATE`, `PAYMENT_METHOD_WEIGHTS` | `behaviour/order_lifecycle.py` |
 | Order lifecycle | `NEVER_PAID_RATE`, `PAID_CANCELLATION_RATE`, `SHIPPING_DELAY_DAYS`, `DELIVERY_DELAY_DAYS` | `behaviour/order_lifecycle.py` |
@@ -433,7 +431,7 @@ The daily volumes and behaviour rates of spec §5.2 are module-level `Final` con
 | Customer value spread | `PROPENSITY_SIGMA` | `simulation/store_snapshot.py` |
 | Rates of the realism rules | class constants of `RealismRules` | `simulation/realism_rules.py` |
 
-The comments next to `RETURNING_VISITOR_SHARE` and `BASE_DAILY_SIGNUPS` explain how they were tuned to land on the spec's conversion rate and yearly totals; volumes interact, so change one constant at a time. `--scale` multiplies every daily volume at run time and needs no code change.
+The comments next to `RETURNING_VISITOR_SHARE`, `NEW_VISITOR_PURCHASE_RATE` and `BASE_DAILY_SIGNUPS` explain how they were tuned to land on the spec's conversion rate and yearly totals; volumes interact, so change one constant at a time. `--scale` multiplies every daily volume at run time and needs no code change.
 
 The behaviour tests check the rates on a 30-day run at scale 0.2 (for example `test_session_conversion_rate`, `test_discount_share`, `test_app_share`). The yearly totals are checked by the slow full-year test, which simulates 365 days at scale 1.0 into a temporary database:
 
@@ -441,9 +439,9 @@ The behaviour tests check the rates on a 30-day run at scale 0.2 (for example `t
 uv run --env-file .env pytest -m slow
 ```
 
-The simulation takes as long as `make backfill DAYS=365` (4.5 minutes on a laptop), plus the test setup. It holds two tests:
+The simulation takes as long as `make backfill DAYS=365` (2.5 minutes on a laptop), plus the test setup. It holds two tests:
 
-- `test_full_year_volumes_and_runtime` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %) and a simulation runtime under 5 minutes (spec §5.2). With `-o log_cli=true --log-cli-level=INFO` it logs what it measured: `runtime 504.3 s, volumes {'customers': 4952, 'orders': 7981, 'events': 648873, 'leads': 5793}`. The runtime limit is sensitive to load: with other work running against the same Postgres it fails while every volume is within tolerance.
+- `test_full_year_volumes_and_runtime` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %) and a simulation runtime under 5 minutes (spec §5.2). With `-o log_cli=true --log-cli-level=INFO` it logs what it measured: `runtime <seconds> s, volumes {'customers': 4951, 'orders': 8090, 'events': 670844, 'leads': 5815}`. The runtime limit is sensitive to load: with other work running against the same Postgres it fails while every volume is within tolerance.
 
   ```
   E       assert 509.1583148000027 < 300
@@ -453,9 +451,9 @@ The simulation takes as long as `make backfill DAYS=365` (4.5 minutes on a lapto
   ```
 
   Rerun it on an idle machine before reading a runtime failure as a regression.
-- `test_top_buyers_hold_70_to_85_percent_of_revenue` is marked `xfail(strict=True)` until the customer-value concentration target is decided: it measures 0.553 against the spec's 0.70–0.85, and the reason string in `generator/tests/simulation/test_full_year_volume.py` lists the options. It reports `xfailed`; if a change makes it pass, strict mode turns that into a failure, and the marker and the spec need revisiting.
+- `test_top_buyers_hold_55_to_65_percent_of_revenue` asserts that the top 20 % of buyers (customers with at least one non-cancelled order) hold 55–65 % of that revenue (spec §4.4, a soft target). On the 365-day dataset above they hold 0.575. It is the check for `PROPENSITY_SIGMA` and the visitor purchase rates.
 
-The expected result is `1 passed, 1 xfailed`.
+The expected result is `2 passed`.
 
 ## 6. Keep determinism intact
 
