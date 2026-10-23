@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod docs-check lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check lint test
 
 # dbt runs from dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
@@ -43,6 +43,10 @@ build:
 build-prod:
 	$(DBT) source freshness $(PROD)
 	$(DBT) build $(PROD)
+
+# Re-applies the agent's prod grants without a build (same macro as the on-run-end hook).
+grant-agent:
+	$(DBT) run-operation grant_agent_access $(PROD)
 
 docs:
 	$(DBT) docs generate

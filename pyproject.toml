@@ -43,10 +43,11 @@ packages = ["generator/src/sherpa_generator"]
 [tool.pytest.ini_options]
 testpaths = ["generator/tests", "tests"]
 pythonpath = ["scripts"]  # scripts/ is not a package; this lets tests/scripts import its modules
-addopts = '-m "not slow"'  # an explicit -m on the command line replaces this
+addopts = '-m "not slow and not warehouse"'  # an explicit -m on the command line replaces this
 markers = [
     "integration: needs Postgres",
     "slow: full-year runs",
+    "warehouse: needs `make build-prod`",
 ]
 
 [tool.ruff]
