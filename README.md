@@ -58,7 +58,7 @@ make eval-db             # optional: the frozen evaluation database sherpa_eval 
 make docs                # generate and serve the dbt docs until you press Ctrl+C
 ```
 
-`make test` runs the tests and `make lint` runs ruff, mypy and sqlfluff.
+`make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy and sqlfluff.
 
 To add days later, run `make generate DAYS=<n>`. Days added after the first run have no paid campaigns, promotions or ad spend, because the catalog is built once, on the first run.
 

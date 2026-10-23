@@ -53,12 +53,12 @@ dbt build --select dim_products
 ```
 
 ```
-21:09:04  Finished running 2 project hooks, 1 table model, 8 data tests in 0 hours 0 minutes and 2.27 seconds (2.27s).
-21:09:04  Completed successfully
-21:09:04  Done. PASS=11 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=11
+22:28:34  Finished running 2 project hooks, 1 table model, 9 data tests in 0 hours 0 minutes and 1.13 seconds (1.13s).
+22:28:34  Completed successfully
+22:28:34  Done. PASS=12 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=12
 ```
 
-The `--select` also ran the 8 tests on the model and the tests on other models that reference it (here the `relationships` test of `fct_order_items`). Check the type Postgres gave the column:
+The 9 tests are the model's own, the new `not_null` included, plus the tests on other models that reference it (here the `relationships` test of `fct_order_items`, which `--select` brings along). Check the type Postgres gave the column:
 
 ```bash
 docker compose exec postgres psql -U sherpa_admin -d sherpa -c '\d dev_marts.dim_products' | grep current_margin
@@ -154,7 +154,7 @@ A model that needs lookups or joins starts with one CTE per input (`with custome
         data_type: boolean
 ```
 
-- `meta.domain`, `meta.grain` and `meta.primary_key` are required on every mart (`primary_key` is a column name or a list of names). The agent reads them.
+- `meta.domain`, `meta.grain` and `meta.primary_key` are required on every mart by convention (`primary_key` is a column name or a list of names): the agent reads them, and no check enforces them, so review them yourself.
 - `constraints: primary_key` makes Postgres enforce the key and create its index; `unique` and `not_null` as data tests also report violations as test failures, which is what you see in the dbt output.
 - For a fact table add an index on each column you will join or filter on, in the model's SQL file:
 
@@ -174,8 +174,13 @@ dbt build --select dim_countries
 ```
 
 ```
-21:10:16  1 of 12 OK created sql table model dev_marts.dim_countries ..................... [INSERT 0 8 in 0.87s]
+22:29:08  1 of 3 OK created sql table model dev_marts.dim_countries ...................... [INSERT 0 8 in 0.32s]
+22:29:08  2 of 3 PASS not_null_dim_countries_country_code ................................ [PASS in 0.09s]
+22:29:08  3 of 3 PASS unique_dim_countries_country_code .................................. [PASS in 0.08s]
+22:29:08  Done. PASS=5 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=5
 ```
+
+(The 5 include the two `on-run` hooks.)
 
 `make docs-check` regenerates the docs and fails when any model or column has no description. Without the `region` description above it reports:
 

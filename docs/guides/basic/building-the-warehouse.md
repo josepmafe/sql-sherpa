@@ -11,6 +11,9 @@ A few dbt terms first:
 - A **contract** is a promise in the YAML that a model has exactly the listed columns with the listed types. dbt checks it before it builds the table. The marts enforce one.
 - A **hook** is SQL dbt runs around a build: `on-run-start` and `on-run-end` once per invocation, `post-hook` after one model.
 - A **target** is one named connection in `dbt/profiles.yml`: `dev` (the default), `prod` and `eval`. Credentials come from `.env` through `env_var()`.
+- `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-agent` uses it).
+- **`persist_docs`** is a config that copies the YAML descriptions into Postgres comments on the tables and columns, so a database client can read them.
+- **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` on the marts).
 
 The project has the seeds, one staging view per raw table, an intermediate layer and the eight marts. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
 
@@ -80,33 +83,39 @@ grant_agent_access: granted usage on marts, extensions and select on marts table
 ## Building
 
 ```bash
-make deps        # install the dbt packages (dbt_utils) into dbt/dbt_packages/
+make deps        # install the dbt packages (dbt_utils, dbt_expectations) into dbt/dbt_packages/
 make build       # source freshness, then dbt build on dev
 make build-prod  # the same on prod
 ```
 
-`make deps` downloads the versions pinned in `dbt/package-lock.yml`:
+`make deps` downloads the versions pinned in `dbt/package-lock.yml`: `dbt_utils`, `dbt_expectations` and `dbt_date`, which `dbt_expectations` needs:
 
 ```
 cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt deps
-08:05:42  Running with dbt=1.12.6
-08:05:43  Installing dbt-labs/dbt_utils
-08:05:44  Installed from version 1.4.1
-08:05:44  Up to date!
+22:23:47  Running with dbt=1.12.6
+22:23:50  Installing dbt-labs/dbt_utils
+22:23:52  Installed from version 1.4.1
+22:23:52  Up to date!
+22:23:52  Installing metaplane/dbt_expectations
+22:23:54  Installed from version 0.10.10
+22:23:54  Up to date!
+22:23:54  Installing godatadriven/dbt_date
+22:23:57  Installed from version 0.21.0
+22:23:57  Up to date!
 ```
 
-`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 55 seconds on a year of data, source freshness included (the build itself 42 s):
+`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 56 seconds on a year of data, source freshness included (the build itself 47 s):
 
 ```
 cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt build
-21:05:14  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
+22:25:25  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
 There are 1 unused configuration paths:
 - snapshots.sherpa
-21:05:15  Found 37 models, 239 data tests, 3 seeds, 2 operations, 21 sources, 922 macros
-21:05:15  Concurrency: 4 threads (target='dev')
+22:25:25  Found 37 models, 254 data tests, 3 seeds, 2 operations, 21 sources, 923 macros
+22:25:25  Concurrency: 4 threads (target='dev')
 ...
-21:05:57  Finished running 2 project hooks, 3 seeds, 9 table models, 239 data tests, 24 view models in 0 hours 0 minutes and 41.75 seconds (41.75s).
-21:05:58  Done. PASS=277 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=277
+22:26:13  Finished running 2 project hooks, 3 seeds, 9 table models, 254 data tests, 24 view models in 0 hours 0 minutes and 47.47 seconds (47.47s).
+22:26:13  Done. PASS=292 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=292
 ```
 
 The 37 models are 24 views, 9 tables and 4 ephemeral models (which build nothing); the 2 operations are the `on-run-start` and `on-run-end` hooks.
@@ -149,7 +158,7 @@ Warnings let the build continue; an error stops `make build` before `dbt build`.
 13:03:23  3 of 4 WARN freshness of marketing.ad_spend_daily .............................. [WARN in 0.06s]
 13:03:23  4 of 4 ERROR STALE freshness of shop.orders .................................... [ERROR STALE in 0.07s]
 ...
-make: *** [Makefile:40: build] Error 1
+make: *** [Makefile:...: build] Error 1
 ```
 
 The fix is to top the data up to yesterday (`make generate DAYS=<n>`, see the generator guide), not to loosen the thresholds.
@@ -454,17 +463,17 @@ If something goes wrong with dbt itself rather than the data, `dbt debug` checks
 make eval-db   # about 5 minutes or more
 ```
 
-It drops `sherpa_eval` if it exists and recreates it empty, so it is safe to rerun, and it never touches the main `sherpa` database. The name comes from `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`). The target refuses a name that does not start with `sherpa_eval`, contains anything but lowercase letters, digits and `_`, or equals the main database, so a typo cannot drop the wrong database:
+It drops `sherpa_eval` if it exists and recreates it empty, so it is safe to rerun, and it never touches the main `sherpa` database. The name comes from `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`), which make reads from the environment or the command line, not from `.env`. The target refuses a name that does not start with `sherpa_eval`, contains anything but lowercase letters, digits and `_`, or equals the main database, so a typo cannot drop the wrong database:
 
 ```bash
 make eval-db SHERPA_EVAL_DB_NAME=sherpa
 ```
 
 ```
-Makefile:80: *** SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database 'sherpa', got 'sherpa'.  Stop.
+Makefile:...: *** SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database 'sherpa', got 'sherpa'.  Stop.
 ```
 
-The build skips the source freshness check, because the frozen data is old on purpose. For the same reason one test warns on this database, and the warning is expected: the check that `stg_events__events.received_at` has data from the last 3 days. The command writes its artifacts to the scratch folder `target-scratch`, so the frozen eval artifacts in `target-eval` stay as `make eval-db` left them.
+The build skips the source freshness check, because the frozen data is old on purpose. For the same reason one test warns on this database, so the eval build ends with `WARN=1`, and the warning is expected: the check that `stg_events__events.received_at` has data from the last 3 days. To run just that test:
 
 ```bash
 cd dbt
@@ -477,6 +486,8 @@ DBT_PROFILES_DIR=. uv run --env-file ../.env dbt test --target eval --target-pat
 21:01:42  Done. PASS=2 WARN=1 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=3
 ```
 
+The command writes its artifacts to the scratch folder `target-scratch`, so the frozen eval artifacts in `target-eval` stay as `make eval-db` left them.
+
 The `on-run-end` hook gives `sherpa_agent` the same read access to the eval marts as to prod. Query it with `-d sherpa_eval` ([Querying the marts](querying-the-marts.md#connecting-as-sherpa_agent)).
 
 ## Tests that need the warehouse
@@ -488,14 +499,14 @@ uv run --env-file .env pytest -m warehouse
 ```
 
 ```
-collected 319 items / 288 deselected / 31 selected
+collected 323 items / 288 deselected / 35 selected
 
-tests\dbt\test_agent_access.py ...............................           [100%]
+tests\dbt\test_agent_access.py ...................................       [100%]
 
-===================== 31 passed, 288 deselected in 1.41s ======================
+===================== 35 passed, 288 deselected in 1.13s ======================
 ```
 
-They check, on both the main and the eval database, that `sherpa_agent` can read all eight marts, cannot read staging, intermediate, seeds or raw, has no `USAGE` on `public`, can use `similarity()` without a schema prefix, and can read the table comments; and, on the main database, that it cannot read `dev_marts`. Before each denied read, an admin connection checks that the table exists, so a missing table cannot pass for a missing privilege.
+They check, on both the main and the eval database, that `sherpa_agent` can read all eight marts, cannot read staging, intermediate, seeds or raw, has no `USAGE` on `public`, cannot create temporary tables or large objects, can use `similarity()` without a schema prefix, and can read the table comments, and that `marts.dim_products` has its five trigram indexes; and, on the main database, that it cannot read `dev_marts`. Before each denied read, an admin connection checks that the table exists, so a missing table cannot pass for a missing privilege.
 
 ## Next
 
