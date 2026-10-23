@@ -4,7 +4,7 @@
 DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
 # Prod artifacts (manifest.json, catalog.json, ...) go to their own folder so dev runs never overwrite them.
 PROD = --target prod --target-path target-prod
-DBT_SCHEMAS = dev_seeds, dev_staging, dev_marts, dev_dbt_test__audit, seeds, staging, marts, dbt_test__audit
+DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit
 
 up:
 	docker compose up -d --wait

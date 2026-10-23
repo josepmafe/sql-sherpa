@@ -1,0 +1,108 @@
+version: 2
+
+# Intermediate models prepare order data for the sales marts. Ephemeral models are inlined into the
+# models that use them, so they cannot be tested on their own; fct_orders tests their columns.
+models:
+  - name: int_order_items__discount_allocated
+    description: >
+      One row per order line with the order's discount allocated pro-rata to the lines by gross amount.
+      Shares are rounded to cents and the rounding remainder goes to the line with the largest gross
+      amount (ties: lowest order_item_id), so the lines add up exactly to the order discount.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: allocated_discount >= 0 and allocated_discount <= gross_amount
+      - column_sums_match:
+          arguments:
+            column_name: allocated_discount
+            compare_model: ref('stg_shop__order_discounts')
+            compare_column: amount
+            group_by: order_id
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: The order the line belongs to.
+      - name: variant_id
+        description: The product variant sold.
+      - name: quantity
+        description: Units sold on the line.
+      - name: unit_price
+        description: Price per unit in EUR, including tax, before discounts.
+      - name: gross_amount
+        description: quantity x unit_price, in EUR.
+      - name: allocated_discount
+        description: The line's share of the order discount, in EUR; 0 when the order has no discount.
+      - name: net_amount
+        description: gross_amount minus allocated_discount, in EUR.
+
+  - name: int_order_items__costed
+    description: >
+      One row per order line with the unit cost at the time of sale. For now this is the variant's
+      current cost_price; data-platform-3 switches it to the product variants snapshot.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+      - name: unit_cost_at_sale
+        description: Cost per unit in EUR.
+
+  - name: int_orders__status_pivoted
+    description: One row per order with the first time it reached each status, taken from the status history.
+    columns:
+      - name: order_id
+        description: Primary key.
+      - name: paid_at
+        description: First time the order was paid (UTC); null if never.
+      - name: shipped_at
+        description: First time the order was shipped (UTC); null if never.
+      - name: delivered_at
+        description: First time the order was delivered (UTC); null if never.
+      - name: cancelled_at
+        description: First time the order was cancelled (UTC); null if never.
+
+  - name: int_orders__payments_summarized
+    description: One row per order with payments, summarizing the payment attempts.
+    columns:
+      - name: order_id
+        description: Primary key.
+      - name: captured_amount
+        description: Sum of the captured payments in EUR.
+      - name: payment_count
+        description: Number of payment attempts, whatever their status.
+      - name: failed_payment_count
+        description: Number of payment attempts that failed.
+      - name: primary_payment_method
+        description: Method of the largest captured payment, lowest payment_id on a tie; null if nothing was captured.
+
+  - name: int_orders__refunds_summarized
+    description: >
+      One row per order with refunds, at order grain. refunded_revenue removes the tax from return and
+      goodwill refunds and counts cancellation refunds as 0, because a cancelled order already contributes no revenue.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: refunded_amount
+        description: Sum of all refunds in EUR, including tax.
+      - name: refunded_revenue
+        description: Revenue refunded in EUR, excluding tax; cancellation refunds count as 0.
+
+  - name: int_order_items__returns_summarized
+    description: >
+      One row per order line that has items on received returns, at line grain. Goodwill and cancellation
+      refunds exist only at order level, so they are not part of this model.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: restockable_returned_quantity <= returned_quantity
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: returned_quantity
+        description: Units of the line on received returns.
+      - name: restockable_returned_quantity
+        description: Returned units that can be resold.
+      - name: refunded_revenue
+        description: Revenue refunded for the returned units in EUR, excluding tax (the line's net amount pro-rated by quantity).
