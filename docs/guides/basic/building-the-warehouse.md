@@ -499,11 +499,11 @@ uv run --env-file .env pytest -m warehouse
 ```
 
 ```
-collected 323 items / 288 deselected / 35 selected
+collected 325 items / 288 deselected / 37 selected
 
-tests\dbt\test_agent_access.py ...................................       [100%]
+tests\dbt\test_agent_access.py .....................................     [100%]
 
-===================== 35 passed, 288 deselected in 1.13s ======================
+===================== 37 passed, 288 deselected in 3.36s ======================
 ```
 
 They check, on both the main and the eval database, that `sherpa_agent` can read all nine marts, cannot read staging, intermediate, seeds or raw, has no `USAGE` on `public`, cannot create temporary tables or large objects, can use `similarity()` without a schema prefix, and can read the table comments, and that `marts.dim_products` has its five trigram indexes; and, on the main database, that it cannot read `dev_marts`. Before each denied read, an admin connection checks that the table exists, so a missing table cannot pass for a missing privilege.
