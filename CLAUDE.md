@@ -41,7 +41,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `dbt/models` has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.
-- `make test`: pytest with `.env` loaded (`slow` tests excluded); the integration tests need Postgres (`make up`).
+- `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`make up`).
 
 ## Conventions
 
@@ -116,9 +116,11 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - Markers:
   - `integration`: needs Postgres
-  - `warehouse`: needs the dbt marts (`make build-prod`; the `dev_marts` test also needs `make build`)
-  - `slow`: full-year runs; excluded by default (`-m "not slow"`). An explicit `-m` replaces that default, so run the integration tests alone with `uv run pytest -m "integration and not slow"`
+  - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`)
+  - `slow`: full-year runs
   - `live`: real Bedrock calls; costs money, never in CI
+
+  `slow` and `warehouse` tests are excluded by default (`-m "not slow and not warehouse"`). An explicit `-m` replaces that default, so run the integration tests alone with `uv run --env-file .env pytest -m "integration and not slow"` and the warehouse tests with `uv run --env-file .env pytest -m warehouse`.
 
   Always save `live` output to a file so it can be reviewed without re-running: `uv run pytest -m live 2>&1 | tee /tmp/live_out.txt`.
 
