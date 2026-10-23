@@ -172,14 +172,18 @@ outcomes as (
         case when is_cancelled then 0 else cogs end as outcome_cogs,
         case
             when is_cancelled then 0 else returned_cogs
-        end as outcome_returned_cogs,
-        case
-            when is_cancelled then 0
-            else
-                gross_revenue - discount_amount - refunded_revenue
-                - (cogs - returned_cogs)
-        end as gross_margin
+        end as outcome_returned_cogs
     from joined
+
+),
+
+-- All three outcomes are 0 on a cancelled order, so the margin is too.
+margins as (
+
+    select
+        *,
+        net_revenue - (outcome_cogs - outcome_returned_cogs) as gross_margin
+    from outcomes
 
 ),
 
@@ -217,7 +221,7 @@ final as (
         has_discount::boolean as has_discount,
         has_return::boolean as has_return,
         days_to_deliver::integer as days_to_deliver
-    from outcomes
+    from margins
 
 )
 

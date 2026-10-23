@@ -13,7 +13,7 @@ lines pro-rata to their gross amount. Free-shipping promotions waive shipping an
 
 {% docs metric_refunded_revenue %}
 Refunded revenue: the revenue given back by refunds, in EUR. For refunds with reason `return` or
-`goodwill` it is the refunded amount without its tax, amount / (1 + tax_rate) with tax_rate 0.20;
+`goodwill` it is the refunded amount without its tax, amount / (1 + tax_rate) with var `tax_rate`, default 0.20;
 these refunds never include shipping. Refunds with reason `cancellation` count as 0: the cancelled
 order already contributes no revenue, and the refund only reverses the payment. In `fct_orders` it is
 attributed to the order's date, not to the date of the refund.
@@ -39,7 +39,8 @@ Average order value (AOV): Σ net_revenue / count of non-cancelled orders, in EU
 {% enddocs %}
 
 {% docs metric_refund_rate %}
-Refund rate: Σ refunded_revenue / Σ gross_revenue over the same orders, as a fraction.
+Refund rate: Σ refunded_revenue / Σ gross_revenue over non-cancelled orders (`not is_cancelled`), as a
+fraction.
 {% enddocs %}
 
 {% docs cancelled_orders %}

@@ -29,7 +29,7 @@ models:
       - name: quantity
         description: Units sold on the line.
       - name: unit_price
-        description: Price per unit in EUR, including tax, before discounts.
+        description: Price per unit in EUR, net of tax, before discounts.
       - name: gross_amount
         description: quantity x unit_price, in EUR.
       - name: allocated_discount
