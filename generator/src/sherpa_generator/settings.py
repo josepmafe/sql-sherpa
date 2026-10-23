@@ -4,6 +4,9 @@ from psycopg.conninfo import make_conninfo
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# libpq waits ~2 minutes for an unreachable host by default; fail fast so the CLI can report it.
+CONNECT_TIMEOUT_SECONDS = 10
+
 
 class GeneratorSettings(BaseSettings):
     model_config = SettingsConfigDict(frozen=True, env_prefix="SHERPA_", env_file=".env", extra="ignore")
@@ -22,4 +25,5 @@ class GeneratorSettings(BaseSettings):
             dbname=dbname or self.db_name,
             user=self.admin_user,
             password=self.admin_password.get_secret_value(),
+            connect_timeout=CONNECT_TIMEOUT_SECONDS,
         )
