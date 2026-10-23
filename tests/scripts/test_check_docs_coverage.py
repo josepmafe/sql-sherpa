@@ -67,7 +67,6 @@ class TestDocsCoverageChecker:
 
         assert result == []
 
-
     def test_model_missing_from_catalog_is_checked_on_yaml_columns_only(self) -> None:
         manifest = _manifest(_model("stg_shop__orders", "One row per order.", {"order_id": ""}))
         catalog = _catalog({})

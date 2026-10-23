@@ -35,7 +35,8 @@ def unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
         sock.bind(("127.0.0.1", 0))
         free_port = sock.getsockname()[1]
 
-    monkeypatch.setenv("PGCONNECT_TIMEOUT", "2")  # libpq env var; bounds the wait where the OS drops instead of refusing
+    # libpq env var; bounds the wait on hosts where the OS drops the connection instead of refusing it
+    monkeypatch.setenv("PGCONNECT_TIMEOUT", "2")
     monkeypatch.setenv("SHERPA_DB_HOST", "127.0.0.1")
     monkeypatch.setenv("SHERPA_DB_PORT", str(free_port))
     monkeypatch.setenv("SHERPA_DB_NAME", "sherpa")
