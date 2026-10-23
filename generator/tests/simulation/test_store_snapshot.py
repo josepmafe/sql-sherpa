@@ -186,7 +186,7 @@ class TestStoreSnapshotLoader:
 
 def test_lognormal_propensity_median_and_sigma() -> None:
     assert lognormal_propensity(0.5) == pytest.approx(1.0)
-    assert lognormal_propensity(0.841344746) == pytest.approx(math.exp(1.1), rel=1e-6)
+    assert lognormal_propensity(0.841344746) == pytest.approx(math.exp(1.0), rel=1e-6)
 
 
 def test_lognormal_propensity_is_finite_at_fraction_zero() -> None:

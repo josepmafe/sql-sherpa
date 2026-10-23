@@ -34,7 +34,9 @@ if TYPE_CHECKING:
     from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 
 PROPENSITY_MU: Final = 0.0  # Spec A §4.4: lognormal customer propensity (Pareto customer value)
-PROPENSITY_SIGMA: Final = 1.1  # Spec A §4.4
+# Spec A §4.4: wide enough for the top 20% of buyers to hold ~55-65% of revenue; the busiest buyer places ~45 orders a
+# year (wider spreads concentrate more but give the early high-propensity customers implausible order counts).
+PROPENSITY_SIGMA: Final = 1.0
 POPULARITY_ZIPF_EXPONENT: Final = 1.0  # product popularity falls off as 1 / rank
 RECENT_EMAIL_SEND_DAYS: Final = 3  # covers the 48 h open window plus the click delay
 ACTIVE_PROMOTION: Final = "starts_at < %s AND ends_at > %s"  # overlaps the day; params: day end, day start

@@ -97,10 +97,10 @@ LOCALE_BY_COUNTRY: Final = {
     "BE": "nl_BE",
 }
 
-# Sessions from existing customers, chosen by propensity. Tuned (the plan said 0.30) so that web conversion lands on
-# Spec A §5.2's ~3.5 %: the funnel rates multiply to 6.6 %, new visitors buy only through the ~14 daily signups
-# (~9.8 purchases), so returning visitors may add only ~4.2 purchases per 400 sessions.
-RETURNING_VISITOR_SHARE: Final = 0.16
+# Sessions from existing customers, chosen by propensity (Spec A §5.2 step 3). 9.45 % of sessions reach checkout, so
+# 0.385 x 400 sessions give ~10.2 returning purchases a day, which with the ~2.4 from new visitors (12 signups x
+# NEW_VISITOR_PURCHASE_RATE) keeps ~8k orders a year (Spec A §5.2) at a web session conversion of ~3.1 %.
+RETURNING_VISITOR_SHARE: Final = 0.385
 NEW_DEVICE_RATE: Final = 0.10
 MAX_DEVICES_PER_CUSTOMER: Final = 3  # Spec A §5.2 step 3: 1-3 devices per visitor
 LOGIN_FIRST_RATE: Final = 0.60
@@ -109,7 +109,10 @@ MIN_PRODUCT_VIEWS: Final = 1
 MAX_PRODUCT_VIEWS: Final = 6
 ADD_TO_CART_RATE: Final = 0.30
 BEGIN_CHECKOUT_RATE: Final = 0.45
-PURCHASE_RATE: Final = 0.70
+PURCHASE_RATE: Final = 0.70  # returning customers at checkout
+# Spec A §5.2 step 4: a new visitor who signs up at checkout mostly leaves without buying, so most orders come from
+# existing customers by propensity. That repeat buying is what concentrates revenue on the top buyers (Spec A §4.4).
+NEW_VISITOR_PURCHASE_RATE: Final = 0.20
 EVENT_GAP_SECONDS: Final = (10, 240)
 DELIVERY_LATENCY_SECONDS: Final = (0.2, 5.0)
 # Session start hour (UTC) weights: peaks at 12-14 and 19-22.
@@ -122,8 +125,7 @@ LAST_SESSION_START: Final = timedelta(days=1) - timedelta(seconds=EVENT_GAP_SECO
 LANDING_PAGE: Final = "/"
 CHECKOUT_PAGE: Final = "/checkout"
 
-# Spec A §5.2 step 4 says ~14 a day before seasonality, but the calendar averages ~1.13x over a year, so 14 lands
-# ~5.8k customers against the ~5k the same section expects for 365 days; 12 lands ~5k.
+# Spec A §5.2 step 4: with the calendar averaging ~1.13x over a year, 12 a day lands the ~5k customers of Spec A §5.2.
 BASE_DAILY_SIGNUPS: Final = 12
 LEAD_EMAIL_REUSE_RATE: Final = 0.35  # Spec A §5.2 step 4
 MARKETING_OPT_IN_RATE: Final = 0.55
@@ -255,7 +257,8 @@ class VisitorTrafficSimulator:
         if customer_id is None:
             return  # a new visitor beyond the day's signups leaves without an account
 
-        if day.rng.random() >= PURCHASE_RATE:
+        purchase_rate = PURCHASE_RATE if customer is not None else NEW_VISITOR_PURCHASE_RATE
+        if day.rng.random() >= purchase_rate:
             return
 
         purchase = self._emit(day, session, EventType.PURCHASE, checkout)

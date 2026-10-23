@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 DAY = date(2025, 3, 12)  # a Wednesday: seasonality 1.0
 END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
 PAID_MEDIUMS = {"cpc", "paid_social", "affiliate"}
+PURCHASE_RATE_SCALE = 20.0  # one day with enough signups and returning checkouts to measure both purchase rates
 EventRow = tuple[str, str, str | None, str, datetime, str | None, str | None]
 
 
@@ -133,6 +134,24 @@ class TestVisitorTrafficSimulator:
         assert all(i.sales_channel == SalesChannel.WEB for i in outcome.purchase_intents)
         assert not any(e.event_type == EventType.LOGIN for e in events)
         assert {i.customer_id for i in outcome.purchase_intents} <= {c.id for c in outcome.new_customers}
+
+    def test_new_visitors_buy_less_often_after_signup_than_returning_customers_at_checkout(self) -> None:
+        changes = DayChanges()
+
+        _simulator(scale=PURCHASE_RATE_SCALE).simulate_day(_snapshot(), changes)
+
+        events = list({e.event_id: e for e in _events(changes)}.values())  # without R1
+        signed_up = {e.anonymous_id for e in events if e.event_type == EventType.SIGNUP}
+        returning = {e.anonymous_id for e in events if e.event_type == EventType.LOGIN}
+        purchased = {e.anonymous_id for e in events if e.event_type == EventType.PURCHASE}
+        returning_checkouts = [
+            e for e in events if e.event_type == EventType.BEGIN_CHECKOUT and e.anonymous_id in returning
+        ]
+        returning_purchases = [e for e in events if e.event_type == EventType.PURCHASE and e.anonymous_id in returning]
+        assert len(signed_up) > 200
+        assert 0.15 <= len(signed_up & purchased) / len(signed_up) <= 0.25  # NEW_VISITOR_PURCHASE_RATE 0.20
+        assert len(returning_checkouts) > 250
+        assert 0.65 <= len(returning_purchases) / len(returning_checkouts) <= 0.75  # PURCHASE_RATE 0.70
 
     def test_app_purchases_complement_web_purchases_without_events(self) -> None:
         changes = DayChanges()
