@@ -72,7 +72,7 @@ raw_shop.returns: 952
 raw_shop.shipments: 7635
 ```
 
-`raw_meta.pending_events` holds late events (realism rule R2) whose `received_at` is after the last simulated day; they land in `raw_events.events` when that day is simulated.
+`raw_meta.pending_events` holds late events (realism rule R2; the realism rules R1 to R12 are listed in the data platform spec §4.4) whose `received_at` is after the last simulated day; they land in `raw_events.events` when that day is simulated.
 
 ## Commands and options
 
@@ -161,7 +161,7 @@ uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
 simulated 2026-10-01 .. 2026-10-22: 4630 rows written
 ```
 
-With the default seed and scale, `make generate DAYS=7` does the same. Topping up keeps `dbt source freshness` green (see [Building the warehouse](building-the-warehouse.md)). Campaigns and promotions cover the first 365 days from the start date, or end on the yesterday of the first run if that is sooner, so days added after that have no campaigns, promotions or ad spend, and the freshness check on `ad_spend_daily` warns after 48 hours. To get a full catalog again, start over.
+With the default seed and scale, `make generate DAYS=7` does the same. Topping up keeps the freshness checks on orders, events and leads green (see [Building the warehouse](building-the-warehouse.md)). Campaigns and promotions cover the first 365 days from the start date, or end on the yesterday of the first run if that is sooner, so top-ups after the first run add days without paid campaigns, promotions or ad spend. Once the newest `ad_spend_daily` row is more than 48 hours old, its freshness check warns. To get a full catalog again, start over.
 
 ### Starting over
 
@@ -312,7 +312,7 @@ ORDER BY events DESC;
  signup         |   4998
 ```
 
-`context` and `properties` are `jsonb`; `->>` extracts a key as text:
+`context` and `properties` are `jsonb`; `->>` extracts a key as text. UTM tags (`utm_source`, `utm_medium`, `utm_campaign`) are URL parameters that record where a visit came from:
 
 ```sql
 SELECT event_type, context ->> 'utm_source' AS utm_source, properties ->> 'order_id' AS order_id

@@ -77,7 +77,7 @@ FAILED generator/tests/database/test_raw_schema.py::TestRawSchema::test_table_co
             preferred_language=Language(LOCALE_BY_COUNTRY[session.country].split("_")[0]),
 ```
 
-Deriving instead of drawing keeps every other row identical: the 30-day run at scale 0.1 wrote 7,934 rows before and after the change. A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
+Deriving instead of drawing keeps every other row identical: note the row count of a 30-day run at scale 0.1 before the change and compare it after: it is the same (one run wrote 7,934 rows; your count depends on the day you run, because the window ends yesterday). A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
 
 **4. The test fixtures and a test.** Every `Customer(...)` must pass the new field, so add `preferred_language=Language.DE` to `make_customer` in `generator/tests/helpers.py`. Then test the rule in `generator/tests/behaviour/test_visitor_traffic.py`:
 
@@ -242,7 +242,7 @@ class WishlistSimulator:
             )
 ```
 
-Its own `STREAM` name gives it a random sequence no other simulator consumes, so adding it leaves every other table unchanged: the 30-day run at scale 0.1 writes the same 7,934 rows plus the wishlist items.
+Its own `STREAM` name gives it a random sequence no other simulator consumes, so adding it leaves every other table unchanged: the 30-day run at scale 0.1 writes the row count you noted before the change plus the wishlist items.
 
 **6. Wire it into the day** (`_DaySimulator` in `simulation/simulator.py`):
 

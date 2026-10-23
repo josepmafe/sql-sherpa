@@ -365,7 +365,7 @@ models:
         description: Whether each customer can use the code only once.
 
   - name: stg_shop__order_discounts
-    description: One row per discount applied to an order (order level; a few orders have several, R8).
+    description: One row per discount applied to an order (order level; a few orders have several, R8). Free-shipping discounts have amount 0.00 because the shipping is waived, so an order has a monetary discount only when a row has amount > 0.
     columns:
       - name: order_discount_id
         description: Primary key.

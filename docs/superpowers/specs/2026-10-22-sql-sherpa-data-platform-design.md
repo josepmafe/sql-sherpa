@@ -218,6 +218,11 @@ Changing `seed` or `scale` against existing state is an error (use `reset`).
 - Two fresh 30-day runs with the same parameters produce identical per-table row counts and identical `md5` of ordered primary keys.
 - Killing the process mid-day leaves `last_simulated_date` and data consistent (verified by a test that raises inside the day transaction).
 
+**Known simplifications** that later milestones have to account for:
+- Ad spend is budget-driven, so cost per click is not realistic; ROAS and CAC (data-platform-4) reflect the budgets, not click prices.
+- `remove_from_cart` events are never generated.
+- All coupon codes are unlimited: none is single-use.
+
 ---
 
 ## 6. dbt Transformation Layers
@@ -232,7 +237,7 @@ Naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_` / `obt
 Rename to consistent `<entity>_id`, cast types, normalize (R3, R4), parse JSON/text timestamps (events), no joins except to seeds. Exception: **`stg_events__events` is incremental using the `microbatch` strategy** (`event_time: received_at`, `batch_size: day`, `lookback: 3`, `begin` = simulation start date via var), deduping R1 with `row_number()` over `event_id` inside each batch. This is correct because the generator guarantees duplicates share the original's `received_at` day (R1). Microbatch has no `unique_key`; the `unique` test on `event_id` guards the assumption.
 
 ### 6.3 Snapshot
-`snap_product_variants` (YAML-defined), `timestamp` strategy on `updated_at`, `hard_deletes: invalidate`. Because the timestamp strategy uses `updated_at` as `dbt_valid_from`, simulated time is preserved. **`make backfill` runs the generator in 7-day chunks and `dbt snapshot` after each chunk**, so price history during backfill is captured. Two changes to the same variant within one 7-day chunk are rare (~25 variant-weeks per year at scale 1.0); the intermediate one is lost, which is harmless. Known limitations, documented: an order placed before the first captured version uses the earliest version's cost. Backfill and advance always snapshot with `--target prod` (snapshots live in the single `snapshots` schema, §3).
+`snap_product_variants` (YAML-defined), `timestamp` strategy on `updated_at`, `hard_deletes: invalidate`. Because the timestamp strategy uses `updated_at` as `dbt_valid_from`, simulated time is preserved. **From data-platform-3, `make backfill` runs the generator in 7-day chunks and `dbt snapshot` after each chunk**, so price history during backfill is captured. In data-platform-1 and data-platform-2, `make backfill` runs the generator once and takes no snapshot: list-price and cost history exists only as the current values in raw `product_variants`, so a data-platform-2 mart that needs the cost at time of sale uses the current cost until the snapshot exists. Two changes to the same variant within one 7-day chunk are rare (~25 variant-weeks per year at scale 1.0); the intermediate one is lost, which is harmless. Known limitations, documented: an order placed before the first captured version uses the earliest version's cost. Backfill and advance always snapshot with `--target prod` (snapshots live in the single `snapshots` schema, §3).
 
 ### 6.4 Intermediate (not exposed to consumers)
 
@@ -252,6 +257,8 @@ Models with unit tests (§7) are views, not ephemeral, so they can be unit-teste
 ### 6.5 Marts (tables, contracts enforced, fully documented)
 
 **Global rules:** test accounts (R5) and all their orders/events are excluded everywhere. Soft-deleted customers (R6) are kept with `email`, `first_name`, `last_name` set to null and `is_deleted = true`, so facts keep referential integrity. **`as_of_date`** = `max(order_date)` over `fct_orders` (non-test orders, UTC dates; computed from the same CTE inside models that need it). All "days since" columns use it, never `now()`, so results are deterministic.
+
+**Sessionization dependency.** These columns need `int_events__sessionized` (data-platform-3): `fct_orders.session_id` and `marketing_channel`, `dim_customers.acquisition_channel` and `acquisition_campaign_id`, `obt_order_items.marketing_channel`. The data-platform-2 plan has to resolve this sequencing dependency, for example by moving the sessionization forward or by leaving these columns out of data-platform-2 (§8).
 
 **Domains** (`meta.domain`, consumed by the agent): `sales`, `customers`, `products`, `marketing_web`, `shared`.
 
@@ -332,6 +339,8 @@ order_date, sales_channel, orders, items, gross_revenue, discount_amount, net_re
 | ROAS | attributed_net_revenue / spend |
 | CAC | Σ `fct_ad_spend_daily.spend` / Σ `fct_ad_spend_daily.new_customers`, for any grouping of campaigns, channels and dates |
 
+**Has a discount.** An order has a discount when it has at least one `order_discounts` row with `amount > 0`. Rows of a `free_shipping` promotion have `amount = 0.00` (shipping is waived), so counting rows would overstate the discounted share.
+
 Precision: amounts `numeric(12,2)`; rates computed as `numeric` and rounded only at presentation.
 
 ---
@@ -359,11 +368,12 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 ### data-platform-1 — Foundation
 **Builds:** Docker Compose, roles, generator (full §5), dbt project, sources, seeds, all staging models, `dim_date`.
 **dbt features:** project config, `profiles.yml` with `env_var()` and `dev`/`prod` targets, custom `generate_schema_name`, `--target-path` for prod artifacts, **sources + freshness** (`dbt source freshness`), **seeds** (with `column_types`), view materialization, **generic tests**, `dbt_utils`, `vars` (`tax_rate`, `session_timeout_minutes`, `date_spine_start/end`), `meta` on `dim_date` (`domain`, `grain`, `primary_key`), `dbt docs generate/serve`, a `__overview__` doc block. CLI: `dbt debug`, `dbt parse`, `dbt compile`, `dbt ls` (selection syntax), **`dbt show`** (preview a model's output without materializing it).
-**Acceptance:** `make up && make backfill DAYS=365 && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
+**Acceptance:** `make up && make backfill DAYS=365 && make deps && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
 
 ### data-platform-2 — Core marts
 **Builds:** intermediate order models, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_returns`, `fct_refunds`, `obt_order_items`.
 **dbt features:** ephemeral/table materializations, **macros & Jinja** (e.g. `cents_rounding_allocation`, `normalize_email`), **custom generic test**, **singular tests**, **dbt_expectations**, **model contracts** (enforced, with `primary_key` and `not_null` constraints; FKs as `relationships` tests, not DB constraints), **doc blocks** for metrics (`metric_<name>`), `meta` extended to the other marts (`domain`, `grain`, `primary_key`, `pii`, `synonyms`), the `eval` and `agent` targets with `make eval-db` (§3), **`persist_docs`** (relations + columns) on marts, Postgres **`indexes`** config, **`grants`** (`select` to `sherpa_agent`) on marts, **hooks**: `on-run-start` creates `pg_trgm` (a trusted extension in PG 16, so the database owner can create it); `on-run-end` grants `USAGE` on `marts` to `sherpa_agent`; post-hook `ANALYZE` on marts. B-tree indexes via the `indexes` config. GIN trigram indexes on `dim_products.product_name`, `brand`, `category_l1/l2/l3` via a **`create_trigram_index(column)` macro called from a post-hook** (`CREATE INDEX IF NOT EXISTS … USING gin (col gin_trgm_ops)`), because the `indexes` config has no operator-class option. **`dbt run-operation`**: a `grant_agent_access` macro that re-applies agent grants on demand (same macro as the on-run-end hook).
+**Sequencing notes:** the session-derived columns listed in §6.5 depend on the sessionization scheduled for data-platform-3, and cost at time of sale depends on the data-platform-3 snapshot (§6.3); the plan resolves both.
 **Acceptance:** all mart tests pass; `sherpa_agent` can `SELECT` from marts and no other application schema (system catalogs are readable by every role; the agent's SQL guard blocks them); contracts reject a deliberately wrong column type (verified once, manually).
 
 ### data-platform-3 — Time
@@ -427,16 +437,6 @@ Targets added by later milestones:
 | `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
 | `make advance DAYS=3` | data-platform-3 | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
 | `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
-
----|---|
-| `make up` / `make down` | Start/stop Docker Compose |
-| `make backfill DAYS=365` | Generator in 7-day chunks + `dbt snapshot --target prod` after each chunk |
-| `make advance DAYS=3` | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
-| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod` |
-| `make slim` / `make clone` | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
-| `make docs` / `make docs-prod` | `dbt docs generate && dbt docs serve` on dev / prod (`--target-path target-prod`) |
-| `make lint` / `make test` | sqlfluff + ruff / generator pytest |
-| `make reset` | Drop raw and dbt schemas |
 
 ---
 

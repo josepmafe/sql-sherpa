@@ -21,13 +21,15 @@ It is a learning project, built to production standards: a realistic synthetic e
 
 ## Stack
 
+The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the data-platform-1 tools are installed today.
+
 | Layer | Tools |
 |---|---|
-| Data | PostgreSQL 16 (Docker), Python 3.12 + Faker |
-| Transformation | dbt Core + dbt-postgres, dbt_utils, dbt_expectations, MetricFlow |
-| Agent | PydanticAI, FastMCP, Claude on Amazon Bedrock |
-| Observability & evals | Pydantic Logfire (OpenTelemetry), a small execution-accuracy eval runner |
-| Tooling | uv, ruff, sqlfluff, pre-commit, GitHub Actions |
+| Data | PostgreSQL 16 (Docker), Python 3.12 + Faker (data-platform-1) |
+| Transformation | dbt Core + dbt-postgres and dbt_utils (data-platform-1), dbt_expectations (data-platform-2), MetricFlow (data-platform-5) |
+| Agent | PydanticAI, FastMCP, Claude on Amazon Bedrock (agent milestones) |
+| Observability & evals | Pydantic Logfire (OpenTelemetry) and a small execution-accuracy eval runner (agent milestones) |
+| Tooling | uv, ruff, sqlfluff, pre-commit (data-platform-1), GitHub Actions (data-platform-4) |
 
 ## Roadmap
 
@@ -45,17 +47,24 @@ It is a learning project, built to production standards: a realistic synthetic e
 Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
 
 ```bash
+uv run pre-commit install  # hooks enforce lint and format locally; there is no CI yet
 cp .env.example .env     # then replace the change-me passwords with real values
 make up                  # start Postgres
-make backfill DAYS=365   # simulate a year of data into the raw schemas
+make backfill DAYS=365   # simulate a year of data into the raw schemas (about 2.5 minutes)
 make deps                # install the dbt packages
 make build               # dbt: seeds, staging models and tests
-make docs                # generate and serve the dbt docs
+make docs                # generate and serve the dbt docs until you press Ctrl+C
 ```
 
 `make test` runs the tests and `make lint` runs ruff, mypy and sqlfluff.
 
-**Behind a TLS-intercepting proxy**, `make deps` (and `uv` downloads) fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and point `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) at it in `.env`; `.env.example` shows the lines.
+To add days later, run `make generate DAYS=<n>`. Days added after the first run have no paid campaigns, promotions or ad spend, because the catalog is built once, on the first run.
+
+### Windows and corporate networks
+
+- OneDrive folders can break uv's hardlinks (`Failed to hardlink files` or "access denied" errors). Set `UV_LINK_MODE=copy`.
+- Behind a TLS-intercepting proxy, `uv` downloads and `make deps` fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and set `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) to its path in `.env`; `.env.example` shows the lines.
+- `localhost` can resolve to IPv6 on Windows while Docker publishes the port on IPv4, which is why `.env.example` uses `127.0.0.1`.
 
 ## Repository layout
 
