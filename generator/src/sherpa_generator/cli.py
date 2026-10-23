@@ -2,6 +2,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
+import psycopg
 import typer
 
 from sherpa_generator.database.connection import Database
@@ -33,8 +34,8 @@ def generate(
     seed: Annotated[int, typer.Option(help="Seed for every random draw.")] = DEFAULT_SEED,
 ) -> None:
     """Simulate DAYS more days: the first run sets up the catalog, later runs resume after the last simulated day."""
-    simulator = Simulator(_database(), seed=seed, scale=scale, today=datetime.now(UTC).date())
     try:
+        simulator = Simulator(_database(), seed=seed, scale=scale, today=datetime.now(UTC).date())
         result = simulator.run(days, start_date.date() if start_date else None)
     except GeneratorError as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -50,7 +51,12 @@ def generate(
 @app.command()
 def status() -> None:
     """Print the simulated range and the row count of every raw table."""
-    db = _database()
+    try:
+        db = _database()
+    except GeneratorError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(GENERATOR_ERROR_EXIT_CODE) from exc
+
     with db.connect() as conn:
         state = SimulationStateStore(conn).load()
 
@@ -77,5 +83,9 @@ def reset() -> None:
 def _database() -> Database:
     """The configured database, with the raw schemas created on first use."""
     db = Database(GeneratorSettings())
-    RawSchema(db).create()
+    try:
+        RawSchema(db).create()
+    except psycopg.OperationalError as exc:
+        raise GeneratorError(f"cannot connect to the database (is it running? see `make up`): {exc}") from exc
+
     return db

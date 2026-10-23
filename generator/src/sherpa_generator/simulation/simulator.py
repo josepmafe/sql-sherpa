@@ -99,7 +99,8 @@ class Simulator:
 
     def _set_up(self, start_date: date) -> tuple[SimulationState, Counter[str]]:
         """Catalog and initial state in one transaction. The catalog spans up to yesterday, whatever `days` is, so a
-        short first run followed by resumes builds the same catalog as one long run."""
+        short first run followed by resumes builds the same catalog as one long run. The catalog ends at the first
+        run's yesterday, so days simulated after that date have no active campaigns, promotions or ad spend."""
         if start_date > self._yesterday:
             msg = f"start date {start_date} is after yesterday ({self._yesterday})"
             raise GeneratorError(msg)

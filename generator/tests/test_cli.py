@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -27,7 +28,31 @@ def cli_database(temp_database: Database, monkeypatch: pytest.MonkeyPatch) -> Da
     return temp_database
 
 
+@pytest.fixture
+def unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Points the CLI's GeneratorSettings at a local port that was just free, so the connection fails fast."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        free_port = sock.getsockname()[1]
+
+    monkeypatch.setenv("PGCONNECT_TIMEOUT", "2")  # libpq env var; bounds the wait where the OS drops instead of refusing
+    monkeypatch.setenv("SHERPA_DB_HOST", "127.0.0.1")
+    monkeypatch.setenv("SHERPA_DB_PORT", str(free_port))
+    monkeypatch.setenv("SHERPA_DB_NAME", "sherpa")
+    monkeypatch.setenv("SHERPA_ADMIN_USER", "sherpa_admin")
+    monkeypatch.setenv("SHERPA_ADMIN_PASSWORD", "unused")
+
+
 class TestCli:
+    @pytest.mark.usefixtures("unreachable_database")
+    @pytest.mark.parametrize("args", [["generate", "--days", "1"], ["status"]])
+    def test_unreachable_database_exits_2_with_message_not_traceback(self, args: list[str]) -> None:
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == 2
+        assert "error: cannot connect to the database" in result.stderr
+        assert "Traceback" not in result.stderr
+
     def test_rejects_zero_days(self) -> None:
         result = runner.invoke(app, ["generate", "--days", "0"])
 
