@@ -296,6 +296,12 @@ models:
       - name: customer_id
         description: The customer who placed the order.
         data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
       - name: variant_id
         description: The product variant sold. Join to dim_products on variant_id.
         data_type: bigint
@@ -311,6 +317,11 @@ models:
       - name: order_date
         description: UTC date the order was placed.
         data_type: date
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
       - name: is_cancelled
         description: True when the order is cancelled; the line's cogs is then 0.
         data_type: boolean
@@ -375,6 +386,12 @@ models:
       - name: customer_id
         description: The customer who placed the order.
         data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
       - name: reason
         description: Why the customer returns the items, size, damaged, not_as_described or changed_mind.
         data_type: text
@@ -457,6 +474,12 @@ models:
       - name: customer_id
         description: The customer who placed the order.
         data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
       - name: return_id
         description: The return the refund pays for; null for goodwill and cancellation refunds.
         data_type: bigint
@@ -480,6 +503,11 @@ models:
       - name: refund_date
         description: UTC date of the refund. Join to dim_date on date_day.
         data_type: date
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
       - name: amount
         description: Amount in EUR refunded to the customer, including tax, whatever the reason.
         data_type: numeric(12,2)
