@@ -321,7 +321,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent
 | **agent-design-4 — Gold set batch 2** (needs data-platform-4) | Tranche 2 of `cases.yaml`: 10 more cases (marketing and web), `gold_version: 2` | Same checks as agent-design-2; `v0_baseline` is re-run on the full 50 cases as the baseline every technique is compared against |
 | **agent-design-5–agent-design-8 — Techniques** | `v1_grounding`, `v2_linking`, `v3_critic`, `v4_voting`, one per milestone | Each: a report against the current default, plus a `FINDINGS.md` entry (what changed, per-category effect, cost/latency effect, the decision) |
 | **agent-design-9 — Checkpoint** | `v5_checkpoint`, `--confirm` flow | Manual check: approve, edit and abort paths work in the CLI; the eval report runs non-interactively |
-| **agent-design-10 — MetricFlow** (needs data-platform-5) | `compile_metrics` tool, `v6_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
+| **agent-design-10 — MetricFlow** (needs data-platform-5) | the `agent` dbt target (data platform spec §3), `compile_metrics` tool, `v6_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
 
 **Promotion rule (agent-design-5–agent-design-10):** a technique becomes the default variant if, with `--repeat 2` against a same-session run of the current default (same `gold_version` and `dataset_version`), it improves accepted-case EX by **≥ 2 cases in both repeats**, without more than doubling p50 latency or mean cost. Otherwise it stays a non-default variant, and the finding is recorded. With 40–50 cases this rule is coarse on purpose: it only detects large effects, and `FINDINGS.md` says so.
 
@@ -365,7 +365,7 @@ The agent relies only on the data platform spec's §11 (Interface to the Agent).
 - the `marts` schema and the `sherpa_agent` role
 - the `target-prod` and `target-eval` artifacts, including `meta.{domain, grain, primary_key, pii, synonyms}`, `metric_<name>` doc blocks and `accepted_values` tests
 - `pg_trgm` and `as_of_date`
-- the `eval` and `agent` dbt targets
+- the `eval` dbt target, and the `agent` target that agent-design-10 adds
 
 Everything the agent needs from the warehouse is defined there, not here.
 
