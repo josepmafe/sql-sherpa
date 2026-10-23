@@ -1,4 +1,4 @@
-"""What the agent role can and cannot read in the built warehouses, and the trigram indexes it searches with.
+"""What the agent role can and cannot read or create in the built warehouses, and the trigram indexes it searches with.
 
 The main database tests need `make build-prod` (and `make build` for the dev_marts check); the eval database
 tests need `make eval-db`. Every denied read is preceded by an admin-side check that the relation exists, so a
@@ -135,6 +135,18 @@ class TestAgentAccess:
         row = agent.execute(query).fetchone()
 
         assert row == (False,)
+
+    def test_cannot_create_temporary_tables_or_large_objects(self, admin: psycopg.Connection) -> None:
+        # Both are writable storage outside the schema privileges; the init script and eval-db revoke them.
+        query = (
+            "select has_database_privilege(%(role)s, current_database(), 'TEMPORARY'),"
+            " has_function_privilege(%(role)s, 'lo_from_bytea(oid, bytea)', 'EXECUTE'),"
+            " has_function_privilege(%(role)s, 'lo_create(oid)', 'EXECUTE')"
+        )
+
+        privileges = admin.execute(query, {"role": WarehouseSettings().agent_user}).fetchone()
+
+        assert privileges == (False, False, False)
 
     def test_can_use_trigram_similarity_unqualified(self, agent: psycopg.Connection) -> None:
         query = "select similarity('running', 'runing') > 0.3"

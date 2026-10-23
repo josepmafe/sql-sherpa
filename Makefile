@@ -74,15 +74,15 @@ docs-check:
 
 # Rebuilds the frozen eval database from scratch (fixed seed and dates); never touches the main database.
 # No source freshness: the frozen data is old on purpose. Inside the container, POSTGRES_DB is the main database,
-# whatever make saw as SHERPA_DB_NAME. The new database's public schema is locked down like the main one's, so the
-# agent only reaches the marts.
+# whatever make saw as SHERPA_DB_NAME. The new database's public schema and temporary tables are locked down like the
+# main one's, so the agent only reaches the marts; the large-object revokes come with template1 (init script).
 eval-db:
 	$(if $(and $(filter 1,$(words $(SHERPA_EVAL_DB_NAME))),$(filter sherpa_eval%,$(SHERPA_EVAL_DB_NAME)),$(filter-out $(SHERPA_DB_NAME),$(SHERPA_EVAL_DB_NAME))),,$(error SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database '$(SHERPA_DB_NAME)', got '$(SHERPA_EVAL_DB_NAME)'))
 	$(if $(call strip-chars,$(SHERPA_EVAL_DB_NAME),$(DB_NAME_CHARS)),$(error SHERPA_EVAL_DB_NAME may only contain [a-z0-9_], got '$(SHERPA_EVAL_DB_NAME)'))
 	docker compose exec -T postgres sh -c \
 		'test "$$POSTGRES_DB" != $(SHERPA_EVAL_DB_NAME) || { echo "refusing to drop the main database $$POSTGRES_DB" >&2; exit 1; }; \
 		psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)" && \
-		psql -U "$$SHERPA_ADMIN_USER" -d $(SHERPA_EVAL_DB_NAME) -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC"'
+		psql -U "$$SHERPA_ADMIN_USER" -d $(SHERPA_EVAL_DB_NAME) -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" -c "REVOKE TEMPORARY ON DATABASE $(SHERPA_EVAL_DB_NAME) FROM PUBLIC"'
 	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run sherpa-generate generate --seed 42 --start-date 2025-01-01 --days 365
 	$(DBT) build $(EVAL)
 	$(DBT) docs generate $(EVAL)
