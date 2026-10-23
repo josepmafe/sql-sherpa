@@ -340,3 +340,152 @@ models:
           Revenue refunded for the line's returned units in EUR, excluding tax (the line's net amount
           pro-rated by returned quantity); 0 when none.
         data_type: numeric(12,2)
+
+  - name: fct_returns
+    description: >
+      Return fact, one row per return of an order in fct_orders, with the units returned and
+      restockable and the refund paid for it, if any.
+    config:
+      meta:
+        domain: sales
+        grain: one row per return
+        primary_key: return_id
+    columns:
+      - name: return_id
+        description: The return. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: The order the return belongs to.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: customer_id
+        description: The customer who placed the order.
+        data_type: bigint
+      - name: reason
+        description: Why the customer returns the items, size, damaged, not_as_described or changed_mind.
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [size, damaged, not_as_described, changed_mind]
+      - name: status
+        description: Where the return stands, requested, approved, received or rejected.
+        data_type: text
+        config:
+          meta:
+            synonyms: [return status]
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [requested, approved, received, rejected]
+      - name: requested_at
+        description: When the customer requested the return (UTC).
+        data_type: timestamptz
+      - name: returned_item_quantity
+        description: Units on the return, the sum of its return items; 0 when it has none.
+        data_type: integer
+      - name: restockable_quantity
+        description: Units on the return that can be put back in stock; 0 when none.
+        data_type: integer
+      - name: refund_id
+        description: The refund paid for the return; null if not refunded yet.
+        data_type: bigint
+        data_tests:
+          - unique:
+              config:
+                where: "refund_id is not null"
+          - relationships:
+              arguments:
+                to: ref('fct_refunds')
+                field: refund_id
+              config:
+                where: "refund_id is not null"
+      - name: refunded_amount
+        description: Amount in EUR of the refund paid for the return, including tax; null if not refunded yet.
+        data_type: numeric(12,2)
+
+  - name: fct_refunds
+    description: >
+      Refund fact, one row per refund of an order in fct_orders. A refund is a return, a goodwill
+      or a cancellation refund; only return refunds link to a return. {{ doc('cancelled_orders') }}
+    config:
+      meta:
+        domain: sales
+        grain: one row per refund
+        primary_key: refund_id
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "days_since_order >= 0"
+      - column_sums_match:
+          arguments:
+            column_name: revenue_amount
+            compare_model: ref('fct_orders')
+            compare_column: refunded_revenue
+            group_by: order_id
+    columns:
+      - name: refund_id
+        description: The refund. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: The order the refund belongs to.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: customer_id
+        description: The customer who placed the order.
+        data_type: bigint
+      - name: return_id
+        description: The return the refund pays for; null for goodwill and cancellation refunds.
+        data_type: bigint
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_returns')
+                field: return_id
+              config:
+                where: "return_id is not null"
+      - name: refund_reason
+        description: Why the money was refunded, return, goodwill or cancellation.
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [return, goodwill, cancellation]
+      - name: refunded_at
+        description: When the refund was made (UTC).
+        data_type: timestamptz
+      - name: refund_date
+        description: UTC date of the refund. Join to dim_date on date_day.
+        data_type: date
+      - name: amount
+        description: Amount in EUR refunded to the customer, including tax, whatever the reason.
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [refund, money returned]
+      - name: revenue_amount
+        description: >
+          Revenue refunded in EUR, excluding tax, attributed to the refund's date.
+          {{ doc('metric_refunded_revenue') }}
+        data_type: numeric(12,2)
+      - name: days_since_order
+        description: Days from the order's date to refund_date.
+        data_type: integer
