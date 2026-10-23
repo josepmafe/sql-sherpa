@@ -14,7 +14,7 @@
         {%- elif not adapter.check_schema_exists(target.database, 'marts') -%}
             {%- do log('grant_agent_access: skipped on ' ~ target.name ~ ', schema marts not built yet', info=true) -%}
         {%- else -%}
-            {%- set agent = adapter.quote(env_var('SHERPA_AGENT_USER')) -%}
+            {%- set agent = adapter.quote(validate_identifier(env_var('SHERPA_AGENT_USER'), 'SHERPA_AGENT_USER')) -%}
             {%- set grants -%}
                 grant usage on schema marts, extensions to {{ agent }};
                 grant select on all tables in schema marts to {{ agent }};

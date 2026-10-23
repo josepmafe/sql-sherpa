@@ -65,8 +65,8 @@ Data flows through three layers, each in its own schema:
 
 Three hooks in `dbt/dbt_project.yml` do work outside the models:
 
-- `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path.
-- A `post-hook: analyze {{ this }}` on every mart refreshes its table statistics after it is built, so Postgres plans queries well.
+- `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name and `SHERPA_AGENT_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
+- A `post-hook: analyze {{ this }}` on every mart, and on the `int_events__sessionized` table, refreshes its table statistics after it is built, so Postgres plans queries well.
 - `on-run-end` runs the `grant_agent_access` macro. On `prod` and `eval` it gives the `sherpa_agent` role `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables; on `dev` it does nothing (`grant_agent_access: skipped on dev`).
 
 `make grant-agent` runs the same macro on prod without a build, which re-applies the grants if they were lost:

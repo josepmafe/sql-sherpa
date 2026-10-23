@@ -48,6 +48,7 @@ models:
       +post-hook: "analyze {{ this }}"
       # SELECT for the agent on every target; it only takes effect where the agent also has schema USAGE (prod, eval).
       # The default (the role name from .env.example) lets commands that only parse, like deps, run without .env.
+      # dbt does not quote grantees; the on-run-start hook (ensure_extensions) rejects a malformed role name.
       +grants:
         select: ["{{ env_var('SHERPA_AGENT_USER', 'sherpa_agent') }}"]
 
