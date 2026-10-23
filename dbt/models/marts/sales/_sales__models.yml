@@ -168,6 +168,7 @@ models:
         description: Number of units ordered, the sum of the line quantities.
         data_type: integer
         data_tests:
+          - not_null
           - dbt_expectations.expect_column_mean_to_be_between:
               arguments:
                 min_value: 1.9
@@ -182,6 +183,7 @@ models:
         config:
           meta:
             synonyms: [sales, gross sales, turnover]
+        data_tests: [not_null]
       - name: discount_amount
         description: >
           The order's discount as placed, kept when the order is cancelled.
@@ -259,6 +261,9 @@ models:
             column_A: gross_amount
             column_B: net_amount
             or_equal: true
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "returned_quantity <= quantity"
       - column_sums_match:
           arguments:
             column_name: gross_amount

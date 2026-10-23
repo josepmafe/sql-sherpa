@@ -1,4 +1,5 @@
-{{ config(materialized='table') }}
+{#- A table two marts read; the project's analyze hook covers marts only. -#}
+{{ config(materialized='table', post_hook="analyze {{ this }}") }}
 
 with
 

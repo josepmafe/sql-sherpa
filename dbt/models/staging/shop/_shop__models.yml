@@ -490,8 +490,14 @@ models:
                 to: ref('stg_shop__orders')
                 field: order_id
       - name: return_id
-        description: Return that triggered the refund; null for goodwill and cancellation refunds.
+        description: >
+          Return that triggered the refund; null for goodwill and cancellation refunds. A return has
+          at most one refund, so fct_returns can join refunds by return_id without fanning out; the
+          unique test enforces it.
         data_tests:
+          - unique:
+              config:
+                where: "return_id is not null"
           - relationships:
               arguments:
                 to: ref('stg_shop__returns')

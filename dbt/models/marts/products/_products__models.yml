@@ -58,6 +58,8 @@ models:
           meta:
             synonyms: [department, category]
         data_tests:
+          # accepted_values ignores nulls, so not_null is a separate test.
+          - not_null
           - accepted_values:
               arguments:
                 values: [Footwear, Apparel, Accessories, Equipment]

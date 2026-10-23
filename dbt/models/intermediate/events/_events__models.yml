@@ -22,7 +22,14 @@ models:
       - name: received_at
         description: When the warehouse received the event (UTC).
       - name: order_id
-        description: Order the event refers to; null for events that are not about an order.
+        description: >
+          Order the event refers to; null for events that are not about an order. An order has at
+          most one purchase event, so fct_orders can join purchase events by order_id without fanning
+          out; the unique test on purchase events enforces it.
+        data_tests:
+          - unique:
+              config:
+                where: "event_type = 'purchase' and order_id is not null"
       - name: session_id
         description: md5 of anonymous_id and the epoch microseconds of session_start_at.
         data_tests: [not_null]
