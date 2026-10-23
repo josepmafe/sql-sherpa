@@ -64,30 +64,31 @@ cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt deps
 08:05:44  Up to date!
 ```
 
-`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took 28 seconds on a year of data:
+`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took 33 seconds on a year of data:
 
 ```
 cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt build
-09:24:23  Running with dbt=1.12.6
-09:24:23  Registered adapter: postgres=1.11.0
-09:24:23  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
+12:48:16  Running with dbt=1.12.6
+12:48:16  Registered adapter: postgres=1.11.0
+12:48:18  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
 There are 1 unused configuration paths:
 - snapshots.sherpa
-09:24:24  Found 22 models, 122 data tests, 2 seeds, 21 sources, 594 macros
-09:24:24
-09:24:24  Concurrency: 4 threads (target='dev')
-09:24:24
-09:24:24  1 of 146 START sql table model dev_marts.dim_date .............................. [RUN]
-09:24:24  2 of 146 START sql view model dev_staging.stg_crm__email_sends ................. [RUN]
+12:48:18  Found 22 models, 147 data tests, 3 seeds, 21 sources, 594 macros
+12:48:18
+12:48:18  Concurrency: 4 threads (target='dev')
+12:48:18
+12:48:19  1 of 172 START sql table model dev_marts.dim_date .............................. [RUN]
+12:48:19  2 of 172 START sql view model dev_staging.stg_crm__email_sends ................. [RUN]
 ...
-09:24:37  146 of 146 PASS unique_stg_shop__addresses_address_id ........................... [PASS in 0.07s]
-09:24:39  135 of 146 PASS relationships_stg_events__events_customer_id__customer_id__ref_stg_shop__customers_  [PASS in 2.79s]
-09:24:39
-09:24:39  Finished running 2 seeds, 1 table model, 122 data tests, 21 view models in 0 hours 0 minutes and 14.89 seconds (14.89s).
-09:24:39
-09:24:39  Completed successfully
-09:24:39
-09:24:39  Done. PASS=146 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=146
+12:48:34  172 of 172 PASS unique_stg_shop__addresses_address_id .......................... [PASS in 0.12s]
+12:48:35  157 of 172 PASS assert_no_activity_after_customer_deletion ..................... [PASS in 1.71s]
+12:48:35  161 of 172 PASS relationships_stg_events__events_customer_id__customer_id__ref_stg_shop__customers_  [PASS in 2.12s]
+12:48:35
+12:48:35  Finished running 3 seeds, 1 table model, 147 data tests, 21 view models in 0 hours 0 minutes and 16.99 seconds (16.99s).
+12:48:36
+12:48:36  Completed successfully
+12:48:36
+12:48:36  Done. PASS=172 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=172
 ```
 
 The warning is expected: `dbt_project.yml` configures a schema for snapshots and the project has no snapshots. `make build-prod` prints the same with `target='prod'` and schemas without the prefix (`marts.dim_date`).
@@ -95,9 +96,9 @@ The warning is expected: `dbt_project.yml` configures a schema for snapshots and
 `make seed` loads only the seeds, which is handy after editing a CSV:
 
 ```
-09:27:12  1 of 3 OK loaded seed file dev_seeds.channel_mapping ........................... [INSERT 5 in 0.16s]
-09:27:12  2 of 3 OK loaded seed file dev_seeds.countries ................................. [INSERT 8 in 0.16s]
-09:27:12  3 of 3 OK loaded seed file dev_seeds.country_code_variants ..................... [INSERT 18 in 0.16s]
+12:52:02  1 of 3 OK loaded seed file dev_seeds.channel_mapping ........................... [INSERT 5 in 0.17s]
+12:52:02  3 of 3 OK loaded seed file dev_seeds.country_code_variants ..................... [INSERT 18 in 0.17s]
+12:52:02  2 of 3 OK loaded seed file dev_seeds.countries ................................. [INSERT 8 in 0.18s]
 ```
 
 ### Source freshness
@@ -114,21 +115,21 @@ The warning is expected: `dbt_project.yml` configures a schema for snapshots and
 On data that reaches yesterday every check passes:
 
 ```
-09:24:18  1 of 4 PASS freshness of crm.leads ............................................. [PASS in 0.05s]
-09:24:18  4 of 4 PASS freshness of shop.orders ........................................... [PASS in 0.05s]
-09:24:18  3 of 4 PASS freshness of marketing.ad_spend_daily .............................. [PASS in 0.07s]
-09:24:18  2 of 4 PASS freshness of events.events ......................................... [PASS in 0.11s]
+12:48:11  3 of 4 PASS freshness of marketing.ad_spend_daily .............................. [PASS in 0.07s]
+12:48:11  1 of 4 PASS freshness of crm.leads ............................................. [PASS in 0.11s]
+12:48:11  2 of 4 PASS freshness of events.events ......................................... [PASS in 0.11s]
+12:48:11  4 of 4 PASS freshness of shop.orders ........................................... [PASS in 0.12s]
 ```
 
 Warnings let the build continue; an error stops `make build` before `dbt build`. On a dataset whose last day was three weeks ago:
 
 ```
-09:32:28  4 of 4 ERROR STALE freshness of shop.orders .................................... [ERROR STALE in 0.09s]
-09:32:28  1 of 4 ERROR STALE freshness of crm.leads ...................................... [ERROR STALE in 0.11s]
-09:32:28  3 of 4 WARN freshness of marketing.ad_spend_daily .............................. [WARN in 0.11s]
-09:32:28  2 of 4 ERROR STALE freshness of events.events .................................. [ERROR STALE in 0.11s]
+13:03:23  1 of 4 ERROR STALE freshness of crm.leads ...................................... [ERROR STALE in 0.04s]
+13:03:23  2 of 4 ERROR STALE freshness of events.events .................................. [ERROR STALE in 0.06s]
+13:03:23  3 of 4 WARN freshness of marketing.ad_spend_daily .............................. [WARN in 0.06s]
+13:03:23  4 of 4 ERROR STALE freshness of shop.orders .................................... [ERROR STALE in 0.07s]
 ...
-make: *** [Makefile:46: build] Error 1
+make: *** [Makefile:40: build] Error 1
 ```
 
 The fix is to top the data up to yesterday (`make generate DAYS=<n>`, see the generator guide), not to loosen the thresholds.
@@ -145,9 +146,9 @@ DBT_PROFILES_DIR=. uv run --env-file ../.env dbt <command>
 `DBT_PROFILES_DIR=.` points dbt at `dbt/profiles.yml` and `--env-file ../.env` supplies the `SHERPA_*` variables it reads. The examples below run from `dbt/` with that prefix, shortened to `dbt`. Add `--target prod --target-path target-prod` to run on prod. `dbt debug` checks the setup and the connection; it ends with:
 
 ```
-09:27:18    Connection test: [OK connection ok]
+12:52:09    Connection test: [OK connection ok]
 
-09:27:18  All checks passed!
+12:52:09  All checks passed!
 ```
 
 ### Selecting what to run
@@ -165,12 +166,13 @@ $ dbt --quiet ls --select +stg_shop__customers
 sherpa.staging.shop.stg_shop__customers
 sherpa.country_code_variants
 source:sherpa.shop.customers
+sherpa.assert_no_activity_after_customer_deletion
 sherpa.not_null_country_code_variants_code
 ...
 sherpa.staging.shop.unique_stg_shop__customers_customer_id
 ```
 
-Upstream of a staging model are its source and the seeds it joins; the tests attached to them come along. `--quiet` drops the log lines.
+Upstream of a staging model are its source and the seeds it joins; the tests attached to them come along, including the singular test that reads the model. `--quiet` drops the log lines.
 
 To rebuild one model and run its tests:
 
@@ -179,14 +181,15 @@ dbt build --select stg_shop__payments
 ```
 
 ```
-09:27:42  1 of 8 START sql view model dev_staging.stg_shop__payments ..................... [RUN]
-09:27:42  1 of 8 OK created sql view model dev_staging.stg_shop__payments ................ [CREATE VIEW in 0.11s]
-09:27:42  2 of 8 START test accepted_values_stg_shop__payments_method__card__paypal__gift_card  [RUN]
+12:53:17  1 of 9 START sql view model dev_staging.stg_shop__payments ..................... [RUN]
+12:53:17  1 of 9 OK created sql view model dev_staging.stg_shop__payments ................ [CREATE VIEW in 0.15s]
+12:53:17  2 of 9 START test accepted_values_stg_shop__payments_method__card__paypal__gift_card  [RUN]
 ...
-09:27:42  7 of 8 PASS relationships_stg_shop__refunds_payment_id__payment_id__ref_stg_shop__payments_  [PASS in 0.08s]
-09:27:42  8 of 8 PASS unique_stg_shop__payments_payment_id ............................... [PASS in 0.07s]
-09:27:42
-09:27:42  Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=8
+12:53:18  9 of 9 PASS unique_stg_shop__payments_payment_id ............................... [PASS in 0.10s]
+12:53:18  8 of 9 PASS relationships_stg_shop__refunds_payment_id__payment_id__ref_stg_shop__payments_  [PASS in 0.13s]
+12:53:18  7 of 9 PASS relationships_stg_shop__payments_order_id__order_id__ref_stg_shop__orders_  [PASS in 0.13s]
+12:53:18
+12:53:18  Done. PASS=9 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=9
 ```
 
 `dbt run` only builds models and `dbt test` only runs tests; both take the same `--select`. A test on another model that references this one (here the `relationships` test of `stg_shop__refunds`) runs too.
@@ -289,16 +292,16 @@ dbt build --select stg_shop__customers
 ```
 
 ```
-09:29:36  7 of 9 FAIL 162 relationships_stg_shop__customers_country_code__code__ref_countries_  [FAIL 162 in 0.08s]
+12:53:48  8 of 10 FAIL 162 relationships_stg_shop__customers_country_code__code__ref_countries_  [FAIL 162 in 0.10s]
 ...
-09:29:37  Completed with 1 error, 0 partial successes, and 0 warnings:
-09:29:37
-09:29:37  [ERROR]: in test relationships_stg_shop__customers_country_code__code__ref_countries_ (models\staging\shop\_shop__models.yml)
-09:29:37    Got 162 results, configured to fail if != 0
-09:29:37
-09:29:37    compiled code at target\compiled\sherpa\models\staging\shop\_shop__models.yml\relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4.sql
-09:29:37
-09:29:37  Done. PASS=8 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=9
+12:53:50  Completed with 1 error, 0 partial successes, and 0 warnings:
+12:53:50
+12:53:50  [ERROR]: in test relationships_stg_shop__customers_country_code__code__ref_countries_ (models\staging\shop\_shop__models.yml)
+12:53:50    Got 162 results, configured to fail if != 0
+12:53:50
+12:53:50    compiled code at target\compiled\sherpa\models\staging\shop\_shop__models.yml\relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4.sql
+12:53:50
+12:53:50  Done. PASS=9 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=10
 ```
 
 The test name says what broke: `relationships` from `stg_shop__customers.country_code` to `countries.code`, with 162 rows that have no match. `dbt build` still created the view (a model is built before its tests), but anything downstream of a failed test would be skipped.
@@ -334,7 +337,7 @@ dbt test --select stg_shop__customers --store-failures
 ```
 
 ```
-09:29:44    See test failures:
+12:53:59    See test failures:
   --------------------------------------------------------------------------------------------------------------
   select * from "sherpa"."dev_dbt_test__audit"."relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4"
   --------------------------------------------------------------------------------------------------------------
@@ -361,7 +364,7 @@ GROUP BY 1 ORDER BY 2 DESC;
  gb         |     2
 ```
 
-Exactly the noisy codes of R4, so the seed join is missing. Restore the line, rerun `dbt build --select stg_shop__customers` (`PASS=9`), and drop the audit schema (`make reset` also removes it):
+Exactly the noisy codes of R4, so the seed join is missing. Restore the line, rerun `dbt build --select stg_shop__customers` (`PASS=10`), and drop the audit schema (`make reset` also removes it):
 
 ```bash
 docker compose exec postgres psql -U sherpa_admin -d sherpa -c "DROP SCHEMA dev_dbt_test__audit CASCADE"

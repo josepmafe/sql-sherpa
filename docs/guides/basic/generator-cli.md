@@ -31,15 +31,15 @@ Postgres listens on `127.0.0.1:5432` (the port is published on the loopback addr
 make backfill DAYS=365
 ```
 
-This simulates the 365 days ending yesterday (UTC). It took 2.5 minutes on a laptop; the log prints one line per day on stderr and a summary at the end:
+This simulates the 365 days ending yesterday (UTC). It took 3.5 minutes on a laptop; the log prints one line per day on stderr and a summary at the end:
 
 ```
 uv run sherpa-generate generate --days 365
-2026-10-23 11:21:43,362 INFO sherpa_generator.simulation.simulator: set up the catalog from 2025-10-23: 1878 rows
-2026-10-23 11:21:45,024 INFO sherpa_generator.simulation.simulator: simulated 2025-10-23: 1589 rows
+2026-10-23 14:44:27,155 INFO sherpa_generator.simulation.simulator: set up the catalog from 2025-10-23: 1878 rows
+2026-10-23 14:44:28,509 INFO sherpa_generator.simulation.simulator: simulated 2025-10-23: 1593 rows
 ...
-2026-10-23 11:24:11,749 INFO sherpa_generator.simulation.simulator: simulated 2026-10-22: 2219 rows
-simulated 2025-10-23 .. 2026-10-22: 947863 rows written
+2026-10-23 14:47:57,864 INFO sherpa_generator.simulation.simulator: simulated 2026-10-22: 2214 rows
+simulated 2025-10-23 .. 2026-10-22: 948182 rows written
 ```
 
 The first run creates the five raw schemas, builds the catalog (categories, products, variants, campaigns, promotions and coupons) and then simulates every day in its own transaction. A year at the default scale gives about 5,000 customers (43 % of whom never order), 8,100 orders, 670,000 events and 5,800 leads. See them with `make status`:
@@ -58,18 +58,18 @@ raw_shop.addresses: 9808
 raw_shop.categories: 41
 raw_shop.coupon_codes: 16
 raw_shop.customers: 4951
-raw_shop.order_discounts: 1842
-raw_shop.order_items: 14123
-raw_shop.order_status_history: 31629
+raw_shop.order_discounts: 1930
+raw_shop.order_items: 14269
+raw_shop.order_status_history: 31670
 raw_shop.orders: 8090
-raw_shop.payments: 8703
+raw_shop.payments: 8683
 raw_shop.product_variants: 1488
 raw_shop.products: 300
 raw_shop.promotions: 18
-raw_shop.refunds: 1172
-raw_shop.return_items: 1339
-raw_shop.returns: 952
-raw_shop.shipments: 7635
+raw_shop.refunds: 1195
+raw_shop.return_items: 1342
+raw_shop.returns: 971
+raw_shop.shipments: 7654
 ```
 
 `raw_meta.pending_events` holds late events (realism rule R2; the realism rules R1 to R12 are listed in the data platform spec §4.4) whose `received_at` is after the last simulated day; they land in `raw_events.events` when that day is simulated.
@@ -118,12 +118,12 @@ uv run sherpa-generate generate --days 30 --scale 0.1
 ```
 
 ```
-2026-10-23 11:30:24,232 INFO sherpa_generator.simulation.simulator: set up the catalog from 2026-09-23: 1790 rows
+2026-10-23 14:55:12,150 INFO sherpa_generator.simulation.simulator: set up the catalog from 2026-09-23: 1790 rows
 ...
-simulated 2026-09-23 .. 2026-10-22: 7934 rows written
+simulated 2026-09-23 .. 2026-10-22: 7917 rows written
 ```
 
-About 5 seconds, ~30 customers, ~65 orders and ~5,100 events. That is enough to run every dbt model and test. Later runs must keep `--scale 0.1`.
+About 6 seconds, ~30 customers, ~65 orders and ~5,100 events. That is enough to run every dbt model and test. Later runs must keep `--scale 0.1`.
 
 ### A reproducible dataset
 
@@ -140,7 +140,7 @@ diff run1.txt run2.txt && echo identical
 ```
 
 ```
-simulated 2026-09-01 .. 2026-09-30: 7884 rows written
+simulated 2026-09-01 .. 2026-09-30: 7874 rows written
 ...
 identical
 ```
@@ -156,7 +156,7 @@ uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
 ```
 
 ```
-2026-10-23 11:31:19,444 INFO sherpa_generator.simulation.simulator: simulated 2026-10-01: 231 rows
+2026-10-23 15:03:37,416 INFO sherpa_generator.simulation.simulator: simulated 2026-10-01: 231 rows
 ...
 simulated 2026-10-01 .. 2026-10-22: 4630 rows written
 ```
@@ -190,6 +190,7 @@ Every refused run exits with code 2 and writes nothing.
 $ make generate DAYS=1
 uv run sherpa-generate generate --days 1
 error: stored state has seed 42, scale 0.1; got seed 42, scale 1.0 (reset to start over)
+make: *** [Makefile:17: generate] Error 2
 ```
 
 **Start date on a later run.** `--start-date` only applies to the first run. Drop it, or `make reset` first.
@@ -210,7 +211,7 @@ error: start date 2026-10-23 is after yesterday (2026-10-22)
 
 ```
 $ uv run sherpa-generate generate --days 1 --scale 0.1
-2026-10-23 11:30:41,460 INFO sherpa_generator.simulation.simulator: nothing to simulate: already at 2026-10-22
+2026-10-23 15:04:03,351 INFO sherpa_generator.simulation.simulator: nothing to simulate: already at 2026-10-22
 nothing to simulate: already caught up to yesterday
 ```
 
@@ -257,14 +258,14 @@ ORDER BY status, sales_channel;
 ```
   status   | sales_channel | orders | order_total
 -----------+---------------+--------+-------------
- cancelled | app           |    143 |    16756.31
- cancelled | web           |    275 |    29810.02
- delivered | app           |   2648 |   282118.19
- delivered | web           |   4910 |   530568.58
- paid      | app           |     13 |     1304.02
- paid      | web           |     24 |     2626.04
- shipped   | app           |     25 |     2725.85
- shipped   | web           |     52 |     6144.99
+ cancelled | app           |    142 |    14722.44
+ cancelled | web           |    258 |    29797.96
+ delivered | app           |   2649 |   288414.68
+ delivered | web           |   4931 |   524794.06
+ paid      | app           |     13 |     1528.68
+ paid      | web           |     23 |     2369.64
+ shipped   | app           |     25 |     2462.87
+ shipped   | web           |     49 |     4782.28
 ```
 
 Orders per month show the seasonality (Black Friday week and December up, January down):
@@ -510,17 +511,16 @@ ORDER BY id;
 ```
  order_id |  method   | amount |  status  |       created_at
 ----------+-----------+--------+----------+------------------------
-       16 | gift_card |  23.21 | captured | 2025-10-24 17:00:42+00
-       16 | card      |  32.04 | captured | 2025-10-24 17:00:42+00
+        8 | gift_card |  21.80 | captured | 2025-10-24 10:51:07+00
+        8 | card      |  72.99 | captured | 2025-10-24 10:51:07+00
 
- order_id |  method   | amount |  status  |       created_at
-----------+-----------+--------+----------+------------------------
-       80 | card      |  18.63 | failed   | 2025-10-27 12:17:45+00
-       80 | gift_card |  33.11 | captured | 2025-10-27 12:21:00+00
-       80 | card      |  18.63 | captured | 2025-10-27 12:21:00+00
+ order_id | method | amount |  status  |       created_at
+----------+--------+--------+----------+------------------------
+       28 | card   | 143.96 | failed   | 2025-10-24 23:42:54+00
+       28 | card   | 143.96 | captured | 2025-10-24 23:47:46+00
 ```
 
-The failed order here is also a split payment: the card attempt failed and was retried together with the gift card.
+The failed card attempt of order 28 was retried a few minutes later and captured.
 
 Revenue sums only `captured` payments, never every row.
 
@@ -537,8 +537,8 @@ WHERE order_id = (
 ```
  order_id | promotion_id | coupon_code_id | amount
 ----------+--------------+----------------+--------
-      646 |           12 |                |  10.00
-      646 |            2 |              5 |  20.58
+      645 |           11 |                |   5.00
+      645 |            2 |              3 |  23.59
 ```
 
 The simulation state itself is one row:

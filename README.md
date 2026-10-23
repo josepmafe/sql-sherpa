@@ -50,7 +50,7 @@ Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
 uv run pre-commit install  # hooks enforce lint and format locally; there is no CI yet
 cp .env.example .env     # then replace the change-me passwords with real values
 make up                  # start Postgres
-make backfill DAYS=365   # simulate a year of data into the raw schemas (about 2.5 minutes)
+make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
 make deps                # install the dbt packages
 make build               # dbt: seeds, staging models and tests
 make docs                # generate and serve the dbt docs until you press Ctrl+C

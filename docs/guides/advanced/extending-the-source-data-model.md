@@ -77,7 +77,7 @@ FAILED generator/tests/database/test_raw_schema.py::TestRawSchema::test_table_co
             preferred_language=Language(LOCALE_BY_COUNTRY[session.country].split("_")[0]),
 ```
 
-Deriving instead of drawing keeps every other row identical: note the row count of a 30-day run at scale 0.1 before the change and compare it after: it is the same (one run wrote 7,934 rows; your count depends on the day you run, because the window ends yesterday). A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
+Deriving instead of drawing keeps every other row identical: note the row count of a 30-day run at scale 0.1 before the change and compare it after: it is the same (one run wrote 7,917 rows; your count depends on the day you run, because the window ends yesterday). A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
 
 **4. The test fixtures and a test.** Every `Customer(...)` must pass the new field, so add `preferred_language=Language.DE` to `make_customer` in `generator/tests/helpers.py`. Then test the rule in `generator/tests/behaviour/test_visitor_traffic.py`:
 
@@ -99,7 +99,7 @@ uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py 
 ```
 
 ```
-... passed in ...s
+52 passed in 15.88s
 ```
 
 **5. The source YAML** (`dbt/models/staging/shop/_shop__sources.yml`), under `customers`:
@@ -145,9 +145,9 @@ make docs-check
 ```
 
 ```
-09:36:13  132 of 148 PASS accepted_values_stg_shop__customers_preferred_language__de__en__es__fr__it__nl  [PASS in 0.08s]
-09:36:13  136 of 148 PASS not_null_stg_shop__customers_preferred_language ................ [PASS in 0.05s]
-09:36:13  Done. PASS=148 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=148
+12:58:05  157 of 174 PASS accepted_values_stg_shop__customers_preferred_language__de__en__es__fr__it__nl  [PASS in 0.17s]
+12:58:05  162 of 174 PASS not_null_stg_shop__customers_preferred_language ................ [PASS in 0.18s]
+12:58:06  Done. PASS=174 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=174
 ```
 
 Finish with `make test`, `make lint` and `make reset && make backfill DAYS=365 && make build`.
@@ -274,9 +274,7 @@ The wishlist simulator needs only the snapshot, so it sits with the browsing beh
 uv run --env-file .env pytest generator/tests -q
 ```
 
-```
-... passed, 2 deselected in ...s
-```
+Every test passes; the summary line also reports the 3 slow full-year tests as deselected.
 
 **8. dbt.** A source table entry in `_shop__sources.yml` with every column described, the staging model `dbt/models/staging/shop/stg_shop__wishlist_items.sql`:
 
@@ -311,10 +309,7 @@ make build
 make docs-check
 ```
 
-```
-...
-Done. PASS=N WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=N
-```
+The build ends with `Completed successfully` and `ERROR=0`, with the new view and its tests added to the counts, and `make docs-check` prints nothing.
 
 If the table should be checked for freshness, add a `freshness` block and `loaded_at_field` to its source entry, as `orders` has.
 
@@ -348,9 +343,9 @@ The draw is still one `choices` call per order, so the other tables keep their r
 **3. The staging `accepted_values` test.** It lists the allowed values, so the new data fails it until it is updated. With a 30-day run at scale 0.5 (at scale 0.1 a 5 % method may not show up at all):
 
 ```
-09:37:34  80 of 146 FAIL 1 accepted_values_stg_shop__payments_method__card__paypal__gift_card  [FAIL 1 in 0.13s]
+12:59:18  92 of 172 FAIL 1 accepted_values_stg_shop__payments_method__card__paypal__gift_card  [FAIL 1 in 0.19s]
 ...
-09:37:36  Done. PASS=145 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=146
+12:59:23  Done. PASS=171 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=172
 ```
 
 `FAIL 1` is one unexpected value. Add it in `_shop__models.yml`:
@@ -365,11 +360,11 @@ The draw is still one `choices` call per order, so the other tables keep their r
 ```
 
 ```
-09:38:41  2 of 8 PASS accepted_values_stg_shop__payments_method__card__paypal__gift_card__klarna  [PASS in 0.14s]
-09:38:41  Done. PASS=8 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=8
+12:59:44  2 of 9 PASS accepted_values_stg_shop__payments_method__card__paypal__gift_card__klarna  [PASS in 0.14s]
+12:59:45  Done. PASS=9 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=9
 ```
 
-The generator tests that cover payments still pass (`uv run --env-file .env pytest generator/tests/behaviour/test_order_lifecycle.py generator/tests/behaviour/test_after_sales.py`: 51 passed). Renaming or removing a value works the same way, and also breaks every downstream model that filters on the old value; search `dbt/` for it.
+The generator tests that cover payments still pass (`uv run --env-file .env pytest generator/tests/behaviour/test_order_lifecycle.py generator/tests/behaviour/test_after_sales.py`: 53 passed). Renaming or removing a value works the same way, and also breaks every downstream model that filters on the old value; search `dbt/` for it.
 
 ## 4. Add or tune a realism rule
 
@@ -395,7 +390,7 @@ E         Obtained: 0.14895
 E         Expected: 0.1 ± 0.02
 ...
 FAILED generator/tests/simulation/test_realism_rules.py::TestRealismRules::test_email_noise_rate
-1 failed, 18 passed in 3.33s
+1 failed, 18 passed in 1.01s
 ```
 
 Update it to the new spec value (`assert_rate(noisy, 0.15)`) and run the rule tests and the simulators that use the rule:
@@ -406,8 +401,8 @@ uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py 
 ```
 
 ```
-19 passed in 3.84s
-22 passed in 21.12s
+19 passed in 0.91s
+24 passed in 8.63s
 ```
 
 The staging cleanup needs no change, since `lower(trim(...))` handles any amount of noise. A new kind of noise needs new cleanup, and a dbt test that proves it (for example a `dbt_utils.expression_is_true` or an `accepted_values` test on the cleaned column), run with `make build` on regenerated data.
@@ -439,15 +434,23 @@ The behaviour tests check the rates on a 30-day run at scale 0.2 (for example `t
 uv run --env-file .env pytest -m slow
 ```
 
-The simulation takes as long as `make backfill DAYS=365` (2.5 minutes on a laptop), plus the test setup. The year is simulated once and shared by three tests:
+The simulation takes about as long as `make backfill DAYS=365` (3.5 to 4 minutes on a laptop), plus the test setup. The year (seed 42, the 365 days of 2025) is simulated once and shared by three tests:
 
-- `test_full_year_volumes` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %). With `-o log_cli=true --log-cli-level=INFO` it logs what it counted: `volumes {'customers': 4951, 'orders': 8090, 'events': 670844, 'leads': 5815}`.
+- `test_full_year_volumes` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %). With `-o log_cli=true --log-cli-level=INFO` it logs what it counted: `volumes {'customers': 4919, 'orders': 7766, 'events': 671292, 'leads': 5793}`.
 
 - `test_full_year_runtime` asserts a simulation runtime under 5 minutes (spec §5.2) and logs `runtime <seconds> s`. The limit is sensitive to load: with other work running against the same Postgres it can fail while the volumes pass; rerun it on an idle machine before reading that as a regression.
 
 - `test_top_buyers_hold_55_to_65_percent_of_net_revenue` asserts that the top 20 % of buyers (customers with at least one non-cancelled order, test accounts excluded) hold 55–65 % of net revenue (spec §4.4, a soft target). Net revenue follows spec §6.6: gross revenue (`quantity × unit_price`) minus discounts minus refunded revenue (return and goodwill refunds without their tax), over non-cancelled orders. It logs `top 20% of buyers hold 0.570 of net revenue`. It is the check for `PROPENSITY_SIGMA` and the visitor purchase rates.
 
-The expected result is `3 passed`.
+A passing run ends with:
+
+```
+collected 288 items / 285 deselected / 3 selected
+
+generator\tests\simulation\test_full_year_volume.py ...                  [100%]
+
+================ 3 passed, 285 deselected in 224.43s (0:03:44) ================
+```
 
 ## 6. Keep determinism intact
 
@@ -475,7 +478,9 @@ Breaking a rule shows up here. With `marketing_opt_in` drawn from the global `ra
 ```
 FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_fresh_runs_are_identical
 FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_resume_equals_single_run
-2 failed in 22.81s
+FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_crash_mid_day_rolls_back_and_resume_matches
+FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_crash_on_first_day_keeps_setup_and_resumes_from_start
+4 failed, 31 passed in 28.00s
 ```
 
 The reference run covers only 10 days at scale 0.1, so behaviour that starts later is not exercised: the same mistake in `CustomerDeletionSimulator`, whose deletions happen 30 or more days after signup, passes both tests. For a behaviour like that, add a test of your own that runs long enough, or test the simulator directly with a snapshot that triggers it.
