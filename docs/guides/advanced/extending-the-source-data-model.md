@@ -22,7 +22,7 @@ make test                                              # every test except the s
 make lint                                              # ruff, ruff format, mypy, sqlfluff
 make reset && uv run sherpa-generate generate --days 30 --scale 0.1   # fresh small dataset
 make build                                             # dbt on the dev target
-make docs-check                                        # every staging model and column described
+make docs-check                                        # every model and column described
 ```
 
 The raw schema is created once, so a new column or table only appears after `make reset`. A small dataset is enough to check the dbt side; the last step of each change is a full `make reset && make backfill DAYS=365 && make build`.

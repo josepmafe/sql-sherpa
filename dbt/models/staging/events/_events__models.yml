@@ -38,10 +38,14 @@ models:
         description: When the event happened on the client, as a timestamptz (the client's UTC offset is honoured).
         data_tests: [not_null]
       - name: received_at
-        description: When the tracker received the event (UTC).
+        description: When the tracker received the event (UTC); late events (R2) arrive 1 to under 4 days after occurred_at.
         data_tests: [not_null]
       - name: device_type
         description: desktop, mobile or tablet.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [desktop, mobile, tablet]
       - name: utm_source
         description: UTM source on the visit; null if none.
       - name: utm_medium
@@ -63,7 +67,5 @@ models:
               arguments:
                 to: ref('stg_shop__orders')
                 field: order_id
-              config:
-                where: "order_id is not null"
       - name: cart_value
         description: Cart value in EUR at the time of the event, numeric(12,2); null if not applicable.

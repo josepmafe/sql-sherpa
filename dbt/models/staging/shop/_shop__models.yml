@@ -148,8 +148,10 @@ models:
         description: Colour name.
       - name: cost_price
         description: What the variant costs the shop, EUR, net of tax.
+        data_tests: [not_null]
       - name: list_price
         description: Selling price, EUR, net of tax.
+        data_tests: [not_null]
       - name: created_at
         description: When the variant was created (UTC).
       - name: updated_at
@@ -192,14 +194,19 @@ models:
                 values: [placed, paid, shipped, delivered, cancelled]
       - name: subtotal
         description: Sum of line prices before discounts, EUR, net of tax.
+        data_tests: [not_null]
       - name: discount_total
         description: Total discount applied to the order, EUR.
+        data_tests: [not_null]
       - name: shipping_amount
         description: Shipping charged to the customer, EUR.
+        data_tests: [not_null]
       - name: tax_amount
         description: Tax charged, EUR.
+        data_tests: [not_null]
       - name: order_total
         description: subtotal - discount_total + shipping_amount + tax_amount, EUR.
+        data_tests: [not_null]
       - name: sales_channel
         description: Channel the order came from.
         data_tests:
@@ -237,6 +244,7 @@ models:
         description: Units sold.
       - name: unit_price
         description: Variant list price at the time of the order, net of tax, before discounts.
+        data_tests: [not_null]
 
   - name: stg_shop__order_status_history
     description: One row per order status transition, including the initial placed status.
@@ -283,6 +291,7 @@ models:
                 values: [card, paypal, gift_card]
       - name: amount
         description: Amount of this payment, EUR.
+        data_tests: [not_null]
       - name: payment_status
         description: Payment status.
         data_tests:
@@ -310,6 +319,7 @@ models:
         description: Carrier name.
       - name: shipping_cost
         description: What the shipment costs the shop (not what the customer paid), EUR.
+        data_tests: [not_null]
       - name: shipped_at
         description: When the shipment left the warehouse (UTC).
       - name: delivered_at
@@ -331,8 +341,10 @@ models:
                 values: [percent, fixed, free_shipping]
       - name: value
         description: Discount value; a percentage for percent, EUR otherwise.
+        data_tests: [not_null]
       - name: min_order_value
         description: Minimum order value needed to qualify, EUR.
+        data_tests: [not_null]
       - name: campaign_id
         description: Marketing campaign that promotes it; null if none.
         data_tests:
@@ -397,6 +409,7 @@ models:
                 field: coupon_code_id
       - name: amount
         description: Discount amount, EUR.
+        data_tests: [not_null]
 
   - name: stg_shop__returns
     description: One row per return request.
@@ -489,6 +502,7 @@ models:
                 field: payment_id
       - name: amount
         description: Amount paid back, EUR, including tax.
+        data_tests: [not_null]
       - name: refund_reason
         description: Why the refund was issued.
         data_tests:

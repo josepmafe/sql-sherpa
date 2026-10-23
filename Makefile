@@ -55,7 +55,7 @@ docs-prod:
 # docs generate writes manifest.json (the YAML) and catalog.json (the real columns); the checker compares them.
 docs-check:
 	$(DBT) --quiet docs generate
-	uv run python scripts/check_docs_coverage.py --target-path dbt/target --path models/staging
+	uv run python scripts/check_docs_coverage.py --target-path dbt/target --path models
 
 lint:
 	uv run ruff check .

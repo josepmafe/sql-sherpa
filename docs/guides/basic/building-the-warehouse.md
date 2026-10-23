@@ -274,7 +274,7 @@ The landing page is the `__overview__` doc block in `dbt/models/overview.md`. On
 
 The **lineage graph** button (bottom right) draws the DAG: sources on the left, flowing into the staging views, with the seeds feeding the models that join them (`country_code_variants` into `stg_shop__customers` and `stg_shop__addresses`). `dim_date` stands alone because it reads nothing, and so does the `channel_mapping` seed, which no model reads. The `--select` box at the bottom takes the same syntax as the CLI: `+stg_shop__customers` shows the model with its source and seed. Click a node to open its page.
 
-`make docs-check` regenerates the docs quietly and fails if a staging model or column has no description; it prints nothing when everything is documented.
+`make docs-check` regenerates the docs quietly and fails if a model or column (staging or marts) has no description; it prints nothing when everything is documented.
 
 ## When a test fails
 

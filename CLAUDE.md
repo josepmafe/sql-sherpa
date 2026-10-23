@@ -37,14 +37,14 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make build`: check source freshness, then `dbt build` on the dev target.
 - `make build-prod`: the same on the prod target, with artifacts in `target-prod`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
-- `make docs-check`: fail if a staging model or column has no description.
+- `make docs-check`: fail if a model or column under `dbt/models` has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.
 - `make test`: pytest with `.env` loaded (`slow` tests excluded); the integration tests need Postgres (`make up`).
 
 ## Conventions
 
 - Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `dev`). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
-- dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_` / `obt_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
+- dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
 - Time-relative columns use `as_of_date`, never `now()`.

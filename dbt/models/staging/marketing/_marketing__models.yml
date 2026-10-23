@@ -11,6 +11,7 @@ models:
         description: Campaign name.
       - name: utm_campaign
         description: Slug used as utm_campaign in tracked links.
+        data_tests: [unique]
       - name: channel
         description: Campaign channel.
         data_tests:
@@ -23,6 +24,7 @@ models:
         description: Campaign end (UTC).
       - name: budget
         description: Planned budget, EUR.
+        data_tests: [not_null]
 
   - name: stg_marketing__ad_spend_daily
     description: >
@@ -47,6 +49,7 @@ models:
                 field: campaign_id
       - name: spend
         description: Amount spent, EUR.
+        data_tests: [not_null]
       - name: impressions
         description: Ad impressions reported by the platform.
       - name: clicks

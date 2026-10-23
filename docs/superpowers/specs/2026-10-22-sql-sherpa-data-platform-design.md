@@ -227,7 +227,7 @@ Changing `seed` or `scale` against existing state is an error (use `reset`).
 
 ## 6. dbt Transformation Layers
 
-Naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_` / `obt_`. YAML per directory (`_<dir>__models.yml`, `_<dir>__sources.yml`).
+Naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory (`_<dir>__models.yml`, `_<dir>__sources.yml`).
 
 ### 6.1 Seeds
 - `countries` (code, name, region, is_eu) — one row per country; `code` is the canonical ISO alpha-2 code and the primary key.
@@ -259,7 +259,7 @@ Models with unit tests (§7) are views, not ephemeral, so they can be unit-teste
 
 **Global rules:** test accounts (R5) and all their orders/events are excluded everywhere. Soft-deleted customers (R6) are kept with `email`, `first_name`, `last_name` set to null and `is_deleted = true`, so facts keep referential integrity. **`as_of_date`** = `max(order_date)` over `fct_orders` (non-test orders, UTC dates; computed from the same CTE inside models that need it). All "days since" columns use it, never `now()`, so results are deterministic.
 
-**Sessionization dependency.** These columns need `int_events__sessionized` (data-platform-3): `fct_orders.session_id` and `marketing_channel`, `dim_customers.acquisition_channel` and `acquisition_campaign_id`, `obt_order_items.marketing_channel`. The data-platform-2 plan has to resolve this sequencing dependency, for example by moving the sessionization forward or by leaving these columns out of data-platform-2 (§8).
+**Sessionization dependency.** These columns need `int_events__sessionized` (data-platform-3): `fct_orders.session_id` and `marketing_channel`, `dim_customers.acquisition_channel` and `acquisition_campaign_id`. The data-platform-2 plan has to resolve this sequencing dependency, for example by moving the sessionization forward or by leaving these columns out of data-platform-2 (§8).
 
 **Domains** (`meta.domain`, consumed by the agent): `sales`, `customers`, `products`, `marketing_web`, `shared`.
 
@@ -319,9 +319,6 @@ lead_id, email (pii), lead_source, utm_campaign, lifecycle_stage, created_at, is
 
 #### Consumption
 
-**`obt_order_items`** — 1 row per order line · PK `order_item_id` · domain `sales`
-All `fct_order_items` columns, plus: order_number, current_status, sales_channel, marketing_channel, ship_country_code; customer country_name, region, customer_segment, is_vip, acquisition_channel (from `dim_customers` **v1**, pinned explicitly); product_name, brand, category_l1/l2/l3, size, color; `primary_promotion_name` (the discount with the largest amount on the order; null if none).
-
 **`agg_daily_sales`** (data-platform-4) — 1 row per `order_date` × `sales_channel` · materialized view · domain `sales`
 order_date, sales_channel, orders, items, gross_revenue, discount_amount, net_revenue, avg_order_value (non-cancelled orders only). No contract (dbt contracts are not supported on materialized views). Part of the marts schema and therefore readable by the agent, but not required by it.
 
@@ -372,7 +369,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 **Acceptance:** `make up && make backfill DAYS=365 && make deps && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
 
 ### data-platform-2 — Core marts
-**Builds:** intermediate order models, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_returns`, `fct_refunds`, `obt_order_items`.
+**Builds:** intermediate order models, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_returns`, `fct_refunds`.
 **dbt features:** ephemeral/table materializations, **macros & Jinja** (e.g. `cents_rounding_allocation`, `normalize_email`), **custom generic test**, **singular tests**, **dbt_expectations**, **model contracts** (enforced, with `primary_key` and `not_null` constraints; FKs as `relationships` tests, not DB constraints), **doc blocks** for metrics (`metric_<name>`), `meta` extended to the other marts (`domain`, `grain`, `primary_key`, `pii`, `synonyms`), the `eval` and `agent` targets with `make eval-db` (§3), **`persist_docs`** (relations + columns) on marts, Postgres **`indexes`** config, **`grants`** (`select` to `sherpa_agent`) on marts, **hooks**: `on-run-start` creates `pg_trgm` (a trusted extension in PG 16, so the database owner can create it); `on-run-end` grants `USAGE` on `marts` to `sherpa_agent`; post-hook `ANALYZE` on marts. B-tree indexes via the `indexes` config. GIN trigram indexes on `dim_products.product_name`, `brand`, `category_l1/l2/l3` via a **`create_trigram_index(column)` macro called from a post-hook** (`CREATE INDEX IF NOT EXISTS … USING gin (col gin_trgm_ops)`), because the `indexes` config has no operator-class option. **`dbt run-operation`**: a `grant_agent_access` macro that re-applies agent grants on demand (same macro as the on-run-end hook).
 **Sequencing notes:** the session-derived columns listed in §6.5 depend on the sessionization scheduled for data-platform-3, and cost at time of sale depends on the data-platform-3 snapshot (§6.3); the plan resolves both.
 **Acceptance:** all mart tests pass; `sherpa_agent` can `SELECT` from marts and no other application schema (system catalogs are readable by every role; the agent's SQL guard blocks them); contracts reject a deliberately wrong column type (verified once, manually).
@@ -390,7 +387,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 - **Analyses:** revenue reconciliation raw vs marts; incremental vs full-refresh diff.
 - **Tags + YAML selectors:** `nightly`, `marts_only`, `marketing_web`, `ci`.
 - **Materialized view:** `agg_daily_sales`, feeding the Executive Sales exposure. Postgres drops dependent views with `CASCADE` when `fct_orders` is rebuilt, so every selector and Make target that builds `fct_orders` uses the `+` children operator (`fct_orders+`). `make slim` already does this via `state:modified+`.
-- **Model versions:** `dim_customers` v2 replaces `customer_segment` with an RFM-based `rfm_segment` (recency/frequency/monetary quintiles → `champions`, `loyal`, `potential`, `at_risk`, `hibernating`). **`latest_version: 1`** — v2 is a pre-release that consumers can opt into with `ref('dim_customers', v=2)`. v1 sets `alias: dim_customers`, so the latest version is a real dbt node at the unversioned name, with contract, grants and docs. Promoting v2 later (by flipping `latest_version` and moving the alias) is a deliberate breaking change to the agent interface and out of scope here. v1 gets a `deprecation_date` one year out.
+- **Model versions:** `dim_customers` v2 replaces `customer_segment` with an RFM-based `rfm_segment` (recency/frequency/monetary quintiles → `champions`, `loyal`, `potential`, `at_risk`, `hibernating`). **`latest_version: 1`** — v2 is a pre-release that consumers can opt into with `ref('dim_customers', v=2)`; a downstream model or exposure pins v1 explicitly with `ref('dim_customers', v=1)`, and the data-platform-4 plan chooses which. v1 sets `alias: dim_customers`, so the latest version is a real dbt node at the unversioned name, with contract, grants and docs. Promoting v2 later (by flipping `latest_version` and moving the alias) is a deliberate breaking change to the agent interface and out of scope here. v1 gets a `deprecation_date` one year out.
 - **`on-run-end` audit hook** writing `results` to `ops.dbt_run_results`.
 - **State and environment commands.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`. `make clone` runs **`dbt clone`** of prod relations into dev schemas, so dev can query full data without rebuilding. **`--empty`** is used in CI as a first schema-only build that catches SQL and contract errors in seconds. **`--sample`** is used for fast dev builds on recent data, if the pinned dbt version supports it on Postgres; otherwise the reason it was skipped is recorded in §9.
 
@@ -427,7 +424,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 | `make deps` / `make seed` | `dbt deps` / `dbt seed` on `dev` |
 | `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod` |
 | `make docs` / `make docs-prod` | `dbt docs generate && dbt docs serve` on dev / prod (`--target-path target-prod`) |
-| `make docs-check` | `dbt docs generate`, then check the staging models' YAML columns against the real columns |
+| `make docs-check` | `dbt docs generate`, then check every model's YAML columns against the real columns |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt` |
 | `make test` | `pytest` with `.env` loaded; integration tests need Postgres |
 
