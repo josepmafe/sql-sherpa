@@ -167,7 +167,7 @@ Passwords come from `.env`.
 | R11 | Ad-platform clicks ≠ tracked sessions | clicks = paid sessions × U(0.85, 1.15) | don't treat them as equal |
 | R12 | App orders have no web events | 35% of orders are `app` | sessions and orders don't fully reconcile |
 
-Plus baseline distributions: weekly cycle (weekends +20%), seasonality (Black Friday week ×3, December ×1.6, January ×0.7), and a Pareto customer value distribution (lognormal propensity; top 20% of buyers should produce 70–85% of net revenue).
+Plus baseline distributions: weekly cycle (weekends +20%), seasonality (Black Friday week ×3, December ×1.6, January ×0.7), and a Pareto-like customer value distribution (lognormal propensity drives repeat purchases; the top 20% of buyers produce roughly 55–65% of net revenue). These distribution targets are soft: the data aims to be plausible rather than to hit exact numbers.
 
 ---
 
@@ -195,8 +195,8 @@ Per simulated day (before seasonality multipliers):
 
 1. **Catalog drift:** apply R10 price changes; activate/deactivate ~0.1% of products.
 2. **Leads:** ~16 new leads; email sends for active campaigns and a weekly newsletter (Tuesdays) to all `subscriber`+ leads; open 25%, click 3% of sends.
-3. **Sessions:** ~400 sessions, channel mix: direct 25%, organic 25%, paid_search 18%, paid_social 12%, email 10%, affiliate 5%, referral 5%. Each anonymous visitor has 1–3 devices (anonymous_ids). Funnel per session: `page_view` → 0–6 `product_view` (70% view ≥1) → `add_to_cart` (30% of viewing sessions) → `begin_checkout` (45% of carts) → `purchase` (70% of checkouts). Overall web session conversion ≈ 3.5%.
-4. **Signups:** ~14/day; ~35% of signups match an existing lead's email (with R3 noise); events after `signup`/`login` carry `user_id`.
+3. **Sessions:** ~400 sessions, channel mix: direct 25%, organic 25%, paid_search 18%, paid_social 12%, email 10%, affiliate 5%, referral 5%. Each anonymous visitor has 1–3 devices (anonymous_ids). Funnel per session: `page_view` → 0–6 `product_view` (70% view ≥1) → `add_to_cart` (30% of viewing sessions) → `begin_checkout` (45% of carts) → `purchase` (70% of a returning customer's checkouts; new visitors see step 4). ~38% of sessions come from existing customers, chosen by propensity. Overall web session conversion ≈ 3.1%.
+4. **Signups:** ~12/day, by new visitors at checkout; only 20% of them buy in that session, so many accounts never order and most orders are existing customers' repeat purchases. ~35% of signups match an existing lead's email (with R3 noise); events after `signup`/`login` carry `user_id`.
 5. **Orders:** every `purchase` event creates a `web` order; `app` orders are added so they make up 35% of orders (R12). Repeat purchases follow each customer's propensity. 1–4 lines per order. Discounts per active promotions (25% of orders discounted). Shipping €4.95, free above €75 or with `free_shipping`. Tax 20% on `subtotal − discount_total`.
 6. **Lifecycle progression of open orders:** `placed → paid` same day (R7 failures retried; 2% never paid → `cancelled` next day); `paid → shipped` after 1–3 days; `shipped → delivered` after 2–5 days; 3% of paid orders cancelled before shipping (refund reason `cancellation`).
 7. **Returns & refunds:** 12% of delivered orders get a return within 30 days (footwear 2× more likely, reason `size`); 1–all lines, partial quantities allowed; 90% approved; refund on `received` 3–10 days after request, amount = returned lines' net value (after allocated discount) incl. tax. 1% of delivered orders get a goodwill refund of 5–20% of `(subtotal − discount_total + tax_amount)` — i.e. never refunding shipping. Cancellation refunds return the full captured amount (incl. shipping).
@@ -344,7 +344,7 @@ Precision: amounts `numeric(12,2)`; rates computed as `numeric` and rounded only
 | `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily), `expression_is_true`, `accepted_range` |
 | `dbt_expectations` | `expect_column_pair_values_A_to_be_greater_than_B` (gross ≥ net), `expect_column_values_to_match_regex` (email in staging), `expect_row_values_to_have_recent_data` (events, severity warn), `expect_table_row_count_to_be_between` and `expect_column_mean_to_be_between` (generator distributions, severity warn) |
 | Custom generic | `column_sums_match(compare_model, compare_column, group_by)` — e.g. allocated line discounts sum to order discounts |
-| Singular | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers ≥ 70% of net revenue, warn) |
+| Singular | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise) |
 | Unit tests | discount allocation rounding remainder; sessionization (29 vs 31 min gap; session across midnight; late event inserted into an existing session); `customer_segment` boundaries (90/91/180/181 days); refunded revenue tax removal |
 | Freshness | `raw_events.events` (`received_at`), `raw_shop.orders` (`updated_at`), `raw_crm.leads` (`updated_at`): warn 36h, error 72h; `ad_spend_daily` on `spend_date::timestamp`: warn 48h. `dbt build` does not check freshness, so `make build` runs `dbt source freshness` first. |
 
@@ -447,7 +447,7 @@ Agent work can start once data-platform-2 is done; data-platform-3–data-platfo
 - Contracts enforce PK/not-null in the database; foreign keys are tested, not enforced.
 - CI does a full build on tiny data; slim/defer is local-only.
 - Backfill runs in 7-day chunks with snapshots between chunks.
-- Scale of ~8k orders / ~600k events per simulated year, consistent with a realistic ~3.5% session conversion.
+- Scale of ~8k orders / ~600k events per simulated year, consistent with a realistic ~3.1% session conversion.
 - Snapshots live in one shared `snapshots` schema for all targets; prod artifacts in `dbt/target-prod/`.
 - Cancellation refunds don't reduce revenue (the cancelled order already contributes 0); goodwill refunds never include shipping.
 - `new_customers` / CAC are campaign-level (via `acquisition_campaign_id`), so they sum correctly.
