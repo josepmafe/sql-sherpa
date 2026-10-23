@@ -4,6 +4,8 @@
 DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
 # Prod artifacts (manifest.json, catalog.json, ...) go to their own folder so dev runs never overwrite them.
 PROD = --target prod --target-path target-prod
+# The eval database name is read by make from the environment or the command line (default sherpa_eval);
+# make does not read .env for it. eval-db refuses names that do not start with sherpa_eval.
 # Eval artifacts and database: a frozen warehouse (separate database) built by `make eval-db`.
 EVAL = --target eval --target-path target-eval
 SHERPA_EVAL_DB_NAME ?= sherpa_eval
@@ -68,7 +70,9 @@ docs-check:
 # Rebuilds the frozen eval database from scratch (fixed seed and dates); never touches the main database.
 # No source freshness: the frozen data is old on purpose.
 eval-db:
-	docker compose exec -T postgres sh -c 		'psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)"'
+	$(if $(filter-out $(SHERPA_DB_NAME),$(filter sherpa_eval%,$(SHERPA_EVAL_DB_NAME))),,$(error SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database, got '$(SHERPA_EVAL_DB_NAME)'))
+	docker compose exec -T postgres sh -c \
+		'psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)"'
 	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run sherpa-generate generate --seed 42 --start-date 2025-01-01 --days 365
 	$(DBT) build $(EVAL)
 	$(DBT) docs generate $(EVAL)
