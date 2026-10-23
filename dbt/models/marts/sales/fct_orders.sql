@@ -127,6 +127,7 @@ joined as (
         lines.discount_amount,
         lines.cogs,
         lines.returned_cogs,
+        payments.primary_payment_method,
         (orders.placed_at at time zone 'UTC')::date as order_date,
         orders.order_status = 'cancelled' as is_cancelled,
         -- An app order has no session (R12). A web order whose purchase
@@ -136,7 +137,6 @@ joined as (
             else coalesce(purchase_sessions.marketing_channel, 'unknown')
         end as marketing_channel,
         coalesce(payments.captured_amount, 0) as captured_amount,
-        payments.primary_payment_method,
         coalesce(payments.payment_count, 0) as payment_count,
         coalesce(payments.failed_payment_count, 0) as failed_payment_count,
         coalesce(refunds.refunded_amount, 0) as refunded_amount,
