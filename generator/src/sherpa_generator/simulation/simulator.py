@@ -34,8 +34,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ONE_DAY = timedelta(days=1)
-# Spec A §5.1: the output depends only on seed, scale and start date, so the catalog cannot depend on the first run's
-# yesterday; it spans at most this many days from the start date.
+# Spec A §5.1: the output depends only on seed, scale and start date for ranges completed one year after the start date.
+# The catalog spans at most this many days from the start date, so it is independent of the first run's yesterday once
+# the start date is at least this many days before it; a younger dataset's catalog stops at that yesterday.
 CATALOG_HORIZON_DAYS = 365
 
 

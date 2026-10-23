@@ -99,7 +99,7 @@ uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py 
 ```
 
 ```
-50 passed in 14.42s
+... passed in ...s
 ```
 
 **5. The source YAML** (`dbt/models/staging/shop/_shop__sources.yml`), under `customers`:
@@ -275,7 +275,7 @@ uv run --env-file .env pytest generator/tests -q
 ```
 
 ```
-249 passed, 2 deselected in 205.93s (0:03:25)
+... passed, 2 deselected in ...s
 ```
 
 **8. dbt.** A source table entry in `_shop__sources.yml` with every column described, the staging model `dbt/models/staging/shop/stg_shop__wishlist_items.sql`:
@@ -313,7 +313,7 @@ make docs-check
 
 ```
 ...
-Done. PASS=153 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=153
+Done. PASS=N WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=N
 ```
 
 If the table should be checked for freshness, add a `freshness` block and `loaded_at_field` to its source entry, as `orders` has.
@@ -441,19 +441,15 @@ uv run --env-file .env pytest -m slow
 
 The simulation takes as long as `make backfill DAYS=365` (2.5 minutes on a laptop), plus the test setup. It holds two tests:
 
-- `test_full_year_volumes_and_runtime` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %) and a simulation runtime under 5 minutes (spec §5.2). With `-o log_cli=true --log-cli-level=INFO` it logs what it measured: `runtime <seconds> s, volumes {'customers': 4951, 'orders': 8090, 'events': 670844, 'leads': 5815}`. The runtime limit is sensitive to load: with other work running against the same Postgres it fails while every volume is within tolerance.
+- `test_full_year_volumes_and_runtime` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %) and a simulation runtime under 5 minutes (spec §5.2). With `-o log_cli=true --log-cli-level=INFO` it logs what it measured: `runtime <seconds> s, volumes {'customers': 4951, 'orders': 8090, 'events': 670844, 'leads': 5815}`. The runtime limit is sensitive to load: with other work running against the same Postgres it can fail the runtime assertion while every volume is within tolerance; rerun it on an idle machine before reading that as a regression.
 
   ```
-  E       assert 509.1583148000027 < 300
-  ...
-  FAILED generator/tests/simulation/test_full_year_volume.py::test_full_year_volumes_and_runtime
-  ========== 1 failed, 257 deselected, 1 xfailed in 512.59s (0:08:32) ===========
+  2 passed, 270 deselected in 161.62s (0:02:41)
   ```
 
-  Rerun it on an idle machine before reading a runtime failure as a regression.
 - `test_top_buyers_hold_55_to_65_percent_of_revenue` asserts that the top 20 % of buyers (customers with at least one non-cancelled order) hold 55–65 % of that revenue (spec §4.4, a soft target). On the 365-day dataset above they hold 0.575. It is the check for `PROPENSITY_SIGMA` and the visitor purchase rates.
 
-The expected result is `2 passed`.
+The expected result is `2 passed`, as in the output above.
 
 ## 6. Keep determinism intact
 
