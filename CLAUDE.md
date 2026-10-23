@@ -31,7 +31,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
 - `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
 - `make status`: print the simulated date range and the row count of every raw table.
-- `make reset`: drop the dbt schemas and the raw schemas.
+- `make reset`: drop the dbt schemas and the raw schemas, then recreate the raw schemas empty.
 - `make deps`: install the dbt packages.
 - `make seed`: load the dbt seeds.
 - `make build`: check source freshness, then `dbt build` on the dev target.
@@ -39,7 +39,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a staging model or column has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.
-- `make test`: pytest with `.env` loaded (`slow` tests excluded).
+- `make test`: pytest with `.env` loaded (`slow` tests excluded); the integration tests need Postgres (`make up`).
 - `make mutate MODULE=<path>`: run mutmut on one generator module.
 
 ## Conventions

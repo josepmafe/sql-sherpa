@@ -45,7 +45,7 @@ It is a learning project, built to production standards: a realistic synthetic e
 Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
 
 ```bash
-cp .env.example .env     # then set the passwords
+cp .env.example .env     # then replace the change-me passwords with real values
 make up                  # start Postgres
 make backfill DAYS=365   # simulate a year of data into the raw schemas
 make deps                # install the dbt packages
