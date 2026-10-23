@@ -67,10 +67,10 @@ class TestCatalogBuilder:
         categories = {c.id: c for c in changes.inserted(Category)}
         root_of = {p.id: self._root(categories, p.category_id).name for p in changes.inserted(Product)}
         ranges = {
-            "Footwear": (60, 180),
-            "Apparel": (20, 120),
-            "Accessories": (10, 80),
-            "Equipment": (30, 300),
+            "Footwear": (30, 75),
+            "Apparel": (10, 45),
+            "Accessories": (5, 25),
+            "Equipment": (12, 80),
         }
 
         for variant in changes.inserted(ProductVariant):

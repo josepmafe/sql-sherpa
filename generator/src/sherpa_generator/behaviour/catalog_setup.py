@@ -68,10 +68,10 @@ APPAREL_SIZES: Final = ("XS", "S", "M", "L", "XL", "XXL")
 ONE_SIZE: Final = ("one-size",)
 SIZES_BY_ROOT: Final = {"Footwear": FOOTWEAR_SIZES, "Apparel": APPAREL_SIZES}
 LIST_PRICE_RANGE_BY_ROOT: Final = {
-    "Footwear": (60, 180),
-    "Apparel": (20, 120),
-    "Accessories": (10, 80),
-    "Equipment": (30, 300),
+    "Footwear": (30, 75),
+    "Apparel": (10, 45),
+    "Accessories": (5, 25),
+    "Equipment": (12, 80),
 }
 PRICE_ENDINGS: Final = (Decimal("0.99"), Decimal("0.95"))
 COST_RATIO_RANGE: Final = (0.30, 0.60)
