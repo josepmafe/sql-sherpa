@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: >
+      Calendar dimension, one row per day from var date_spine_start to var date_spine_end. Join
+      facts to it on their date column to group by week, month, quarter or year, or to filter
+      weekends and Black Friday week.
+    config:
+      # meta is free-form metadata that dbt copies into the manifest; the agent reads it.
+      meta:
+        domain: shared
+        grain: one row per calendar day
+        primary_key: date_day
+    columns:
+      - name: date_day
+        description: The calendar day. Primary key.
+        data_tests: [unique, not_null]
+      - name: week_start
+        description: Monday of the week the day belongs to.
+      - name: month_start
+        description: First day of the month.
+      - name: quarter
+        description: Calendar quarter, 1 to 4.
+      - name: year
+        description: Calendar year.
+      - name: day_of_week_name
+        description: English day name, Monday to Sunday.
+      - name: is_weekend
+        description: True on Saturday and Sunday.
+      - name: is_black_friday_week
+        description: True from Monday to Sunday of the week containing the 4th Friday of November.

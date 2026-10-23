@@ -43,6 +43,7 @@ packages = ["generator/src/sherpa_generator"]
 
 [tool.pytest.ini_options]
 testpaths = ["generator/tests", "tests"]
+pythonpath = ["scripts"]  # scripts/ is not a package; this lets tests/scripts import its modules
 addopts = '-m "not slow"'  # an explicit -m on the command line replaces this
 markers = [
     "integration: needs Postgres",
@@ -55,6 +56,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "T20", "LOG", "G", "C4", "TC", "PT", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["T20"]  # scripts print their results (CLAUDE.md)
 
 [tool.ruff.lint.flake8-type-checking]
 runtime-evaluated-base-classes = [
