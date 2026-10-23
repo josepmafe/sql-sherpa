@@ -340,14 +340,16 @@ Without the `limit` the query returns all 15 dumbbell products. `product_name % 
 
 ## Connecting as `sherpa_agent`
 
-The agent connects as the `sherpa_agent` role, which can read **only the `marts` schema** (and use the functions in `extensions`) on prod and on the frozen eval database. It cannot read staging, intermediate, seeds, the raw schemas or the `dev_` schemas, and its queries stop after 5 seconds. dbt grants this access at the end of every run on those targets (`make grant-agent` re-applies it without a build).
+The agent connects as the `sherpa_agent` role, which can read **only the `marts` schema** (and use the functions in `extensions`) on prod and on the frozen eval database. It cannot read staging, intermediate, seeds, the raw schemas or the `dev_` schemas, cannot create temporary tables or large objects, and its queries stop after 5 seconds. dbt grants this access at the end of every run on those targets (`make grant-agent` re-applies it without a build).
 
-Load the variables from `.env` into your shell without printing them, then run psql inside the container (the password comes from `$SHERPA_AGENT_PASSWORD`):
+Inside the container, Postgres trusts every connection over the local socket and over `127.0.0.1`: a `docker compose exec ... psql -U sherpa_agent` there logs in without checking any password. Connections from any other address must pass a `scram-sha-256` password check, including the container's own network address, which is how the function below connects. The container already has the variables from `.env` in its environment, so the password is read there, inside the container: it never appears on a command line or in the host's process list, and nothing from `.env` is loaded into your shell:
 
 ```bash
-set -a; . ./.env; set +a
-AGENT="docker compose exec -T -e PGPASSWORD=$SHERPA_AGENT_PASSWORD postgres psql -U sherpa_agent -d sherpa"
-$AGENT -c "select count(*) from marts.fct_orders"
+agent_psql() {
+  docker compose exec -T postgres sh -c \
+    'PGPASSWORD="$SHERPA_AGENT_PASSWORD" exec psql -h "$(hostname -i)" -U "$SHERPA_AGENT_USER" -d "$POSTGRES_DB" "$@"' sh "$@"
+}
+agent_psql -c "select count(*) from marts.fct_orders"
 ```
 
 ```
@@ -356,12 +358,14 @@ $AGENT -c "select count(*) from marts.fct_orders"
   8033
 ```
 
+The single quotes stop your shell from expanding the variables, so the container's shell does it. Avoid the shortcut of loading `.env` into your shell (`set -a; . ./.env; set +a`) and putting `PGPASSWORD=$SHERPA_AGENT_PASSWORD` in a command: the expanded password then shows in the process list, and the shell parses `.env` as a script, so a value with spaces or `$` breaks unless it is quoted.
+
 Anything outside the marts is refused:
 
 ```bash
-$AGENT -c "select count(*) from staging.stg_shop__orders"
-$AGENT -c "select count(*) from raw_shop.orders"
-$AGENT -c "select count(*) from dev_marts.fct_orders"
+agent_psql -c "select count(*) from staging.stg_shop__orders"
+agent_psql -c "select count(*) from raw_shop.orders"
+agent_psql -c "select count(*) from dev_marts.fct_orders"
 ```
 
 ```
@@ -370,9 +374,15 @@ ERROR:  permission denied for schema raw_shop
 ERROR:  permission denied for schema dev_marts
 ```
 
-Fuzzy search works for the agent too (`select similarity('dumbell', 'dumbbell')` returns 0.7), and `show statement_timeout` returns `5s`. For the frozen eval database use `-d sherpa_eval` ([Building the warehouse](building-the-warehouse.md#the-frozen-eval-database)).
+Fuzzy search works for the agent too (`select similarity('dumbell', 'dumbbell')` returns 0.7), and `show statement_timeout` returns `5s`. For the frozen eval database add `-d sherpa_eval` (`agent_psql -d sherpa_eval -c "..."`; the last `-d` wins; see [Building the warehouse](building-the-warehouse.md#the-frozen-eval-database)).
 
-`pytest -m warehouse` checks all of this against the real database (the `warehouse` marker needs `make build-prod`, and the test for `dev_marts` also needs `make build`).
+The `warehouse` tests check all of this against the real databases:
+
+```bash
+uv run --env-file .env pytest -m warehouse
+```
+
+They need `make build-prod` (the prod marts), `make build` (the test that `dev_marts` stays closed) and `make eval-db` (the eval database tests).
 
 ## Next
 
