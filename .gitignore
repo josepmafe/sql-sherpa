@@ -12,6 +12,7 @@ __pycache__/
 # dbt
 dbt/target/
 dbt/target-prod/
+dbt/target-eval/
 dbt/dbt_packages/
 dbt/logs/
 dbt/.user.yml

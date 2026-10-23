@@ -36,6 +36,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make seed`: load the dbt seeds.
 - `make build`: check source freshness, then `dbt build` on the dev target.
 - `make build-prod`: the same on the prod target, with artifacts in `target-prod`.
+- `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `dbt/models` has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.

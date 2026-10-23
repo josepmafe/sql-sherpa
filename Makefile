@@ -1,9 +1,13 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check eval-db lint test
 
 # dbt runs from dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
 # Prod artifacts (manifest.json, catalog.json, ...) go to their own folder so dev runs never overwrite them.
 PROD = --target prod --target-path target-prod
+# Eval artifacts and database: a frozen warehouse (separate database) built by `make eval-db`.
+EVAL = --target eval --target-path target-eval
+SHERPA_EVAL_DB_NAME ?= sherpa_eval
+export SHERPA_EVAL_DB_NAME
 DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit
 
 up:
@@ -60,6 +64,14 @@ docs-prod:
 docs-check:
 	$(DBT) --quiet docs generate
 	uv run python scripts/check_docs_coverage.py --target-path dbt/target --path models
+
+# Rebuilds the frozen eval database from scratch (fixed seed and dates); never touches the main database.
+# No source freshness: the frozen data is old on purpose.
+eval-db:
+	docker compose exec -T postgres sh -c 		'psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)"'
+	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run sherpa-generate generate --seed 42 --start-date 2025-01-01 --days 365
+	$(DBT) build $(EVAL)
+	$(DBT) docs generate $(EVAL)
 
 lint:
 	uv run ruff check .
