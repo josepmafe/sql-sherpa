@@ -47,7 +47,7 @@ addopts = '-m "not slow and not warehouse"'  # an explicit -m on the command lin
 markers = [
     "integration: needs Postgres",
     "slow: full-year runs",
-    "warehouse: needs `make build-prod`",
+    "warehouse: needs `make build-prod` (the dev_marts test also `make build`, the eval database tests `make eval-db`)",
 ]
 
 [tool.ruff]
