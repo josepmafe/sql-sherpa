@@ -445,7 +445,7 @@ The simulation takes as long as `make backfill DAYS=365` (2.5 minutes on a lapto
 
 - `test_full_year_runtime` asserts a simulation runtime under 5 minutes (spec §5.2) and logs `runtime <seconds> s`. The limit is sensitive to load: with other work running against the same Postgres it can fail while the volumes pass; rerun it on an idle machine before reading that as a regression.
 
-- `test_top_buyers_hold_55_to_65_percent_of_revenue` asserts that the top 20 % of buyers (customers with at least one non-cancelled order) hold 55–65 % of that revenue (spec §4.4, a soft target). On the 365-day dataset above they hold 0.575. It is the check for `PROPENSITY_SIGMA` and the visitor purchase rates.
+- `test_top_buyers_hold_55_to_65_percent_of_net_revenue` asserts that the top 20 % of buyers (customers with at least one non-cancelled order, test accounts excluded) hold 55–65 % of net revenue (spec §4.4, a soft target). Net revenue follows spec §6.6: gross revenue (`quantity × unit_price`) minus discounts minus refunded revenue (return and goodwill refunds without their tax), over non-cancelled orders. It logs `top 20% of buyers hold 0.570 of net revenue`. It is the check for `PROPENSITY_SIGMA` and the visitor purchase rates.
 
 The expected result is `3 passed`.
 
