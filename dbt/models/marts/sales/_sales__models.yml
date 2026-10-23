@@ -245,8 +245,9 @@ models:
     description: >
       Order line fact, one row per line of an order in fct_orders: the variant sold, its quantity,
       price, allocated discount, cost and returns. Line refunded_revenue covers return refunds only;
-      goodwill and cancellation refunds exist only on fct_orders, so the lines' refunded_revenue adds
-      up to at most the order's (up to a cent per line from rounding). {{ doc('cancelled_orders') }}
+      goodwill and cancellation refunds exist only on fct_orders. The order's refunded_revenue is
+      authoritative: each line is rounded to cents on its own, so the lines can add up to more than
+      the order's by at most a cent per refunded line. {{ doc('cancelled_orders') }}
     config:
       meta:
         domain: sales
@@ -353,8 +354,9 @@ models:
         data_type: integer
       - name: refunded_revenue
         description: >
-          Revenue refunded for the line's returned units in EUR, excluding tax (the line's net amount
-          pro-rated by returned quantity); 0 when none.
+          Revenue refunded for the line's returned units in EUR, excluding tax: the line's net amount
+          pro-rated by returned quantity, rounded to cents per line; 0 when none. For order totals use
+          fct_orders.refunded_revenue, which also includes goodwill refunds.
         data_type: numeric(12,2)
 
   - name: fct_returns

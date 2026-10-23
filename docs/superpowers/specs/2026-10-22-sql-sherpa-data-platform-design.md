@@ -302,7 +302,7 @@ order_id, order_number, customer_id, order_date, placed_at, paid_at, shipped_at,
 
 **`fct_order_items`** — 1 row per order line · PK `order_item_id` · domain `sales`
 order_item_id, order_id, customer_id, variant_id, product_id, order_date, is_cancelled, quantity, unit_price, gross_amount, allocated_discount, net_amount, unit_cost_at_sale, cogs, returned_quantity, refunded_revenue
-- Line-level `refunded_revenue` covers return refunds only; goodwill and cancellation refunds exist only at order level. Documented: `Σ lines.refunded_revenue ≤ fct_orders.refunded_revenue`.
+- Line-level `refunded_revenue` covers return refunds only; goodwill and cancellation refunds exist only at order level. It is the line's allocated `net_amount` pro-rated by its received returned quantity, `round(returned_quantity × net_amount / quantity, 2)`. The order-level `fct_orders.refunded_revenue` (from the refund amounts, §6.6) is authoritative. Because each line is rounded on its own, the lines' sum can exceed it by at most 0.01 per refunded line: `Σ lines.refunded_revenue ≤ fct_orders.refunded_revenue + 0.01 × (lines with refunded_revenue > 0)` (singular test `assert_line_refunds_within_order_refunds`).
 
 **`fct_returns`** — 1 row per return · PK `return_id` · domain `sales`
 return_id, order_id, customer_id, reason, status, requested_at, returned_item_quantity, restockable_quantity, refund_id, refunded_amount
@@ -332,7 +332,7 @@ order_date, sales_channel, orders, items, gross_revenue, discount_amount, net_re
 |---|---|
 | gross_revenue | Σ `quantity × unit_price` over **non-cancelled** orders. Net of tax; excludes shipping. |
 | discount_amount | Σ order discounts (allocated at line level) |
-| refunded_revenue | For reasons `return` and `goodwill`: refund `amount / (1 + tax_rate)` (tax portion removed; var `tax_rate`, default 0.20; neither reason ever refunds shipping, §5.2). For reason `cancellation`: **0** — the order is cancelled, so its revenue is already excluded and the refund only reverses the payment. `fct_refunds.amount` still shows every refund. **Attributed to the order's date** in `fct_orders`; to the refund's date in `fct_refunds`. |
+| refunded_revenue | For reasons `return` and `goodwill`: refund `amount / (1 + tax_rate)` (tax portion removed; var `tax_rate`, default 0.20; neither reason ever refunds shipping, §5.2). For reason `cancellation`: **0** — the order is cancelled, so its revenue is already excluded and the refund only reverses the payment. `fct_refunds.amount` still shows every refund. **Attributed to the order's date** in `fct_orders`; to the refund's date in `fct_refunds`. `fct_order_items.refunded_revenue` is a pro-rated, per-line-rounded split of return refunds only (§6.5); the order-level figure is authoritative. |
 | net_revenue | gross_revenue − discount_amount − refunded_revenue, over non-cancelled orders. For cancelled orders, `fct_orders.net_revenue` = 0. |
 | cogs / gross_margin | cogs = Σ quantity × unit cost at sale; returned_cogs = restockable returned qty × unit cost at sale; gross_margin = net_revenue − (cogs − returned_cogs) |
 | AOV | net_revenue / count of non-cancelled orders |
