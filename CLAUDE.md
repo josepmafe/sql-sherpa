@@ -7,7 +7,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Data platform spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md`. The data model, metric definitions, realism rules and dbt feature roadmap live there.
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, and the agent in `agent-design-1` … `agent-design-10` (each spec's §8). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md` or `<date>-agent-design-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 is done (`2026-10-22-data-platform-1-foundation.md`). Current plan: `2026-10-23-data-platform-2-core-marts.md`.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, and the agent in `agent-design-1` … `agent-design-10` (each spec's §8). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md` or `<date>-agent-design-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`) and data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`) are done. Current plan: data-platform-3, to be planned.
 - Sequencing: data-platform-1 → data-platform-2 (defines the agent-facing interface) → agent-design-1 to agent-design-3 alongside data-platform-3 → data-platform-4 → agent-design-4 (gold set batch 2) → agent-design-5 to agent-design-9; data-platform-5 → agent-design-10.
 - **Every plan ends with a documentation task**, and writing a plan includes writing it. The task does two things:
   - **Checks `CLAUDE.md` and `README.md`** against what the milestone changed (commands, layout, status, conventions) and updates them.
@@ -36,6 +36,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make seed`: load the dbt seeds.
 - `make build`: check source freshness, then `dbt build` on the dev target.
 - `make build-prod`: the same on the prod target, with artifacts in `target-prod`.
+- `make grant-agent`: re-apply the `sherpa_agent` read grants on `marts` (prod) without a build; the build runs the same macro as its `on-run-end` hook.
 - `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `dbt/models` has no description.
@@ -115,6 +116,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - Markers:
   - `integration`: needs Postgres
+  - `warehouse`: needs the dbt marts (`make build-prod`; the `dev_marts` test also needs `make build`)
   - `slow`: full-year runs; excluded by default (`-m "not slow"`). An explicit `-m` replaces that default, so run the integration tests alone with `uv run pytest -m "integration and not slow"`
   - `live`: real Bedrock calls; costs money, never in CI
 

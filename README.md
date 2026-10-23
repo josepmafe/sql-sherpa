@@ -4,7 +4,7 @@
 
 It is a learning project, built to production standards: a realistic synthetic e-commerce business, a dbt project that uses dbt Core's features the way practitioners do, and a text-to-SQL agent where observability and evaluation come first.
 
-> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation) is done; data-platform-2 (Core marts) is next.
+> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation) and data-platform-2 (Core marts) are done; data-platform-3 (Time) is next.
 
 ---
 
@@ -21,7 +21,7 @@ It is a learning project, built to production standards: a realistic synthetic e
 
 ## Stack
 
-The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the data-platform-1 tools are installed today.
+The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the tools of the finished milestones (data-platform-1 and data-platform-2) are installed today.
 
 | Layer | Tools |
 |---|---|
@@ -52,7 +52,9 @@ cp .env.example .env     # then replace the change-me passwords with real values
 make up                  # start Postgres
 make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
 make deps                # install the dbt packages
-make build               # dbt: seeds, staging models and tests
+make build               # dbt: seeds, staging, intermediate and mart models, and tests
+make build-prod          # the same into the prod schemas, which the agent reads
+make eval-db             # optional: the frozen evaluation database sherpa_eval (about 5 minutes or more)
 make docs                # generate and serve the dbt docs until you press Ctrl+C
 ```
 
@@ -70,11 +72,11 @@ To add days later, run `make generate DAYS=<n>`. Days added after the first run 
 
 ```
 generator/   the synthetic-data generator (Python package, CLI and tests)
-dbt/         the dbt project: sources, seeds, staging models, dim_date
+dbt/         the dbt project: sources, seeds, staging, intermediate and mart models, macros and tests
 docker/      Postgres init script (database roles)
 scripts/     helper scripts, such as the dbt docs-coverage check
 docs/        design specs, implementation plans and how-to guides
-tests/       tests outside the generator package (dbt seeds, scripts)
+tests/       tests outside the generator package (dbt seeds, agent access to the marts, scripts)
 ```
 
 ## Design docs
@@ -82,11 +84,14 @@ tests/       tests outside the generator package (dbt seeds, scripts)
 - [Data platform spec (generator + dbt)](docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)
 - [Agent spec (text-to-SQL agent)](docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md)
 - [Plan — data-platform-1 Foundation](docs/superpowers/plans/2026-10-22-data-platform-1-foundation.md)
+- [Plan — data-platform-2 Core marts](docs/superpowers/plans/2026-10-23-data-platform-2-core-marts.md)
 
 ## Guides
 
 - [Using the generator](docs/guides/basic/generator-cli.md): commands, recipes, errors, and the raw data in `psql`
-- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev and prod, selecting, previewing, docs and failing tests
+- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev, prod and eval, the layers, hooks, selecting, previewing, docs and failing tests
+- [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers, revenue definitions, copy-paste queries, traps, fuzzy search and the agent role
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, end to end
+- [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns, marts, metrics, trigram indexes, custom tests and intermediate models
 
 All data is synthetic.

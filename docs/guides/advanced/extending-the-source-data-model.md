@@ -150,6 +150,8 @@ make docs-check
 12:58:06  Done. PASS=174 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=174
 ```
 
+**8. Carry it into the marts** (when consumers should see it). The staging view now has the column; a mart only exposes it once its SQL selects it, its YAML declares it (with `data_type`, description and tests) and the build passes the mart's contract. For `preferred_language`, that is a new column on `dim_customers`. [Adding or changing a mart](adding-or-changing-a-mart.md) lists the files and the tests, in order.
+
 Finish with `make test`, `make lint` and `make reset && make backfill DAYS=365 && make build`.
 
 ## 2. Add a new table
