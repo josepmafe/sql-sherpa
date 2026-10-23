@@ -104,18 +104,18 @@ cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt deps
 22:23:57  Up to date!
 ```
 
-`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 53 seconds on a year of data, source freshness included (the build itself 44 s):
+`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 63 seconds on a year of data, source freshness included (the build itself 52 s):
 
 ```
 cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt build
-22:51:55  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
+23:10:41  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
 There are 1 unused configuration paths:
 - snapshots.sherpa
-22:51:55  Found 38 models, 280 data tests, 3 seeds, 2 operations, 21 sources, 923 macros
-22:51:55  Concurrency: 4 threads (target='dev')
+23:10:41  Found 38 models, 281 data tests, 3 seeds, 2 operations, 21 sources, 923 macros
+23:10:41  Concurrency: 4 threads (target='dev')
 ...
-22:52:39  Finished running 2 project hooks, 3 seeds, 10 table models, 280 data tests, 24 view models in 0 hours 0 minutes and 43.95 seconds (43.95s).
-22:52:40  Done. PASS=319 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=319
+23:11:33  Finished running 2 project hooks, 3 seeds, 10 table models, 281 data tests, 24 view models in 0 hours 0 minutes and 52.43 seconds (52.43s).
+23:11:34  Done. PASS=320 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=320
 ```
 
 The 38 models are 24 views, 10 tables and 4 ephemeral models (which build nothing); the 2 operations are the `on-run-start` and `on-run-end` hooks.

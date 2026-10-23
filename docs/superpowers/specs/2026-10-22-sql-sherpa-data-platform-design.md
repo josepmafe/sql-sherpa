@@ -310,7 +310,7 @@ order_item_id, order_id, customer_id, variant_id, product_id, order_date, is_can
 **`fct_order_discounts`** — 1 row per discount applied to an order · PK `order_discount_id` · domain `sales`
 order_discount_id, order_id, customer_id, order_date, promotion_id, coupon_code, promotion_type, amount, is_cancelled
 - The bridge from orders to promotions, for orders in `fct_orders` (non-test, cancelled included and flagged). `coupon_code` is the code entered, null when the promotion applied automatically; `amount` is 0.00 for `free_shipping` discounts (§6.6 "has a discount").
-- Per order, Σ `amount` = `fct_orders.discount_amount` (`column_sums_match`). Every discount comes from a promotion, so per promotion the row count and Σ `amount` equal `dim_promotions.redemption_count` and `total_discount_amount` (singular test `assert_order_discounts_match_promotions`).
+- An order uses a promotion at most once (`unique_combination_of_columns` on `order_id`, `promotion_id`). Per order, Σ `amount` = `fct_orders.discount_amount` (`column_sums_match`). Every discount comes from a promotion, so per promotion the row count and Σ `amount` equal `dim_promotions.redemption_count` and `total_discount_amount` (singular test `assert_order_discounts_match_promotions`).
 
 **`fct_returns`** — 1 row per return · PK `return_id` · domain `sales`
 return_id, order_id, customer_id, reason, status, requested_at, returned_item_quantity, restockable_quantity, refund_id, refunded_amount
@@ -360,7 +360,7 @@ Precision: amounts `numeric(12,2)`; rates computed as `numeric` and rounded only
 | Kind | Where / what |
 |---|---|
 | Generic (built-in) | `unique` + `not_null` on every PK; `relationships` for every FK in marts; `accepted_values` on every enum column (the agent reuses these as grounding facts) |
-| `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily), `expression_is_true`, `accepted_range` |
+| `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily; `order_id` × `promotion_id` in fct_order_discounts), `expression_is_true`, `accepted_range` |
 | `dbt_expectations` | `expect_column_pair_values_A_to_be_greater_than_B` (gross ≥ net), `expect_column_values_to_match_regex` (email in staging), `expect_row_values_to_have_recent_data` (events, severity warn), `expect_table_row_count_to_be_between` and `expect_column_mean_to_be_between` (generator distributions, severity warn) |
 | Custom generic | `column_sums_match(compare_model, compare_column, group_by)` — e.g. allocated line discounts sum to order discounts |
 | Singular | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise); line margins, order discounts and first orders reconcile with `fct_orders`, `dim_promotions` and `dim_customers` (§6.5) |

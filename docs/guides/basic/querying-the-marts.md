@@ -210,7 +210,7 @@ The 2,741 new orders are the 2,741 buyers of the VIP query below. Cancelled orde
 
 ### Payment method mix
 
-`primary_payment_method` is the method of the order's largest captured payment (a split payment is gift card plus card), and null when nothing was captured, as on cancelled orders. `failed_payment_count` counts the order's failed payment attempts:
+`primary_payment_method` is the method of the order's largest captured payment (a split payment is gift card plus card), and null only when none of the order's payments was captured. `failed_payment_count` counts the order's failed payment attempts:
 
 ```sql
 select primary_payment_method,
@@ -411,7 +411,7 @@ inner join marts.fct_order_items as i using (order_id);
 
 Sum order columns in `fct_orders` alone, and line columns (`gross_amount`, `net_amount`, `quantity`) in `fct_order_items`. If you need both, aggregate the lines first in a subquery and join that to the orders.
 
-`fct_order_discounts` fans out the same way: 1,862 orders have 1,917 discounts, so joining all of them to `fct_orders` sums some orders twice: over the non-cancelled orders with `has_discount`, the join gives 126,238.74 of net revenue instead of 122,004.78. Filter to one promotion, as above, or use `where exists (select 1 from marts.fct_order_discounts as d where d.order_id = o.order_id and ...)`.
+`fct_order_discounts` fans out the same way: over non-cancelled orders, 1,769 orders have 1,823 discounts, so joining all of them to `fct_orders` sums some orders twice: the join gives 146,492.16 of net revenue instead of 142,258.20 for those 1,769 orders. Filter to one promotion, as above, or use `where exists (select 1 from marts.fct_order_discounts as d where d.order_id = o.order_id and ...)`.
 
 ## Fuzzy search on products
 

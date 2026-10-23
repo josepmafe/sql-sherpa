@@ -245,7 +245,7 @@ models:
       - name: primary_payment_method
         description: >
           Method of the order's largest captured payment (lowest payment id on a tie), card, paypal or
-          gift_card; null if nothing was captured, e.g. a cancelled or not yet paid order.
+          gift_card; null only when none of the order's payments was captured.
         data_type: text
         config:
           meta:
@@ -470,6 +470,9 @@ models:
             compare_model: ref('fct_orders')
             compare_column: discount_amount
             group_by: order_id
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, promotion_id]
     columns:
       - name: order_discount_id
         description: The discount applied to an order. Primary key.
@@ -527,8 +530,9 @@ models:
                 values: [percent, fixed, free_shipping]
       - name: amount
         description: >
-          Discount in EUR, kept when the order is cancelled; 0.00 for free-shipping discounts. Per
-          order the rows add up to fct_orders.discount_amount. {{ doc('metric_discount_amount') }}
+          EUR discount this promotion granted on the order, kept when the order is cancelled; 0.00
+          for free-shipping discounts, which waive the shipping instead. An order uses a promotion at
+          most once, and per order the rows add up to fct_orders.discount_amount.
         data_type: numeric(12,2)
         config:
           meta:
