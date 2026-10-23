@@ -28,13 +28,15 @@ days as (
 
 with_black_friday as (
 
-    -- Black Friday is the 4th Friday of November:
-    -- the first Friday on or after 1 November, plus 3 weeks.
+    -- Black Friday is the day after US Thanksgiving, the 4th Thursday of
+    -- November: the first Thursday on or after 1 November, plus 3 weeks,
+    -- plus 1 day.
     select
         date_day,
         november_1st
-        + (5 - extract(isodow from november_1st)::int + 7) % 7
-        + 21 as black_friday
+        + (4 - extract(isodow from november_1st)::int + 7) % 7
+        + 21
+        + 1 as black_friday
     from days
 
 ),

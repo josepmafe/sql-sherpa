@@ -29,4 +29,4 @@ models:
       - name: is_weekend
         description: True on Saturday and Sunday.
       - name: is_black_friday_week
-        description: True from Monday to Sunday of the week containing the 4th Friday of November.
+        description: True from Monday to Sunday of the week containing Black Friday, the day after US Thanksgiving (the 4th Thursday of November).
