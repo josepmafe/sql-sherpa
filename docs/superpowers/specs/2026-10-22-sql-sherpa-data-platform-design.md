@@ -98,7 +98,7 @@ Passwords come from `.env`.
 | `raw_meta` | Generator | `simulation_state` (§5.3) |
 | `seeds`, `staging`, `intermediate`, `snapshots`, `marts`, `ops`, `test_failures` | dbt | dbt-managed (prod/ci targets) |
 
-**Schema naming:** a custom `generate_schema_name` macro uses the custom schema name verbatim on `prod` and `ci` targets and prefixes it with `dev_` on the `dev` target (e.g. `dev_marts`). **Exception: snapshots always write to `snapshots`** regardless of target — a snapshot is captured history that cannot be rebuilt, so there is exactly one copy, and dev and prod models both read it. `dev` is the default target; the agent reads the `prod` `marts` schema.
+**Schema naming:** a custom `generate_schema_name` macro uses the custom schema name verbatim on `prod` and `ci` targets and prefixes it with `dev_` on the `dev` target (e.g. `dev_marts`). Nodes without a custom schema use the target's schema: `dev_public` on `dev`, `public` on `prod` and `ci`. **Exception: snapshots always write to `snapshots`** regardless of target — a snapshot is captured history that cannot be rebuilt, so there is exactly one copy, and dev and prod models both read it. `dev` is the default target; the agent reads the `prod` `marts` schema.
 
 **Artifacts:** prod commands use `--target-path target-prod`, so `dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `dbt/target/`.
 
@@ -139,7 +139,7 @@ Passwords come from `.env`.
 
 | Table | Columns | Notes |
 |---|---|---|
-| `events` | event_id (uuid text), anonymous_id (text), user_id (text, nullable — customer id as string), event_type (`page_view`\|`product_view`\|`add_to_cart`\|`remove_from_cart`\|`begin_checkout`\|`purchase`\|`signup`\|`login`), occurred_at (**text**, ISO-8601 with client UTC offset), received_at (timestamptz), context (jsonb: `device_type`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer`), properties (jsonb: `page_path`, `product_id`, `variant_id`, `order_id`, `cart_value`) | No session id. Staging parses text timestamps and extracts JSON. |
+| `events` | event_id (uuid text), anonymous_id (text), user_id (text, nullable — customer id as string), event_type (`page_view`\|`product_view`\|`add_to_cart`\|`remove_from_cart`\|`begin_checkout`\|`purchase`\|`signup`\|`login`), occurred_at (**text**, ISO-8601 with client UTC offset), received_at (timestamptz), context (jsonb: `device_type`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer`), properties (jsonb: `page_path`, `product_id`, `variant_id`, `order_id`, `cart_value`) | `device_type` is `desktop`, `mobile` or `tablet`. `cart_value` is a JSON string (e.g. `"20.00"`) inside the jsonb payload. No session id. Staging parses text timestamps and extracts JSON. |
 
 ### 4.3 `raw_marketing` and `raw_crm`
 
@@ -147,7 +147,7 @@ Passwords come from `.env`.
 |---|---|---|
 | `raw_marketing.campaigns` | id, name, utm_campaign (slug), channel (`paid_search`\|`paid_social`\|`email`\|`affiliate`\|`display`), starts_at, ends_at, budget | |
 | `raw_marketing.ad_spend_daily` | spend_date (date), campaign_id, spend, impressions, clicks | Paid channels only |
-| `raw_crm.leads` | id, email, source (`newsletter`\|`popup`\|`giveaway`\|`referral`), utm_campaign (nullable), lifecycle_stage (`subscriber`\|`lead`\|`mql`\|`customer`), created_at, updated_at | **No FK to customers** — matched on normalized email in dbt |
+| `raw_crm.leads` | id, email, source (`newsletter`\|`popup`\|`giveaway`\|`referral`), utm_campaign (nullable), lifecycle_stage (`subscriber`\|`lead`\|`mql`\|`customer`), created_at, updated_at | **No FK to customers** — matched on normalized email in dbt. `utm_campaign` is always NULL: leads carry a source, not a campaign |
 | `raw_crm.email_sends` | id, lead_id, campaign_id (nullable), sent_at, opened_at (nullable), clicked_at (nullable) | |
 
 ### 4.4 Realism rules (fixed list — the generator implements exactly these)
@@ -167,7 +167,7 @@ Passwords come from `.env`.
 | R11 | Ad-platform clicks ≠ tracked sessions | clicks = paid sessions × U(0.85, 1.15) | don't treat them as equal |
 | R12 | App orders have no web events | 35% of orders are `app` | sessions and orders don't fully reconcile |
 
-Plus baseline distributions: weekly cycle (weekends +20%), seasonality (Black Friday week ×3, December ×1.6, January ×0.7), and a Pareto-like customer value distribution (lognormal propensity drives repeat purchases; the top 20% of buyers produce roughly 55–65% of net revenue). These distribution targets are soft: the data aims to be plausible rather than to hit exact numbers.
+Plus baseline distributions: weekly cycle (weekends +20%), seasonality (Black Friday week ×3, December ×1.6, January ×0.7), and a Pareto-like customer value distribution (lognormal propensity drives repeat purchases; the top 20% of buyers produce roughly 55–65% of net revenue). Black Friday is the day after the fourth Thursday of November; its week runs Monday to Sunday. These distribution targets are soft: the data aims to be plausible rather than to hit exact numbers.
 
 ---
 
@@ -181,7 +181,7 @@ A **day-by-day simulation**. One command:
 sherpa-generate generate --days N [--start-date YYYY-MM-DD] [--scale S] [--seed K]
 ```
 
-- **First run** (empty `raw_meta.simulation_state`): runs setup (catalog, campaigns, promotions) then simulates `N` days ending yesterday, unless `--start-date` is given.
+- **First run** (empty `raw_meta.simulation_state`): runs setup (catalog, campaigns, promotions) then simulates `N` days ending yesterday, unless `--start-date` is given. Output depends only on seed, scale and start date (for the range the catalog covers, §5.2 Setup).
 - **Later runs:** continue from the day after `last_simulated_date` for `N` days, **never beyond yesterday** (wall clock), so source freshness behaves realistically. If there is nothing left to simulate, exit 0 with a message.
 - `sherpa-generate reset` drops and recreates the `raw_*` schemas. `sherpa-generate status` prints the simulated range and row counts.
 - Each simulated day is written in **one transaction** (all-or-nothing); `simulation_state` updates in the same transaction. A crash mid-day leaves the database at the end of the previous day.
@@ -199,12 +199,12 @@ Per simulated day (before seasonality multipliers):
 4. **Signups:** ~12/day, by new visitors at checkout; only 20% of them buy in that session, so many accounts never order and most orders are existing customers' repeat purchases. ~35% of signups match an existing lead's email (with R3 noise); events after `signup`/`login` carry `user_id`.
 5. **Orders:** every `purchase` event creates a `web` order; `app` orders are added so they make up 35% of orders (R12). Repeat purchases follow each customer's propensity. 1–4 lines per order. Discounts per active promotions (25% of orders discounted). Shipping €4.95, free above €75 or with `free_shipping`. Tax 20% on `subtotal − discount_total`.
 6. **Lifecycle progression of open orders:** `placed → paid` same day (R7 failures retried; 2% never paid → `cancelled` next day); `paid → shipped` after 1–3 days; `shipped → delivered` after 2–5 days; 3% of paid orders cancelled before shipping (refund reason `cancellation`).
-7. **Returns & refunds:** 12% of delivered orders get a return within 30 days (footwear 2× more likely, reason `size`); 1–all lines, partial quantities allowed; 90% approved; refund on `received` 3–10 days after request, amount = returned lines' net value (after allocated discount) incl. tax. 1% of delivered orders get a goodwill refund of 5–20% of `(subtotal − discount_total + tax_amount)` — i.e. never refunding shipping. Cancellation refunds return the full captured amount (incl. shipping).
+7. **Returns & refunds:** 12% of delivered orders get a return within 30 days (footwear 2× more likely, reason `size`); 1–all lines, partial quantities allowed; 90% approved; refund on `received` 3–10 days after request, booked on the order's largest captured payment (on a split payment a refund can exceed that single payment; an order's refunds never total more than the amount captured), amount = returned lines' net value (after allocated discount) incl. tax. 1% of delivered orders get a goodwill refund (one outcome draw per order, so an order gets at most one of a return or a goodwill refund) of 5–20% of `(subtotal − discount_total + tax_amount)` — i.e. never refunding shipping. Cancellation refunds return the full captured amount (incl. shipping).
 8. **Ad spend:** one row per active paid campaign, with R11.
 
-**Expected totals for 365 days at scale 1.0 (±15%):** ~5k customers, ~8k orders, ~150k sessions, ~600k events, ~6k leads. `--scale` multiplies all daily volumes. Generation of 365 days completes in under 5 minutes on a laptop.
+**Expected totals for 365 days at scale 1.0 (±15%):** ~5k customers, ~8k orders, ~150k sessions, ~600k events, ~6k leads. These volume, rate and distribution numbers are approximate targets for plausible synthetic data, not exact goals. `--scale` multiplies all daily volumes. Generation of 365 days completes in under 5 minutes on a laptop.
 
-**Setup (once):** 4 L1 categories (Footwear, Apparel, Accessories, Equipment), ~12 L2, ~25 L3; ~300 products across ~25 brands; ~1,500 variants; cost = 30–60% of list price. ~20 promotions over the year (including a Black Friday sitewide 20%) and ~15 campaigns.
+**Setup (once):** 4 L1 categories (Footwear, Apparel, Accessories, Equipment), ~12 L2, ~25 L3; ~300 products across ~25 brands; ~1,500 variants; cost = 30–60% of list price. ~20 promotions over the year (including a Black Friday sitewide 20%) and ~15 campaigns. The catalog (campaigns, promotions, coupon codes) is built once, on the first run, from the start date up to the earlier of yesterday and 365 days after it (`CATALOG_HORIZON_DAYS`), whatever `--days` is; days simulated after that have no active campaigns, promotions or ad spend.
 
 ### 5.3 State
 
@@ -256,7 +256,7 @@ Models with unit tests (§7) are views, not ephemeral, so they can be unit-teste
 **Domains** (`meta.domain`, consumed by the agent): `sales`, `customers`, `products`, `marketing_web`, `shared`.
 
 **Mart metadata:**
-- Every mart carries `meta: {domain, grain, primary_key}`. `primary_key` is a column name or a list of column names.
+- Every mart carries `meta: {domain, grain, primary_key}` (data-platform-1 on `dim_date`, data-platform-2 on the other marts). `primary_key` is a column name or a list of column names.
 - Columns holding PII carry `meta.pii: true`.
 - Columns and models that carry business terms carry `meta.synonyms`, a list of the words people use for them, e.g. `net_revenue: ["revenue", "net sales"]`, `customer_segment: ["lifecycle stage"]`.
 
@@ -281,7 +281,7 @@ promotion_id, promotion_name, promotion_type, value, min_order_value, campaign_i
 campaign_id, campaign_name, utm_campaign, channel, starts_at, ends_at, budget
 
 **`dim_date`** — 1 row per day · PK `date_day` · domain `shared`
-date_day, week_start, month_start, quarter, year, day_of_week_name, is_weekend, is_black_friday_week. Range: static vars `date_spine_start` (default `2024-01-01`) and `date_spine_end` (default `2028-12-31`) passed to `dbt_utils.date_spine` — static so the spine never depends on data at compile time. Also serves as the MetricFlow time spine (data-platform-5).
+date_day, week_start, month_start, quarter, year, day_of_week_name, is_weekend, is_black_friday_week (Monday to Sunday of the week containing Black Friday, §4.4). Range: static vars `date_spine_start` (default `2024-01-01`) and `date_spine_end` (default `2028-12-31`) passed to `dbt_utils.date_spine` — static so the spine never depends on data at compile time. Also serves as the MetricFlow time spine (data-platform-5).
 
 #### Facts
 
@@ -358,12 +358,12 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 
 ### data-platform-1 — Foundation
 **Builds:** Docker Compose, roles, generator (full §5), dbt project, sources, seeds, all staging models, `dim_date`.
-**dbt features:** project config, `profiles.yml` with `env_var()` and `dev`/`prod`/`ci` targets, custom `generate_schema_name`, `--target-path` for prod artifacts, **sources + freshness** (`dbt source freshness`), **seeds** (with `column_types`), view materialization, **generic tests**, `dbt_utils`, `vars` (`tax_rate`, `session_timeout_minutes`, `date_spine_start/end`), `dbt docs generate/serve`, a `__overview__` doc block. CLI: `dbt debug`, `dbt parse`, `dbt compile`, `dbt ls` (selection syntax), **`dbt show`** (preview a model's output without materializing it).
+**dbt features:** project config, `profiles.yml` with `env_var()` and `dev`/`prod`/`ci` targets, custom `generate_schema_name`, `--target-path` for prod artifacts, **sources + freshness** (`dbt source freshness`), **seeds** (with `column_types`), view materialization, **generic tests**, `dbt_utils`, `vars` (`tax_rate`, `session_timeout_minutes`, `date_spine_start/end`), `meta` on `dim_date` (`domain`, `grain`, `primary_key`), `dbt docs generate/serve`, a `__overview__` doc block. CLI: `dbt debug`, `dbt parse`, `dbt compile`, `dbt ls` (selection syntax), **`dbt show`** (preview a model's output without materializing it).
 **Acceptance:** `make up && make backfill DAYS=365 && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
 
 ### data-platform-2 — Core marts
 **Builds:** intermediate order models, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_returns`, `fct_refunds`, `obt_order_items`.
-**dbt features:** ephemeral/table materializations, **macros & Jinja** (e.g. `cents_rounding_allocation`, `normalize_email`), **custom generic test**, **singular tests**, **dbt_expectations**, **model contracts** (enforced, with `primary_key` and `not_null` constraints; FKs as `relationships` tests, not DB constraints), **doc blocks** for metrics (`metric_<name>`), `meta` (`domain`, `grain`, `primary_key`, `pii`, `synonyms`), the `eval` and `agent` targets with `make eval-db` (§3), **`persist_docs`** (relations + columns) on marts, Postgres **`indexes`** config, **`grants`** (`select` to `sherpa_agent`) on marts, **hooks**: `on-run-start` creates `pg_trgm` (a trusted extension in PG 16, so the database owner can create it); `on-run-end` grants `USAGE` on `marts` to `sherpa_agent`; post-hook `ANALYZE` on marts. B-tree indexes via the `indexes` config. GIN trigram indexes on `dim_products.product_name`, `brand`, `category_l1/l2/l3` via a **`create_trigram_index(column)` macro called from a post-hook** (`CREATE INDEX IF NOT EXISTS … USING gin (col gin_trgm_ops)`), because the `indexes` config has no operator-class option. **`dbt run-operation`**: a `grant_agent_access` macro that re-applies agent grants on demand (same macro as the on-run-end hook).
+**dbt features:** ephemeral/table materializations, **macros & Jinja** (e.g. `cents_rounding_allocation`, `normalize_email`), **custom generic test**, **singular tests**, **dbt_expectations**, **model contracts** (enforced, with `primary_key` and `not_null` constraints; FKs as `relationships` tests, not DB constraints), **doc blocks** for metrics (`metric_<name>`), `meta` extended to the other marts (`domain`, `grain`, `primary_key`, `pii`, `synonyms`), the `eval` and `agent` targets with `make eval-db` (§3), **`persist_docs`** (relations + columns) on marts, Postgres **`indexes`** config, **`grants`** (`select` to `sherpa_agent`) on marts, **hooks**: `on-run-start` creates `pg_trgm` (a trusted extension in PG 16, so the database owner can create it); `on-run-end` grants `USAGE` on `marts` to `sherpa_agent`; post-hook `ANALYZE` on marts. B-tree indexes via the `indexes` config. GIN trigram indexes on `dim_products.product_name`, `brand`, `category_l1/l2/l3` via a **`create_trigram_index(column)` macro called from a post-hook** (`CREATE INDEX IF NOT EXISTS … USING gin (col gin_trgm_ops)`), because the `indexes` config has no operator-class option. **`dbt run-operation`**: a `grant_agent_access` macro that re-applies agent grants on demand (same macro as the on-run-end hook).
 **Acceptance:** all mart tests pass; `sherpa_agent` can `SELECT` from marts and no other application schema (system catalogs are readable by every role; the agent's SQL guard blocks them); contracts reject a deliberately wrong column type (verified once, manually).
 
 ### data-platform-3 — Time
@@ -409,6 +409,28 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 | Target | Does |
 |---|---|
 | `make up` / `make down` | Start/stop Docker Compose |
+| `make generate DAYS=N` | Generator for N more days (`DAYS` required), capped at yesterday |
+| `make backfill [DAYS=365]` | Generator for `DAYS` days (default 365); from data-platform-3, in 7-day chunks with `dbt snapshot --target prod` after each chunk |
+| `make status` | Simulated range and row counts |
+| `make reset` | Drop the dbt schemas (including the dbt test-failure audit schemas), then drop and recreate the raw schemas empty |
+| `make deps` / `make seed` | `dbt deps` / `dbt seed` on `dev` |
+| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod` |
+| `make docs` / `make docs-prod` | `dbt docs generate && dbt docs serve` on dev / prod (`--target-path target-prod`) |
+| `make docs-check` | `dbt docs generate`, then check the staging models' YAML columns against the real columns |
+| `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt` |
+| `make test` | `pytest` with `.env` loaded; integration tests need Postgres |
+| `make mutate MODULE=<path>` | `mutmut` scoped to one module |
+
+Targets added by later milestones:
+
+| Target | Milestone | Does |
+|---|---|---|
+| `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
+| `make advance DAYS=3` | data-platform-3 | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
+| `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
+
+---|---|
+| `make up` / `make down` | Start/stop Docker Compose |
 | `make backfill DAYS=365` | Generator in 7-day chunks + `dbt snapshot --target prod` after each chunk |
 | `make advance DAYS=3` | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
 | `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod` |
@@ -447,7 +469,7 @@ Agent work can start once data-platform-2 is done; data-platform-3–data-platfo
 - Contracts enforce PK/not-null in the database; foreign keys are tested, not enforced.
 - CI does a full build on tiny data; slim/defer is local-only.
 - Backfill runs in 7-day chunks with snapshots between chunks.
-- Scale of ~8k orders / ~600k events per simulated year, consistent with a realistic ~3.1% session conversion.
+- Scale of ~8k orders / ~600k events per simulated year, consistent with a realistic ~3.1% session conversion. Volume, rate and distribution numbers are approximate targets, not exact goals.
 - Snapshots live in one shared `snapshots` schema for all targets; prod artifacts in `dbt/target-prod/`.
 - Cancellation refunds don't reduce revenue (the cancelled order already contributes 0); goodwill refunds never include shipping.
 - `new_customers` / CAC are campaign-level (via `acquisition_campaign_id`), so they sum correctly.
