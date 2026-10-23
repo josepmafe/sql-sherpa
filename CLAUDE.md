@@ -7,9 +7,15 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Data platform spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md`. The data model, metric definitions, realism rules and dbt feature roadmap live there.
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, and the agent in `agent-design-1` … `agent-design-9` (each spec's §8). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md` or `<date>-agent-design-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. Current plan: `2026-10-22-data-platform-1-foundation.md`.
-- Sequencing: data-platform-1 → data-platform-2 (defines the agent-facing interface) → agent-design-1 to agent-design-3 alongside data-platform-3 → data-platform-4 → data-platform-5, with agent-design-4 onwards after the baseline.
-- **Every plan ends with a documentation task:** check `CLAUDE.md` and `README.md` against what the milestone changed (commands, layout, status, conventions) and update them. Writing a plan includes writing that task.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, and the agent in `agent-design-1` … `agent-design-10` (each spec's §8). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md` or `<date>-agent-design-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 is done (`2026-10-22-data-platform-1-foundation.md`); data-platform-2 is next and still has to be planned.
+- Sequencing: data-platform-1 → data-platform-2 (defines the agent-facing interface) → agent-design-1 to agent-design-3 alongside data-platform-3 → data-platform-4 → agent-design-4 (gold set batch 2) → agent-design-5 to agent-design-9; data-platform-5 → agent-design-10.
+- **Every plan ends with a documentation task**, and writing a plan includes writing it. The task does two things:
+  - **Checks `CLAUDE.md` and `README.md`** against what the milestone changed (commands, layout, status, conventions) and updates them.
+  - **Writes or updates how-to guides** in `docs/guides/`:
+    - `basic/`: how to *use* what the milestone built, with easy and complete, copy-pasteable examples.
+    - `advanced/`: how to *extend or modify* it, i.e. which files to touch, in which order, and which tests prove the change.
+
+    Every milestone that adds something a person runs or extends gets at least one guide of each kind, or updates existing guides. Guides follow the current-state rule like every other doc.
 - **Docs describe the current state only.** `CLAUDE.md`, the README, the specs and the plans say what *is*, not what used to be. When something changes, rewrite the affected text in place. Don't add "previously…", "no longer…", "was replaced by…" or notes about discarded approaches; git history is the archive. Anything removed was removed on purpose, so don't carry it over.
 
 ## Principles
@@ -19,11 +25,27 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **The agent is built incrementally and measured.** Start from a single-agent baseline and add one technique at a time. Each technique has to improve the eval scores. Keep the eval code small and boring.
 - **Observability and evals are not afterthoughts.** Tracing comes with the first agent code, and the eval harness comes before any pipeline complexity.
 
+## Commands
+
+- `make up` / `make down`: start / stop the Postgres container.
+- `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
+- `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
+- `make status`: print the simulated date range and the row count of every raw table.
+- `make reset`: drop the dbt schemas (including the `--store-failures` audit schema) and the raw schemas, then recreate the raw schemas empty.
+- `make deps`: install the dbt packages.
+- `make seed`: load the dbt seeds.
+- `make build`: check source freshness, then `dbt build` on the dev target.
+- `make build-prod`: the same on the prod target, with artifacts in `target-prod`.
+- `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
+- `make docs-check`: fail if a model or column under `dbt/models` has no description.
+- `make lint`: ruff check, ruff format check, mypy and sqlfluff.
+- `make test`: pytest with `.env` loaded (`slow` tests excluded); the integration tests need Postgres (`make up`).
+
 ## Conventions
 
 - Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `dev`). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
-- dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_` / `obt_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
-- Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`/`ci`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
+- dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
+- Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
 - Time-relative columns use `as_of_date`, never `now()`.
 - Money is `numeric(12,2)` EUR (Python `Decimal`, `ROUND_HALF_UP`). Timestamps are UTC.
@@ -42,7 +64,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ### Structure
 - Keep **pure logic separate from I/O**, so most code is testable without a database or a model:
-  - generator: `records/`, `RealismRules`, `SimulationCalendar`, `DeterministicRandom` and `OrderPricing` are pure; `database/`, `StoreSnapshotLoader` and `Simulator` do the I/O
+  - generator: `records/`, `RealismRules`, `SimulationCalendar`, `DeterministicRandom` and `OrderPricing` are pure; `database/`, `StoreSnapshotLoader` and `Simulator` do the I/O. `OrderPricing` lives in `behaviour/order_lifecycle.py` and `GeneratorError` in `simulation/simulator.py`
   - MCP server: `sql_guard`, `masking` and `manifest` parsing are pure; tools and `db` do the I/O
   - agent: `guards` and `outcomes` are pure; variants orchestrate
 - One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.
@@ -54,7 +76,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
   - A caller comes before the helpers it calls, so you can stop reading once you've seen enough.
 
 ### Types and data
-- Type hints on every function, including tests' helpers; mypy runs on `src` with `disallow_untyped_defs`. Use modern syntax (`X | None`, `list[str]`) and `from __future__ import annotations` where forward references need it.
+- Type hints on every function, including tests' helpers; mypy runs on the source packages with `disallow_untyped_defs`. Use modern syntax (`X | None`, `list[str]`) and `from __future__ import annotations` where forward references need it.
 - Imports used only for typing go under `if TYPE_CHECKING:` (ruff `TC`). Exception: annotations that Pydantic or Typer resolve at runtime.
 - **Frozen Pydantic models for structured data:** raw source records, config, MCP tool inputs/outputs, `Outcome`, eval cases. No positional tuples and no bare `dict`s cross a module boundary; nested payloads such as JSON columns get their own model.
 - `StrEnum` with `auto()` for enumerations that are part of the domain; `Literal[...]` for small closed parameter sets.
@@ -89,19 +111,17 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
-- **Mutation tests** where correctness hinges on small details: discount allocation and rounding, `sql_guard`, result comparison (`compare.py`), the answer guards, and the realism rules' rates. Run `mutmut` scoped to those modules (`uv run mutmut run --paths-to-mutate <module>`). Surviving mutants either get a test that kills them or a short justification in the test file. Mutation runs are slow, so they are run on demand (`make mutate`) and not in CI.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - Markers:
   - `integration`: needs Postgres
-  - `slow`: full-year runs
+  - `slow`: full-year runs; excluded by default (`-m "not slow"`). An explicit `-m` replaces that default, so run the integration tests alone with `uv run pytest -m "integration and not slow"`
   - `live`: real Bedrock calls; costs money, never in CI
 
   Always save `live` output to a file so it can be reviewed without re-running: `uv run pytest -m live 2>&1 | tee /tmp/live_out.txt`.
 
 ### Tooling
 - Every Python command runs through uv: `uv run pytest`, `uv run python`, `uv add <pkg> --group <group>`.
-- `mutmut` is in the `dev` group; `make mutate MODULE=<path>` runs it on one module.
-- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `check-json`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
+- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `generator/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
 
 ## Environment notes
 

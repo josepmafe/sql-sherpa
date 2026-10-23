@@ -4,7 +4,7 @@
 
 It is a learning project, built to production standards: a realistic synthetic e-commerce business, a dbt project that uses dbt Core's features the way practitioners do, and a text-to-SQL agent where observability and evaluation come first.
 
-> **Status:** design complete for both the data platform and the agent; implementation starts with milestone data-platform-1 (Foundation).
+> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation) is done; data-platform-2 (Core marts) is next.
 
 ---
 
@@ -16,18 +16,20 @@ It is a learning project, built to production standards: a realistic synthetic e
 ```
 
 1. **Generator.** A deterministic, day-by-day simulation of an online sports retailer writes four source systems into Postgres: a Shopify-like shop (customers, catalog, orders, payments, promotions, returns, refunds), a Segment-like event tracker, an ads platform, and a CRM. It deliberately injects the problems real data has: duplicate and late events, messy emails and country codes, test accounts, split payments, price changes.
-2. **dbt.** Cleans and models that data into documented, contract-enforced marts (`fct_orders`, `dim_customers`, `fct_sessions`, `obt_order_items`, …), with precisely defined metrics such as net revenue, margin, conversion rate, ROAS and CAC.
+2. **dbt.** Cleans and models that data into documented, contract-enforced marts (`fct_orders`, `dim_customers`, `fct_sessions`, …), with precisely defined metrics such as net revenue, margin, conversion rate, ROAS and CAC.
 3. **Agent.** An MCP server exposes the marts, their dbt documentation and a read-only SQL tool. A PydanticAI agent running Claude on Amazon Bedrock uses them to answer questions. It returns the answer, its interpretation of your question, the SQL, and the result. Every technique the agent uses has to earn its place on an execution-accuracy eval set.
 
 ## Stack
 
+The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the data-platform-1 tools are installed today.
+
 | Layer | Tools |
 |---|---|
-| Data | PostgreSQL 16 (Docker), Python 3.12 + Faker |
-| Transformation | dbt Core + dbt-postgres, dbt_utils, dbt_expectations, MetricFlow |
-| Agent | PydanticAI, FastMCP, Claude on Amazon Bedrock |
-| Observability & evals | Pydantic Logfire (OpenTelemetry), a small execution-accuracy eval runner |
-| Tooling | uv, ruff, sqlfluff, pre-commit, GitHub Actions |
+| Data | PostgreSQL 16 (Docker), Python 3.12 + Faker (data-platform-1) |
+| Transformation | dbt Core + dbt-postgres and dbt_utils (data-platform-1), dbt_expectations (data-platform-2), MetricFlow (data-platform-5) |
+| Agent | PydanticAI, FastMCP, Claude on Amazon Bedrock (agent milestones) |
+| Observability & evals | Pydantic Logfire (OpenTelemetry) and a small execution-accuracy eval runner (agent milestones) |
+| Tooling | uv, ruff, sqlfluff, pre-commit (data-platform-1), GitHub Actions (data-platform-4) |
 
 ## Roadmap
 
@@ -38,12 +40,41 @@ It is a learning project, built to production standards: a realistic synthetic e
 | **data-platform-3 · Time** | Snapshots (price history), incremental models (microbatch, merge, delete+insert), sessionization, unit tests |
 | **data-platform-4 · Governance & CI** | Marketing marts, groups and access, model versions, exposures, selectors, slim builds, GitHub Actions CI |
 | **data-platform-5 · Semantic layer** | MetricFlow semantic models, metrics and saved queries |
-| **agent-design-1 … 9 · Agent** | MCP server, eval harness, a baseline agent, then grounding, schema linking and self-correction, one at a time, measured |
+| **agent-design-1 … 10 · Agent** | MCP server, eval harness, a baseline agent, then grounding, schema linking and self-correction, one at a time, measured |
+
+## Quickstart
+
+Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
+
+```bash
+uv run pre-commit install  # hooks enforce lint and format locally; there is no CI yet
+cp .env.example .env     # then replace the change-me passwords with real values
+make up                  # start Postgres
+make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
+make deps                # install the dbt packages
+make build               # dbt: seeds, staging models and tests
+make docs                # generate and serve the dbt docs until you press Ctrl+C
+```
+
+`make test` runs the tests and `make lint` runs ruff, mypy and sqlfluff.
+
+To add days later, run `make generate DAYS=<n>`. Days added after the first run have no paid campaigns, promotions or ad spend, because the catalog is built once, on the first run.
+
+### Windows and corporate networks
+
+- OneDrive folders can break uv's hardlinks (`Failed to hardlink files` or "access denied" errors). Set `UV_LINK_MODE=copy`.
+- Behind a TLS-intercepting proxy, `uv` downloads and `make deps` fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and set `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) to its path in `.env`; `.env.example` shows the lines.
+- `localhost` can resolve to IPv6 on Windows while Docker publishes the port on IPv4, which is why `.env.example` uses `127.0.0.1`.
 
 ## Repository layout
 
 ```
-docs/        design specs and implementation plans
+generator/   the synthetic-data generator (Python package, CLI and tests)
+dbt/         the dbt project: sources, seeds, staging models, dim_date
+docker/      Postgres init script (database roles)
+scripts/     helper scripts, such as the dbt docs-coverage check
+docs/        design specs, implementation plans and how-to guides
+tests/       tests outside the generator package (dbt seeds, scripts)
 ```
 
 ## Design docs
@@ -51,5 +82,11 @@ docs/        design specs and implementation plans
 - [Data platform spec (generator + dbt)](docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)
 - [Agent spec (text-to-SQL agent)](docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md)
 - [Plan — data-platform-1 Foundation](docs/superpowers/plans/2026-10-22-data-platform-1-foundation.md)
+
+## Guides
+
+- [Using the generator](docs/guides/basic/generator-cli.md): commands, recipes, errors, and the raw data in `psql`
+- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev and prod, selecting, previewing, docs and failing tests
+- [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, end to end
 
 All data is synthetic.

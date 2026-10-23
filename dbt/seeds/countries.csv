@@ -1,0 +1,9 @@
+code,name,region,is_eu
+DE,Germany,DACH,true
+AT,Austria,DACH,true
+FR,France,Western Europe,true
+ES,Spain,Southern Europe,true
+IT,Italy,Southern Europe,true
+NL,Netherlands,Benelux,true
+BE,Belgium,Benelux,true
+GB,United Kingdom,UK & Ireland,false

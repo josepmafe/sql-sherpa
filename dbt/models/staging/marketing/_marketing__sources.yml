@@ -1,0 +1,45 @@
+version: 2
+
+sources:
+  - name: marketing
+    description: Marketing platform exports (campaigns and daily ad spend). Written by the generator.
+    schema: raw_marketing
+    config:
+      freshness: null
+    tables:
+      - name: campaigns
+        description: One row per marketing campaign.
+        columns:
+          - name: id
+            description: Primary key.
+          - name: name
+            description: Campaign name.
+          - name: utm_campaign
+            description: Slug used as utm_campaign in tracked links.
+          - name: channel
+            description: Campaign channel (paid_search, paid_social, email, affiliate, display).
+          - name: starts_at
+            description: Campaign start (UTC).
+          - name: ends_at
+            description: Campaign end (UTC).
+          - name: budget
+            description: Planned budget, EUR.
+
+      - name: ad_spend_daily
+        description: Spend and traffic per paid campaign and day. Platform clicks do not equal tracked sessions.
+        config:
+          # The table has no timestamp column, so the date is cast to one for the freshness check.
+          freshness:
+            warn_after: {count: 48, period: hour}
+          loaded_at_field: spend_date::timestamp
+        columns:
+          - name: spend_date
+            description: Day the spend belongs to.
+          - name: campaign_id
+            description: Campaign that spent the money.
+          - name: spend
+            description: Amount spent, EUR.
+          - name: impressions
+            description: Ad impressions reported by the platform.
+          - name: clicks
+            description: Ad clicks reported by the platform.

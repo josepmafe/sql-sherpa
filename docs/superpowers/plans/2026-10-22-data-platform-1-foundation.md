@@ -696,20 +696,58 @@ Behaviour (the data platform spec §5.1, §5.3):
 
 ---
 
-### Task 15: Documentation check
+### Task 15: Documentation and how-to guides
 
-**Files:** Modify `README.md`, `CLAUDE.md`.
+**Files:**
+- Create `docs/guides/basic/generator-cli.md`, `docs/guides/basic/building-the-warehouse.md`, `docs/guides/advanced/extending-the-source-data-model.md`.
+- Modify `README.md`, `CLAUDE.md`.
 
-Both files describe the current state only (CLAUDE.md › Source of truth). Update every part this milestone made true or changed, and nothing it didn't.
+All docs describe the current state only (CLAUDE.md › Source of truth). Update every part this milestone made true or changed, and nothing it didn't. Every command in a guide must be run once while writing it, and its output must match what the guide shows.
 
-- [ ] **Step 1: `README.md`:**
+- [ ] **Step 1: `docs/guides/basic/generator-cli.md`:** using the generator, easy first, then complete.
+  - **Prerequisites and setup:** `.env` from `.env.example`, `make up`.
+  - **First run:** `make backfill DAYS=365`, and what it creates (schemas, rough row counts, ~5 min).
+  - **Every CLI command and option:** `generate --days/--start-date/--scale/--seed`, `status`, `reset`, each with a real example and its output. Include the Make shortcuts.
+  - **Common recipes:**
+    - a small, fast dataset for experiments (`--scale 0.1 --days 30`)
+    - a reproducible dataset (fixed `--seed` and `--start-date`)
+    - topping up to yesterday after a few days off
+    - starting over
+  - **What the errors mean and how to fix them:** seed/scale mismatch, start date after yesterday, nothing to simulate, Postgres not running.
+  - **Inspecting the data with `psql`:** a handful of example queries per source system, including one that shows each realism rule (a duplicate event, a noisy email, a test account, a split payment).
+- [ ] **Step 2: `docs/guides/basic/building-the-warehouse.md`:** using dbt on the generated data.
+  - dev vs prod targets, and where each one writes (`dev_*` schemas vs plain ones, `target/` vs `target-prod/`)
+  - `make deps`, `make seed`, `make build`, `make build-prod`; `dbt source freshness`
+  - running a single model or test (`dbt build --select …`); `dbt show`, `dbt ls`, `dbt compile`
+  - `make docs` and how to read the lineage graph
+  - what a failing test looks like and how to investigate it
+- [ ] **Step 3: `docs/guides/advanced/extending-the-source-data-model.md`:** changing the source model end to end. It has one worked example per kind of change, each with the exact files in order and the tests that prove it:
+  1. **Add a column to an existing table** (e.g. `customers.preferred_language`):
+     - the record field in `records/`, the DDL in `RawSchema`
+     - the simulator that sets the value
+     - the source YAML, the staging model + its tests, and an `accepted_values` test if it's an enum
+     - then `make reset && make backfill`
+  2. **Add a new table** (e.g. `raw_shop.wishlist_items`):
+     - a new record class, its DDL, a `PrimaryKeyAllocator` key
+     - a new behaviour simulator wired into `Simulator` (and where in the day order it goes, and why)
+     - the `StoreSnapshot` fields it needs
+     - the source + staging model + tests
+  3. **Add or change an enum value** (e.g. a new `PaymentMethod`): the StrEnum, the generator weights, and the staging `accepted_values` test that must change with it.
+  4. **Add or tune a realism rule:**
+     - the constant in `RealismRules`, the rule method and its rate test
+     - the staging logic that cleans it up
+     - and why rules are kept to the fixed list (data platform spec §4.4)
+  5. **Change volumes or rates:** which class constants to change, and how to verify with the full-year volume test (`pytest -m slow`).
+  6. **Keep determinism intact:** the rules every change must respect (`DeterministicRandom` only, no `hash()`, keys from `PrimaryKeyAllocator`, `entity_fraction` for future decisions). Explain how to prove it with the resume-equals-single-run test.
+- [ ] **Step 4: `README.md`:**
   - **Status line:** data-platform-1 is done; data-platform-2 is next.
   - **Quickstart:** add one now that the commands exist. Prerequisites: Docker, uv, GNU Make. Commands: `cp .env.example .env`, `make up`, `make backfill DAYS=365`, `make build`, `make docs`.
   - **Repository layout:** `generator/`, `dbt/`, `docker/`, `scripts/`, `docs/`, each with one line.
-  - **Design docs:** keep the link to this plan.
-- [ ] **Step 2: `CLAUDE.md`:**
+  - **Docs:** keep the link to this plan, and add a "Guides" list linking the three guides.
+
+- [ ] **Step 5: `CLAUDE.md`:**
   - Add a **Commands** section listing exactly the Makefile targets that exist after Task 14 (`up`, `down`, `generate`, `backfill`, `status`, `reset`, `deps`, `seed`, `build`, `build-prod`, `docs`, `docs-prod`, `docs-check`, `lint`, `test`, `mutate`), one line each.
   - Check that the module and class names cited in Python Guidelines › Structure match the code.
   - Point "Current plan" at the next plan once it exists; until then, say data-platform-2 is to be planned.
-- [ ] **Step 3:** `grep -rn` both files for every command, path, module and class name they mention, and confirm each one exists. Expected: no dangling references.
-- [ ] **Step 4:** Commit `docs: README and CLAUDE.md for data-platform-1`.
+- [ ] **Step 6:** Check `CLAUDE.md`, `README.md` and the three guides for every command, path, module and class name they mention, and confirm each one exists (`grep` + `ls`). Expected: no dangling references.
+- [ ] **Step 7:** Commit `docs: how-to guides, README and CLAUDE.md for data-platform-1`.

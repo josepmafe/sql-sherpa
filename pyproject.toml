@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sql-sherpa"
+version = "0.1.0"
+description = "Synthetic e-commerce warehouse (generator + dbt on Postgres) and a text-to-SQL agent on top of it."
+requires-python = ">=3.12,<3.13"
+
+[project.scripts]
+sherpa-generate = "sherpa_generator.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "psycopg[binary]",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
+dbt = [
+    "dbt-core==1.12.6",
+    "dbt-postgres==1.11.0",
+    "sqlfluff",
+    "sqlfluff-templater-dbt",
+]
+generator = [
+    "pydantic",
+    "pydantic-settings",
+    "psycopg[binary]",
+    "faker>=40.43.0",
+    "tzdata>=2026.5",
+    "typer>=0.27.3",
+]
+
+[tool.uv]
+default-groups = ["dev", "generator", "dbt"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["generator/src/sherpa_generator"]
+
+[tool.pytest.ini_options]
+testpaths = ["generator/tests", "tests"]
+pythonpath = ["scripts"]  # scripts/ is not a package; this lets tests/scripts import its modules
+addopts = '-m "not slow"'  # an explicit -m on the command line replaces this
+markers = [
+    "integration: needs Postgres",
+    "slow: full-year runs",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "T20", "LOG", "G", "C4", "TC", "PT", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["T20"]  # scripts print their results (CLAUDE.md)
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sherpa_generator.records.base.RawRecord",
+]
+
+[tool.mypy]
+files = ["generator/src"]
+python_version = "3.12"
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]  # lets GeneratorSettings() be built from the environment without arguments
