@@ -17,6 +17,8 @@ vars:
   session_timeout_minutes: 30
   date_spine_start: "2024-01-01"
   date_spine_end: "2028-12-31"
+  # Required by dbt_date (used by dbt_expectations); all timestamps are UTC.
+  "dbt_date:time_zone": "UTC"
 
 # Folder-level defaults. "+schema" is a *custom* schema; the generate_schema_name macro
 # turns it into the real schema name (dev_<name> on dev, <name> on prod).

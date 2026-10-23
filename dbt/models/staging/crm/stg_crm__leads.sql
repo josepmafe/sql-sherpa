@@ -15,7 +15,7 @@ renamed as (
         lifecycle_stage,
         created_at,
         updated_at,
-        lower(trim(email)) as email
+        {{ normalize_email('email') }} as email
     from source
 
 )
