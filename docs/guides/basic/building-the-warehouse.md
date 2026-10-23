@@ -295,7 +295,7 @@ Stop it with Ctrl+C. `make docs-prod` does the same for prod from `dbt/target-pr
 
 The landing page is the `__overview__` doc block in `dbt/models/overview.md`. On the left, the **Project** tab groups the nodes by folder and the **Database** tab by schema. A model page shows its description, its columns with their tests, the SQL (source and compiled) and what it depends on.
 
-The **lineage graph** button (bottom right) draws the DAG: sources on the left, flowing into the staging views, the intermediate models and the marts, with the seeds feeding the models that join them (`country_code_variants` into `stg_shop__customers` and `stg_shop__addresses`). `dim_date` stands alone because it reads nothing, The `channel_mapping` seed feeds `int_events__sessionized`. The `--select` box at the bottom takes the same syntax as the CLI: `+stg_shop__customers` shows the model with its source and seed. Click a node to open its page.
+The **lineage graph** button (bottom right) draws the DAG: sources on the left, flowing into the staging views, the intermediate models and the marts, with the seeds feeding the models that join them (`country_code_variants` into `stg_shop__customers` and `stg_shop__addresses`). The `channel_mapping` seed feeds `int_events__sessionized`, and `dim_date` stands alone because it reads nothing. The `--select` box at the bottom takes the same syntax as the CLI: `+stg_shop__customers` shows the model with its source and seed. Click a node to open its page.
 
 `make docs-check` regenerates the docs quietly and fails if a model or column under `dbt/models` has no description; it prints nothing when everything is documented.
 
@@ -464,11 +464,11 @@ make eval-db SHERPA_EVAL_DB_NAME=sherpa
 Makefile:80: *** SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database 'sherpa', got 'sherpa'.  Stop.
 ```
 
-The build skips the source freshness check, because the frozen data is old on purpose. For the same reason one test warns on this database, and the warning is expected: the check that `stg_events__events.received_at` has data from the last 3 days.
+The build skips the source freshness check, because the frozen data is old on purpose. For the same reason one test warns on this database, and the warning is expected: the check that `stg_events__events.received_at` has data from the last 3 days. The command writes its artifacts to the scratch folder `target-scratch`, so the frozen eval artifacts in `target-eval` stay as `make eval-db` left them.
 
 ```bash
 cd dbt
-DBT_PROFILES_DIR=. uv run --env-file ../.env dbt test --target eval --target-path target-eval --select stg_events__events,test_name:expect_row_values_to_have_recent_data
+DBT_PROFILES_DIR=. uv run --env-file ../.env dbt test --target eval --target-path target-scratch --select stg_events__events,test_name:expect_row_values_to_have_recent_data
 ```
 
 ```

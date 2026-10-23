@@ -186,7 +186,7 @@ Missing descriptions:
 
 It also catches a column that exists in Postgres but not in the YAML. With the description added it prints nothing and exits 0.
 
-Finally add the mart to the list in the README and in `dbt/models/overview.md`, add its row to the spec's §6.5, and add a test for any rule you rely on. The agent access test (`tests/dbt/test_agent_access.py`) lists every mart in its `MARTS` tuple: add the new table there.
+Finally add the mart to the list in `dbt/models/overview.md`, add its row to the spec's §6.5, and add a test for any rule you rely on. The agent access test (`tests/dbt/test_agent_access.py`) lists every mart in its `MARTS` tuple: add the new table there.
 
 ## 3. Change a metric definition
 

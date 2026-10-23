@@ -9,7 +9,7 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
-clean-targets: ["target", "target-prod", "target-eval", "target-sqlfluff", "dbt_packages"]
+clean-targets: ["target", "target-prod", "target-eval", "target-sqlfluff", "target-scratch", "dbt_packages"]
 
 # Project variables, read in models with {{ var('tax_rate') }}.
 vars:

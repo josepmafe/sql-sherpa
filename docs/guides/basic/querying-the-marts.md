@@ -314,7 +314,7 @@ limit 5;
  Quill Max Dumbbells | 0.33
 ```
 
-`ilike '%dumbell%'` finds nothing for the misspelling. Use `ilike` for exact fragments and `%` for typos. Because the index covers `%`, the lookup does not scan the table. The usual follow-up is to take the matched `variant_id` values and query `fct_order_items`.
+`ilike '%dumbell%'` finds nothing for the misspelling. Use `ilike` for exact fragments and `%` for typos. The GIN trigram index supports `%`, so on a large table the planner uses it instead of comparing every row; on a table this small (about 1,500 rows) it may still choose a sequential scan, which is just as fast here. The usual follow-up is to take the matched `variant_id` values and query `fct_order_items`.
 
 ## Connecting as `sherpa_agent`
 
