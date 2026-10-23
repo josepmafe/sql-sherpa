@@ -147,6 +147,7 @@ class OrderLifecycleSimulator:
             rng=self._random.for_day(snapshot.day, STREAM),
             end=self._calendar.day_bounds(snapshot.day)[1],
             variants=variants,
+            variants_by_id={v.id: v for v in variants},
             variant_cum_weights=list(accumulate(snapshot.variant_popularity[v.id] for v in variants)),
             promotions=snapshot.active_promotions,
             coupons=snapshot.coupon_codes,
@@ -187,7 +188,7 @@ class OrderLifecycleSimulator:
     def _place(self, day: _PlacementDay, intent: PurchaseIntent) -> Order:
         order_id = self._keys.next_id(Order)
         placed_at = intent.purchased_at
-        items = self._items(day, order_id)
+        items = self._items(day, order_id, intent.variant_id)
         subtotal = self._pricing.subtotal(items)
         discounts = self._discounts(day, order_id, placed_at, subtotal)
         discount_total = sum((discount.amount for _, discount in discounts), Decimal(0))
@@ -216,14 +217,16 @@ class OrderLifecycleSimulator:
             self._insert_status_change(day.changes, order_id, OrderStatus.PAID, paid_at)
         self._insert_payments(day, order, paid_at)
         if intent.purchase_event_id is not None:
-            self._tag_purchase_event(day, intent.purchase_event_id, order_id)
+            self._tag_purchase_event(day, intent.purchase_event_id, order)
 
         return order
 
-    def _items(self, day: _PlacementDay, order_id: int) -> list[OrderItem]:
-        """1-4 distinct variants by popularity, at today's list price."""
+    def _items(self, day: _PlacementDay, order_id: int, carted_variant_id: int | None) -> list[OrderItem]:
+        """1-4 distinct variants at today's list price: a web order's carted variant first, the rest by popularity."""
         count = min(day.rng.choices(_LINE_COUNTS, cum_weights=_LINE_CUM_WEIGHTS)[0], len(day.variants))
         chosen: dict[int, ProductVariant] = {}
+        if carted_variant_id is not None:
+            chosen[carted_variant_id] = day.variants_by_id[carted_variant_id]
         while len(chosen) < count:
             variant = day.rng.choices(day.variants, cum_weights=day.variant_cum_weights)[0]
             chosen.setdefault(variant.id, variant)
@@ -323,10 +326,13 @@ class OrderLifecycleSimulator:
             )
         )
 
-    def _tag_purchase_event(self, day: _PlacementDay, event_id: str, order_id: int) -> None:
-        """Records are frozen, so the purchase event (and any R1 copy of it) is swapped for one carrying order_id."""
+    def _tag_purchase_event(self, day: _PlacementDay, event_id: str, order: Order) -> None:
+        """Records are frozen, so the purchase event (and any R1 copy of it) is swapped for one carrying the order.
+
+        Its cart_value becomes the order subtotal, so the event agrees with the order it created.
+        """
         for event in day.purchase_events[event_id]:
-            properties = event.properties.model_copy(update={"order_id": order_id})
+            properties = event.properties.model_copy(update={"order_id": order.id, "cart_value": order.subtotal})
             day.changes.replace(event, event.model_copy(update={"properties": properties}))
 
     def _transition(
@@ -407,6 +413,7 @@ class _PlacementDay:
     rng: random.Random
     end: datetime
     variants: list[ProductVariant]
+    variants_by_id: dict[int, ProductVariant]
     variant_cum_weights: list[float]
     promotions: list[Promotion]
     coupons: list[CouponCode]

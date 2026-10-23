@@ -137,7 +137,10 @@ _DEVICE_CUM_WEIGHTS: Final = tuple(accumulate(DEVICE_TYPE_WEIGHTS.values()))
 
 
 class PurchaseIntent(BaseModel):
-    """A purchase decided by traffic; the order lifecycle turns it into an order. App intents have no events."""
+    """A purchase decided by traffic; the order lifecycle turns it into an order. App intents have no events.
+
+    `variant_id` is the variant the web session carted, which becomes the order's first line.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -147,6 +150,7 @@ class PurchaseIntent(BaseModel):
     session_anonymous_id: str | None
     utm_campaign: str | None
     purchase_event_id: str | None
+    variant_id: int | None
 
 
 class TrafficOutcome(BaseModel):
@@ -261,6 +265,7 @@ class VisitorTrafficSimulator:
         if day.rng.random() >= purchase_rate:
             return
 
+        # Placing the order tags this event with its order_id and sets cart_value to the order subtotal.
         purchase = self._emit(day, session, EventType.PURCHASE, checkout)
         day.web_intents.append(
             PurchaseIntent(
@@ -270,6 +275,7 @@ class VisitorTrafficSimulator:
                 session_anonymous_id=session.anonymous_id,
                 utm_campaign=session.context.utm_campaign,
                 purchase_event_id=purchase.event_id,
+                variant_id=variant.id,
             )
         )
 
@@ -399,6 +405,7 @@ class VisitorTrafficSimulator:
                 session_anonymous_id=None,
                 utm_campaign=None,
                 purchase_event_id=None,
+                variant_id=None,
             )
             for buyer in buyers
         ]

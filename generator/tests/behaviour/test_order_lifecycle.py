@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
@@ -13,7 +13,7 @@ from sherpa_generator.behaviour.order_lifecycle import (
     OrderLifecycleSimulator,
     OrderPricing,
 )
-from sherpa_generator.behaviour.visitor_traffic import PurchaseIntent
+from sherpa_generator.behaviour.visitor_traffic import EVENT_GAP_SECONDS, MAX_SESSION_GAPS, PurchaseIntent
 from sherpa_generator.records import (
     Address,
     AddressType,
@@ -57,6 +57,8 @@ DAY = date(2025, 3, 12)
 DAY_START = datetime(2025, 3, 12, tzinfo=UTC)
 END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
 CENT = Decimal("0.01")
+MAX_SESSION_SECONDS = EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS  # the longest a session runs, add_to_cart to purchase
+LINE_ORDERS = 400  # enough web orders to see every line count of LINE_COUNT_WEIGHTS
 VALID_STATUS_PATHS = {
     ("placed",),
     ("placed", "cancelled"),
@@ -256,6 +258,20 @@ class TestOrderLifecycleSimulator:
         assert untagged == 0
 
     @pytest.mark.integration
+    def test_web_order_matches_its_purchase_event_and_leads_with_the_carted_variant(
+        self, order_month: Database
+    ) -> None:
+        with order_month.connect() as conn:
+            rows = conn.execute(_WEB_ORDER_PURCHASES, [MAX_SESSION_SECONDS]).fetchall()
+            [(web_orders,)] = _rows(conn, "SELECT count(*) FROM raw_shop.orders WHERE sales_channel = 'web'")
+
+        assert web_orders > 0
+        assert len(rows) == web_orders
+        for subtotal, cart_value, item_variants, carted_variants in rows:
+            assert cart_value == subtotal
+            assert item_variants[0] in carted_variants
+
+    @pytest.mark.integration
     def test_never_paid_orders_are_cancelled_next_day_without_refund(self, order_month: Database) -> None:
         with order_month.connect() as conn:
             rows = _rows(conn, _NEVER_PAID_ORDERS)
@@ -307,7 +323,7 @@ class TestOrderLifecycleSimulator:
         assert changes.insert_counts() == {}
         assert changes.updates == []
 
-    def test_web_order_tags_its_purchase_event_and_r1_duplicate_with_the_order_id(self) -> None:
+    def test_web_order_tags_its_purchase_event_and_r1_duplicate_with_the_order_id_and_subtotal(self) -> None:
         changes = DayChanges()
         purchase = _purchase_event(TrackedEvent, "evt-1")
         duplicate = purchase.model_copy(update={"received_at": purchase.received_at + timedelta(seconds=30)})
@@ -320,8 +336,30 @@ class TestOrderLifecycleSimulator:
         events = changes.inserted(TrackedEvent)
         assert [e.event_id for e in events] == ["evt-1", "evt-1", "evt-2"]
         assert [e.properties.order_id for e in events] == [order.id, order.id, None]
+        assert [e.properties.cart_value for e in events] == [order.subtotal, order.subtotal, Decimal("59.99")]
         assert [e.received_at for e in events] == [purchase.received_at, duplicate.received_at, other.received_at]
-        assert events[0].properties.cart_value == purchase.properties.cart_value
+
+    def test_web_order_leads_with_the_carted_variant_and_draws_the_other_lines_by_popularity(self) -> None:
+        changes = DayChanges()
+        snapshot = _snapshot()
+        carted = snapshot.variants[-1]
+        intents = []
+        for index in range(LINE_ORDERS):
+            changes.insert(_purchase_event(TrackedEvent, f"evt-{index}"))
+            intents.append(_web_intent(f"evt-{index}", customer_id=1 + index % 50, variant_id=carted.id))
+
+        orders = _simulator().place_orders(snapshot, changes, intents)
+
+        lines: dict[int, list[OrderItem]] = defaultdict(list)
+        for item in changes.inserted(OrderItem):
+            lines[item.order_id].append(item)
+        line_counts = Counter(len(lines[order.id]) for order in orders)
+        assert all(
+            (lines[o.id][0].variant_id, lines[o.id][0].unit_price) == (carted.id, carted.list_price) for o in orders
+        )
+        assert all(len({line.variant_id for line in lines[o.id]}) == len(lines[o.id]) for o in orders)
+        assert set(line_counts) == {1, 2, 3, 4}
+        assert 0.40 <= line_counts[1] / LINE_ORDERS <= 0.60  # LINE_COUNT_WEIGHTS: half the orders have one line
 
     def test_web_order_tags_a_pending_purchase_event(self) -> None:
         changes = DayChanges()
@@ -612,7 +650,7 @@ def _purchase_event(event_type: type[TrackedEvent], event_id: str) -> TrackedEve
     )
 
 
-def _web_intent(event_id: str, customer_id: int) -> PurchaseIntent:
+def _web_intent(event_id: str, customer_id: int, variant_id: int = 1) -> PurchaseIntent:
     return PurchaseIntent(
         customer_id=customer_id,
         sales_channel=SalesChannel.WEB,
@@ -620,6 +658,7 @@ def _web_intent(event_id: str, customer_id: int) -> PurchaseIntent:
         session_anonymous_id="device-1",
         utm_campaign=None,
         purchase_event_id=event_id,
+        variant_id=variant_id,
     )
 
 
@@ -631,6 +670,7 @@ def _app_intent(customer_id: int, purchased_at: datetime) -> PurchaseIntent:
         session_anonymous_id=None,
         utm_campaign=None,
         purchase_event_id=None,
+        variant_id=None,
     )
 
 
@@ -663,6 +703,24 @@ SELECT event_id, (properties->>'order_id')::bigint AS order_id
 FROM raw_events.events WHERE event_type = 'purchase'
 UNION
 SELECT event_id, (properties->>'order_id')::bigint FROM raw_meta.pending_events WHERE event_type = 'purchase'
+"""
+
+_WEB_ORDER_PURCHASES = """
+WITH events AS (
+    SELECT DISTINCT ON (event_id) event_id, anonymous_id, event_type, occurred_at::timestamptz AS occurred_at,
+           properties
+    FROM (SELECT * FROM raw_events.events UNION ALL SELECT * FROM raw_meta.pending_events) e
+    ORDER BY event_id
+)
+SELECT o.subtotal, (p.properties->>'cart_value')::numeric(12, 2),
+       (SELECT array_agg(i.variant_id ORDER BY i.id) FROM raw_shop.order_items i WHERE i.order_id = o.id),
+       (SELECT array_agg((c.properties->>'variant_id')::bigint) FROM events c
+        WHERE c.event_type = 'add_to_cart' AND c.anonymous_id = p.anonymous_id
+          AND c.occurred_at BETWEEN p.occurred_at - %s * interval '1 second' AND p.occurred_at)
+FROM raw_shop.orders o
+JOIN events p ON p.event_type = 'purchase' AND (p.properties->>'order_id')::bigint = o.id
+WHERE o.sales_channel = 'web'
+ORDER BY o.id
 """
 
 _PURCHASE_EVENTS_BY_ORDER = f"""

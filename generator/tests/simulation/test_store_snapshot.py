@@ -57,8 +57,9 @@ class TestStoreSnapshotLoader:
     def test_order_state_is_ordered_by_key_and_holds_only_what_can_still_change(self, order_month: Database) -> None:
         with order_month.connect() as conn:
             snapshot = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(LAST_DAY)
-            [(orders, addresses)] = conn.execute(
+            [(orders, open_orders, addresses)] = conn.execute(
                 "SELECT (SELECT count(*) FROM raw_shop.orders),"
+                " (SELECT count(*) FROM raw_shop.orders WHERE status IN ('placed', 'paid', 'shipped')),"
                 " (SELECT count(*) FROM raw_shop.addresses WHERE type = 'shipping' AND is_default)"
             ).fetchall()
 
@@ -75,8 +76,9 @@ class TestStoreSnapshotLoader:
         ]
 
         assert all(ids == sorted(ids) for ids in ([r.id for r in records] for records in lists))
-        assert 0 < len(open_ids) < orders
-        assert {o.status for o in snapshot.open_orders} == {OrderStatus.PLACED, OrderStatus.PAID, OrderStatus.SHIPPED}
+        assert 0 < len(open_ids) == open_orders < orders
+        assert {OrderStatus.PAID, OrderStatus.SHIPPED} <= {o.status for o in snapshot.open_orders}
+        assert {o.status for o in snapshot.open_orders} <= {OrderStatus.PLACED, OrderStatus.PAID, OrderStatus.SHIPPED}
         assert {s.order_id for s in snapshot.open_shipments} <= open_ids
         assert all(s.delivered_at is None for s in snapshot.open_shipments)
         assert {p.order_id for p in snapshot.captured_payments} == paid_ids

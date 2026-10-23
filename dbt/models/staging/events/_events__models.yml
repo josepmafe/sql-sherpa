@@ -68,4 +68,6 @@ models:
                 to: ref('stg_shop__orders')
                 field: order_id
       - name: cart_value
-        description: Cart value in EUR at the time of the event, numeric(12,2); null if not applicable.
+        description: >-
+          Cart value in EUR, numeric(12,2). add_to_cart/begin_checkout: price of the carted item; purchase: the order
+          subtotal. Null for other events.

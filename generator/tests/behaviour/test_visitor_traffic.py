@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from helpers import SIMULATION_SEED, TRAFFIC_MONTH_END, make_customer
 from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
-from sherpa_generator.behaviour.visitor_traffic import VisitorTrafficSimulator
+from sherpa_generator.behaviour.visitor_traffic import EVENT_GAP_SECONDS, MAX_SESSION_GAPS, VisitorTrafficSimulator
 from sherpa_generator.records import (
     Campaign,
     CampaignChannel,
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 DAY = date(2025, 3, 12)  # a Wednesday: seasonality 1.0
 END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
 PAID_MEDIUMS = {"cpc", "paid_social", "affiliate"}
+MAX_SESSION = timedelta(seconds=EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS)  # the longest a session runs
 PURCHASE_RATE_SCALE = 20.0  # one day with enough signups and returning checkouts to measure both purchase rates
 EventRow = tuple[str, str, str | None, str, datetime, str | None, str | None]
 
@@ -168,6 +169,27 @@ class TestVisitorTrafficSimulator:
         assert all(i.purchase_event_id is None and i.session_anonymous_id is None for i in app)
         assert {i.customer_id for i in app} <= {c.id for c in _snapshot().customers}
         assert all(start <= i.purchased_at < end for i in outcome.purchase_intents)
+
+    def test_web_purchase_intent_carries_the_variant_its_session_carted(self) -> None:
+        changes = DayChanges()
+
+        outcome = _simulator().simulate_day(_snapshot(), changes)
+
+        events = list({e.event_id: e for e in _events(changes)}.values())  # without R1
+        purchases = {e.event_id: e for e in events if e.event_type == EventType.PURCHASE}
+        web = [i for i in outcome.purchase_intents if i.sales_channel == SalesChannel.WEB]
+        assert web
+        for intent in web:
+            purchased_at = datetime.fromisoformat(purchases[str(intent.purchase_event_id)].occurred_at)
+            carted = {
+                e.properties.variant_id
+                for e in events
+                if e.event_type == EventType.ADD_TO_CART
+                and e.anonymous_id == intent.session_anonymous_id
+                and timedelta(0) <= purchased_at - datetime.fromisoformat(e.occurred_at) <= MAX_SESSION
+            }
+            assert intent.variant_id in carted
+        assert all(i.variant_id is None for i in outcome.purchase_intents if i.sales_channel == SalesChannel.APP)
 
     def test_late_events_become_pending_and_never_occur_after_the_day(self) -> None:
         changes = DayChanges()
