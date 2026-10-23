@@ -60,3 +60,283 @@ models:
       - name: total_discount_amount
         description: Total discount in EUR granted by the promotion on non-test orders.
         data_type: numeric(12,2)
+
+  - name: fct_orders
+    description: >
+      Order fact, one row per order of a non-test customer, cancelled orders included and flagged.
+      Holds the order's dates, status, channels, amounts as placed and outcomes (net revenue, cost
+      and margin). {{ doc('cancelled_orders') }}
+      {{ doc('metric_aov') }}
+      {{ doc('metric_refund_rate') }}
+    config:
+      meta:
+        domain: sales
+        grain: one row per order
+        primary_key: order_id
+    data_tests:
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          arguments:
+            column_A: gross_revenue
+            column_B: net_revenue
+            or_equal: true
+    columns:
+      - name: order_id
+        description: The order. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: order_number
+        description: Order number shown to the customer, e.g. SS-000123.
+        data_type: text
+      - name: customer_id
+        description: The customer who placed the order.
+        data_type: bigint
+        data_tests: [not_null]
+      - name: order_date
+        description: UTC date the order was placed. Join to dim_date on date_day.
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: placed_at
+        description: When the order was placed (UTC).
+        data_type: timestamptz
+      - name: paid_at
+        description: When the order was first paid (UTC); null if never paid.
+        data_type: timestamptz
+      - name: shipped_at
+        description: When the order was first shipped (UTC); null if not shipped.
+        data_type: timestamptz
+      - name: delivered_at
+        description: When the order was first delivered (UTC); null if not delivered.
+        data_type: timestamptz
+      - name: cancelled_at
+        description: When the order was cancelled (UTC); null if not cancelled.
+        data_type: timestamptz
+      - name: current_status
+        description: Current status of the order, placed, paid, shipped, delivered or cancelled.
+        data_type: text
+        config:
+          meta:
+            synonyms: [status, order status]
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [placed, paid, shipped, delivered, cancelled]
+      - name: is_cancelled
+        description: True when the order is cancelled. {{ doc('cancelled_orders') }}
+        data_type: boolean
+      - name: sales_channel
+        description: Where the order was placed, web (the website) or app (the mobile app).
+        data_type: text
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [web, app]
+      - name: marketing_channel
+        description: >
+          Marketing channel of the order. A web order takes the channel of the session containing its
+          purchase event; an app order is app. A web order whose purchase event has not arrived yet is
+          unknown until it does.
+        data_type: text
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [direct, organic, paid_search, paid_social, email, affiliate, referral, app, unknown]
+      - name: session_id
+        description: >
+          Web session containing the order's purchase event; null for app orders and for web orders whose
+          purchase event has not arrived yet.
+        data_type: text
+      - name: ship_country_code
+        description: ISO alpha-2 code of the shipping address's country.
+        data_type: text
+      - name: item_count
+        description: Number of units ordered, the sum of the line quantities.
+        data_type: integer
+        data_tests:
+          - dbt_expectations.expect_column_mean_to_be_between:
+              arguments:
+                min_value: 1.9
+                max_value: 2.4
+              config:
+                severity: warn
+      - name: gross_revenue
+        description: >
+          The order's gross revenue as placed, kept when the order is cancelled.
+          {{ doc('metric_gross_revenue') }}
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [sales, gross sales, turnover]
+      - name: discount_amount
+        description: >
+          The order's discount as placed, kept when the order is cancelled.
+          {{ doc('metric_discount_amount') }}
+        data_type: numeric(12,2)
+      - name: shipping_amount
+        description: Shipping charged to the customer in EUR; 0 when shipping is free.
+        data_type: numeric(12,2)
+      - name: tax_amount
+        description: Tax on the order in EUR, 20% of gross revenue minus discount.
+        data_type: numeric(12,2)
+      - name: order_total
+        description: Amount charged to the customer in EUR, gross revenue minus discount plus shipping and tax.
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [amount paid, basket total]
+      - name: captured_amount
+        description: Sum of the order's captured payments in EUR; failed and authorized-only attempts are excluded.
+        data_type: numeric(12,2)
+      - name: refunded_amount
+        description: Sum of all refunds of the order in EUR, including tax, whatever the reason; 0 when none.
+        data_type: numeric(12,2)
+      - name: refunded_revenue
+        description: >
+          The order's refunded revenue; 0 when the order has no refund.
+          {{ doc('metric_refunded_revenue') }}
+        data_type: numeric(12,2)
+      - name: net_revenue
+        description: >
+          The order's net revenue. {{ doc('metric_net_revenue') }}
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [revenue, net sales]
+      - name: cogs
+        description: >
+          The order's cost of goods sold. {{ doc('metric_cogs') }}
+        data_type: numeric(12,2)
+      - name: returned_cogs
+        description: >
+          The cost of the order's restockable returned units. {{ doc('metric_cogs') }}
+        data_type: numeric(12,2)
+      - name: gross_margin
+        description: >
+          The order's gross margin. {{ doc('metric_gross_margin') }}
+        data_type: numeric(12,2)
+      - name: has_discount
+        description: >
+          True when the order has at least one discount with an amount above 0. Free-shipping promotions
+          have a 0 amount and do not count.
+        data_type: boolean
+      - name: has_return
+        description: True when the order has at least one return that was not rejected.
+        data_type: boolean
+      - name: days_to_deliver
+        description: Days from order_date to the UTC date of delivered_at; null if not delivered.
+        data_type: integer
+
+  - name: fct_order_items
+    description: >
+      Order line fact, one row per line of an order in fct_orders: the variant sold, its quantity,
+      price, allocated discount, cost and returns. Line refunded_revenue covers return refunds only;
+      goodwill and cancellation refunds exist only on fct_orders, so the lines' refunded_revenue adds
+      up to at most the order's (up to a cent per line from rounding). {{ doc('cancelled_orders') }}
+    config:
+      meta:
+        domain: sales
+        grain: one row per order line
+        primary_key: order_item_id
+    data_tests:
+      - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
+          arguments:
+            column_A: gross_amount
+            column_B: net_amount
+            or_equal: true
+      - column_sums_match:
+          arguments:
+            column_name: gross_amount
+            compare_model: ref('fct_orders')
+            compare_column: gross_revenue
+            group_by: order_id
+      - column_sums_match:
+          arguments:
+            column_name: allocated_discount
+            compare_model: ref('fct_orders')
+            compare_column: discount_amount
+            group_by: order_id
+      - column_sums_match:
+          arguments:
+            column_name: cogs
+            compare_model: ref('fct_orders')
+            compare_column: cogs
+            group_by: order_id
+    columns:
+      - name: order_item_id
+        description: The order line. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: The order the line belongs to.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: customer_id
+        description: The customer who placed the order.
+        data_type: bigint
+      - name: variant_id
+        description: The product variant sold. Join to dim_products on variant_id.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: variant_id
+      - name: product_id
+        description: The product the variant belongs to.
+        data_type: bigint
+      - name: order_date
+        description: UTC date the order was placed.
+        data_type: date
+      - name: is_cancelled
+        description: True when the order is cancelled; the line's cogs is then 0.
+        data_type: boolean
+      - name: quantity
+        description: Units sold on the line.
+        data_type: integer
+      - name: unit_price
+        description: Variant list price at the time of the order in EUR, net of tax, before discounts.
+        data_type: numeric(12,2)
+      - name: gross_amount
+        description: quantity × unit_price in EUR, kept when the order is cancelled.
+        data_type: numeric(12,2)
+      - name: allocated_discount
+        description: >
+          The line's share of the order discount in EUR, pro-rata to gross amount; the lines add up
+          exactly to the order's discount_amount.
+        data_type: numeric(12,2)
+      - name: net_amount
+        description: gross_amount minus allocated_discount in EUR, kept when the order is cancelled.
+        data_type: numeric(12,2)
+      - name: unit_cost_at_sale
+        description: Cost per unit in EUR at the time of sale, taken as the variant's current cost price.
+        data_type: numeric(12,2)
+      - name: cogs
+        description: quantity × unit_cost_at_sale in EUR; 0 when the order is cancelled.
+        data_type: numeric(12,2)
+      - name: returned_quantity
+        description: Units of the line on received returns; 0 when none.
+        data_type: integer
+      - name: refunded_revenue
+        description: >
+          Revenue refunded for the line's returned units in EUR, excluding tax (the line's net amount
+          pro-rated by returned quantity); 0 when none.
+        data_type: numeric(12,2)
