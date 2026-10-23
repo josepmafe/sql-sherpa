@@ -168,7 +168,7 @@ tests/dbt/test_agent_access.py                     # pytest, marker `warehouse`
   - `create schema if not exists extensions`
   - `create extension if not exists pg_trgm with schema extensions`
   - `alter database "{{ target.dbname }}" set search_path = "$user", public, extensions`
-- `create_trigram_index(column)` → `create index if not exists {{ this.identifier }}_{{ column }}_trgm on {{ this }} using gin ({{ column }} extensions.gin_trgm_ops)`.
+- `create_trigram_index(column)` → `drop index if exists {{ this.schema }}.<name>; create index <name> on {{ this }} using gin ({{ column }} extensions.gin_trgm_ops)` with `<name>` = `{{ this.identifier }}_{{ column }}_trgm`. The drop comes first because the previous build's `__dbt_backup` table still holds an index of that name while the post-hook runs (`if not exists` would skip and the backup drop would remove it).
 - `dim_products` (`marts/products/`): columns per spec §6.5.
   - Category hierarchy from `stg_shop__categories` via two self-joins from the product's leaf: a depth-3 leaf gives l1/l2/l3; a depth-2 leaf gives l1/l2 with `l3` null.
   - `current_list_price`/`current_cost_price` from the variant.

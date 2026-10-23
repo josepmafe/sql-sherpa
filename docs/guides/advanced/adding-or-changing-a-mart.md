@@ -216,7 +216,7 @@ Three of the five pinned cases do not match the new rate, so the change cannot g
 
 ## 4. Add a trigram index
 
-A trigram index speeds up fuzzy text search (`column % 'text'` and `similarity()`) on a text column. Add one when people look rows up by that column's value, such as product names. The macro `create_trigram_index(column)` in `dbt/macros/create_trigram_index.sql` creates a GIN index on the column; add a line to the model's `post_hook` list (a *hook* is SQL dbt runs after the model builds; the quotes make it a string, so `{{ this }}` is resolved for each run):
+A trigram index speeds up fuzzy text search (`column % 'text'`, `'text' <% column`) on a text column. Add one when people look rows up by that column's value, such as product names. The macro `create_trigram_index(column)` in `dbt/macros/create_trigram_index.sql` creates a GIN index on the column; add a line to the model's `post_hook` list (a *hook* is SQL dbt runs after the model builds; the quotes make it a string, so `{{ this }}` is resolved for each run):
 
 ```sql
 {{
@@ -257,7 +257,7 @@ set enable_seqscan=off; explain select distinct color from dev_marts.dim_product
                Index Cond: (color % 'blck'::text)
 ```
 
-A table is rebuilt from scratch on every run, so the hook recreates the index each time.
+A table is rebuilt from scratch on every run, so the hook creates the index again each time. Index names are unique per schema, and while the post-hooks run, dbt still keeps the previous build's table as `dim_products__dbt_backup`, holding an index with the same name; dbt drops that backup, with its indexes, after the hooks. So the macro first runs `drop index if exists <schema>.<index name>`, which removes the backup's copy, and then `create index` on the new table. (`create index if not exists` would find the backup's index, skip, and leave the new table without one once the backup is gone.) To check that an index survives a rebuild, run the build twice and query `pg_indexes` after each run; the `warehouse` tests check the five `dim_products` indexes on the prod and eval databases.
 
 ## 5. Write a custom generic test
 

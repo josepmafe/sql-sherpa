@@ -1,4 +1,4 @@
-"""What the agent role can and cannot read in the built warehouses.
+"""What the agent role can and cannot read in the built warehouses, and the trigram indexes it searches with.
 
 The main database tests need `make build-prod` (and `make build` for the dev_marts check); the eval database
 tests need `make eval-db`. Every denied read is preceded by an admin-side check that the relation exists, so a
@@ -35,6 +35,13 @@ NOT_EXPOSED = (
     ("seeds", "countries"),
     ("raw_shop", "orders"),
 )
+TRIGRAM_INDEXES = [
+    "dim_products_brand_trgm",
+    "dim_products_category_l1_trgm",
+    "dim_products_category_l2_trgm",
+    "dim_products_category_l3_trgm",
+    "dim_products_product_name_trgm",
+]
 
 pytestmark = pytest.mark.warehouse
 
@@ -143,6 +150,20 @@ class TestAgentAccess:
 
         assert row is not None
         assert row[0] is not None
+
+
+class TestTrigramIndexes:
+    # The planner may still seq-scan a table of ~1,500 rows, so the check is that the indexes exist, not the plan.
+    def test_dim_products_has_every_trigram_index(self, admin: psycopg.Connection) -> None:
+        query = (
+            "select indexname from pg_indexes"
+            " where schemaname = 'marts' and tablename = 'dim_products' and indexname like '%\\_trgm'"
+            " order by indexname"
+        )
+
+        rows = admin.execute(query).fetchall()
+
+        assert [row[0] for row in rows] == TRIGRAM_INDEXES
 
 
 def _exists(admin: psycopg.Connection, schema: str, table: str) -> bool:

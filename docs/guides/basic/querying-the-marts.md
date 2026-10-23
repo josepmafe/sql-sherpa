@@ -295,26 +295,31 @@ Sum order columns in `fct_orders` alone, and line columns (`gross_amount`, `net_
 
 ## Fuzzy search on products
 
-People misspell product names. `dim_products` has GIN trigram indexes on `product_name`, `brand` and the three category columns, and the `pg_trgm` extension lives in the `extensions` schema, which is on the database search path. A *trigram* is a group of three consecutive letters; two strings with many in common are similar.
+People misspell product names. `dim_products` has GIN trigram indexes on `product_name`, `brand` and the three category columns, recreated by a post-hook on every build, and the `pg_trgm` extension lives in the `extensions` schema, which is on the database search path. A *trigram* is a group of three consecutive letters; two strings with many in common are similar.
 
-- `column % 'text'` is true when the similarity is above 0.3.
-- `similarity(a, b)` returns it, from 0 to 1.
+- `'text' <% column` is true when `text` is similar to some run of whole words in `column` (word similarity of at least 0.6). Use it to look up a word inside a longer name.
+- `word_similarity(text, column)` returns that score, from 0 to 1.
+- `column % 'text'` compares the whole strings (similarity above 0.3), and `similarity(a, b)` returns that score. It suits short values such as a brand or a category.
 
 ```sql
-select distinct product_name, round(similarity(product_name, 'dumbell')::numeric, 2) as sim
+select distinct product_name, round(word_similarity('dumbell', product_name)::numeric, 2) as sim
 from marts.dim_products
-where product_name % 'dumbell'
+where 'dumbell' <% product_name
 order by sim desc, product_name
 limit 5;
 ```
 
 ```
-    product_name     | sim
----------------------+------
- Quill Max Dumbbells | 0.33
+       product_name        | sim
+---------------------------+------
+ Aerolite Active Dumbbells | 0.60
+ Altura Swift Dumbbells    | 0.60
+ Elevate Swift Dumbbells   | 0.60
+ Fjordic Pro Dumbbells     | 0.60
+ Gravel Swift Dumbbells    | 0.60
 ```
 
-`ilike '%dumbell%'` finds nothing for the misspelling. Use `ilike` for exact fragments and `%` for typos. The GIN trigram index supports `%`, so on a large table the planner uses it instead of comparing every row; on a table this small (about 1,500 rows) it may still choose a sequential scan, which is just as fast here. The usual follow-up is to take the matched `variant_id` values and query `fct_order_items`.
+Without the `limit` the query returns all 15 dumbbell products. `product_name % 'dumbell'` returns only `Quill Max Dumbbells` (similarity 0.33): whole-string similarity also counts the trigrams of the other words in the name, so in a three-word name one matching word usually stays below the 0.3 threshold. `ilike '%dumbell%'` finds nothing for the misspelling. Use `ilike` for exact fragments, `<%` for a misspelled word in a name and `%` for a misspelled short value. The GIN trigram index supports both operators, so on a large table the planner uses it instead of comparing every row; on a table this small (about 1,500 rows) it may still choose a sequential scan, which is just as fast here. The usual follow-up is to take the matched `variant_id` values and query `fct_order_items`.
 
 ## Connecting as `sherpa_agent`
 
