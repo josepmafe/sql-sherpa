@@ -19,7 +19,7 @@ vars:
   date_spine_end: "2028-12-31"
 
 # Folder-level defaults. "+schema" is a *custom* schema; the generate_schema_name macro
-# turns it into the real schema name (dev_<name> on dev, <name> on prod/ci).
+# turns it into the real schema name (dev_<name> on dev, <name> on prod).
 models:
   sherpa:
     staging:

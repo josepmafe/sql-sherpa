@@ -96,9 +96,9 @@ Passwords come from `.env`.
 |---|---|---|
 | `raw_shop`, `raw_events`, `raw_marketing`, `raw_crm` | Generator | Source systems (§4) |
 | `raw_meta` | Generator | `simulation_state` (§5.3) |
-| `seeds`, `staging`, `intermediate`, `snapshots`, `marts`, `ops`, `test_failures` | dbt | dbt-managed (prod/ci targets) |
+| `seeds`, `staging`, `intermediate`, `snapshots`, `marts`, `ops`, `test_failures` | dbt | dbt-managed (prod target) |
 
-**Schema naming:** a custom `generate_schema_name` macro uses the custom schema name verbatim on `prod` and `ci` targets and prefixes it with `dev_` on the `dev` target (e.g. `dev_marts`). Nodes without a custom schema use the target's schema: `dev_public` on `dev`, `public` on `prod` and `ci`. **Exception: snapshots always write to `snapshots`** regardless of target — a snapshot is captured history that cannot be rebuilt, so there is exactly one copy, and dev and prod models both read it. `dev` is the default target; the agent reads the `prod` `marts` schema.
+**Schema naming:** a custom `generate_schema_name` macro uses the custom schema name verbatim on the `prod` target and prefixes it with `dev_` on the `dev` target (e.g. `dev_marts`). Nodes without a custom schema use the target's schema: `dev_public` on `dev`, `public` on `prod`. **Exception: snapshots always write to `snapshots`** regardless of target — a snapshot is captured history that cannot be rebuilt, so there is exactly one copy, and dev and prod models both read it. `dev` is the default target; the agent reads the `prod` `marts` schema.
 
 **Artifacts:** prod commands use `--target-path target-prod`, so `dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `dbt/target/`.
 
@@ -358,7 +358,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 
 ### data-platform-1 — Foundation
 **Builds:** Docker Compose, roles, generator (full §5), dbt project, sources, seeds, all staging models, `dim_date`.
-**dbt features:** project config, `profiles.yml` with `env_var()` and `dev`/`prod`/`ci` targets, custom `generate_schema_name`, `--target-path` for prod artifacts, **sources + freshness** (`dbt source freshness`), **seeds** (with `column_types`), view materialization, **generic tests**, `dbt_utils`, `vars` (`tax_rate`, `session_timeout_minutes`, `date_spine_start/end`), `meta` on `dim_date` (`domain`, `grain`, `primary_key`), `dbt docs generate/serve`, a `__overview__` doc block. CLI: `dbt debug`, `dbt parse`, `dbt compile`, `dbt ls` (selection syntax), **`dbt show`** (preview a model's output without materializing it).
+**dbt features:** project config, `profiles.yml` with `env_var()` and `dev`/`prod` targets, custom `generate_schema_name`, `--target-path` for prod artifacts, **sources + freshness** (`dbt source freshness`), **seeds** (with `column_types`), view materialization, **generic tests**, `dbt_utils`, `vars` (`tax_rate`, `session_timeout_minutes`, `date_spine_start/end`), `meta` on `dim_date` (`domain`, `grain`, `primary_key`), `dbt docs generate/serve`, a `__overview__` doc block. CLI: `dbt debug`, `dbt parse`, `dbt compile`, `dbt ls` (selection syntax), **`dbt show`** (preview a model's output without materializing it).
 **Acceptance:** `make up && make backfill DAYS=365 && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
 
 ### data-platform-2 — Core marts
@@ -383,7 +383,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 - **`on-run-end` audit hook** writing `results` to `ops.dbt_run_results`.
 - **State and environment commands.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`. `make clone` runs **`dbt clone`** of prod relations into dev schemas, so dev can query full data without rebuilding. **`--empty`** is used in CI as a first schema-only build that catches SQL and contract errors in seconds. **`--sample`** is used for fast dev builds on recent data, if the pinned dbt version supports it on Postgres; otherwise the reason it was skipped is recorded in §9.
 
-**CI (`.github/workflows/ci.yml`, on PR):** Postgres service container → `uv sync` → `ruff` + `sqlfluff lint` → generator unit tests → generator (30 days, scale 0.05) → `dbt deps/seed` → `dbt build --empty --target ci` → `dbt build --target ci`. Full build on tiny data: deferral needs persistent prod relations, which CI does not have, so slim/defer is demonstrated locally.
+**CI (`.github/workflows/ci.yml`, on PR; adds the `ci` dbt target to `profiles.yml`):** Postgres service container → `uv sync` → `ruff` + `sqlfluff lint` → generator unit tests → generator (30 days, scale 0.05) → `dbt deps/seed` → `dbt build --empty --target ci` → `dbt build --target ci`. Full build on tiny data: deferral needs persistent prod relations, which CI does not have, so slim/defer is demonstrated locally.
 **Acceptance:** CI green on a PR; `ops.dbt_run_results` has one row per node per run; exposures appear in the docs lineage graph; `dbt build --select fct_orders+` leaves `agg_daily_sales` present.
 
 ### data-platform-5 — Semantic Layer

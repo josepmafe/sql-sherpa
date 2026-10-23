@@ -8,7 +8,7 @@ A few dbt terms first:
 - A **source** declares a table dbt did not build, here the generator's `raw_*` tables. Models read it with `{{ source('shop', 'orders') }}`, other models with `{{ ref('stg_shop__orders') }}`. These two functions give dbt the dependency graph (the *DAG*).
 - A **seed** is a small CSV in `dbt/seeds/` that dbt loads as a table, such as `country_codes`.
 - A **data test** is a query that returns the rows breaking a rule (`unique`, `not_null`, `accepted_values`, `relationships`, ...). Zero rows means it passes.
-- A **target** is one named connection in `dbt/profiles.yml`: `dev` (the default), `prod` and `ci`. Credentials come from `.env` through `env_var()`.
+- A **target** is one named connection in `dbt/profiles.yml`: `dev` (the default) and `prod`. Credentials come from `.env` through `env_var()`.
 
 The project currently has the seeds, one staging view per raw table and `dim_date`. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
 

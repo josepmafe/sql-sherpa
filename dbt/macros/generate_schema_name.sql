@@ -5,7 +5,7 @@
       - snapshots          -> always "snapshots": captured history cannot be rebuilt, so
                               there is exactly one copy that dev and prod both read
       - dev target         -> dev_<custom>
-      - prod / ci          -> <custom> verbatim
+      - any other target   -> <custom> verbatim (prod)
 -#}
 {% macro generate_schema_name(custom_schema_name, node) -%}
     {%- if custom_schema_name is none -%}

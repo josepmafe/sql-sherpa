@@ -1,8 +1,8 @@
 # A dbt "profile" tells dbt how to connect to the warehouse. Each "target" is one named
-# connection (dev / prod / ci). Everything comes from environment variables (loaded from
+# connection (dev / prod). Everything comes from environment variables (loaded from
 # .env by the Makefile), so no credentials live in this committed file.
 sherpa:
-  target: dev # default target; prod and ci are selected explicitly with --target
+  target: dev # default target; prod is selected explicitly with --target
   outputs:
     dev:
       type: postgres
@@ -15,15 +15,6 @@ sherpa:
       schema: dev_public
       threads: 4
     prod:
-      type: postgres
-      host: "{{ env_var('SHERPA_DB_HOST') }}"
-      port: "{{ env_var('SHERPA_DB_PORT') | as_number }}"
-      user: "{{ env_var('SHERPA_ADMIN_USER') }}"
-      password: "{{ env_var('SHERPA_ADMIN_PASSWORD') }}"
-      dbname: "{{ env_var('SHERPA_DB_NAME') }}"
-      schema: public
-      threads: 4
-    ci:
       type: postgres
       host: "{{ env_var('SHERPA_DB_HOST') }}"
       port: "{{ env_var('SHERPA_DB_PORT') | as_number }}"

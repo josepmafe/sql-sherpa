@@ -45,7 +45,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 - Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `dev`). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
 - dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_` / `obt_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
-- Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`/`ci`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
+- Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
 - Time-relative columns use `as_of_date`, never `now()`.
 - Money is `numeric(12,2)` EUR (Python `Decimal`, `ROUND_HALF_UP`). Timestamps are UTC.
