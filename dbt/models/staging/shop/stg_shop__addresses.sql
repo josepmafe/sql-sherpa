@@ -6,9 +6,9 @@ source as (
 
 ),
 
-country_codes as (
+country_variants as (
 
-    select * from {{ ref('country_codes') }}
+    select * from {{ ref('country_code_variants') }}
 
 ),
 
@@ -23,9 +23,10 @@ renamed as (
         source.is_default,
         -- Same rule as stg_shop__customers: an unmapped raw value is kept
         -- so the relationships test fails.
-        coalesce(country_codes.code, source.country_code) as country_code
+        coalesce(country_variants.code, source.country_code) as country_code
     from source
-    left join country_codes on source.country_code = country_codes.raw_value
+    left join country_variants
+        on source.country_code = country_variants.raw_value
 
 )
 

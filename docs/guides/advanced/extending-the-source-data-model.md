@@ -380,7 +380,7 @@ Where a rule lives:
 - **Its rate** is a constant on `RealismRules` (`simulation/realism_rules.py`) with the rule number in a comment, for example `EMAIL_NOISE_RATE: Final = 0.10  # R3`. Behaviour simulators read the rates from there.
 - **Its noise** is a method on `RealismRules` when the rule changes a value (`noisy_email`, `noisy_country`, `duplicate_events`, `late_delivery_delay`, `is_test_account`, `ad_clicks`), or lives in the simulator that owns the behaviour when it changes what happens (split and failed payments in `OrderLifecycleSimulator._insert_payments`, soft deletes in `CustomerDeletionSimulator`).
 - **Its rate test** is in `generator/tests/simulation/test_realism_rules.py`: 20,000 draws with a seeded `random.Random`, asserted within ±20 % of the spec rate (`assert_rate`).
-- **Its cleanup** is in staging: R3 is `lower(trim(email))` in `stg_shop__customers` and `stg_crm__leads`, R4 the left join to the `country_codes` seed, R1 the `row_number()` dedupe in `stg_events__events`, R5 the `is_test_account` flag in `stg_shop__customers`.
+- **Its cleanup** is in staging: R3 is `lower(trim(email))` in `stg_shop__customers` and `stg_crm__leads`, R4 the left join to the `country_code_variants` seed, R1 the `row_number()` dedupe in `stg_events__events`, R5 the `is_test_account` flag in `stg_shop__customers`.
 
 Example: tune R3 from 10 % to 15 %. Change the constant:
 

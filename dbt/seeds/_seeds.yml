@@ -1,21 +1,50 @@
 version: 2
 
 # A seed is a small CSV in the repo that `dbt seed` loads into the warehouse as a table.
-# Models then join to it with {{ ref('country_codes') }}. `column_types` pins the Postgres
+# Models then join to it with {{ ref('country_code_variants') }}. `column_types` pins the Postgres
 # type instead of letting dbt guess it from the data.
+#
+# Countries come as two seeds: `countries` holds one row per country with its attributes, and
+# `country_code_variants` maps every spelling the source can emit (variant) to the canonical code.
+# Staging translates raw values through the variants; anything joining on the canonical code
+# then reaches exactly one row in `countries`, so the join never fans out.
 seeds:
-  - name: country_codes
+  - name: countries
+    description: One row per country the shop sells to, keyed by its canonical ISO code.
+    config:
+      column_types:
+        code: text
+        name: text
+        region: text
+        is_eu: boolean
+    columns:
+      - name: code
+        description: Canonical upper-case ISO 3166-1 alpha-2 country code. Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: name
+        description: English country name.
+        data_tests: [not_null]
+      - name: region
+        description: Sales region the country belongs to.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [DACH, Western Europe, Southern Europe, Benelux, UK & Ireland]
+      - name: is_eu
+        description: Whether the country is a member of the European Union.
+
+  - name: country_code_variants
     description: >
-      Lookup that maps every raw country value the shop can emit to a canonical ISO code.
+      Maps every raw country value the shop can emit to its canonical code in `countries`.
       Raw values include the canonical code itself, its lowercase form and the noisy variant
       UK (and uk) for GB (realism rule R4). One row per raw value.
     config:
       column_types:
         raw_value: text
         code: text
-        name: text
-        region: text
-        is_eu: boolean
     columns:
       - name: raw_value
         description: Country value as it can appear in the source data (any casing, including the UK/uk variants of GB).
@@ -23,17 +52,13 @@ seeds:
           - unique
           - not_null
       - name: code
-        description: Canonical upper-case ISO 3166-1 alpha-2 country code.
-      - name: name
-        description: English country name.
-      - name: region
-        description: Sales region the country belongs to.
+        description: Canonical upper-case ISO 3166-1 alpha-2 country code the raw value maps to.
         data_tests:
-          - accepted_values:
+          - not_null
+          - relationships:
               arguments:
-                values: [DACH, Western Europe, Southern Europe, Benelux, UK & Ireland]
-      - name: is_eu
-        description: Whether the country is a member of the European Union.
+                to: ref('countries')
+                field: code
 
   - name: channel_mapping
     description: >

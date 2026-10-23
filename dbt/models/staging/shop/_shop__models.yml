@@ -10,7 +10,7 @@ models:
   - name: stg_shop__customers
     description: >
       One row per customer. Emails are normalized (lower-cased, trimmed, realism rule R3) and
-      country codes mapped to ISO alpha-2 through the country_codes seed (R4). Test accounts and
+      country codes mapped to ISO alpha-2 through the country_code_variants seed (R4). Test accounts and
       soft-deleted customers are kept and flagged; marts decide what to do with them.
     columns:
       - name: customer_id
@@ -25,13 +25,14 @@ models:
         description: Family name. PII.
       - name: country_code
         description: >
-          Canonical upper-case ISO 3166-1 alpha-2 code. A raw value missing from the country_codes
-          seed is passed through unchanged so the relationships test fails instead of hiding it.
+          Canonical upper-case ISO 3166-1 alpha-2 code. A raw value missing from the
+          country_code_variants seed is passed through unchanged so the relationships test fails instead
+          of hiding it.
         data_tests:
           - not_null
           - relationships:
               arguments:
-                to: ref('country_codes')
+                to: ref('countries')
                 field: code
       - name: marketing_opt_in
         description: Whether the customer agreed to receive marketing emails.
@@ -47,7 +48,7 @@ models:
         description: When the customer was soft-deleted (UTC); null if active.
 
   - name: stg_shop__addresses
-    description: One row per customer address, with country codes mapped to ISO alpha-2 through the country_codes seed (R4).
+    description: One row per customer address, with country codes mapped to ISO alpha-2 through the country_code_variants seed (R4).
     columns:
       - name: address_id
         description: Primary key.
@@ -68,13 +69,14 @@ models:
                 values: [shipping, billing]
       - name: country_code
         description: >
-          Canonical upper-case ISO 3166-1 alpha-2 code. A raw value missing from the country_codes
-          seed is passed through unchanged so the relationships test fails instead of hiding it.
+          Canonical upper-case ISO 3166-1 alpha-2 code. A raw value missing from the
+          country_code_variants seed is passed through unchanged so the relationships test fails instead
+          of hiding it.
         data_tests:
           - not_null
           - relationships:
               arguments:
-                to: ref('country_codes')
+                to: ref('countries')
                 field: code
       - name: city
         description: City.

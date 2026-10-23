@@ -9,9 +9,9 @@ source as (
 
 ),
 
-country_codes as (
+country_variants as (
 
-    select * from {{ ref('country_codes') }}
+    select * from {{ ref('country_code_variants') }}
 
 ),
 
@@ -30,14 +30,15 @@ renamed as (
         -- from the seed keeps its raw value (not null, which the
         -- relationships test would skip), so the test fails loudly and the
         -- seed gets fixed.
-        coalesce(country_codes.code, source.country_code) as country_code,
+        coalesce(country_variants.code, source.country_code) as country_code,
         (
             source.is_test_account
             or lower(trim(source.email)) like '%@sqlsherpa-test.com'
         ) as is_test_account,
         (source.deleted_at is not null) as is_deleted
     from source
-    left join country_codes on source.country_code = country_codes.raw_value
+    left join country_variants
+        on source.country_code = country_variants.raw_value
 
 )
 

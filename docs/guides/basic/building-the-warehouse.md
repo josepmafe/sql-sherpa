@@ -6,7 +6,7 @@ A few dbt terms first:
 
 - A **model** is a `SELECT` in a `.sql` file under `dbt/models/`. dbt wraps it in `CREATE VIEW` or `CREATE TABLE` (its *materialization*) and runs the models in dependency order.
 - A **source** declares a table dbt did not build, here the generator's `raw_*` tables. Models read it with `{{ source('shop', 'orders') }}`, other models with `{{ ref('stg_shop__orders') }}`. These two functions give dbt the dependency graph (the *DAG*).
-- A **seed** is a small CSV in `dbt/seeds/` that dbt loads as a table, such as `country_codes`.
+- A **seed** is a small CSV in `dbt/seeds/` that dbt loads as a table, such as `countries`.
 - A **data test** is a query that returns the rows breaking a rule (`unique`, `not_null`, `accepted_values`, `relationships`, ...). Zero rows means it passes. A **singular test** is a plain SQL file in `dbt/tests/` that returns the failing rows; two live there (`assert_dim_date_black_friday_weeks` and `assert_events_occurred_at_utc_parsing`).
 - A **target** is one named connection in `dbt/profiles.yml`: `dev` (the default) and `prod`. Credentials come from `.env` through `env_var()`.
 
@@ -95,8 +95,9 @@ The warning is expected: `dbt_project.yml` configures a schema for snapshots and
 `make seed` loads only the seeds, which is handy after editing a CSV:
 
 ```
-09:27:12  1 of 2 OK loaded seed file dev_seeds.channel_mapping ........................... [INSERT 5 in 0.16s]
-09:27:12  2 of 2 OK loaded seed file dev_seeds.country_codes ............................. [INSERT 18 in 0.16s]
+09:27:12  1 of 3 OK loaded seed file dev_seeds.channel_mapping ........................... [INSERT 5 in 0.16s]
+09:27:12  2 of 3 OK loaded seed file dev_seeds.countries ................................. [INSERT 8 in 0.16s]
+09:27:12  3 of 3 OK loaded seed file dev_seeds.country_code_variants ..................... [INSERT 18 in 0.16s]
 ```
 
 ### Source freshness
@@ -162,9 +163,9 @@ dbt ls --select source:events+                       # everything downstream of 
 ```
 $ dbt --quiet ls --select +stg_shop__customers
 sherpa.staging.shop.stg_shop__customers
-sherpa.country_codes
+sherpa.country_code_variants
 source:sherpa.shop.customers
-sherpa.accepted_values_country_codes_region__DACH__Western_Europe__Southern_Europe__Benelux__UK_Ireland
+sherpa.not_null_country_code_variants_code
 ...
 sherpa.staging.shop.unique_stg_shop__customers_customer_id
 ```
@@ -271,7 +272,7 @@ Stop it with Ctrl+C. `make docs-prod` does the same for prod from `dbt/target-pr
 
 The landing page is the `__overview__` doc block in `dbt/models/overview.md`. On the left, the **Project** tab groups the nodes by folder and the **Database** tab by schema. A model page shows its description, its columns with their tests, the SQL (source and compiled) and what it depends on.
 
-The **lineage graph** button (bottom right) draws the DAG: sources on the left, flowing into the staging views, with the seeds feeding the models that join them (`country_codes` into `stg_shop__customers` and `stg_shop__addresses`). `dim_date` stands alone because it reads nothing, and so does the `channel_mapping` seed, which no model reads. The `--select` box at the bottom takes the same syntax as the CLI: `+stg_shop__customers` shows the model with its source and seed. Click a node to open its page.
+The **lineage graph** button (bottom right) draws the DAG: sources on the left, flowing into the staging views, with the seeds feeding the models that join them (`country_code_variants` into `stg_shop__customers` and `stg_shop__addresses`). `dim_date` stands alone because it reads nothing, and so does the `channel_mapping` seed, which no model reads. The `--select` box at the bottom takes the same syntax as the CLI: `+stg_shop__customers` shows the model with its source and seed. Click a node to open its page.
 
 `make docs-check` regenerates the docs quietly and fails if a staging model or column has no description; it prints nothing when everything is documented.
 
@@ -280,7 +281,7 @@ The **lineage graph** button (bottom right) draws the DAG: sources on the left, 
 To see what a failure looks like, break the R4 cleanup in `dbt/models/staging/shop/stg_shop__customers.sql` by keeping the raw country instead of the seed's code:
 
 ```sql
-        source.country_code as country_code,   -- was: coalesce(country_codes.code, source.country_code)
+        source.country_code as country_code,   -- was: coalesce(country_variants.code, source.country_code)
 ```
 
 ```bash
@@ -288,19 +289,19 @@ dbt build --select stg_shop__customers
 ```
 
 ```
-09:29:36  7 of 9 FAIL 162 relationships_stg_shop__customers_country_code__code__ref_country_codes_  [FAIL 162 in 0.08s]
+09:29:36  7 of 9 FAIL 162 relationships_stg_shop__customers_country_code__code__ref_countries_  [FAIL 162 in 0.08s]
 ...
 09:29:37  Completed with 1 error, 0 partial successes, and 0 warnings:
 09:29:37
-09:29:37  [ERROR]: in test relationships_stg_shop__customers_country_code__code__ref_country_codes_ (models\staging\shop\_shop__models.yml)
+09:29:37  [ERROR]: in test relationships_stg_shop__customers_country_code__code__ref_countries_ (models\staging\shop\_shop__models.yml)
 09:29:37    Got 162 results, configured to fail if != 0
 09:29:37
-09:29:37    compiled code at target\compiled\sherpa\models\staging\shop\_shop__models.yml\relationships_stg_shop__custom_0d6747d12cdbae399e0f2f5695c1d0a9.sql
+09:29:37    compiled code at target\compiled\sherpa\models\staging\shop\_shop__models.yml\relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4.sql
 09:29:37
 09:29:37  Done. PASS=8 WARN=0 ERROR=1 SKIP=0 NO-OP=0 REUSED=0 TOTAL=9
 ```
 
-The test name says what broke: `relationships` from `stg_shop__customers.country_code` to `country_codes.code`, with 162 rows that have no match. `dbt build` still created the view (a model is built before its tests), but anything downstream of a failed test would be skipped.
+The test name says what broke: `relationships` from `stg_shop__customers.country_code` to `countries.code`, with 162 rows that have no match. `dbt build` still created the view (a model is built before its tests), but anything downstream of a failed test would be skipped.
 
 To investigate, open the compiled test it points to. It is a plain query you can paste into psql:
 
@@ -313,7 +314,7 @@ with child as (
 
 parent as (
     select code as to_field
-    from "sherpa"."dev_seeds"."country_codes"
+    from "sherpa"."dev_seeds"."countries"
 )
 
 select
@@ -335,13 +336,13 @@ dbt test --select stg_shop__customers --store-failures
 ```
 09:29:44    See test failures:
   --------------------------------------------------------------------------------------------------------------
-  select * from "sherpa"."dev_dbt_test__audit"."relationships_stg_shop__custom_0d6747d12cdbae399e0f2f5695c1d0a9"
+  select * from "sherpa"."dev_dbt_test__audit"."relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4"
   --------------------------------------------------------------------------------------------------------------
 ```
 
 ```sql
 SELECT from_field, count(*)
-FROM dev_dbt_test__audit.relationships_stg_shop__custom_0d6747d12cdbae399e0f2f5695c1d0a9
+FROM dev_dbt_test__audit.relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4
 GROUP BY 1 ORDER BY 2 DESC;
 ```
 

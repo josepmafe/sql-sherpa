@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections import Counter
 from pathlib import Path
 
 from sherpa_generator.simulation.realism_rules import RealismRules
@@ -13,7 +14,7 @@ def test_every_noisy_country_variant_is_in_seed() -> None:
     expected = set(rules.COUNTRY_WEIGHTS)
     expected |= {variant for variants in rules.noisy_country_variants().values() for variant in variants}
 
-    mapping = _read_country_seed()
+    mapping = _read_variants_seed()
 
     assert expected <= mapping.keys()
 
@@ -21,13 +22,33 @@ def test_every_noisy_country_variant_is_in_seed() -> None:
 def test_country_seed_maps_every_variant_back_to_its_canonical_code() -> None:
     rules = RealismRules()
 
-    mapping = _read_country_seed()
+    mapping = _read_variants_seed()
 
     for code, variants in rules.noisy_country_variants().items():
         assert mapping[code] == code
         assert {mapping[variant] for variant in variants} == {code}
 
 
-def _read_country_seed() -> dict[str, str]:
-    with (SEEDS_DIR / "country_codes.csv").open(newline="", encoding="utf-8") as f:
-        return {row["raw_value"]: row["code"] for row in csv.DictReader(f)}
+def test_countries_seed_has_exactly_one_row_per_canonical_code() -> None:
+    rules = RealismRules()
+
+    codes = Counter(row["code"] for row in _read_seed("countries"))
+
+    assert codes == dict.fromkeys(rules.COUNTRY_WEIGHTS, 1)
+
+
+def test_every_variant_maps_to_a_code_in_countries() -> None:
+    countries = {row["code"] for row in _read_seed("countries")}
+
+    mapping = _read_variants_seed()
+
+    assert set(mapping.values()) <= countries
+
+
+def _read_variants_seed() -> dict[str, str]:
+    return {row["raw_value"]: row["code"] for row in _read_seed("country_code_variants")}
+
+
+def _read_seed(name: str) -> list[dict[str, str]]:
+    with (SEEDS_DIR / f"{name}.csv").open(newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))

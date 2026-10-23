@@ -230,7 +230,8 @@ Changing `seed` or `scale` against existing state is an error (use `reset`).
 Naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_` / `obt_`. YAML per directory (`_<dir>__models.yml`, `_<dir>__sources.yml`).
 
 ### 6.1 Seeds
-- `country_codes` (code, name, region, is_eu) — plus the noisy variants mapped (`uk`→`GB`) in a `raw_value` column.
+- `countries` (code, name, region, is_eu) — one row per country; `code` is the canonical ISO alpha-2 code and the primary key.
+- `country_code_variants` (raw_value, code) — one row per raw country value the shop can emit (each canonical code, its lowercase form, `UK`/`uk` for `GB`), mapped to its `countries.code` (R4).
 - `channel_mapping` (utm_source, utm_medium, marketing_channel) — maps raw UTMs to the 8 channels: `direct`, `organic`, `paid_search`, `paid_social`, `email`, `affiliate`, `referral`, `app`.
 
 ### 6.2 Staging (views, 1:1 with source)
