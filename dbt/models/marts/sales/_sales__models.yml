@@ -55,10 +55,16 @@ models:
         description: Number of coupon codes of the promotion.
         data_type: integer
       - name: redemption_count
-        description: Number of times the promotion was applied to a non-test order.
+        description: >
+          Number of times the promotion was applied to a non-test order, cancelled orders included:
+          it counts how often the promotion was used, whether or not the order went through.
         data_type: integer
       - name: total_discount_amount
-        description: Total discount in EUR granted by the promotion on non-test orders.
+        description: >
+          Total discount in EUR granted by the promotion on non-test orders, cancelled orders
+          included like redemption_count. Summed over all promotions it therefore exceeds
+          Σ fct_orders.discount_amount over non-cancelled orders; filter fct_orders on
+          not is_cancelled for the discount on orders that went through.
         data_type: numeric(12,2)
 
   - name: fct_orders
@@ -162,7 +168,10 @@ models:
           purchase event has not arrived yet.
         data_type: text
       - name: ship_country_code
-        description: ISO alpha-2 code of the shipping address's country.
+        description: >
+          ISO alpha-2 code of the shipping address's country. For the country name and region join
+          dim_customers and use country_name and region; in this data the shipping country always
+          equals the customer's country.
         data_type: text
       - name: item_count
         description: Number of units ordered, the sum of the line quantities.
@@ -177,12 +186,13 @@ models:
                 severity: warn
       - name: gross_revenue
         description: >
-          The order's gross revenue as placed, kept when the order is cancelled.
+          The order's gross revenue as placed, kept when the order is cancelled, so a sum over
+          fct_orders includes cancelled orders unless filtered with not is_cancelled.
           {{ doc('metric_gross_revenue') }}
         data_type: numeric(12,2)
         config:
           meta:
-            synonyms: [sales, gross sales, turnover]
+            synonyms: [gross revenue, turnover]
         data_tests: [not_null]
       - name: discount_amount
         description: >
@@ -196,11 +206,14 @@ models:
         description: Tax on the order in EUR, 20% of gross revenue minus discount.
         data_type: numeric(12,2)
       - name: order_total
-        description: Amount charged to the customer in EUR, gross revenue minus discount plus shipping and tax.
+        description: >
+          Amount charged to the customer in EUR, gross revenue minus discount plus shipping and tax,
+          as placed. Cancelled and unpaid orders keep their order_total, so it is not what was paid:
+          captured_amount is.
         data_type: numeric(12,2)
         config:
           meta:
-            synonyms: [amount paid, basket total]
+            synonyms: [basket total]
       - name: captured_amount
         description: Sum of the order's captured payments in EUR; failed and authorized-only attempts are excluded.
         data_type: numeric(12,2)
@@ -237,7 +250,9 @@ models:
           have a 0 amount and do not count.
         data_type: boolean
       - name: has_return
-        description: True when the order has at least one return that was not rejected.
+        description: >
+          True when the order has at least one return that was not rejected, including returns still
+          requested or approved and not yet received or refunded.
         data_type: boolean
       - name: days_to_deliver
         description: Days from order_date to the UTC date of delivered_at; null if not delivered.
@@ -417,13 +432,20 @@ models:
               arguments:
                 values: [requested, approved, received, rejected]
       - name: requested_at
-        description: When the customer requested the return (UTC).
+        description: >
+          When the customer requested the return (UTC). The only return date: there is no date for
+          when the return was received.
         data_type: timestamptz
       - name: returned_item_quantity
-        description: Units on the return, the sum of its return items; 0 when it has none.
+        description: >
+          Units on the return, the sum of its return items; 0 when it has none. Counted for every
+          status, rejected included (filter on status); fct_order_items.returned_quantity counts
+          received returns only.
         data_type: integer
       - name: restockable_quantity
-        description: Units on the return that can be put back in stock; 0 when none.
+        description: >
+          Units on the return that can be put back in stock; 0 when none. Counted for every status,
+          like returned_item_quantity.
         data_type: integer
       - name: refund_id
         description: The refund paid for the return; null if not refunded yet.

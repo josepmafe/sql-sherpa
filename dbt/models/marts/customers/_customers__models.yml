@@ -97,7 +97,8 @@ models:
         description: >
           Marketing channel of the customer's first non-cancelled order (app for app orders, unknown
           for a web order whose purchase event has not arrived); unknown when they have no
-          non-cancelled order.
+          non-cancelled order, so unknown also covers every prospect. Filter on order_count >= 1 for
+          acquisition analyses.
         data_type: text
         config:
           meta:
@@ -181,4 +182,4 @@ models:
         data_type: boolean
         config:
           meta:
-            synonyms: [top customer, best customer]
+            synonyms: [vip]

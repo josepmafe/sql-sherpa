@@ -128,7 +128,7 @@ order by 2 desc;
  Equipment   |      0.0727
 ```
 
-Line refunds exclude goodwill refunds, so the line-level rates sit slightly below the order-level 0.0793 above.
+Line refunds exclude goodwill refunds, so the line-level rate over all categories (0.0780, the same query without the `group by`) sits slightly below the order-level 0.0793 above. A category's rate is not comparable to the order-level one for the same reason.
 
 ### AOV by marketing channel
 
@@ -248,7 +248,7 @@ where refund_date between '2026-01-01' and '2026-01-31';
 
 ### The `unknown` channel
 
-Every order has a `marketing_channel`: one of the eight channels (`direct`, `organic`, `paid_search`, `paid_social`, `email`, `affiliate`, `referral`, `app`) or `unknown`. A web order takes the channel of the session that contains its purchase event. If that event has not arrived yet (events can be delivered late), the order is `unknown` until it lands. App orders are always `app`. Keep `unknown` in channel breakdowns so the totals add up, and expect it to be small:
+Every order has a `marketing_channel`: one of the eight channels (`direct`, `organic`, `paid_search`, `paid_social`, `email`, `affiliate`, `referral`, `app`) or `unknown`. A web order takes the channel of the session that contains its purchase event. If that event has not arrived yet (events can be delivered late), the order is `unknown` until it lands. App orders are always `app`. Keep `unknown` in channel breakdowns so the totals add up; for orders, expect it to be small:
 
 ```sql
 select count(*) filter (where marketing_channel = 'unknown') as unknown_orders from marts.fct_orders;
@@ -259,6 +259,23 @@ select count(*) filter (where marketing_channel = 'unknown') as unknown_orders f
 ----------------
               0
 ```
+
+For customers it is not small. `dim_customers.acquisition_channel` is the channel of the customer's first non-cancelled order, and `unknown` when there is no such order, so every prospect is `unknown`:
+
+```sql
+select order_count >= 1 as is_buyer, count(*) as unknown_customers
+from marts.dim_customers
+where acquisition_channel = 'unknown'
+group by 1;
+```
+
+```
+ is_buyer | unknown_customers
+----------+-------------------
+ f        |              2179
+```
+
+Filter on `order_count >= 1` in acquisition analyses.
 
 ### `as_of_date`, not today
 

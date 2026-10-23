@@ -16,7 +16,9 @@ Refunded revenue: the revenue given back by refunds, in EUR. For refunds with re
 `goodwill` it is the refunded amount without its tax, amount / (1 + tax_rate) with var `tax_rate`, default 0.20;
 these refunds never include shipping. Refunds with reason `cancellation` count as 0: the cancelled
 order already contributes no revenue, and the refund only reverses the payment. In `fct_orders` it is
-attributed to the order's date, not to the date of the refund.
+attributed to the order's date, not to the date of the refund. Refunds arrive after the order (in
+this data, return refunds 8–47 days and goodwill refunds 6–28 days after it), so for the most recent
+weeks of orders refunded revenue is understated and net revenue overstated until their refunds arrive.
 {% enddocs %}
 
 {% docs metric_net_revenue %}
@@ -27,11 +29,15 @@ It is 0 for a cancelled order. This is what "revenue" means unless stated otherw
 {% docs metric_cogs %}
 Cost of goods sold (COGS): Σ quantity × unit cost at the time of sale, in EUR. Returned COGS is the
 restockable returned quantity × unit cost at the time of sale: those units go back into stock, so
-their cost is recovered. Both are 0 for a cancelled order.
+their cost is recovered. Both are 0 for a cancelled order. The unit cost at the time of sale
+(unit_cost_at_sale) is the variant's current cost price: cost price history is not kept yet, so
+cogs for older periods can be off when a variant's cost has changed since.
 {% enddocs %}
 
 {% docs metric_gross_margin %}
-Gross margin: net_revenue − (cogs − returned_cogs), in EUR. It is 0 for a cancelled order.
+Gross margin: net_revenue − (cogs − returned_cogs), in EUR. It is 0 for a cancelled order. Its cost
+side uses the variant's current cost price (see cogs), so margins for older periods can be off when a
+variant's cost has changed since.
 {% enddocs %}
 
 {% docs metric_aov %}
@@ -40,7 +46,8 @@ Average order value (AOV): Σ net_revenue / count of non-cancelled orders, in EU
 
 {% docs metric_refund_rate %}
 Refund rate: Σ refunded_revenue / Σ gross_revenue over non-cancelled orders (`not is_cancelled`), as a
-fraction.
+fraction. Refunds arrive 6–47 days after the order (see refunded revenue), so the rate for the most
+recent weeks of orders is understated until their refunds arrive.
 {% enddocs %}
 
 {% docs cancelled_orders %}

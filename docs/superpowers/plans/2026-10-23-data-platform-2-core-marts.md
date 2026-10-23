@@ -221,7 +221,7 @@ tests/dbt/test_agent_access.py                     # pytest, marker `warehouse`
   - **Flags and durations:** `has_discount` = any discount row with `amount > 0` (spec §6.6); `has_return` = any return with status ≠ `rejected`; `days_to_deliver` = UTC delivered date − order date, null if not delivered.
   - `config(indexes=[{columns: [order_date]}, {columns: [customer_id]}])`.
   - `meta: {domain: sales, grain: one row per order, primary_key: order_id}`.
-  - **Synonyms:** `net_revenue: [revenue, net sales]`, `gross_revenue: [sales, gross sales, turnover]`, `order_total: [amount paid, basket total]`, `current_status: [status, order status]`.
+  - **Synonyms:** `net_revenue: [revenue, net sales]`, `gross_revenue: [gross revenue, turnover]`, `order_total: [basket total]`, `current_status: [status, order status]`.
   - The descriptions of the revenue, cogs and margin columns use `{{ doc('metric_…') }}`.
 - `fct_order_items` (`marts/sales/`): columns per spec §6.5.
   - Line `cogs` is 0 when cancelled; `returned_quantity` and line `refunded_revenue` from `int_order_items__returns_summarized` (0 when the line has no received return).
@@ -296,7 +296,7 @@ Both: non-test orders only.
   - `lead_id`, `lead_source` from `int_identity__lead_to_customer`; `country_name`, `region` from the `countries` seed.
   - **VIP:** `is_vip` is true for buyers (`order_count ≥ 1`) whose rank by `lifetime_net_revenue` desc (tie → lowest `customer_id`) is ≤ `ceil(0.10 × buyer count)`.
   - `meta: {domain: customers, grain: one row per customer, primary_key: customer_id}`.
-  - **Synonyms:** `customer_segment: [lifecycle stage, segment]`, `is_vip: [top customer, best customer]`, `lifetime_net_revenue: [lifetime value, ltv, clv]`.
+  - **Synonyms:** `customer_segment: [lifecycle stage, segment]`, `is_vip: [vip]`, `lifetime_net_revenue: [lifetime value, ltv, clv]`.
 
 - [ ] **Step 1: Tests first:**
   - **YAML:** PK; `customer_segment` accepted_values (`prospect, new, active, at_risk, churned`); `acquisition_channel` accepted_values (9 values); `lead_id` → `ref('stg_crm__leads')` (`where` not null); and in `_sales__models.yml`, `fct_orders.customer_id` → `ref('dim_customers')`.
