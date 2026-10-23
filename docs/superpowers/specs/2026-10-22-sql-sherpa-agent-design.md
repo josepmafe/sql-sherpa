@@ -127,7 +127,8 @@ The role's settings are defaults that a session could override. **`sql_guard` is
 2. **Role:** the server connects as `sherpa_agent` (read-only, `SELECT` on `marts`). System catalogs are readable by every Postgres role, which is why the guard has to block them.
 3. **Timeout:** the server runs `SET LOCAL statement_timeout = '5s'` in every transaction itself, rather than relying on the role default. A timeout returns a tool error suggesting aggregation or a narrower filter.
 4. **Row cap:** 100 rows to the model (above).
-5. **PII masking:** any output column whose name matches a column flagged `meta.pii` in any mart (`email`, `first_name`, `last_name`) is replaced by `'***'`. Name-based by design; documented as a known limitation (aliases evade it — acceptable for synthetic data, called out in docs).
+5. **Connection settings:** the server's connection string sets `options=-c default_transaction_read_only=on -c statement_timeout=5s`, so every session starts read-only with the timeout whatever the role defaults say. `sql_guard` rejects `ALTER ROLE`, `SET` and `RESET`, so a query cannot change them for the session or for later ones, and a test asserts the agent's `pg_db_role_setting` rows are unchanged after the MCP server's tests run.
+6. **PII masking:** any output column whose name matches a column flagged `meta.pii` in any mart (`email`, `first_name`, `last_name`) is replaced by `'***'`. Name-based by design; documented as a known limitation (aliases evade it — acceptable for synthetic data, called out in docs).
 
 ### 4.3 Few-shot examples
 `examples.yaml` holds ~15 question/SQL pairs covering common patterns (aggregation by period, top-N, ratio metrics, funnel flags). They are **disjoint from the eval gold set**: no example question may be a paraphrase of a gold question. agent-design-2 checks this by reviewing the closest example per gold case (Jaccard, listed in the agent-design-2 report).
