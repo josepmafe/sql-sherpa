@@ -87,6 +87,7 @@ The init script is a shell script (not `.sql`) because the Postgres image runs `
 |---|---|---|
 | `sherpa_admin` | Owner of database `sherpa` | Generator, dbt |
 | `sherpa_agent` | `LOGIN`, no privileges at creation. Receives `USAGE` on `marts` and `SELECT` on mart relations **via dbt** (`grants` + hook, §8). Role default `default_transaction_read_only = on`, `statement_timeout = 5s`. Like every role but the owner it cannot create temporary tables, large objects (`EXECUTE` on `lo_create`, `lo_creat`, `lo_from_bytea`, `lo_open`, `lowrite`, `lo_put` is revoked from `PUBLIC` in the main database and in `template1`, so the eval database inherits it) or connect to the `postgres` database. | The agent's MCP server |
+| `sherpa_ui` (ui-1, created by the idempotent roles script that `make roles` re-runs on existing volumes) | Like `sherpa_agent`: `LOGIN`, `USAGE` on `marts` and `extensions` and `SELECT` on mart relations via the same dbt `grants` and hook, the same `PUBLIC` revokes. Its connections set `statement_timeout = 30s` (UI spec §5). | The UI backend |
 
 Passwords come from `.env`.
 
@@ -105,7 +106,7 @@ Passwords come from `.env`.
 
 **Additional targets:**
 - `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database and revokes all privileges on its `public` schema and `TEMPORARY` on the database from `PUBLIC` (as the init script does for the main database; the large-object revokes come from `template1`), runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
-- `agent` (agent-design-10): like `prod`, but with `sherpa_agent` credentials. It is used only for read-only compilation, namely MetricFlow's `--explain`, so it is added to `profiles.yml` by the milestone that first runs it.
+- `agent` (agent-design-9): like `prod`, but with `sherpa_agent` credentials. It is used only for read-only compilation, namely MetricFlow's `--explain`, so it is added to `profiles.yml` by the milestone that first runs it.
 
 **Dates and time zones:** every timestamp is converted to UTC in staging; every `*_date` column (`order_date`, `session_date`, `refund_date`, `spend_date`, `as_of_date`) is a UTC calendar date.
 
@@ -434,7 +435,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 | `make status` | Simulated range and row counts |
 | `make reset` | Drop the dbt schemas (including the dbt test-failure audit schemas), then drop and recreate the raw schemas empty |
 | `make deps` / `make seed` | `dbt deps` / `dbt seed` on `dev` |
-| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod` |
+| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then copies `run_results.json` and `sources.json` to `target-prod/last-build/` (dbt rewrites `run_results.json` on every compiling command, so only the copy reliably describes the last full build) and runs `dbt docs generate --no-compile` for `catalog.json`, which leaves the copies untouched |
 | `make docs` / `make docs-prod` | `dbt docs generate && dbt docs serve` on dev / prod (`--target-path target-prod`) |
 | `make docs-check` | `dbt docs generate`, then check every model's YAML columns against the real columns |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt` |
@@ -447,6 +448,7 @@ Targets added by later milestones:
 | `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
 | `make advance DAYS=3` | data-platform-3 | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
 | `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
+| `make roles` | ui-1 | Re-run the idempotent roles script (`data-platform/postgres/roles.sql`) as the `postgres` superuser, so a role added later (e.g. `sherpa_ui`) reaches an existing volume without wiping it |
 
 ---
 
@@ -456,14 +458,16 @@ The agent may rely on exactly these:
 
 - **Schema** `marts` (prod target) with the models in §6.5. Intermediate, staging and snapshot models are not part of the interface.
 - **Role** `sherpa_agent`: read-only, `SELECT` on `marts` only, `USAGE` on `extensions` (for `pg_trgm`), `statement_timeout = 5s`.
-- **Artifacts** `dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod && make docs-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, exposures, and (from data-platform-4) model versions.
+- **Artifacts** `dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod`, and by `make docs-prod` until ui-1 adds `catalog.json` to `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, exposures, and (from data-platform-4) model versions.
 - **Eval dataset:** database `sherpa_eval` with artifacts in `dbt/target-eval/` (§3), built by `make eval-db`.
-- **dbt target `agent`** (from agent-design-10) for read-only compilation with `sherpa_agent` credentials.
+- **dbt target `agent`** (from agent-design-9) for read-only compilation with `sherpa_agent` credentials.
 - **Postgres comments** on mart tables and columns (`persist_docs`), so the descriptions are available without the manifest.
 - **`pg_trgm`** with GIN trigram indexes on product/brand/category name columns for fuzzy value search.
 - **Determinism:** `as_of_date` semantics (§6.5) — time-relative columns never depend on `now()`.
 
-Agent work can start once data-platform-2 is done; data-platform-3–data-platform-5 add tables and metadata without breaking the data-platform-2 interface (data-platform-4's `dim_customers` versioning keeps v1, with `customer_segment`, at the unversioned name; v2 appears additionally as `dim_customers_v2`).
+**The UI** (UI spec) relies on the same interface, with its own read-only role `sherpa_ui` (§3), and also reads the prod build's `run_results.json` and `sources.json` from `dbt/target-prod/`. `make build-prod` writes both, because it runs `dbt source freshness` and `dbt build` with `--target-path target-prod`.
+
+Agent and UI work can start once data-platform-2 is done; data-platform-3–data-platform-5 add tables and metadata without breaking the data-platform-2 interface (data-platform-4's `dim_customers` versioning keeps v1, with `customer_segment`, at the unversioned name; v2 appears additionally as `dim_customers_v2`).
 
 ---
 
