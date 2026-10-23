@@ -159,7 +159,7 @@ Passwords come from `.env`.
 | R3 | Email casing / whitespace noise (customers and leads) | 10% | normalize `lower(trim(email))` |
 | R4 | Country code noise (`uk`, lowercase, `UK` for `GB`) | 3% of customers/addresses | normalize to ISO alpha-2 via seed |
 | R5 | Internal test accounts (`@sqlsherpa-test.com`) that place orders | 0.5% of customers | exclude from all marts |
-| R6 | Soft-deleted customers (GDPR) | 1% of customers | keep, anonymize PII in marts |
+| R6 | Soft-deleted customers (GDPR) | 1% of customers, 30–199 days after signup; a deletion takes effect at the end of its day (`deleted_at` = the day's last microsecond), so no order is placed and no event occurs after `deleted_at` | keep, anonymize PII in marts |
 | R7 | Failed payment attempts; split payments (gift card + card) | 3% failed then retried; 5% split | sum only `captured` |
 | R8 | Multiple discounts per order (promotion + coupon) | 3% of orders | allocate the sum |
 | R9 | Partial returns; refunds without returns (goodwill, cancellation) | see §5.2 | separate returns from refunds |

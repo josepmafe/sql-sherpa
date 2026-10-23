@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from helpers import SIMULATION_SEED, make_customer, make_snapshot
 from sherpa_generator.behaviour.customer_deletions import CustomerDeletionSimulator
@@ -21,12 +21,21 @@ class TestCustomerDeletionSimulator:
 
         deletions = _deletions(customers, DAYS)
 
-        delays = [deleted_at - CREATED_AT for _, deleted_at in deletions]
+        delays = [(deleted_at.date() - CREATED_AT.date()).days for _, deleted_at in deletions]
         assert 0.008 * CUSTOMERS <= len(deletions) <= 0.012 * CUSTOMERS  # R6: 1 %
-        assert all(timedelta(days=30) <= delay <= timedelta(days=199) for delay in delays)
-        assert all(delay % timedelta(days=1) == timedelta(0) for delay in delays)  # at the signup time of day
-        assert min(delays) < timedelta(days=60)
-        assert max(delays) > timedelta(days=170)
+        assert all(30 <= delay <= 199 for delay in delays)
+        assert min(delays) < 60
+        assert max(delays) > 170
+
+    def test_deletion_takes_effect_in_the_last_microsecond_of_its_day(self) -> None:
+        customers = _customers(CUSTOMERS)
+
+        deletions = _deletions(customers, DAYS)
+
+        assert deletions
+        for _, deleted_at in deletions:
+            next_day = datetime.combine(deleted_at.date() + timedelta(days=1), time(), tzinfo=UTC)
+            assert deleted_at == next_day - timedelta(microseconds=1)  # after every order and event of the day
 
     def test_deleted_customer_is_never_deleted_twice(self) -> None:
         customers = _customers(CUSTOMERS)

@@ -18,11 +18,14 @@ MIN_DAYS_BEFORE_DELETION: Final = 30  # a deleted customer was deleted 30-199 da
 DELETION_SPREAD_DAYS: Final = 170
 DELETE_PURPOSE: Final = "delete"
 DELETE_AFTER_PURPOSE: Final = "delete_after"
+# A deletion takes effect in its day's last microsecond: the customer was in the day's morning snapshot, so their
+# orders and events of that day all come before deleted_at, and the next day's snapshot no longer holds them.
+DELETION_BEFORE_DAY_END: Final = timedelta(microseconds=1)
 _CUSTOMER: Final = "customer"
 
 
 class CustomerDeletionSimulator:
-    """R6: soft-deletes (GDPR) 1 % of customers, on a day fixed per customer by `entity_fraction`.
+    """R6: soft-deletes (GDPR) 1 % of customers at the end of a day fixed per customer by `entity_fraction`.
 
     The snapshot holds only customers that are not deleted yet, so nobody is deleted twice.
     """
@@ -46,7 +49,8 @@ class CustomerDeletionSimulator:
                 delay = MIN_DAYS_BEFORE_DELETION + int(
                     self._fraction(customer.id, DELETE_AFTER_PURPOSE) * DELETION_SPREAD_DAYS
                 )
-                deleted_at = customer.created_at + timedelta(days=delay)
+                deletion_day = (customer.created_at + timedelta(days=delay)).date()
+                deleted_at = self._calendar.day_bounds(deletion_day)[1] - DELETION_BEFORE_DAY_END
             self._deletions[customer.id] = deleted_at
 
         return self._deletions[customer.id]

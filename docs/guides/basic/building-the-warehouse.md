@@ -7,7 +7,7 @@ A few dbt terms first:
 - A **model** is a `SELECT` in a `.sql` file under `dbt/models/`. dbt wraps it in `CREATE VIEW` or `CREATE TABLE` (its *materialization*) and runs the models in dependency order.
 - A **source** declares a table dbt did not build, here the generator's `raw_*` tables. Models read it with `{{ source('shop', 'orders') }}`, other models with `{{ ref('stg_shop__orders') }}`. These two functions give dbt the dependency graph (the *DAG*).
 - A **seed** is a small CSV in `dbt/seeds/` that dbt loads as a table, such as `countries`.
-- A **data test** is a query that returns the rows breaking a rule (`unique`, `not_null`, `accepted_values`, `relationships`, ...). Zero rows means it passes. A **singular test** is a plain SQL file in `dbt/tests/` that returns the failing rows; two live there (`assert_dim_date_black_friday_weeks` and `assert_events_occurred_at_utc_parsing`).
+- A **data test** is a query that returns the rows breaking a rule (`unique`, `not_null`, `accepted_values`, `relationships`, ...). Zero rows means it passes. A **singular test** is a plain SQL file in `dbt/tests/` that returns the failing rows; three live there (`assert_dim_date_black_friday_weeks`, `assert_events_occurred_at_utc_parsing` and `assert_no_activity_after_customer_deletion`).
 - A **target** is one named connection in `dbt/profiles.yml`: `dev` (the default) and `prod`. Credentials come from `.env` through `env_var()`.
 
 The project currently has the seeds, one staging view per raw table and `dim_date`. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
