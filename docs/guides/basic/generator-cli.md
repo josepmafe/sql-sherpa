@@ -23,7 +23,7 @@ docker compose up -d --wait
 
 Docker Compose names the container after the folder you cloned into. There is no separate install step: the first `uv run` creates the Python 3.12 environment with every dependency group.
 
-Postgres listens on `localhost:5432`. If that port is taken, set `SHERPA_DB_PORT` in `.env`; Docker Compose, the generator and dbt all read it. On the first start the container runs `docker/postgres/init/00_roles.sh`, which creates the `sherpa_admin` and `sherpa_agent` roles with the passwords from `.env`.
+Postgres listens on `127.0.0.1:5432` (the port is published on the loopback address only, and `.env` sets `SHERPA_DB_HOST=127.0.0.1` because `localhost` can resolve to IPv6 first on Windows and hang). If that port is taken, set `SHERPA_DB_PORT` in `.env`; Docker Compose, the generator and dbt all read it. On the first start the container runs `docker/postgres/init/00_roles.sh`, which creates the `sherpa_admin` and `sherpa_agent` roles with the passwords from `.env`.
 
 ## First run: a year of data
 
@@ -104,7 +104,7 @@ The seed and scale are stored on the first run and every later run must pass the
 | `make generate DAYS=3` | `sherpa-generate generate --days 3` (`DAYS` is required) |
 | `make backfill` | `sherpa-generate generate --days 365` (`DAYS=...` overrides) |
 | `make status` | `sherpa-generate status` |
-| `make reset` | drops the dbt schemas (`dev_seeds`, `dev_staging`, `dev_marts`, `seeds`, `staging`, `marts`), then `sherpa-generate reset` |
+| `make reset` | drops the dbt schemas (`dev_seeds`, `dev_staging`, `dev_marts`, `dev_dbt_test__audit`, `seeds`, `staging`, `marts`, `dbt_test__audit`), then `sherpa-generate reset` |
 
 The shortcuts always use the default seed and scale. For anything else call `uv run sherpa-generate` directly.
 
@@ -214,14 +214,14 @@ $ uv run sherpa-generate generate --days 1 --scale 0.1
 nothing to simulate: already caught up to yesterday
 ```
 
-**Postgres not running.** Start it with `make up` (and check `SHERPA_DB_PORT` in `.env`). The connection attempt can take up to about two minutes to give up:
+**Postgres not running.** Start it with `make up` (and check `SHERPA_DB_PORT` in `.env`). The connection attempt gives up after 10 seconds:
 
 ```
 $ uv run sherpa-generate status
 error: cannot connect to the database (is it running? see `make up`): connection timeout expired
 ```
 
-`sherpa-generate reset` shows the same failure as a traceback ending in `ConnectionTimeout: connection timeout expired`.
+`generate` and `reset` report the same error and exit with code 2.
 
 **Missing or invalid `--days`.** `make generate` needs `DAYS`, and `--days` must be at least 1:
 

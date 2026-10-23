@@ -360,7 +360,7 @@ GROUP BY 1 ORDER BY 2 DESC;
  be         |     5
 ```
 
-Exactly the noisy codes of R4, so the seed join is missing. Restore the line, rerun `dbt build --select stg_shop__customers` (`PASS=9`), and drop the audit schema, which `make reset` does not remove:
+Exactly the noisy codes of R4, so the seed join is missing. Restore the line, rerun `dbt build --select stg_shop__customers` (`PASS=9`), and drop the audit schema (`make reset` also removes it):
 
 ```bash
 docker compose exec postgres psql -U sherpa_admin -d sherpa -c "DROP SCHEMA dev_dbt_test__audit CASCADE"

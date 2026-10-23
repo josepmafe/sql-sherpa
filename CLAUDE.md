@@ -31,7 +31,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
 - `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
 - `make status`: print the simulated date range and the row count of every raw table.
-- `make reset`: drop the dbt schemas and the raw schemas, then recreate the raw schemas empty.
+- `make reset`: drop the dbt schemas (including the `--store-failures` audit schema) and the raw schemas, then recreate the raw schemas empty.
 - `make deps`: install the dbt packages.
 - `make seed`: load the dbt seeds.
 - `make build`: check source freshness, then `dbt build` on the dev target.
