@@ -62,7 +62,7 @@ generator/   the synthetic-data generator (Python package, CLI and tests)
 dbt/         the dbt project: sources, seeds, staging models, dim_date
 docker/      Postgres init script (database roles)
 scripts/     helper scripts, such as the dbt docs-coverage check
-docs/        design specs and implementation plans
+docs/        design specs, implementation plans and how-to guides
 tests/       tests outside the generator package (dbt seeds, scripts)
 ```
 
@@ -71,5 +71,11 @@ tests/       tests outside the generator package (dbt seeds, scripts)
 - [Data platform spec (generator + dbt)](docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)
 - [Agent spec (text-to-SQL agent)](docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md)
 - [Plan — data-platform-1 Foundation](docs/superpowers/plans/2026-10-22-data-platform-1-foundation.md)
+
+## Guides
+
+- [Using the generator](docs/guides/basic/generator-cli.md): commands, recipes, errors, and the raw data in `psql`
+- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev and prod, selecting, previewing, docs and failing tests
+- [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, end to end
 
 All data is synthetic.
