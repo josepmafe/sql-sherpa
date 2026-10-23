@@ -85,8 +85,14 @@ models:
               config:
                 where: "lead_id is not null"
       - name: lead_source
-        description: Source of the matched lead; null when there is none.
+        description: >
+          How the matched lead was captured, newsletter, popup, giveaway or referral; null when there
+          is none.
         data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [newsletter, popup, giveaway, referral]
       - name: acquisition_channel
         description: >
           Marketing channel of the customer's first non-cancelled order (app for app orders, unknown
