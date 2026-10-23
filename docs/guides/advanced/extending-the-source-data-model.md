@@ -433,23 +433,21 @@ The daily volumes and behaviour rates of spec §5.2 are module-level `Final` con
 
 The comments next to `RETURNING_VISITOR_SHARE`, `NEW_VISITOR_PURCHASE_RATE` and `BASE_DAILY_SIGNUPS` explain how they were tuned to land on the spec's conversion rate and yearly totals; volumes interact, so change one constant at a time. `--scale` multiplies every daily volume at run time and needs no code change.
 
-The behaviour tests check the rates on a 30-day run at scale 0.2 (for example `test_session_conversion_rate`, `test_discount_share`, `test_app_share`). The yearly totals are checked by the slow full-year test, which simulates 365 days at scale 1.0 into a temporary database:
+The behaviour tests check the rates on a 30-day run at scale 0.2 (for example `test_session_conversion_rate`, `test_discount_share`, `test_app_share`). The yearly totals are checked by the slow full-year tests, which simulate 365 days at scale 1.0 into a temporary database:
 
 ```bash
 uv run --env-file .env pytest -m slow
 ```
 
-The simulation takes as long as `make backfill DAYS=365` (2.5 minutes on a laptop), plus the test setup. It holds two tests:
+The simulation takes as long as `make backfill DAYS=365` (2.5 minutes on a laptop), plus the test setup. The year is simulated once and shared by three tests:
 
-- `test_full_year_volumes_and_runtime` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %) and a simulation runtime under 5 minutes (spec §5.2). With `-o log_cli=true --log-cli-level=INFO` it logs what it measured: `runtime <seconds> s, volumes {'customers': 4951, 'orders': 8090, 'events': 670844, 'leads': 5815}`. The runtime limit is sensitive to load: with other work running against the same Postgres it can fail the runtime assertion while every volume is within tolerance; rerun it on an idle machine before reading that as a regression.
+- `test_full_year_volumes` asserts ~5,000 customers, ~8,000 orders, ~600,000 events and ~6,000 leads (each ±15 %). With `-o log_cli=true --log-cli-level=INFO` it logs what it counted: `volumes {'customers': 4951, 'orders': 8090, 'events': 670844, 'leads': 5815}`.
 
-  ```
-  2 passed, 270 deselected in 161.62s (0:02:41)
-  ```
+- `test_full_year_runtime` asserts a simulation runtime under 5 minutes (spec §5.2) and logs `runtime <seconds> s`. The limit is sensitive to load: with other work running against the same Postgres it can fail while the volumes pass; rerun it on an idle machine before reading that as a regression.
 
 - `test_top_buyers_hold_55_to_65_percent_of_revenue` asserts that the top 20 % of buyers (customers with at least one non-cancelled order) hold 55–65 % of that revenue (spec §4.4, a soft target). On the 365-day dataset above they hold 0.575. It is the check for `PROPENSITY_SIGMA` and the visitor purchase rates.
 
-The expected result is `2 passed`, as in the output above.
+The expected result is `3 passed`.
 
 ## 6. Keep determinism intact
 

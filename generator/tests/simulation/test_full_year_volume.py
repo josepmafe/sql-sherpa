@@ -41,18 +41,25 @@ SELECT sum(revenue) FILTER (WHERE rank <= ceil(buyers * %s)) / sum(revenue) FROM
 """
 
 
-def test_full_year_volumes_and_runtime(full_year: tuple[Database, float]) -> None:
-    db, runtime = full_year
+def test_full_year_volumes(full_year: tuple[Database, float]) -> None:
+    db, _ = full_year
 
     with db.connect() as conn:
         counts = conn.execute(VOLUMES).fetchone()
 
     assert counts is not None
     volumes = dict(zip(EXPECTED_VOLUMES, counts, strict=True))
-    logger.info("runtime %.1f s, volumes %s", runtime, volumes)
-    assert runtime < MAX_RUNTIME_SECONDS
+    logger.info("volumes %s", volumes)
     for name, expected in EXPECTED_VOLUMES.items():
         assert abs(volumes[name] - expected) <= expected * VOLUME_TOLERANCE, (name, volumes[name])
+
+
+def test_full_year_runtime(full_year: tuple[Database, float]) -> None:
+    _, runtime = full_year
+
+    logger.info("runtime %.1f s", runtime)
+
+    assert runtime < MAX_RUNTIME_SECONDS
 
 
 def test_top_buyers_hold_55_to_65_percent_of_revenue(full_year: tuple[Database, float]) -> None:

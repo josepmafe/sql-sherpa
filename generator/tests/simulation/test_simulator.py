@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from helpers import RUN_DAYS, RUN_SCALE, RUN_SEED, RUN_START, RUN_TODAY, STATE_TABLE, fingerprint
+from sherpa_generator.behaviour.catalog_setup import ALWAYS_ON_CHANNELS
 from sherpa_generator.behaviour.customer_deletions import CustomerDeletionSimulator
 from sherpa_generator.database.raw_schema import RawSchema
 from sherpa_generator.simulation.simulation_state import SimulationStateStore
@@ -184,20 +185,18 @@ class TestSimulator:
     def test_catalog_ends_at_yesterday_inside_the_first_year(self, temp_database: Database) -> None:
         Simulator(temp_database, seed=RUN_SEED, scale=SMALL_SCALE, today=RUN_TODAY).run(2, RUN_START)
 
-        with temp_database.connect() as conn:
-            row = conn.execute("SELECT max(ends_at) FROM raw_marketing.campaigns").fetchone()
+        ends = always_on_campaign_ends(temp_database)
 
-        assert row is not None
-        assert row[0] <= datetime(2025, 4, 1, tzinfo=UTC)
+        # ends_at is exclusive: the always-on campaigns cover yesterday (2025-03-31) whole.
+        assert ends == {datetime(2025, 4, 1, tzinfo=UTC)}
 
     def test_catalog_ends_one_year_after_the_start_date(self, temp_database: Database) -> None:
         Simulator(temp_database, seed=RUN_SEED, scale=SMALL_SCALE, today=date(2027, 9, 15)).run(2, RUN_START)
 
-        with temp_database.connect() as conn:
-            row = conn.execute("SELECT max(ends_at) FROM raw_marketing.campaigns").fetchone()
+        ends = always_on_campaign_ends(temp_database)
 
-        assert row is not None
-        assert row[0] <= datetime(2026, 3, 1, tzinfo=UTC)
+        # 365 days from 2025-03-01: the last covered day is 2026-02-28.
+        assert ends == {datetime(2026, 3, 1, tzinfo=UTC)}
 
 
 def make_simulator(db: Database) -> Simulator:
@@ -225,6 +224,14 @@ def catalog_rows(db: Database) -> tuple[list[tuple[object, ...]], list[tuple[obj
     assert campaigns
     assert promotions
     return campaigns, promotions
+
+
+def always_on_campaign_ends(db: Database) -> set[datetime]:
+    with db.connect() as conn:
+        rows = conn.execute("SELECT ends_at FROM raw_marketing.campaigns WHERE name LIKE 'Always On %'").fetchall()
+
+    assert len(rows) == len(ALWAYS_ON_CHANNELS)
+    return {row[0] for row in rows}
 
 
 def stored_state(db: Database) -> SimulationState:

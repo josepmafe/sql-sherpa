@@ -4,6 +4,7 @@ import csv
 from collections import Counter
 from pathlib import Path
 
+from sherpa_generator.behaviour.visitor_traffic import UTM_SOURCES_AND_MEDIUM
 from sherpa_generator.simulation.realism_rules import RealismRules
 
 SEEDS_DIR = Path(__file__).parents[2] / "dbt" / "seeds"
@@ -43,6 +44,19 @@ def test_every_variant_maps_to_a_code_in_countries() -> None:
     mapping = _read_variants_seed()
 
     assert set(mapping.values()) <= countries
+
+
+def test_channel_mapping_seed_is_exactly_the_generator_utm_pairs() -> None:
+    expected = {
+        (source, medium): str(channel)
+        for channel, (sources, medium) in UTM_SOURCES_AND_MEDIUM.items()
+        for source in sources
+    }
+
+    rows = _read_seed("channel_mapping")
+
+    assert {(row["utm_source"], row["utm_medium"]): row["marketing_channel"] for row in rows} == expected
+    assert len(rows) == len(expected)
 
 
 def _read_variants_seed() -> dict[str, str]:

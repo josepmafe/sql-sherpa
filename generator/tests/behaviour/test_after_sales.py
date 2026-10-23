@@ -241,7 +241,7 @@ class TestAfterSalesSimulator:
 
         statuses = {status for status, _, _ in rows}
         # "requested" is transient: it only exists for returns raised at the very end of the season.
-        assert {"approved", "received", "rejected"} <= statuses
+        assert {"approved", "received", "rejected"} <= statuses <= {"requested", "approved", "received", "rejected"}
         for status, refunds, refunded_at_is_receipt in rows:
             assert refunds == (1 if status == "received" else 0)
             assert refunded_at_is_receipt in {None, True}
