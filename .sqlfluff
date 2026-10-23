@@ -5,3 +5,5 @@ dialect = postgres
 [sqlfluff:templater:dbt]
 project_dir = dbt
 profiles_dir = dbt
+# Its own target path, so a lint never reads or overwrites the artifacts of a dbt run in progress.
+target_path = target-sqlfluff
