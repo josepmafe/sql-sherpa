@@ -91,6 +91,9 @@ models:
       - dbt_utils.expression_is_true:
           arguments:
             expression: "(primary_payment_method is null) = (captured_amount = 0)"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(customer_order_number is null) = is_cancelled"
     columns:
       - name: order_id
         description: The order. Primary key.
@@ -149,6 +152,22 @@ models:
       - name: is_cancelled
         description: True when the order is cancelled. {{ doc('cancelled_orders') }}
         data_type: boolean
+      - name: customer_order_number
+        description: >
+          Position of the order among the customer's non-cancelled orders, by placed_at then order_id:
+          1 for the first; null for a cancelled order. The highest number equals
+          dim_customers.order_count.
+        data_type: integer
+      - name: is_first_order
+        description: >
+          True for the customer's first non-cancelled order (customer_order_number = 1), the order that
+          dim_customers.first_order_at points at; false for later orders and cancelled ones. Splits
+          revenue into new and returning customers' orders.
+        data_type: boolean
+        config:
+          meta:
+            synonyms: [new customer order, first purchase]
+        data_tests: [not_null]
       - name: sales_channel
         description: Where the order was placed, web (the website) or app (the mobile app).
         data_type: text

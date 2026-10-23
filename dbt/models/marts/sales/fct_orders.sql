@@ -190,6 +190,33 @@ margins as (
 
 ),
 
+-- Numbers each customer's non-cancelled orders in the order dim_customers
+-- picks the first one; cancelled orders get no number.
+numbered as (
+
+    select
+        *,
+        case
+            when not is_cancelled
+                then
+                    row_number() over (
+                        partition by customer_id, is_cancelled
+                        order by placed_at asc, order_id asc
+                    )
+        end as customer_order_number
+    from margins
+
+),
+
+first_orders as (
+
+    select
+        *,
+        coalesce(customer_order_number = 1, false) as is_first_order
+    from numbered
+
+),
+
 final as (
 
     select
@@ -204,6 +231,8 @@ final as (
         cancelled_at::timestamptz as cancelled_at,
         order_status::text as current_status,
         is_cancelled::boolean as is_cancelled,
+        customer_order_number::integer as customer_order_number,
+        is_first_order::boolean as is_first_order,
         sales_channel::text as sales_channel,
         marketing_channel::text as marketing_channel,
         session_id::text as session_id,
@@ -227,7 +256,7 @@ final as (
         has_discount::boolean as has_discount,
         has_return::boolean as has_return,
         days_to_deliver::integer as days_to_deliver
-    from margins
+    from first_orders
 
 )
 
