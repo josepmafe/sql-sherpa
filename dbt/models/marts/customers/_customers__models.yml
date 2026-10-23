@@ -1,0 +1,178 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: >
+      Customer dimension, one row per customer except test accounts, with their order history
+      (non-cancelled orders only), lifecycle segment, VIP flag and how they were acquired.
+      Soft-deleted customers are kept, with their email and name removed, so facts keep their
+      customer. Recency is measured against as_of_date, the latest order_date in fct_orders,
+      so results never depend on when the query runs.
+    config:
+      meta:
+        domain: customers
+        grain: one row per customer
+        primary_key: customer_id
+    columns:
+      - name: customer_id
+        description: The customer. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: email
+        description: Normalized (trimmed, lower-case) email address; null when the customer is deleted.
+        data_type: text
+        config:
+          meta:
+            pii: true
+      - name: first_name
+        description: First name; null when the customer is deleted.
+        data_type: text
+        config:
+          meta:
+            pii: true
+      - name: last_name
+        description: Last name; null when the customer is deleted.
+        data_type: text
+        config:
+          meta:
+            pii: true
+      - name: country_code
+        description: Canonical ISO alpha-2 code of the customer's country.
+        data_type: text
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('countries')
+                field: code
+      - name: country_name
+        description: English name of the customer's country.
+        data_type: text
+        config:
+          meta:
+            synonyms: [country]
+      - name: region
+        description: Sales region of the customer's country, DACH, Western Europe, Southern Europe, Benelux or UK & Ireland.
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [DACH, Western Europe, Southern Europe, Benelux, UK & Ireland]
+      - name: signup_at
+        description: When the customer created their account (UTC).
+        data_type: timestamptz
+        config:
+          meta:
+            synonyms: [registration date, created at]
+      - name: marketing_opt_in
+        description: True when the customer agreed to receive marketing emails.
+        data_type: boolean
+      - name: is_deleted
+        description: True when the customer deleted their account; their email and name are then null.
+        data_type: boolean
+      - name: lead_id
+        description: >
+          The CRM lead whose email matches the customer's; the earliest one when several match. Null
+          when there is none.
+        data_type: bigint
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_crm__leads')
+                field: lead_id
+              config:
+                where: "lead_id is not null"
+      - name: lead_source
+        description: Source of the matched lead; null when there is none.
+        data_type: text
+      - name: acquisition_channel
+        description: >
+          Marketing channel of the customer's first non-cancelled order (app for app orders, unknown
+          for a web order whose purchase event has not arrived); unknown when they have no
+          non-cancelled order.
+        data_type: text
+        config:
+          meta:
+            synonyms: [acquisition source, first channel]
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [direct, organic, paid_search, paid_social, email, affiliate, referral, app, unknown]
+      - name: acquisition_campaign_id
+        description: >
+          Campaign whose utm_campaign tagged the session of the customer's first non-cancelled order;
+          null when that order has no session or the session no campaign.
+        data_type: bigint
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_marketing__campaigns')
+                field: campaign_id
+              config:
+                where: "acquisition_campaign_id is not null"
+      - name: first_order_at
+        description: When the customer placed their first non-cancelled order (UTC); null if none.
+        data_type: timestamptz
+      - name: last_order_at
+        description: When the customer placed their latest non-cancelled order (UTC); null if none.
+        data_type: timestamptz
+      - name: order_count
+        description: Number of non-cancelled orders of the customer; 0 when none.
+        data_type: integer
+        data_tests: [not_null]
+      - name: lifetime_gross_revenue
+        description: >
+          Sum of gross_revenue over the customer's non-cancelled orders; 0 when none.
+          {{ doc('metric_gross_revenue') }}
+        data_type: numeric(12,2)
+      - name: lifetime_net_revenue
+        description: >
+          Sum of net_revenue over the customer's non-cancelled orders; 0 when none.
+          {{ doc('metric_net_revenue') }}
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [lifetime value, ltv, clv]
+      - name: lifetime_refunded_revenue
+        description: >
+          Sum of refunded_revenue over the customer's non-cancelled orders; 0 when none.
+          {{ doc('metric_refunded_revenue') }}
+        data_type: numeric(12,2)
+      - name: avg_order_value
+        description: >
+          lifetime_net_revenue divided by order_count; null when the customer has no non-cancelled
+          order. {{ doc('metric_aov') }}
+        data_type: numeric(12,2)
+      - name: days_since_last_order
+        description: >
+          Days from the UTC date of last_order_at to as_of_date (the latest order_date in fct_orders);
+          null when the customer has no non-cancelled order.
+        data_type: integer
+        config:
+          meta:
+            synonyms: [recency]
+      - name: customer_segment
+        description: >
+          Lifecycle segment: prospect (no non-cancelled order), new (1 order, the last 90 days ago or
+          less), active (2 or more orders, the last 90 days ago or less), at_risk (last order 91 to
+          180 days ago) or churned (more than 180 days ago).
+        data_type: text
+        config:
+          meta:
+            synonyms: [lifecycle stage, segment]
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [prospect, new, active, at_risk, churned]
+      - name: is_vip
+        description: >
+          True for the top 10% of buyers (customers with at least one non-cancelled order) by
+          lifetime_net_revenue, rounded up; ties go to the lowest customer_id.
+        data_type: boolean
+        config:
+          meta:
+            synonyms: [top customer, best customer]
