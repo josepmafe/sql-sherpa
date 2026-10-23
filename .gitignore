@@ -9,9 +9,6 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# mutmut
-mutants/
-
 # dbt
 dbt/target/
 dbt/target-prod/

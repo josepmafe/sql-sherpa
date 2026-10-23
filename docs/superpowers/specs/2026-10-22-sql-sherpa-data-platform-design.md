@@ -419,7 +419,6 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 | `make docs-check` | `dbt docs generate`, then check the staging models' YAML columns against the real columns |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt` |
 | `make test` | `pytest` with `.env` loaded; integration tests need Postgres |
-| `make mutate MODULE=<path>` | `mutmut` scoped to one module |
 
 Targets added by later milestones:
 

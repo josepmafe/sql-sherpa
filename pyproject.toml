@@ -18,7 +18,6 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
-    "mutmut>=3.8.0",
 ]
 dbt = [
     "dbt-core==1.12.6",
@@ -72,8 +71,3 @@ files = ["generator/src"]
 python_version = "3.12"
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]  # lets GeneratorSettings() be built from the environment without arguments
-
-[tool.mutmut]
-# `make mutate MODULE=<file>` narrows each run to one module by mutant-name glob
-source_paths = ["generator/src/sherpa_generator"]
-pytest_add_cli_args_test_selection = ["generator/tests/"]

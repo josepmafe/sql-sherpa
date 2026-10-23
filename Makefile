@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset mutate deps seed build build-prod docs docs-prod docs-check lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod docs-check lint test
 
 # dbt runs from dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
@@ -28,12 +28,6 @@ reset:
 	docker compose exec -T postgres psql -U sherpa_admin -d sherpa -v ON_ERROR_STOP=1 \
 		-c "DROP SCHEMA IF EXISTS $(DBT_SCHEMAS) CASCADE"
 	uv run sherpa-generate reset
-
-# mutmut 3 mutates every file under source_paths; the glob (mutant names are dotted module paths) scopes the run.
-MUTANT_GLOB = *$(subst /,.,$(patsubst %.py,%,$(patsubst generator/src/%,%,$(MODULE)))).*
-
-mutate:
-	uv run mutmut run "$(MUTANT_GLOB)" && uv run mutmut results
 
 deps:
 	$(DBT) deps

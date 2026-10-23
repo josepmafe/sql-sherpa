@@ -40,7 +40,6 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make docs-check`: fail if a staging model or column has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.
 - `make test`: pytest with `.env` loaded (`slow` tests excluded); the integration tests need Postgres (`make up`).
-- `make mutate MODULE=<path>`: run mutmut on one generator module.
 
 ## Conventions
 
@@ -112,7 +111,6 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
-- **Mutation tests** where correctness hinges on small details: discount allocation and rounding, `sql_guard`, result comparison (`compare.py`), the answer guards, and the realism rules' rates. Run `make mutate MODULE=<path>` on those modules. Surviving mutants either get a test that kills them or a short justification in the test file. Mutation runs are slow, so they are run on demand and not in CI.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - Markers:
   - `integration`: needs Postgres
@@ -123,11 +121,10 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ### Tooling
 - Every Python command runs through uv: `uv run pytest`, `uv run python`, `uv add <pkg> --group <group>`.
-- `mutmut` is in the `dev` group; `make mutate MODULE=<path>` runs it on one module.
 - ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `generator/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
 
 ## Environment notes
 
-- The development machine is Windows with Git Bash. `make` must be installed separately (Scoop, Chocolatey or WSL). mutmut does not run on native Windows; use WSL or Linux for `make mutate`.
+- The development machine is Windows with Git Bash. `make` must be installed separately (Scoop, Chocolatey or WSL).
 - GitHub: personal account `josepmafe` on **github.com**, not the corporate GitHub Enterprise host. Commits use the repo-local identity `Josep Martinez <57620224+josepmafe@users.noreply.github.com>`. Don't use the corporate email.
 - The repo is public. Never commit credentials, corporate data or references to internal systems.

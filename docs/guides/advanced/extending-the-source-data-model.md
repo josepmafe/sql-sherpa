@@ -410,7 +410,7 @@ uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py 
 22 passed in 21.12s
 ```
 
-The staging cleanup needs no change, since `lower(trim(...))` handles any amount of noise. A new kind of noise needs new cleanup, and a dbt test that proves it (for example a `dbt_utils.expression_is_true` or an `accepted_values` test on the cleaned column), run with `make build` on regenerated data. The realism rules module is a mutation-testing target: run `make mutate MODULE=generator/src/sherpa_generator/simulation/realism_rules.py` after changing it (mutmut needs Linux or WSL).
+The staging cleanup needs no change, since `lower(trim(...))` handles any amount of noise. A new kind of noise needs new cleanup, and a dbt test that proves it (for example a `dbt_utils.expression_is_true` or an `accepted_values` test on the cleaned column), run with `make build` on regenerated data.
 
 ## 5. Change volumes or rates
 
