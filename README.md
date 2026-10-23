@@ -16,7 +16,7 @@ It is a learning project, built to production standards: a realistic synthetic e
 ```
 
 1. **Generator.** A deterministic, day-by-day simulation of an online sports retailer writes four source systems into Postgres: a Shopify-like shop (customers, catalog, orders, payments, promotions, returns, refunds), a Segment-like event tracker, an ads platform, and a CRM. It deliberately injects the problems real data has: duplicate and late events, messy emails and country codes, test accounts, split payments, price changes.
-2. **dbt.** Cleans and models that data into documented, contract-enforced marts (`fct_orders`, `dim_customers`, `fct_sessions`, `obt_order_items`, …), with precisely defined metrics such as net revenue, margin, conversion rate, ROAS and CAC.
+2. **dbt.** Cleans and models that data into documented, contract-enforced marts (`fct_orders`, `dim_customers`, `fct_sessions`, …), with precisely defined metrics such as net revenue, margin, conversion rate, ROAS and CAC.
 3. **Agent.** An MCP server exposes the marts, their dbt documentation and a read-only SQL tool. A PydanticAI agent running Claude on Amazon Bedrock uses them to answer questions. It returns the answer, its interpretation of your question, the SQL, and the result. Every technique the agent uses has to earn its place on an execution-accuracy eval set.
 
 ## Stack

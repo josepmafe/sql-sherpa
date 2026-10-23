@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 DEFAULT_TARGET_PATH = "dbt/target"
-DEFAULT_PATH_PREFIX = "models/staging"
+DEFAULT_PATH_PREFIX = "models"
 
 
 class DocsCoverageChecker:

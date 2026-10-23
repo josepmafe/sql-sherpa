@@ -19,7 +19,7 @@ class RealismRules:
     DUPLICATE_MAX_DELAY_SECONDS: Final = 300  # R1: the copy arrives 0-300 s later, on the same UTC day
     LATE_EVENT_RATE: Final = 0.02  # R2
     LATE_MIN_DAYS: Final = 1  # R2
-    LATE_MAX_DAYS_EXCLUSIVE: Final = 4  # R2: received 1-3 days after occurred
+    LATE_MAX_DAYS_EXCLUSIVE: Final = 4  # R2: received from 1 day up to but excluding 4 days after occurred
     EMAIL_NOISE_RATE: Final = 0.10  # R3
     COUNTRY_NOISE_RATE: Final = 0.03  # R4
     TEST_ACCOUNT_RATE: Final = 0.005  # R5
