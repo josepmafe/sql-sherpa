@@ -15,6 +15,9 @@ models:
       - name: promotion_id
         description: The promotion. Primary key.
         data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
         data_tests: [unique, not_null]
       - name: promotion_name
         description: Name of the promotion.

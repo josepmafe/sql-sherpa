@@ -16,6 +16,9 @@ models:
       - name: date_day
         description: The calendar day. Primary key.
         data_type: date
+        constraints:
+          - type: not_null
+          - type: primary_key
         data_tests: [unique, not_null]
       - name: week_start
         description: Monday of the week the day belongs to.

@@ -21,6 +21,9 @@ models:
       - name: variant_id
         description: The product variant. Primary key.
         data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
         data_tests: [unique, not_null]
       - name: sku
         description: Stock keeping unit, unique per variant.
