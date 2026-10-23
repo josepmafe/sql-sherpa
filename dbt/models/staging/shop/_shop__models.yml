@@ -177,6 +177,7 @@ models:
       - name: shipping_address_id
         description: Address the order ships to.
         data_tests:
+          - not_null
           - relationships:
               arguments:
                 to: ref('stg_shop__addresses')
@@ -456,7 +457,7 @@ models:
   - name: stg_shop__refunds
     description: >
       One row per refund. Refunds can exist without a return (goodwill, cancellation, R9). A refund
-      can exceed a single split payment; only per-order totals are capped.
+      can exceed a single split payment; the refunded total per order never exceeds the amount captured.
     columns:
       - name: refund_id
         description: Primary key.
