@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 from helpers import AFTER_SALES_DAYS, AFTER_SALES_START, SIMULATION_SEED
+from sherpa_generator.behaviour.after_sales import GOODWILL_DELAY_DAYS, RECEIPT_DELAY_DAYS, REQUEST_DELAY_DAYS
 from sherpa_generator.records import OrderStatus, PaymentStatus, ReturnStatus
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
-from sherpa_generator.simulation.store_snapshot import StoreSnapshotLoader, lognormal_propensity
+from sherpa_generator.simulation.store_snapshot import RECENT_DELIVERY_DAYS, StoreSnapshotLoader, lognormal_propensity
 
 if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
@@ -193,3 +194,10 @@ def test_lognormal_propensity_is_finite_at_fraction_zero() -> None:
     value = lognormal_propensity(0.0)
 
     assert 0.0 < value < lognormal_propensity(0.001)
+
+
+def test_delivery_window_covers_every_after_sales_delay() -> None:
+    latest_receipt = REQUEST_DELAY_DAYS[1] + RECEIPT_DELAY_DAYS[1]
+
+    assert latest_receipt <= RECENT_DELIVERY_DAYS
+    assert GOODWILL_DELAY_DAYS[1] <= RECENT_DELIVERY_DAYS

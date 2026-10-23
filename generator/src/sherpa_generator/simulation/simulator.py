@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass
 from datetime import timedelta
@@ -38,6 +39,8 @@ _ONE_DAY = timedelta(days=1)
 # The catalog spans at most this many days from the start date, so it is independent of the first run's yesterday once
 # the start date is at least this many days before it; a younger dataset's catalog stops at that yesterday.
 CATALOG_HORIZON_DAYS = 365
+# The state stores scale as numeric, which keeps 15 significant digits of the float (0.1 * 3 comes back as 0.3).
+SCALE_REL_TOLERANCE = 1e-12
 
 
 class GeneratorError(Exception):
@@ -128,7 +131,8 @@ class Simulator:
         return state, Counter(written)
 
     def _check_resumable(self, state: SimulationState, start_date: date | None) -> None:
-        if (state.seed, state.scale) != (self._seed, self._scale):
+        same_scale = math.isclose(state.scale, self._scale, rel_tol=SCALE_REL_TOLERANCE)
+        if state.seed != self._seed or not same_scale:
             msg = (
                 f"stored state has seed {state.seed}, scale {state.scale}; got seed {self._seed}, scale {self._scale}"
                 " (reset to start over)"

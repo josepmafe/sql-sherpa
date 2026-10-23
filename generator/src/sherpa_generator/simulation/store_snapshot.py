@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Final
 
 from pydantic import BaseModel, ConfigDict
 
+from sherpa_generator.behaviour.after_sales import GOODWILL_DELAY_DAYS, RECEIPT_DELAY_DAYS, REQUEST_DELAY_DAYS
 from sherpa_generator.records import (
     Address,
     Campaign,
@@ -40,8 +41,9 @@ PROPENSITY_SIGMA: Final = 1.0
 POPULARITY_ZIPF_EXPONENT: Final = 1.0  # product popularity falls off as 1 / rank
 RECENT_EMAIL_SEND_DAYS: Final = 3  # covers the 48 h open window plus the click delay
 ACTIVE_PROMOTION: Final = "starts_at < %s AND ends_at > %s"  # overlaps the day; params: day end, day start
-# Spec A §5.2 step 7: a return is requested at most 30 days after delivery and received at most 10 days later.
-RECENT_DELIVERY_DAYS: Final = 40
+# Spec A §5.2 step 7: the latest after-sales step of a delivered order is a return received at the longest request
+# plus receipt delay, or a goodwill refund; the after-sales simulator looks the order up until then.
+RECENT_DELIVERY_DAYS: Final = max(REQUEST_DELAY_DAYS[1] + RECEIPT_DELAY_DAYS[1], GOODWILL_DELAY_DAYS[1])
 RECENTLY_DELIVERED: Final = "status = 'delivered' AND updated_at >= %s"  # params: start of the delivery window
 PRODUCT_CATEGORY_L1: Final = f"""
 WITH RECURSIVE tree (id, l1) AS (

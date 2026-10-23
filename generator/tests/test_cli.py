@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import os
 import socket
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import psycopg
 import pytest
 from helpers import RUN_SCALE, RUN_SEED, RUN_TODAY, STATE_TABLE, fingerprint
+from sherpa_generator import settings
 from sherpa_generator.cli import app
 from sherpa_generator.database.raw_schema import RawSchema
 from sherpa_generator.simulation.simulator import Simulator
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sherpa_generator.database.connection import Database
 
 runner = CliRunner()
@@ -35,18 +40,73 @@ def unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
         sock.bind(("127.0.0.1", 0))
         free_port = sock.getsockname()[1]
 
-    # libpq env var; bounds the wait on hosts where the OS drops the connection instead of refusing it
-    monkeypatch.setenv("PGCONNECT_TIMEOUT", "2")
     monkeypatch.setenv("SHERPA_DB_HOST", "127.0.0.1")
     monkeypatch.setenv("SHERPA_DB_PORT", str(free_port))
     monkeypatch.setenv("SHERPA_DB_NAME", "sherpa")
     monkeypatch.setenv("SHERPA_ADMIN_USER", "sherpa_admin")
     monkeypatch.setenv("SHERPA_ADMIN_PASSWORD", "unused")
+    # On Windows a refused port still waits out the connect timeout; libpq raises 1 to its 2 s minimum.
+    monkeypatch.setattr(settings, "CONNECT_TIMEOUT_SECONDS", 1)
+
+
+@pytest.fixture
+def no_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No SHERPA_* variables and no .env in the working directory."""
+    for name in list(os.environ):
+        if name.startswith("SHERPA_"):
+            monkeypatch.delenv(name)
+
+    monkeypatch.chdir(tmp_path)
+
+
+COMMANDS = [["generate", "--days", "1"], ["status"], ["reset"]]
 
 
 class TestCli:
+    @pytest.mark.usefixtures("no_settings")
+    @pytest.mark.parametrize("args", COMMANDS)
+    def test_missing_settings_exit_2_with_message_not_traceback(self, args: list[str]) -> None:
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == 2
+        assert "error: invalid or missing settings" in result.stderr
+        assert "SHERPA_DB_HOST: Field required" in result.stderr
+        assert "check .env" in result.stderr
+        assert "Traceback" not in result.stderr
+
     @pytest.mark.usefixtures("unreachable_database")
-    @pytest.mark.parametrize("args", [["generate", "--days", "1"], ["status"], ["reset"]])
+    def test_invalid_setting_names_the_variable_without_echoing_secrets(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SHERPA_DB_PORT", "not-a-port")
+
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 2
+        assert "SHERPA_DB_PORT: Input should be a valid integer" in result.stderr
+        assert "unused" not in result.stderr
+        assert "Traceback" not in result.stderr
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("args", "target", "method"),
+        [(["generate", "--days", "1"], Simulator, "run"), (["status"], RawSchema, "row_counts")],
+    )
+    def test_connection_lost_mid_command_exits_2_with_message_not_traceback(
+        self, cli_database: Database, monkeypatch: pytest.MonkeyPatch, args: list[str], target: type, method: str
+    ) -> None:
+        def lose_connection(*_args: object, **_kwargs: object) -> None:
+            raise psycopg.OperationalError("server closed the connection unexpectedly")
+
+        monkeypatch.setattr(target, method, lose_connection)
+
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == 2
+        assert "server closed the connection unexpectedly" in result.stderr
+        assert "make up" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    @pytest.mark.usefixtures("unreachable_database")
+    @pytest.mark.parametrize("args", COMMANDS)
     def test_unreachable_database_exits_2_with_message_not_traceback(self, args: list[str]) -> None:
         result = runner.invoke(app, args)
 

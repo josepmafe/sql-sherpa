@@ -153,6 +153,15 @@ class TestSimulator:
 
         assert fingerprint(temp_database) == before
 
+    def test_scale_that_loses_float_precision_in_storage_resumes(self, temp_database: Database) -> None:
+        # 0.1 * 3 is 0.30000000000000004; the numeric column stores it as 0.3.
+        scale = 0.1 * 3
+        Simulator(temp_database, seed=RUN_SEED, scale=scale, today=RUN_TODAY).run(1, RUN_START)
+
+        Simulator(temp_database, seed=RUN_SEED, scale=scale, today=RUN_TODAY).run(1)
+
+        assert stored_state(temp_database).last_simulated_date == RUN_START + timedelta(days=1)
+
     def test_start_date_with_existing_state_rejected(self, temp_database: Database) -> None:
         make_simulator(temp_database).run(1, RUN_START)
         before = fingerprint(temp_database)

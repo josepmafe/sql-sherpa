@@ -1,9 +1,12 @@
 import logging
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Annotated
 
 import psycopg
 import typer
+from pydantic import ValidationError
 
 from sherpa_generator.database.connection import Database
 from sherpa_generator.database.raw_schema import RawSchema
@@ -34,12 +37,9 @@ def generate(
     seed: Annotated[int, typer.Option(help="Seed for every random draw.")] = DEFAULT_SEED,
 ) -> None:
     """Simulate DAYS more days: the first run sets up the catalog, later runs resume after the last simulated day."""
-    try:
+    with _exit_on_error(), _connection_errors():
         simulator = Simulator(_database(), seed=seed, scale=scale, today=datetime.now(UTC).date())
         result = simulator.run(days, start_date.date() if start_date else None)
-    except GeneratorError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(GENERATOR_ERROR_EXIT_CODE) from exc
 
     if result.first_day is None:
         typer.echo("nothing to simulate: already caught up to yesterday")
@@ -51,14 +51,12 @@ def generate(
 @app.command()
 def status() -> None:
     """Print the simulated range and the row count of every raw table."""
-    try:
+    with _exit_on_error(), _connection_errors():
         db = _database()
-    except GeneratorError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(GENERATOR_ERROR_EXIT_CODE) from exc
+        with db.connect() as conn:
+            state = SimulationStateStore(conn).load()
 
-    with db.connect() as conn:
-        state = SimulationStateStore(conn).load()
+        counts = RawSchema(db).row_counts()
 
     if state is None or state.last_simulated_date is None:
         typer.echo("no days simulated yet")
@@ -67,34 +65,54 @@ def status() -> None:
             f"simulated {state.start_date} .. {state.last_simulated_date} (seed {state.seed}, scale {state.scale})"
         )
 
-    for table, count in RawSchema(db).row_counts().items():
+    for table, count in counts.items():
         typer.echo(f"{table}: {count}")
 
 
 @app.command()
 def reset() -> None:
     """Drop and recreate the raw schemas, deleting all generated data and the simulation state."""
-    schema = RawSchema(Database(GeneratorSettings()))
-    try:
+    with _exit_on_error(), _connection_errors():
+        schema = RawSchema(Database(_settings()))
         schema.drop()
         schema.create()
-    except psycopg.OperationalError as exc:
-        typer.echo(f"error: {_connection_error(exc)}", err=True)
-        raise typer.Exit(GENERATOR_ERROR_EXIT_CODE) from exc
 
     typer.echo("raw schemas reset")
 
 
+@contextmanager
+def _exit_on_error() -> Generator[None]:
+    """A GeneratorError becomes a one-line message on stderr and exit code 2 instead of a traceback."""
+    try:
+        yield
+    except GeneratorError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(GENERATOR_ERROR_EXIT_CODE) from exc
+
+
+@contextmanager
+def _connection_errors() -> Generator[None]:
+    """Postgres down or gone mid-command (connect or any later query) is a GeneratorError."""
+    try:
+        yield
+    except psycopg.OperationalError as exc:
+        msg = f"cannot connect to the database (is it running? see `make up`): {exc}"
+        raise GeneratorError(msg) from exc
+
+
 def _database() -> Database:
     """The configured database, with the raw schemas created on first use."""
-    db = Database(GeneratorSettings())
-    try:
-        RawSchema(db).create()
-    except psycopg.OperationalError as exc:
-        raise GeneratorError(_connection_error(exc)) from exc
-
+    db = Database(_settings())
+    RawSchema(db).create()
     return db
 
 
-def _connection_error(exc: psycopg.OperationalError) -> str:
-    return f"cannot connect to the database (is it running? see `make up`): {exc}"
+def _settings() -> GeneratorSettings:
+    try:
+        return GeneratorSettings()
+    except ValidationError as exc:
+        # Name the variables only: the error's input values would include the password.
+        prefix = GeneratorSettings.model_config.get("env_prefix", "")
+        problems = "; ".join(f"{prefix}{str(error['loc'][0]).upper()}: {error['msg']}" for error in exc.errors())
+        msg = f"invalid or missing settings ({problems}); check .env (copy .env.example)"
+        raise GeneratorError(msg) from exc
