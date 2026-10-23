@@ -46,7 +46,7 @@ def unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestCli:
     @pytest.mark.usefixtures("unreachable_database")
-    @pytest.mark.parametrize("args", [["generate", "--days", "1"], ["status"]])
+    @pytest.mark.parametrize("args", [["generate", "--days", "1"], ["status"], ["reset"]])
     def test_unreachable_database_exits_2_with_message_not_traceback(self, args: list[str]) -> None:
         result = runner.invoke(app, args)
 

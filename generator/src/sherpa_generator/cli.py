@@ -75,8 +75,13 @@ def status() -> None:
 def reset() -> None:
     """Drop and recreate the raw schemas, deleting all generated data and the simulation state."""
     schema = RawSchema(Database(GeneratorSettings()))
-    schema.drop()
-    schema.create()
+    try:
+        schema.drop()
+        schema.create()
+    except psycopg.OperationalError as exc:
+        typer.echo(f"error: {_connection_error(exc)}", err=True)
+        raise typer.Exit(GENERATOR_ERROR_EXIT_CODE) from exc
+
     typer.echo("raw schemas reset")
 
 
@@ -86,6 +91,10 @@ def _database() -> Database:
     try:
         RawSchema(db).create()
     except psycopg.OperationalError as exc:
-        raise GeneratorError(f"cannot connect to the database (is it running? see `make up`): {exc}") from exc
+        raise GeneratorError(_connection_error(exc)) from exc
 
     return db
+
+
+def _connection_error(exc: psycopg.OperationalError) -> str:
+    return f"cannot connect to the database (is it running? see `make up`): {exc}"
