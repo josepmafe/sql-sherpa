@@ -104,7 +104,7 @@ Passwords come from `.env`.
 **Artifacts:** prod commands use `--target-path target-prod`, so `dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `dbt/target/`.
 
 **Additional targets:**
-- `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database, runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
+- `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database and revokes all privileges on its `public` schema from `PUBLIC` (as the init script does for the main database), runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
 - `agent` (agent-design-10): like `prod`, but with `sherpa_agent` credentials. It is used only for read-only compilation, namely MetricFlow's `--explain`, so it is added to `profiles.yml` by the milestone that first runs it.
 
 **Dates and time zones:** every timestamp is converted to UTC in staging; every `*_date` column (`order_date`, `session_date`, `refund_date`, `spend_date`, `as_of_date`) is a UTC calendar date.

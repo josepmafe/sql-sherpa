@@ -454,14 +454,14 @@ If something goes wrong with dbt itself rather than the data, `dbt debug` checks
 make eval-db   # about 5 minutes or more
 ```
 
-It drops `sherpa_eval` if it exists and recreates it empty, so it is safe to rerun, and it never touches the main `sherpa` database. The name comes from `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`). The target refuses a name that does not start with `sherpa_eval` or that equals the main database, so a typo cannot drop the wrong database:
+It drops `sherpa_eval` if it exists and recreates it empty, so it is safe to rerun, and it never touches the main `sherpa` database. The name comes from `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`). The target refuses a name that does not start with `sherpa_eval`, contains anything but lowercase letters, digits and `_`, or equals the main database, so a typo cannot drop the wrong database:
 
 ```bash
 make eval-db SHERPA_EVAL_DB_NAME=sherpa
 ```
 
 ```
-Makefile:73: *** SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database, got 'sherpa'.  Stop.
+Makefile:80: *** SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ from the main database 'sherpa', got 'sherpa'.  Stop.
 ```
 
 The build skips the source freshness check, because the frozen data is old on purpose. For the same reason one test warns on this database, and the warning is expected: the check that `stg_events__events.received_at` has data from the last 3 days.
@@ -481,21 +481,21 @@ The `on-run-end` hook gives `sherpa_agent` the same read access to the eval mart
 
 ## Tests that need the warehouse
 
-Most Python tests need nothing but Postgres (`integration` marker). Tests marked `warehouse` also need the dbt marts, because they read them: run `make build-prod` first, and `make build` as well for the one test that proves the agent cannot read `dev_marts`. `make test` includes them; run only these with:
+Most Python tests need nothing but Postgres (`integration` marker). Tests marked `warehouse` also need the built warehouses, because they read them: run `make build-prod` first, `make build` as well for the one test that proves the agent cannot read `dev_marts`, and `make eval-db` for the tests that run against `sherpa_eval`. `make test` leaves them out, like the `slow` tests; run them with:
 
 ```bash
 uv run --env-file .env pytest -m warehouse
 ```
 
 ```
-collected 303 items / 288 deselected / 15 selected
+collected 319 items / 288 deselected / 31 selected
 
-tests\dbt\test_agent_access.py ...............                           [100%]
+tests\dbt\test_agent_access.py ...............................           [100%]
 
-===================== 15 passed, 288 deselected in 0.72s ======================
+===================== 31 passed, 288 deselected in 1.41s ======================
 ```
 
-They check that `sherpa_agent` can read all eight marts, cannot read staging, intermediate, seeds, raw or `dev_marts`, can use `similarity()` without a schema prefix, and can read the table comments.
+They check, on both the main and the eval database, that `sherpa_agent` can read all eight marts, cannot read staging, intermediate, seeds or raw, has no `USAGE` on `public`, can use `similarity()` without a schema prefix, and can read the table comments; and, on the main database, that it cannot read `dev_marts`. Before each denied read, an admin connection checks that the table exists, so a missing table cannot pass for a missing privilege.
 
 ## Next
 

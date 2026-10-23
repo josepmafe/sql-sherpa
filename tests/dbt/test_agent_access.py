@@ -1,8 +1,13 @@
-"""What the agent role can and cannot read once the warehouse is built (`make build-prod`, then `make build`)."""
+"""What the agent role can and cannot read in the built warehouses.
+
+The main database tests need `make build-prod` (and `make build` for the dev_marts check); the eval database
+tests need `make eval-db`. Every denied read is preceded by an admin-side check that the relation exists, so a
+missing table cannot pass for a missing privilege.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import psycopg
 import pytest
@@ -33,32 +38,52 @@ NOT_EXPOSED = (
 
 pytestmark = pytest.mark.warehouse
 
+Database = Literal["main", "eval"]
+Role = Literal["admin", "agent"]
 
-class AgentSettings(BaseSettings):
-    """The agent role's connection, read from `.env` like the generator's admin settings."""
+
+class WarehouseSettings(BaseSettings):
+    """The admin and agent connections, read from `.env` like the generator's admin settings."""
 
     model_config = SettingsConfigDict(frozen=True, env_prefix="SHERPA_", env_file=".env", extra="ignore")
 
     db_host: str
     db_port: int
     db_name: str
+    eval_db_name: str = "sherpa_eval"
+    admin_user: str
+    admin_password: SecretStr
     agent_user: str
     agent_password: SecretStr
 
-    def conninfo(self) -> str:
+    def conninfo(self, database: Database, role: Role) -> str:
+        user, password = (
+            (self.admin_user, self.admin_password) if role == "admin" else (self.agent_user, self.agent_password)
+        )
         return make_conninfo(
             host=self.db_host,
             port=self.db_port,
-            dbname=self.db_name,
-            user=self.agent_user,
-            password=self.agent_password.get_secret_value(),
+            dbname=self.db_name if database == "main" else self.eval_db_name,
+            user=user,
+            password=password.get_secret_value(),
         )
 
 
+@pytest.fixture(params=["main", "eval"])
+def database(request: pytest.FixtureRequest) -> Database:
+    return request.param
+
+
 @pytest.fixture
-def agent() -> Iterator[psycopg.Connection]:
+def agent(database: Database) -> Iterator[psycopg.Connection]:
     # autocommit: a denied query must not abort the session for the next statement.
-    with psycopg.connect(AgentSettings().conninfo(), autocommit=True) as conn:
+    with psycopg.connect(WarehouseSettings().conninfo(database, "agent"), autocommit=True) as conn:
+        yield conn
+
+
+@pytest.fixture
+def admin(database: Database) -> Iterator[psycopg.Connection]:
+    with psycopg.connect(WarehouseSettings().conninfo(database, "admin"), autocommit=True) as conn:
         yield conn
 
 
@@ -74,19 +99,35 @@ class TestAgentAccess:
 
     @pytest.mark.parametrize(("schema", "table"), NOT_EXPOSED)
     def test_cannot_read_staging_intermediate_seeds_or_raw(
-        self, agent: psycopg.Connection, schema: str, table: str
+        self, admin: psycopg.Connection, agent: psycopg.Connection, schema: str, table: str
     ) -> None:
+        assert _exists(admin, schema, table)
         query = sql.SQL("select count(*) from {}").format(sql.Identifier(schema, table))
 
         with pytest.raises(errors.InsufficientPrivilege):
             agent.execute(query)
 
-    def test_cannot_read_dev_marts(self, agent: psycopg.Connection) -> None:
+    @pytest.mark.parametrize("database", ["main"], indirect=True)
+    def test_cannot_read_dev_marts(self, admin: psycopg.Connection, agent: psycopg.Connection) -> None:
         # dbt's grants config gives the agent SELECT on dev_marts tables too; only the missing schema USAGE blocks it.
+        assert _exists(admin, "dev_marts", "fct_orders")
+        privileges = admin.execute(
+            "select has_table_privilege(%(role)s, 'dev_marts.fct_orders', 'SELECT'),"
+            " has_schema_privilege(%(role)s, 'dev_marts', 'USAGE')",
+            {"role": WarehouseSettings().agent_user},
+        ).fetchone()
+        assert privileges == (True, False)
         query = "select count(*) from dev_marts.fct_orders"
 
         with pytest.raises(errors.InsufficientPrivilege):
             agent.execute(query)
+
+    def test_has_no_usage_on_public(self, agent: psycopg.Connection) -> None:
+        query = "select has_schema_privilege('public', 'USAGE')"
+
+        row = agent.execute(query).fetchone()
+
+        assert row == (False,)
 
     def test_can_use_trigram_similarity_unqualified(self, agent: psycopg.Connection) -> None:
         query = "select similarity('running', 'runing') > 0.3"
@@ -102,3 +143,9 @@ class TestAgentAccess:
 
         assert row is not None
         assert row[0] is not None
+
+
+def _exists(admin: psycopg.Connection, schema: str, table: str) -> bool:
+    name = sql.Identifier(schema, table).as_string(admin)
+    row = admin.execute("select to_regclass(%s) is not null", (name,)).fetchone()
+    return row == (True,)
