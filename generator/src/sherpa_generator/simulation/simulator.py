@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ONE_DAY = timedelta(days=1)
+# Spec A §5.1: the output depends only on seed, scale and start date, so the catalog cannot depend on the first run's
+# yesterday; it spans at most this many days from the start date.
+CATALOG_HORIZON_DAYS = 365
 
 
 class GeneratorError(Exception):
@@ -98,16 +101,17 @@ class Simulator:
         return RunResult(first_day=first, last_day=last, rows_written=dict(rows))
 
     def _set_up(self, start_date: date) -> tuple[SimulationState, Counter[str]]:
-        """Catalog and initial state in one transaction. The catalog spans up to yesterday, whatever `days` is, so a
-        short first run followed by resumes builds the same catalog as one long run. The catalog ends at the first
-        run's yesterday, so days simulated after that date have no active campaigns, promotions or ad spend."""
+        """Catalog and initial state in one transaction. The catalog spans at most one year from the start date (or up
+        to yesterday if sooner), whatever `days` is, so a short first run followed by resumes builds the same catalog
+        as one long run. Days simulated after the catalog ends have no active campaigns, promotions or ad spend."""
         if start_date > self._yesterday:
             msg = f"start date {start_date} is after yesterday ({self._yesterday})"
             raise GeneratorError(msg)
 
         keys = PrimaryKeyAllocator({})
         changes = DayChanges()
-        CatalogBuilder(self._random, keys).build(changes, start_date, self._yesterday)
+        catalog_end = min(self._yesterday, start_date + timedelta(days=CATALOG_HORIZON_DAYS - 1))
+        CatalogBuilder(self._random, keys).build(changes, start_date, catalog_end)
         state = SimulationState(
             seed=self._seed,
             scale=self._scale,

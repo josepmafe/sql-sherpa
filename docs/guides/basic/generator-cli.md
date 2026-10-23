@@ -145,7 +145,7 @@ simulated 2026-09-01 .. 2026-09-30: 7648 rows written
 identical
 ```
 
-One caveat: the setup creates campaigns and promotions for the range from the start date to *yesterday*, so a first run on a later calendar day gets a different catalog. Same seed, start date, scale and day of the first run give identical data.
+The setup creates campaigns and promotions for at most one year from the start date (or up to yesterday if sooner), so the same seed, start date, scale and number of days give identical data on any later calendar day, as long as the range is already in the past.
 
 ### Topping up to yesterday after a few days off
 
@@ -161,7 +161,7 @@ uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
 simulated 2026-10-01 .. 2026-10-22: 4611 rows written
 ```
 
-With the default seed and scale, `make generate DAYS=7` does the same. Topping up keeps `dbt source freshness` green (see [Building the warehouse](building-the-warehouse.md)). Campaigns and promotions end on the yesterday of the first run, so days added later have no campaigns, promotions or ad spend, and the freshness check on `ad_spend_daily` warns after 48 hours. To get a full catalog again, start over.
+With the default seed and scale, `make generate DAYS=7` does the same. Topping up keeps `dbt source freshness` green (see [Building the warehouse](building-the-warehouse.md)). Campaigns and promotions end one year after the start date, or on the yesterday of the first run if that is sooner, so days added after that have no campaigns, promotions or ad spend, and the freshness check on `ad_spend_daily` warns after 48 hours. To get a full catalog again, start over.
 
 ### Starting over
 

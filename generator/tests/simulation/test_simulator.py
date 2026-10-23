@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from helpers import RUN_DAYS, RUN_SCALE, RUN_SEED, RUN_START, RUN_TODAY, STATE_TABLE, fingerprint
 from sherpa_generator.behaviour.customer_deletions import CustomerDeletionSimulator
+from sherpa_generator.database.raw_schema import RawSchema
 from sherpa_generator.simulation.simulation_state import SimulationStateStore
 from sherpa_generator.simulation.simulator import GeneratorError, RunResult, Simulator
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 YESTERDAY = RUN_TODAY - timedelta(days=1)
+SMALL_SCALE = 0.05
 
 
 class SimulatedCrashError(Exception):
@@ -160,6 +162,34 @@ class TestSimulator:
 
         assert fingerprint(temp_database) == before
 
+    def test_catalog_is_independent_of_the_day_of_the_first_run(self, temp_database: Database) -> None:
+        Simulator(temp_database, seed=RUN_SEED, scale=SMALL_SCALE, today=date(2026, 6, 1)).run(2, RUN_START)
+        first = catalog_rows(temp_database)
+        RawSchema(temp_database).drop()
+        RawSchema(temp_database).create()
+
+        Simulator(temp_database, seed=RUN_SEED, scale=SMALL_SCALE, today=date(2027, 9, 15)).run(2, RUN_START)
+
+        assert catalog_rows(temp_database) == first
+
+    def test_catalog_ends_at_yesterday_inside_the_first_year(self, temp_database: Database) -> None:
+        Simulator(temp_database, seed=RUN_SEED, scale=SMALL_SCALE, today=RUN_TODAY).run(2, RUN_START)
+
+        with temp_database.connect() as conn:
+            row = conn.execute("SELECT max(ends_at) FROM raw_marketing.campaigns").fetchone()
+
+        assert row is not None
+        assert row[0] <= datetime(2025, 4, 1, tzinfo=UTC)
+
+    def test_catalog_ends_one_year_after_the_start_date(self, temp_database: Database) -> None:
+        Simulator(temp_database, seed=RUN_SEED, scale=SMALL_SCALE, today=date(2027, 9, 15)).run(2, RUN_START)
+
+        with temp_database.connect() as conn:
+            row = conn.execute("SELECT max(ends_at) FROM raw_marketing.campaigns").fetchone()
+
+        assert row is not None
+        assert row[0] <= datetime(2026, 3, 1, tzinfo=UTC)
+
 
 def make_simulator(db: Database) -> Simulator:
     return Simulator(db, seed=RUN_SEED, scale=RUN_SCALE, today=RUN_TODAY)
@@ -176,6 +206,16 @@ def crash_deletions_on(monkeypatch: pytest.MonkeyPatch, crash_day: date) -> None
         original(self, snapshot, changes)
 
     monkeypatch.setattr(CustomerDeletionSimulator, "simulate_day", simulate_day)
+
+
+def catalog_rows(db: Database) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
+    with db.connect() as conn:
+        campaigns = conn.execute("SELECT * FROM raw_marketing.campaigns ORDER BY id").fetchall()
+        promotions = conn.execute("SELECT * FROM raw_shop.promotions ORDER BY id").fetchall()
+
+    assert campaigns
+    assert promotions
+    return campaigns, promotions
 
 
 def stored_state(db: Database) -> SimulationState:
