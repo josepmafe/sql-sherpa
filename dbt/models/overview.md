@@ -32,7 +32,8 @@ The generator writes four raw schemas, one per system the shop would run:
   as spreading an order's discount over its lines or numbering web sessions. Most are
   ephemeral (inlined into the models that use them, so they build nothing). Not for consumers.
 - **Marts** (`marts`): contract-enforced tables for consumers, grouped by domain:
-    - **sales**: `fct_orders`, `fct_order_items`, `fct_returns`, `fct_refunds`, `dim_promotions`
+    - **sales**: `fct_orders`, `fct_order_items`, `fct_order_discounts`, `fct_returns`, `fct_refunds`,
+      `dim_promotions`
     - **customers**: `dim_customers`
     - **products**: `dim_products`
     - **shared**: `dim_date`

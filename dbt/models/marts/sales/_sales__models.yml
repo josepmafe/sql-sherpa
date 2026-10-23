@@ -406,6 +406,93 @@ models:
           refunded line (each line's refunded_revenue is rounded on its own). {{ doc('metric_gross_margin') }}
         data_type: numeric(12,2)
 
+  - name: fct_order_discounts
+    description: >
+      Order discount fact, one row per discount applied to an order in fct_orders: the bridge from
+      orders to promotions. An order can have several discounts. Every discount comes from a
+      promotion, so per promotion the rows add up to dim_promotions' redemption_count and
+      total_discount_amount, cancelled orders included and flagged. Free-shipping discounts have
+      amount 0.00: they waive the shipping instead. {{ doc('cancelled_orders') }}
+    config:
+      meta:
+        domain: sales
+        grain: one row per discount applied to an order
+        primary_key: order_discount_id
+    data_tests:
+      - column_sums_match:
+          arguments:
+            column_name: amount
+            compare_model: ref('fct_orders')
+            compare_column: discount_amount
+            group_by: order_id
+    columns:
+      - name: order_discount_id
+        description: The discount applied to an order. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: The order the discount applies to. Join to fct_orders on order_id.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: customer_id
+        description: The customer who placed the order.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        description: UTC date the order was placed. Join to dim_date on date_day.
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: promotion_id
+        description: The promotion that granted the discount. Join to dim_promotions on promotion_id.
+        data_type: bigint
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_promotions')
+                field: promotion_id
+      - name: coupon_code
+        description: Coupon code the customer entered; null when the promotion applied automatically.
+        data_type: text
+      - name: promotion_type
+        description: How the promotion discounts, percent, fixed or free_shipping.
+        data_type: text
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [percent, fixed, free_shipping]
+      - name: amount
+        description: >
+          Discount in EUR, kept when the order is cancelled; 0.00 for free-shipping discounts. Per
+          order the rows add up to fct_orders.discount_amount. {{ doc('metric_discount_amount') }}
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [discount, promo amount]
+        data_tests: [not_null]
+      - name: is_cancelled
+        description: True when the order is cancelled. {{ doc('cancelled_orders') }}
+        data_type: boolean
+
   - name: fct_returns
     description: >
       Return fact, one row per return of an order in fct_orders, with the units returned and
