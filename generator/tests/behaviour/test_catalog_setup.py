@@ -104,6 +104,14 @@ class TestCatalogBuilder:
         assert promotion.starts_at.date() == first
         assert (promotion.ends_at.date() - last).days == 1
 
+    def test_black_friday_promotion_covers_week_crossing_into_december(self) -> None:
+        changes = build(date(2024, 1, 1), date(2024, 12, 31))
+
+        promotion = next(p for p in changes.inserted(Promotion) if p.name == "Black Friday 20%")
+
+        assert promotion.starts_at.date() == date(2024, 11, 25)
+        assert promotion.ends_at.date() == date(2024, 12, 2)
+
     def test_promotion_mix(self) -> None:
         changes = build()
         promotions = changes.inserted(Promotion)

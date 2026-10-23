@@ -4,7 +4,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Final
 from zoneinfo import ZoneInfo
 
-FRIDAY = 4  # date.weekday() value
+THURSDAY = 3  # date.weekday() values
+FRIDAY = 4
 WEEKEND_START = 5  # date.weekday() of Saturday; Sunday is 6
 
 
@@ -18,7 +19,7 @@ class SimulationCalendar:
     NOVEMBER: Final = 11
     DECEMBER: Final = 12
     JANUARY: Final = 1
-    BLACK_FRIDAY_ORDINAL: Final = 4  # the 4th Friday of November
+    THANKSGIVING_ORDINAL: Final = 4  # US Thanksgiving is the 4th Thursday of November
     DAYS_PER_WEEK: Final = 7
 
     TIMEZONES_BY_COUNTRY: Final = {
@@ -52,10 +53,11 @@ class SimulationCalendar:
         return start, start + timedelta(days=1)
 
     def black_friday_week(self, year: int) -> tuple[date, date]:
-        """Monday to Sunday of the week containing the 4th Friday of November."""
+        """Monday to Sunday of the week containing Black Friday, the day after US Thanksgiving."""
         november_1st = date(year, self.NOVEMBER, 1)
-        first_friday = november_1st + timedelta(days=(FRIDAY - november_1st.weekday()) % self.DAYS_PER_WEEK)
-        black_friday = first_friday + timedelta(weeks=self.BLACK_FRIDAY_ORDINAL - 1)
+        first_thursday = november_1st + timedelta(days=(THURSDAY - november_1st.weekday()) % self.DAYS_PER_WEEK)
+        thanksgiving = first_thursday + timedelta(weeks=self.THANKSGIVING_ORDINAL - 1)
+        black_friday = thanksgiving + timedelta(days=1)
         monday = black_friday - timedelta(days=FRIDAY)
         return monday, monday + timedelta(days=self.DAYS_PER_WEEK - 1)
 

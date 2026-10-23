@@ -26,6 +26,11 @@ class TestSimulationCalendar:
             (date(2025, 11, 30), 3.6),  # last day of the week (Sunday)
             (date(2025, 12, 1), 1.6),  # Monday after the week ends
             (date(2025, 2, 3), 1.0),  # February is untouched
+            (date(2024, 11, 24), 1.2),  # Sunday before the 2024 week, which starts on the 25th
+            (date(2024, 11, 29), 3.0),  # 2024 Black Friday (a 5th Friday)
+            (date(2024, 11, 30), 3.6),  # Saturday of the 2024 week
+            (date(2024, 12, 1), 1.6 * 1.2 * 3.0),  # Black Friday week x December x weekend
+            (date(2024, 12, 2), 1.6),  # first December day after the week
         ],
     )
     def test_seasonality_examples(self, day: date, expected: float) -> None:
@@ -36,11 +41,11 @@ class TestSimulationCalendar:
         [
             (2025, (date(2025, 11, 24), date(2025, 11, 30))),
             (2026, (date(2026, 11, 23), date(2026, 11, 29))),
-            # 2024-11-01 is a Friday, so the 4th Friday is the 22nd.
-            (2024, (date(2024, 11, 18), date(2024, 11, 24))),
+            # 2024-11-01 is a Friday, so Thanksgiving is the 28th and the week crosses into December.
+            (2024, (date(2024, 11, 25), date(2024, 12, 1))),
         ],
     )
-    def test_black_friday_week_is_monday_to_sunday_of_the_fourth_friday(
+    def test_black_friday_week_is_monday_to_sunday_of_the_day_after_thanksgiving(
         self, year: int, expected: tuple[date, date]
     ) -> None:
         assert self.calendar.black_friday_week(year) == expected
