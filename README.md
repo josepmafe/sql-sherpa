@@ -4,7 +4,7 @@
 
 It is a learning project, built to production standards: a realistic synthetic e-commerce business, a dbt project that uses dbt Core's features the way practitioners do, and a text-to-SQL agent where observability and evaluation come first.
 
-> **Status:** design complete for both the data platform and the agent; implementation starts with milestone data-platform-1 (Foundation).
+> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation) is done; data-platform-2 (Core marts) is next.
 
 ---
 
@@ -40,10 +40,30 @@ It is a learning project, built to production standards: a realistic synthetic e
 | **data-platform-5 · Semantic layer** | MetricFlow semantic models, metrics and saved queries |
 | **agent-design-1 … 10 · Agent** | MCP server, eval harness, a baseline agent, then grounding, schema linking and self-correction, one at a time, measured |
 
+## Quickstart
+
+Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
+
+```bash
+cp .env.example .env     # then set the passwords
+make up                  # start Postgres
+make backfill DAYS=365   # simulate a year of data into the raw schemas
+make deps                # install the dbt packages
+make build               # dbt: seeds, staging models and tests
+make docs                # generate and serve the dbt docs
+```
+
+`make test` runs the tests and `make lint` runs ruff, mypy and sqlfluff.
+
 ## Repository layout
 
 ```
+generator/   the synthetic-data generator (Python package, CLI and tests)
+dbt/         the dbt project: sources, seeds, staging models, dim_date
+docker/      Postgres init script (database roles)
+scripts/     helper scripts, such as the dbt docs-coverage check
 docs/        design specs and implementation plans
+tests/       tests outside the generator package (dbt seeds, scripts)
 ```
 
 ## Design docs
