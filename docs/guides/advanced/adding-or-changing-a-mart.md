@@ -162,7 +162,7 @@ A model that needs lookups or joins starts with one CTE per input (`with custome
   {{ config(indexes=[{'columns': ['order_id']}]) }}
   ```
 
-  `fct_orders` indexes `order_date` and `customer_id`; `fct_order_items` indexes `order_id` and `variant_id`.
+  `fct_orders` indexes `order_date` and `customer_id`; `fct_order_items` indexes `order_id` and `variant_id`; `fct_order_discounts` indexes `order_id` and `promotion_id`.
 - Text columns people search by name get a trigram index (section 4).
 
 **3. Grants.** Nothing to do. The `+grants` setting in `dbt_project.yml` gives `sherpa_agent` `SELECT` on every mart table, and the `on-run-end` hook `grant_agent_access` grants `USAGE` on the `marts` schema and `SELECT` on all of its tables on prod and eval. The agent can read the new table after the next `make build-prod`.
@@ -320,18 +320,18 @@ The rules of a generic test:
               group_by: order_id
   ```
 
-The same test is used five times (lines against orders for gross amount, discount and cost; refunds against orders; allocated discounts against the discount rows). Run all of them:
+The same test is used seven times (lines against orders for gross amount, discount, cost and returned cost; discount rows of `fct_order_discounts` against orders; refunds against orders; allocated discounts against the discount rows). Run all of them:
 
 ```bash
 dbt test --select "test_name:column_sums_match" --target prod --target-path target-prod
 ```
 
 ```
-21:01:07  5 of 5 PASS column_sums_match_int_order_items__discount_allocated_allocated_discount__amount__ref_stg_shop__order_discounts___order_id  [PASS in 0.13s]
-21:01:07  Done. PASS=7 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=7
+22:55:30  7 of 7 PASS column_sums_match_int_order_items__discount_allocated_allocated_discount__amount__ref_stg_shop__order_discounts___order_id  [PASS in 0.23s]
+22:55:30  Done. PASS=9 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=9
 ```
 
-(The 7 include the two `on-run` hooks.) `dbt ls --select "test_name:column_sums_match" --resource-type test` lists them. [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows what a failure looks like.
+(The 9 include the two `on-run` hooks.) `dbt ls --select "test_name:column_sums_match" --resource-type test` lists them. [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows what a failure looks like.
 
 Write a generic test when the same rule applies to several models or columns. A rule about one model with fixed values (the segment boundaries, the tax maths) is a singular test: a plain `SELECT` returning the failing rows in `dbt/tests/<name>.sql`, with the cases written out in the file. Add either kind with a comment that says what a returned row means.
 

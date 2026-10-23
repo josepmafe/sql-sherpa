@@ -14,8 +14,9 @@ A **mart** is a dbt model in the `marts` schema, built as a table for consumers.
 
 | Mart | One row per | Answers |
 |---|---|---|
-| `fct_orders` | order (cancelled orders included, flagged) | Revenue, discounts, refunds, margin, channel and delivery time by day, customer, country or channel |
-| `fct_order_items` | order line | Sales by product or category; join to `dim_products` |
+| `fct_orders` | order (cancelled orders included, flagged) | Revenue, discounts, refunds, margin, channel, payment method and delivery time by day, customer, country or channel; new against returning customers' orders |
+| `fct_order_items` | order line | Sales, refunds and margin by product, brand or category; join to `dim_products` |
+| `fct_order_discounts` | discount applied to an order | Which orders used which promotion or coupon code; join to `dim_promotions` |
 | `fct_returns` | return | Why customers return, how many items come back and are restockable |
 | `fct_refunds` | refund | Money given back, by reason, by the date it was refunded |
 | `dim_customers` | customer | Lifetime value, acquisition channel, lifecycle segment, VIPs |
@@ -35,7 +36,7 @@ The metric definitions are written once, in `dbt/models/marts/_metrics.md` (one 
 | `discount_amount` | Promotions and coupons, spread over the lines | Discount cost |
 | `refunded_revenue` | Revenue given back for `return` and `goodwill` refunds, tax removed. `cancellation` refunds count 0 | Refund cost |
 | `net_revenue` | gross − discount − refunded, **0 for a cancelled order** | **"Revenue", unless the question says otherwise** |
-| `gross_margin` | net_revenue − (cogs − returned_cogs) | Profit before overheads |
+| `gross_margin` | net_revenue − (cogs − returned_cogs) | Profit before overheads; per line in `fct_order_items` for products and brands |
 
 All sums are over non-cancelled orders (`where not is_cancelled`, see the traps below). The ratios:
 
@@ -129,6 +130,106 @@ order by 2 desc;
 ```
 
 Line refunds exclude goodwill refunds, so the line-level rate over all categories (0.0780, the same query without the `group by`) sits slightly below the order-level 0.0793 above. A category's rate is not comparable to the order-level one for the same reason.
+
+### Gross margin by brand
+
+`fct_order_items` carries the margin per line: `net_amount − refunded_revenue − (cogs − returned_cogs)`, where `returned_cogs` is the cost of the restockable returned units, which go back into stock:
+
+```sql
+select p.brand,
+       round(sum(i.gross_margin), 2) as gross_margin,
+       round(sum(i.gross_margin) / nullif(sum(i.net_amount - i.refunded_revenue), 0), 3) as margin_rate
+from marts.fct_order_items as i
+inner join marts.dim_products as p using (variant_id)
+where not i.is_cancelled
+group by 1
+order by 2 desc
+limit 5;
+```
+
+```
+  brand   | gross_margin | margin_rate
+----------+--------------+-------------
+ Halden   |    108017.43 |       0.566
+ Gravel   |     34166.98 |       0.620
+ Orbit    |     29307.47 |       0.503
+ Pacer    |     19187.70 |       0.596
+ Ironpeak |     17979.06 |       0.490
+```
+
+Like line refunds, the line margin leaves out goodwill refunds, so over all lines it is 331,154.30 against 330,222.48 summed over `fct_orders.gross_margin`. Use `fct_orders` for the total margin and the lines to split it by product.
+
+### Net revenue of orders that used a promotion
+
+`fct_order_discounts` has one row per discount applied to an order, with its promotion and, if the customer entered one, the coupon code. An order uses a promotion at most once, so joining one promotion's rows to the orders does not repeat an order:
+
+```sql
+select p.promotion_name,
+       count(*) as orders,
+       round(sum(o.net_revenue), 2) as net_revenue,
+       round(sum(d.amount), 2) as promotion_discount
+from marts.fct_order_discounts as d
+inner join marts.fct_orders as o using (order_id)
+inner join marts.dim_promotions as p using (promotion_id)
+where not o.is_cancelled
+  and p.promotion_name = 'Save 5 EUR over 50 EUR (H1)'
+group by 1;
+```
+
+```
+       promotion_name        | orders | net_revenue | promotion_discount
+-----------------------------+--------+-------------+--------------------
+ Save 5 EUR over 50 EUR (H1) |    237 |    21942.85 |            1185.00
+```
+
+`d.amount` is this promotion's discount; `o.discount_amount` would be the order's whole discount, other promotions included. `dim_promotions.redemption_count` (247 here) counts cancelled orders too. Free-shipping discounts have `amount` 0.00: they waive the shipping instead.
+
+### New and returning customers' revenue
+
+`is_first_order` is true for each customer's first non-cancelled order (`customer_order_number = 1`), the one `dim_customers.first_order_at` points at:
+
+```sql
+select case when is_first_order then 'new' else 'returning' end as customer_type,
+       count(*) as orders,
+       round(sum(net_revenue), 2) as net_revenue,
+       round(sum(net_revenue) / count(*), 2) as aov
+from marts.fct_orders
+where not is_cancelled
+group by 1
+order by 1;
+```
+
+```
+ customer_type | orders | net_revenue |  aov
+---------------+--------+-------------+-------
+ new           |   2741 |   218622.52 | 79.76
+ returning     |   4894 |   393259.80 | 80.36
+```
+
+The 2,741 new orders are the 2,741 buyers of the VIP query below. Cancelled orders have no `customer_order_number` and are never first orders.
+
+### Payment method mix
+
+`primary_payment_method` is the method of the order's largest captured payment (a split payment is gift card plus card), and null when nothing was captured, as on cancelled orders. `failed_payment_count` counts the order's failed payment attempts:
+
+```sql
+select primary_payment_method,
+       count(*) as orders,
+       round(count(*)::numeric / sum(count(*)) over (), 3) as share,
+       sum(failed_payment_count) as failed_attempts
+from marts.fct_orders
+where not is_cancelled
+group by 1
+order by 2 desc;
+```
+
+```
+ primary_payment_method | orders | share | failed_attempts
+------------------------+--------+-------+-----------------
+ card                   |   5252 | 0.688 |             136
+ paypal                 |   1835 | 0.240 |              47
+ gift_card              |    548 | 0.072 |              10
+```
 
 ### AOV by marketing channel
 
@@ -309,6 +410,8 @@ inner join marts.fct_order_items as i using (order_id);
 ```
 
 Sum order columns in `fct_orders` alone, and line columns (`gross_amount`, `net_amount`, `quantity`) in `fct_order_items`. If you need both, aggregate the lines first in a subquery and join that to the orders.
+
+`fct_order_discounts` fans out the same way: 1,862 orders have 1,917 discounts, so joining all of them to `fct_orders` sums some orders twice: over the non-cancelled orders with `has_discount`, the join gives 126,238.74 of net revenue instead of 122,004.78. Filter to one promotion, as above, or use `where exists (select 1 from marts.fct_order_discounts as d where d.order_id = o.order_id and ...)`.
 
 ## Fuzzy search on products
 

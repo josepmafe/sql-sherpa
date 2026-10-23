@@ -15,7 +15,7 @@ A few dbt terms first:
 - **`persist_docs`** is a config that copies the YAML descriptions into Postgres comments on the tables and columns, so a database client can read them.
 - **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` on the marts).
 
-The project has the seeds, one staging view per raw table, an intermediate layer and the eight marts. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
+The project has the seeds, one staging view per raw table, an intermediate layer and the nine marts. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
 
 ## Dev and prod
 
@@ -62,7 +62,7 @@ Data flows through three layers, each in its own schema:
 
 - **Staging** (`models/staging/`): one view per raw table; renames, casts and cleans, no business logic.
 - **Intermediate** (`models/intermediate/`, `int_<entity>__<verb>`): joins and calculations that several marts need, such as allocating an order's discount over its lines (`int_order_items__discount_allocated`) or numbering web sessions (`int_events__sessionized`). Consumers never read them. Most are *ephemeral*: dbt pastes the SQL into the models that use them as a CTE (a `WITH` block) and creates nothing in Postgres. The exceptions are `int_events__sessionized` (a table) and `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` (views).
-- **Marts** (`models/marts/`): the eight tables consumers query, with enforced contracts ([Querying the marts](querying-the-marts.md)).
+- **Marts** (`models/marts/`): the nine tables consumers query, with enforced contracts ([Querying the marts](querying-the-marts.md)).
 
 ### Hooks and `make grant-agent`
 
@@ -104,21 +104,21 @@ cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt deps
 22:23:57  Up to date!
 ```
 
-`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 56 seconds on a year of data, source freshness included (the build itself 47 s):
+`dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 53 seconds on a year of data, source freshness included (the build itself 44 s):
 
 ```
 cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt build
-22:25:25  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
+22:51:55  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
 There are 1 unused configuration paths:
 - snapshots.sherpa
-22:25:25  Found 37 models, 254 data tests, 3 seeds, 2 operations, 21 sources, 923 macros
-22:25:25  Concurrency: 4 threads (target='dev')
+22:51:55  Found 38 models, 280 data tests, 3 seeds, 2 operations, 21 sources, 923 macros
+22:51:55  Concurrency: 4 threads (target='dev')
 ...
-22:26:13  Finished running 2 project hooks, 3 seeds, 9 table models, 254 data tests, 24 view models in 0 hours 0 minutes and 47.47 seconds (47.47s).
-22:26:13  Done. PASS=292 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=292
+22:52:39  Finished running 2 project hooks, 3 seeds, 10 table models, 280 data tests, 24 view models in 0 hours 0 minutes and 43.95 seconds (43.95s).
+22:52:40  Done. PASS=319 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=319
 ```
 
-The 37 models are 24 views, 9 tables and 4 ephemeral models (which build nothing); the 2 operations are the `on-run-start` and `on-run-end` hooks.
+The 38 models are 24 views, 10 tables and 4 ephemeral models (which build nothing); the 2 operations are the `on-run-start` and `on-run-end` hooks.
 
 The warning is expected: `dbt_project.yml` configures a schema for snapshots and the project has no snapshots. `make build-prod` prints the same with `target='prod'` and schemas without the prefix (`marts.dim_date`).
 
@@ -506,7 +506,7 @@ tests\dbt\test_agent_access.py ...................................       [100%]
 ===================== 35 passed, 288 deselected in 1.13s ======================
 ```
 
-They check, on both the main and the eval database, that `sherpa_agent` can read all eight marts, cannot read staging, intermediate, seeds or raw, has no `USAGE` on `public`, cannot create temporary tables or large objects, can use `similarity()` without a schema prefix, and can read the table comments, and that `marts.dim_products` has its five trigram indexes; and, on the main database, that it cannot read `dev_marts`. Before each denied read, an admin connection checks that the table exists, so a missing table cannot pass for a missing privilege.
+They check, on both the main and the eval database, that `sherpa_agent` can read all nine marts, cannot read staging, intermediate, seeds or raw, has no `USAGE` on `public`, cannot create temporary tables or large objects, can use `similarity()` without a schema prefix, and can read the table comments, and that `marts.dim_products` has its five trigram indexes; and, on the main database, that it cannot read `dev_marts`. Before each denied read, an admin connection checks that the table exists, so a missing table cannot pass for a missing privilege.
 
 ## Next
 

@@ -36,7 +36,7 @@ The target stack. Each tool is introduced in the milestone where it first does a
 | Milestone | What you get |
 |---|---|
 | **data-platform-1 · Foundation** | Docker Postgres, the generator, dbt sources + freshness, seeds, documented and tested staging models |
-| **data-platform-2 · Core marts** | Order, customer and product marts; macros; custom, singular and dbt_expectations tests; contracts; grants and hooks |
+| **data-platform-2 · Core marts** | Order, promotion, customer and product marts; macros; custom, singular and dbt_expectations tests; contracts; grants and hooks |
 | **data-platform-3 · Time** | Snapshots (price history), incremental models (microbatch, merge, delete+insert), sessionization, unit tests |
 | **data-platform-4 · Governance & CI** | Marketing marts, groups and access, model versions, exposures, selectors, slim builds, GitHub Actions CI |
 | **data-platform-5 · Semantic layer** | MetricFlow semantic models, metrics and saved queries |
