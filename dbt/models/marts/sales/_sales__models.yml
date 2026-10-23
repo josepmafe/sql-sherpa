@@ -85,6 +85,12 @@ models:
             column_A: gross_revenue
             column_B: net_revenue
             or_equal: true
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "failed_payment_count <= payment_count"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(primary_payment_method is null) = (captured_amount = 0)"
     columns:
       - name: order_id
         description: The order. Primary key.
@@ -217,6 +223,26 @@ models:
       - name: captured_amount
         description: Sum of the order's captured payments in EUR; failed and authorized-only attempts are excluded.
         data_type: numeric(12,2)
+      - name: primary_payment_method
+        description: >
+          Method of the order's largest captured payment (lowest payment id on a tie), card, paypal or
+          gift_card; null if nothing was captured, e.g. a cancelled or not yet paid order.
+        data_type: text
+        config:
+          meta:
+            synonyms: [payment method, paid with]
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [card, paypal, gift_card]
+      - name: payment_count
+        description: Number of payment attempts on the order, whatever their status; 0 when none.
+        data_type: integer
+        data_tests: [not_null]
+      - name: failed_payment_count
+        description: Number of the order's payment attempts that failed; 0 when none.
+        data_type: integer
+        data_tests: [not_null]
       - name: refunded_amount
         description: Sum of all refunds of the order in EUR, including tax, whatever the reason; 0 when none.
         data_type: numeric(12,2)
