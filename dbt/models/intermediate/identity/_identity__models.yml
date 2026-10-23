@@ -1,0 +1,15 @@
+version: 2
+
+# Ephemeral models are inlined into the models that use them, so they cannot be tested on their own.
+models:
+  - name: int_identity__lead_to_customer
+    description: >
+      One row per customer whose normalized email matches a CRM lead. When several leads match,
+      the earliest by created_at wins (ties: lowest lead_id).
+    columns:
+      - name: customer_id
+        description: Primary key.
+      - name: lead_id
+        description: The matched lead.
+      - name: lead_source
+        description: Source of the matched lead.
