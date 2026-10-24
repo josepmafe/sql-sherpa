@@ -197,10 +197,14 @@ class TestWarehouseTools:
             "select c from marts.dim_customers c limit 1",
             "select dim_customers from marts.dim_customers limit 1",
             "select to_json(c) from marts.dim_customers c limit 1",
+            "select c.*::text from marts.dim_customers c limit 1",
+            "select concat(c.*) from marts.dim_customers c limit 1",
+            "select (c.*)::text as x from marts.dim_customers c limit 1",
+            "select array_agg(c.*) from marts.dim_customers c",
         ],
     )
     def test_run_sql_refuses_whole_row_pii_leaks(self, tools: WarehouseTools, query: str) -> None:
-        with pytest.raises(WarehouseToolError):
+        with pytest.raises(WarehouseToolError, match=r"whole-row reference|is not allowed"):
             tools.run_sql(query)
 
     def test_run_sql_rejects_hostile_sql_with_guard_errors(self, tools: WarehouseTools) -> None:

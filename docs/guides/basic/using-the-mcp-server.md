@@ -272,6 +272,7 @@ The guard is strict and fails closed: it would rather reject a harmless query th
 | `from generate_series(...)`, also `public.generate_series(...)` | `function exploding_generate_series is not allowed` | join `marts.dim_date` for a series of days |
 | `from fct_orders` | `table fct_orders is not schema-qualified; qualify it as marts.fct_orders` | `from marts.fct_orders` |
 | `select o from marts.fct_orders o` | `whole-row reference `o` is not allowed` | name the columns |
+| `select o.*::text from marts.fct_orders o`, `concat(o.*)` | `whole-row reference `o.*` inside an expression is not allowed` | name the columns, or `select o.*` on its own |
 | `x::regclass` and other `reg*` or non-standard types | `cast to type REGCLASS is not allowed` | cast to standard types (`int`, `numeric`, `text`, `date`, ...) |
 | two statements | `expected exactly one statement, got 2` | one statement |
 
@@ -327,7 +328,7 @@ run_sql {"sql": "select string_agg(email, ',') as joined from (select email from
 {"columns": ["joined"], "rows": [["jurre931@hotmail.com,bbeccheria2@virgilio.it"]], ...}
 ```
 
-Two leaks are closed on purpose: a whole-row reference (`select c from marts.dim_customers c`) would put every PII field into one value, so the guard rejects it; and class 22 errors are returned without the value, as shown above.
+Two leaks are closed on purpose: a whole-row reference (`select c from marts.dim_customers c`, or `c.*` inside an expression such as `c.*::text` or `concat(c.*)`) would put every PII field into one value, so the guard rejects it (a plain `select c.*` expands to named columns, which are masked); and class 22 errors are returned without the value, as shown above.
 
 ## Tracing with Logfire
 

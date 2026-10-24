@@ -377,6 +377,57 @@ class TestWholeRowReferences:
         assert any(fragment in error for error in result.errors), result.errors
 
     @pytest.mark.parametrize(
+        ("sql", "star"),
+        [
+            ("select c.*::text from marts.dim_customers c limit 1", "c.*"),
+            ("select concat(c.*) from marts.dim_customers c limit 1", "c.*"),
+            ("select (c.*)::text as x from marts.dim_customers c limit 1", "c.*"),
+            ("select array_agg(c.*) from marts.dim_customers c", "c.*"),
+            ("select coalesce(c.*) from marts.dim_customers c", "c.*"),
+            ("select c.* || 'x' from marts.dim_customers c", "c.*"),
+            ("select c.* is null from marts.dim_customers c", "c.*"),
+            ("select count(c.*) from marts.dim_customers c", "c.*"),
+            # Postgres expands `c.* as x` and ignores the alias; the guard fails closed on it anyway.
+            ("select c.* as x from marts.dim_customers c", "c.*"),
+            ("select c.email from marts.dim_customers c order by c.*", "c.*"),
+            ("select c.email from marts.dim_customers c where c.* is not null", "c.*"),
+            ("select c.email from marts.dim_customers c where (c.*) = (c.*)", "c.*"),
+            ("select count(*) from marts.dim_customers c group by c.*", "c.*"),
+            ("select count(*) from marts.dim_customers c group by 1 having count(c.*) > 0", "c.*"),
+            ("select distinct on (c.*) c.email from marts.dim_customers c", "c.*"),
+            ("select count(*) over (partition by c.*) from marts.dim_customers c", "c.*"),
+            ("select x from (select c.*::text as x from marts.dim_customers c) s", "c.*"),
+            ("with t as (select c.*::text as x from marts.dim_customers c) select x from t", "c.*"),
+            ("select c.* from marts.dim_customers c union select c.*::text from marts.dim_customers c", "c.*"),
+            ('select "C".*::text from marts.dim_customers "C"', '"C".*'),
+            ("select dim_customers.*::text from marts.dim_customers", "dim_customers.*"),
+            ("select marts.dim_customers.*::text from marts.dim_customers", "marts.dim_customers.*"),
+        ],
+    )
+    def test_rejects_qualified_star_inside_an_expression(self, guard: SqlGuard, sql: str, star: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok
+        assert f"whole-row reference `{star}` inside an expression is not allowed; select named columns" in (
+            result.errors
+        ), result.errors
+
+    @pytest.mark.parametrize(
+        ("sql", "fragment"),
+        [
+            ("select row_to_json(c.*) from marts.dim_customers c", "function row_to_json is not allowed"),
+            ("select to_jsonb(c.*) from marts.dim_customers c", "function to_jsonb is not allowed"),
+            ("select (c).* from marts.dim_customers c", "whole-row reference `c`"),
+            ("select (c).email from marts.dim_customers c", "whole-row reference `c`"),
+        ],
+    )
+    def test_record_star_conversions_are_rejected(self, guard: SqlGuard, sql: str, fragment: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok
+        assert any(fragment in error for error in result.errors), result.errors
+
+    @pytest.mark.parametrize(
         "sql",
         [
             'select "C" from marts.dim_customers "C"',
@@ -401,6 +452,9 @@ class TestWholeRowReferences:
             "select c.email, c.customer_id from marts.dim_customers c",
             "select count(*) from marts.dim_customers",
             "select c.* from marts.dim_customers c",
+            "select *, c.*, c.email from marts.dim_customers c",
+            "select x.* from (select c.* from marts.dim_customers c) x",
+            "with t as (select c.* from marts.dim_customers c) select t.* from t",
             "select customer_id from marts.dim_customers c where c.customer_id > 1",
             "with x as (select 1 as a) select a from x",
             "select s.email from (select email from marts.dim_customers) s",

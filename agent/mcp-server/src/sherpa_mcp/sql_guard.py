@@ -117,6 +117,12 @@ class SqlGuard:
                 return [] if name in ALLOWED_FUNCTIONS else [f"function {name} is not allowed"]
             case exp.Table():
                 return self._table_errors(node, tables)
+            case exp.Column(this=exp.Star()) if not _is_projection_item(node):
+                # `c.*` expands to named (maskable) columns only as a select-list item; anywhere else it is one record.
+                return [
+                    f"whole-row reference `{node.sql(dialect=DIALECT)}` inside an expression is not allowed; "
+                    "select named columns"
+                ]
             case exp.Column(table="") if _is_whole_row(node):
                 return [f"whole-row reference `{node.name}` is not allowed; select named columns"]
             case _:
@@ -202,6 +208,10 @@ def _ctes_in_scope(table: exp.Expr) -> set[str]:
 
 def _cte_name(cte: exp.CTE) -> str:
     return _identifier_value(cte.args["alias"].this)
+
+
+def _is_projection_item(column: exp.Column) -> bool:
+    return isinstance(column.parent, exp.Select) and column.arg_key == "expressions"
 
 
 def _is_whole_row(column: exp.Column) -> bool:
