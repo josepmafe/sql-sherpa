@@ -86,7 +86,7 @@ The init script is a shell script (not `.sql`) because the Postgres image runs `
 | Role | Privileges | Used by |
 |---|---|---|
 | `sherpa_admin` | Owner of database `sherpa` | Generator, dbt |
-| `sherpa_agent` | `LOGIN`, no privileges at creation. Receives `USAGE` on `marts` and `SELECT` on mart relations **via dbt** (`grants` + hook, §8). Role default `default_transaction_read_only = on`, `statement_timeout = 5s`. | The agent's MCP server |
+| `sherpa_agent` | `LOGIN`, no privileges at creation. Receives `USAGE` on `marts` and `SELECT` on mart relations **via dbt** (`grants` + hook, §8). Role default `default_transaction_read_only = on`, `statement_timeout = 5s`. Like every role but the owner it cannot create temporary tables, large objects (`EXECUTE` on `lo_create`, `lo_creat`, `lo_from_bytea`, `lo_open`, `lowrite`, `lo_put` is revoked from `PUBLIC` in the main database and in `template1`, so the eval database inherits it) or connect to the `postgres` database. | The agent's MCP server |
 
 Passwords come from `.env`.
 
@@ -97,14 +97,15 @@ Passwords come from `.env`.
 | `raw_shop`, `raw_events`, `raw_marketing`, `raw_crm` | Generator | Source systems (§4) |
 | `raw_meta` | Generator | `simulation_state` (§5.3) |
 | `seeds`, `staging`, `intermediate`, `snapshots`, `marts`, `ops`, `test_failures` | dbt | dbt-managed (prod target) |
+| `extensions` | dbt (`on-run-start` hook) | Postgres extensions (`pg_trgm`). Kept out of `public`, which the init script locks down, so `sherpa_agent` can be granted `USAGE` on it alone. The database's `search_path` includes it, so `similarity()` and `%` resolve unqualified. |
 
 **Schema naming:** a custom `generate_schema_name` macro uses the custom schema name verbatim on the `prod` target and prefixes it with `dev_` on the `dev` target (e.g. `dev_marts`). Nodes without a custom schema use the target's schema: `dev_public` on `dev`, `public` on `prod`. **Exception: snapshots always write to `snapshots`** regardless of target — a snapshot is captured history that cannot be rebuilt, so there is exactly one copy, and dev and prod models both read it. `dev` is the default target; the agent reads the `prod` `marts` schema.
 
 **Artifacts:** prod commands use `--target-path target-prod`, so `dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `dbt/target/`.
 
-**Additional targets (data-platform-2):**
-- `eval`: like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database, runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
-- `agent`: like `prod`, but with `sherpa_agent` credentials. It is used only for read-only compilation, namely MetricFlow's `--explain` in the agent milestones.
+**Additional targets:**
+- `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database and revokes all privileges on its `public` schema and `TEMPORARY` on the database from `PUBLIC` (as the init script does for the main database; the large-object revokes come from `template1`), runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
+- `agent` (agent-design-10): like `prod`, but with `sherpa_agent` credentials. It is used only for read-only compilation, namely MetricFlow's `--explain`, so it is added to `profiles.yml` by the milestone that first runs it.
 
 **Dates and time zones:** every timestamp is converted to UTC in staging; every `*_date` column (`order_date`, `session_date`, `refund_date`, `spend_date`, `as_of_date`) is a UTC calendar date.
 
@@ -245,13 +246,14 @@ Rename to consistent `<entity>_id`, cast types, normalize (R3, R4), parse JSON/t
 | Model | Materialization | Logic |
 |---|---|---|
 | `int_identity__anonymous_to_customer` | **incremental, `merge`** on `anonymous_id` | anonymous_id → customer_id (most recent identifying event wins; new identifying events update the mapping) |
-| `int_identity__lead_to_customer` | ephemeral | lead ↔ customer on normalized email, earliest lead wins |
-| `int_events__sessionized` | **incremental, `delete+insert`** on `session_date` | 30-minute inactivity rule (var `session_timeout_minutes`) per anonymous_id; `session_id = md5(anonymous_id || session_start)`; first event's UTMs → `marketing_channel` via seed. Each row stores `max_received_at`. **On incremental runs:** watermark = `max(max_received_at)` from `{{ this }}`; cutoff day = `date_trunc('day', min(occurred_at) of events with received_at > watermark) − 1 day`; recompute every session with `session_date ≥ cutoff day` from all events with `occurred_at ≥ cutoff day − 1 day` (so sessions spanning midnight into the cutoff are seen whole) |
+| `int_identity__lead_to_customer` | ephemeral (data-platform-2) | lead ↔ customer on normalized email, earliest lead wins |
+| `int_events__sessionized` | **table** in data-platform-2; **incremental, `delete+insert`** on `session_date` from data-platform-3 | One row per event, carrying its session's columns. 30-minute inactivity rule (var `session_timeout_minutes`): a gap **greater than** the timeout starts a new session, per anonymous_id. `session_id = md5(anonymous_id || '|' || epoch microseconds of session_start_at)`, so it does not depend on the connection's time zone. Sessions containing an event of a test account (R5) are excluded. The session's first event decides `marketing_channel`: a UTM source/medium pair in the `channel_mapping` seed maps through it; a UTM pair missing from the seed is `unknown`; with no UTMs, a search-engine referrer (google, bing, duckduckgo) is `organic`, any other referrer `referral`, and no referrer `direct`. Each row stores its session's `max_received_at`. **On incremental runs (data-platform-3):** watermark = `max(max_received_at)` from `{{ this }}`; cutoff day = `date_trunc('day', min(occurred_at) of events with received_at > watermark) − 1 day`; recompute every session with `session_date ≥ cutoff day` from all events with `occurred_at ≥ cutoff day − 1 day` (so sessions spanning midnight into the cutoff are seen whole) |
 | `int_order_items__discount_allocated` | view | Allocate `Σ order_discounts.amount` pro-rata to lines by gross amount; round to cents; put the rounding remainder on the largest line so lines sum exactly to the order discount |
-| `int_order_items__costed` | ephemeral | unit cost at sale from `snap_product_variants` where `placed_at` ∈ [valid_from, valid_to) |
+| `int_order_items__costed` | ephemeral | Unit cost at sale. In data-platform-2 this is the variant's current `cost_price`; from data-platform-3 it comes from `snap_product_variants` where `placed_at` ∈ [valid_from, valid_to) |
 | `int_orders__status_pivoted` | ephemeral | first `paid_at`, `shipped_at`, `delivered_at`, `cancelled_at` from status history |
 | `int_orders__payments_summarized` | ephemeral | per order: captured amount, payment count, failed attempts, primary method |
-| `int_orders__refunds_summarized` | view | per order and per order line: refunded amount, refunded revenue (per §6.6 rules), returned quantity, restockable returned quantity |
+| `int_orders__refunds_summarized` | view | per order: refunded amount, refunded revenue (per §6.6 rules) |
+| `int_order_items__returns_summarized` | view | per order line with a received return: returned quantity, restockable returned quantity, line refunded revenue |
 
 Models with unit tests (§7) are views, not ephemeral, so they can be unit-tested directly.
 
@@ -259,7 +261,9 @@ Models with unit tests (§7) are views, not ephemeral, so they can be unit-teste
 
 **Global rules:** test accounts (R5) and all their orders/events are excluded everywhere. Soft-deleted customers (R6) are kept with `email`, `first_name`, `last_name` set to null and `is_deleted = true`, so facts keep referential integrity. **`as_of_date`** = `max(order_date)` over `fct_orders` (non-test orders, UTC dates; computed from the same CTE inside models that need it). All "days since" columns use it, never `now()`, so results are deterministic.
 
-**Sessionization dependency.** These columns need `int_events__sessionized` (data-platform-3): `fct_orders.session_id` and `marketing_channel`, `dim_customers.acquisition_channel` and `acquisition_campaign_id`. The data-platform-2 plan has to resolve this sequencing dependency, for example by moving the sessionization forward or by leaving these columns out of data-platform-2 (§8).
+**Cancelled orders.** Amount columns describe the order as placed and keep their values when it is cancelled: `gross_revenue`, `discount_amount`, `shipping_amount`, `tax_amount`, `order_total`, and at line level `gross_amount`, `allocated_discount`, `net_amount`. Outcome columns are 0 for a cancelled order, because nothing was sold: `net_revenue`, `cogs`, `returned_cogs`, `gross_margin` (and the line's `cogs`). Metrics over "non-cancelled orders" filter on `is_cancelled`.
+
+**Marketing channel of an order.** A web order takes the `marketing_channel` and `session_id` of the session containing its `purchase` event; an app order has `marketing_channel = 'app'` and no session. A web order whose purchase event has not arrived yet (late delivery, R2) has `marketing_channel = 'unknown'` and no session until the event lands. Order-level channel columns therefore hold the 8 channels of §6.1 plus `unknown`.
 
 **Domains** (`meta.domain`, consumed by the agent): `sales`, `customers`, `products`, `marketing_web`, `shared`.
 
@@ -294,11 +298,19 @@ date_day, week_start, month_start, quarter, year, day_of_week_name, is_weekend, 
 #### Facts
 
 **`fct_orders`** — 1 row per order (cancelled orders included, flagged) · PK `order_id` · domain `sales`
-order_id, order_number, customer_id, order_date, placed_at, paid_at, shipped_at, delivered_at, cancelled_at, current_status, is_cancelled, sales_channel, marketing_channel, session_id, ship_country_code, item_count, gross_revenue, discount_amount, shipping_amount, tax_amount, order_total, captured_amount, refunded_amount, refunded_revenue, net_revenue, cogs, returned_cogs, gross_margin, has_discount, has_return, days_to_deliver
+order_id, order_number, customer_id, order_date, placed_at, paid_at, shipped_at, delivered_at, cancelled_at, current_status, is_cancelled, customer_order_number, is_first_order, sales_channel, marketing_channel, session_id, ship_country_code, item_count, gross_revenue, discount_amount, shipping_amount, tax_amount, order_total, captured_amount, primary_payment_method, payment_count, failed_payment_count, refunded_amount, refunded_revenue, net_revenue, cogs, returned_cogs, gross_margin, has_discount, has_return, days_to_deliver
+- `customer_order_number` numbers the customer's non-cancelled orders by `placed_at`, then `order_id` (1 = first); null for cancelled orders. `is_first_order` = `customer_order_number = 1` (false for cancelled orders). They agree with `dim_customers`: each customer with `order_count > 0` has exactly one first order, placed at `first_order_at`, and the highest number equals `order_count` (singular test `assert_first_orders_match_dim_customers`).
+- `primary_payment_method` is the method of the largest captured payment (lowest `payment_id` on a tie), `card`, `paypal` or `gift_card`; null when nothing was captured. `payment_count` counts every payment attempt and `failed_payment_count` the failed ones (0 when none).
 
 **`fct_order_items`** — 1 row per order line · PK `order_item_id` · domain `sales`
-order_item_id, order_id, customer_id, variant_id, product_id, order_date, is_cancelled, quantity, unit_price, gross_amount, allocated_discount, net_amount, unit_cost_at_sale, cogs, returned_quantity, refunded_revenue
-- Line-level `refunded_revenue` covers return refunds only; goodwill and cancellation refunds exist only at order level. Documented: `Σ lines.refunded_revenue ≤ fct_orders.refunded_revenue`.
+order_item_id, order_id, customer_id, variant_id, product_id, order_date, is_cancelled, quantity, unit_price, gross_amount, allocated_discount, net_amount, unit_cost_at_sale, cogs, returned_quantity, restockable_returned_quantity, refunded_revenue, returned_cogs, gross_margin
+- Line-level `refunded_revenue` covers return refunds only; goodwill and cancellation refunds exist only at order level. It is the line's allocated `net_amount` pro-rated by its received returned quantity, `round(returned_quantity × net_amount / quantity, 2)`. The order-level `fct_orders.refunded_revenue` (from the refund amounts, §6.6) is authoritative. Because each line is rounded on its own, the lines' sum can exceed it by at most 0.01 per refunded line: `Σ lines.refunded_revenue ≤ fct_orders.refunded_revenue + 0.01 × (lines with refunded_revenue > 0)` (singular test `assert_line_refunds_within_order_refunds`).
+- `returned_cogs` = `restockable_returned_quantity × unit_cost_at_sale` and `gross_margin` = `net_amount − refunded_revenue − (cogs − returned_cogs)`, both 0 for a cancelled order: the order-level definitions (§6.6) applied to the line, for margin by product, brand or category. The lines' `returned_cogs` add up exactly to the order's (`column_sums_match`). Their `gross_margin` uses the line `refunded_revenue`, so per order the lines add up to `fct_orders.gross_margin` plus the order's goodwill refunded revenue, within 0.01 per refunded line (singular test `assert_line_margins_match_order_margins`).
+
+**`fct_order_discounts`** — 1 row per discount applied to an order · PK `order_discount_id` · domain `sales`
+order_discount_id, order_id, customer_id, order_date, promotion_id, coupon_code, promotion_type, amount, is_cancelled
+- The bridge from orders to promotions, for orders in `fct_orders` (non-test, cancelled included and flagged). `coupon_code` is the code entered, null when the promotion applied automatically; `amount` is 0.00 for `free_shipping` discounts (§6.6 "has a discount").
+- An order uses a promotion at most once (`unique_combination_of_columns` on `order_id`, `promotion_id`). Per order, Σ `amount` = `fct_orders.discount_amount` (`column_sums_match`). Every discount comes from a promotion, so per promotion the row count and Σ `amount` equal `dim_promotions.redemption_count` and `total_discount_amount` (singular test `assert_order_discounts_match_promotions`).
 
 **`fct_returns`** — 1 row per return · PK `return_id` · domain `sales`
 return_id, order_id, customer_id, reason, status, requested_at, returned_item_quantity, restockable_quantity, refund_id, refunded_amount
@@ -328,9 +340,9 @@ order_date, sales_channel, orders, items, gross_revenue, discount_amount, net_re
 |---|---|
 | gross_revenue | Σ `quantity × unit_price` over **non-cancelled** orders. Net of tax; excludes shipping. |
 | discount_amount | Σ order discounts (allocated at line level) |
-| refunded_revenue | For reasons `return` and `goodwill`: refund `amount / (1 + tax_rate)` (tax portion removed; var `tax_rate`, default 0.20; neither reason ever refunds shipping, §5.2). For reason `cancellation`: **0** — the order is cancelled, so its revenue is already excluded and the refund only reverses the payment. `fct_refunds.amount` still shows every refund. **Attributed to the order's date** in `fct_orders`; to the refund's date in `fct_refunds`. |
+| refunded_revenue | For reasons `return` and `goodwill`: refund `amount / (1 + tax_rate)` (tax portion removed; var `tax_rate`, default 0.20; neither reason ever refunds shipping, §5.2). For reason `cancellation`: **0** — the order is cancelled, so its revenue is already excluded and the refund only reverses the payment. `fct_refunds.amount` still shows every refund. **Attributed to the order's date** in `fct_orders`; to the refund's date in `fct_refunds`. `fct_order_items.refunded_revenue` is a pro-rated, per-line-rounded split of return refunds only (§6.5); the order-level figure is authoritative. |
 | net_revenue | gross_revenue − discount_amount − refunded_revenue, over non-cancelled orders. For cancelled orders, `fct_orders.net_revenue` = 0. |
-| cogs / gross_margin | cogs = Σ quantity × unit cost at sale; returned_cogs = restockable returned qty × unit cost at sale; gross_margin = net_revenue − (cogs − returned_cogs) |
+| cogs / gross_margin | cogs = Σ quantity × unit cost at sale; returned_cogs = restockable returned qty × unit cost at sale; gross_margin = net_revenue − (cogs − returned_cogs). `fct_order_items` carries the same per line, with the line's `net_amount − refunded_revenue` as its net revenue (§6.5). |
 | AOV | net_revenue / count of non-cancelled orders |
 | conversion_rate | sessions with `purchased` / all sessions |
 | refund_rate | refunded_revenue / gross_revenue |
@@ -348,10 +360,10 @@ Precision: amounts `numeric(12,2)`; rates computed as `numeric` and rounded only
 | Kind | Where / what |
 |---|---|
 | Generic (built-in) | `unique` + `not_null` on every PK; `relationships` for every FK in marts; `accepted_values` on every enum column (the agent reuses these as grounding facts) |
-| `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily), `expression_is_true`, `accepted_range` |
+| `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily; `order_id` × `promotion_id` in fct_order_discounts), `expression_is_true`, `accepted_range` |
 | `dbt_expectations` | `expect_column_pair_values_A_to_be_greater_than_B` (gross ≥ net), `expect_column_values_to_match_regex` (email in staging), `expect_row_values_to_have_recent_data` (events, severity warn), `expect_table_row_count_to_be_between` and `expect_column_mean_to_be_between` (generator distributions, severity warn) |
 | Custom generic | `column_sums_match(compare_model, compare_column, group_by)` — e.g. allocated line discounts sum to order discounts |
-| Singular | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise) |
+| Singular | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise); line margins, order discounts and first orders reconcile with `fct_orders`, `dim_promotions` and `dim_customers` (§6.5) |
 | Unit tests | discount allocation rounding remainder; sessionization (29 vs 31 min gap; session across midnight; late event inserted into an existing session); `customer_segment` boundaries (90/91/180/181 days); refunded revenue tax removal |
 | Freshness | `raw_events.events` (`received_at`), `raw_shop.orders` (`updated_at`), `raw_crm.leads` (`updated_at`): warn 36h, error 72h; `ad_spend_daily` on `spend_date::timestamp`: warn 48h. `dbt build` does not check freshness, so `make build` runs `dbt source freshness` first. |
 
@@ -369,18 +381,18 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 **Acceptance:** `make up && make backfill DAYS=365 && make deps && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
 
 ### data-platform-2 — Core marts
-**Builds:** intermediate order models, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_returns`, `fct_refunds`.
-**dbt features:** ephemeral/table materializations, **macros & Jinja** (e.g. `cents_rounding_allocation`, `normalize_email`), **custom generic test**, **singular tests**, **dbt_expectations**, **model contracts** (enforced, with `primary_key` and `not_null` constraints; FKs as `relationships` tests, not DB constraints), **doc blocks** for metrics (`metric_<name>`), `meta` extended to the other marts (`domain`, `grain`, `primary_key`, `pii`, `synonyms`), the `eval` and `agent` targets with `make eval-db` (§3), **`persist_docs`** (relations + columns) on marts, Postgres **`indexes`** config, **`grants`** (`select` to `sherpa_agent`) on marts, **hooks**: `on-run-start` creates `pg_trgm` (a trusted extension in PG 16, so the database owner can create it); `on-run-end` grants `USAGE` on `marts` to `sherpa_agent`; post-hook `ANALYZE` on marts. B-tree indexes via the `indexes` config. GIN trigram indexes on `dim_products.product_name`, `brand`, `category_l1/l2/l3` via a **`create_trigram_index(column)` macro called from a post-hook** (`CREATE INDEX IF NOT EXISTS … USING gin (col gin_trgm_ops)`), because the `indexes` config has no operator-class option. **`dbt run-operation`**: a `grant_agent_access` macro that re-applies agent grants on demand (same macro as the on-run-end hook).
-**Sequencing notes:** the session-derived columns listed in §6.5 depend on the sessionization scheduled for data-platform-3, and cost at time of sale depends on the data-platform-3 snapshot (§6.3); the plan resolves both.
+**Builds:** intermediate order models, `int_events__sessionized` (as a table), `int_identity__lead_to_customer`, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_order_discounts`, `fct_returns`, `fct_refunds`. Sessionization and lead matching come here rather than later because `fct_orders` and `dim_customers` need their columns, and the agent's interface must be complete at the end of this milestone.
+**dbt features:** ephemeral/table materializations, **macros & Jinja** (`revenue_excluding_tax`, `customer_segment`, `create_trigram_index`, `normalize_email`, `validate_identifier`), **custom generic test**, **singular tests**, **dbt_expectations**, **model contracts** (enforced, with `primary_key` and `not_null` constraints; FKs as `relationships` tests, not DB constraints), **doc blocks** for metrics (`metric_<name>`), `meta` extended to the other marts (`domain`, `grain`, `primary_key`, `pii`, `synonyms`), the `eval` target with `make eval-db` (§3), **`persist_docs`** (relations + columns) on marts, Postgres **`indexes`** config, **`grants`** (`select` to `sherpa_agent`) on marts, **hooks**: `on-run-start` creates the `extensions` schema and `pg_trgm` in it (a trusted extension in PG 16, so the database owner can create it) and puts `extensions` on the database's `search_path`; `on-run-end` grants `USAGE` on `marts` and `extensions` to `sherpa_agent` on the prod and eval targets only; post-hook `ANALYZE` on marts. B-tree indexes via the `indexes` config. GIN trigram indexes on `dim_products.product_name`, `brand`, `category_l1/l2/l3` via a **`create_trigram_index(column)` macro called from a post-hook** (`DROP INDEX IF EXISTS <schema>.<name>` then `CREATE INDEX <name> … USING gin (col gin_trgm_ops)`; the drop removes the same-named index on dbt's `__dbt_backup` table, which still exists while post-hooks run), because the `indexes` config has no operator-class option. **`dbt run-operation`**: a `grant_agent_access` macro that re-applies agent grants on demand (same macro as the on-run-end hook).
+**Cost at sale:** uses the variant's current cost until data-platform-3's snapshot exists (§6.3, §6.4).
 **Acceptance:** all mart tests pass; `sherpa_agent` can `SELECT` from marts and no other application schema (system catalogs are readable by every role; the agent's SQL guard blocks them); contracts reject a deliberately wrong column type (verified once, manually).
 
 ### data-platform-3 — Time
-**Builds:** `advance` workflow, snapshot, sessions.
+**Builds:** `advance` workflow, snapshot (and `int_order_items__costed` switching to it), `int_events__sessionized` converted from a table to incremental, `fct_sessions`.
 **dbt features:** **snapshot** (YAML), all three **incremental strategies** with a purpose each — `microbatch` (`stg_events__events`, incl. `--event-time-start/--event-time-end` for targeted backfills), `delete+insert` (`int_events__sessionized`), `merge` (`int_identity__anonymous_to_customer`) — `is_incremental()`, `{{ this }}`, `--full-refresh`, **unit tests**, `store_failures`, warn/error severity, **`dbt retry`** (resume a failed build from the failure point), `fct_sessions`.
 **Acceptance:** after `make advance DAYS=3 && make build`, an incremental run gives the same `fct_sessions` as `--full-refresh` (verified by an `analyses/` comparison query returning zero diff rows); late events from R2 end up in the correct sessions.
 
 ### data-platform-4 — Marketing, governance, CI
-**Builds:** identity models, `fct_leads`, `fct_ad_spend_daily`, `dim_campaigns`, `agg_daily_sales`, GitHub Actions.
+**Builds:** `int_identity__anonymous_to_customer`, `fct_leads`, `fct_ad_spend_daily`, `dim_campaigns`, `agg_daily_sales`, GitHub Actions.
 **dbt features:**
 - **Groups & access.** Groups mirror the domains: `sales`, `customers`, `products`, `marketing_web`, `shared` (each with an owner). Marts are `public`. Staging is `protected`. Intermediate models used by only one group are `private` to it (`int_order_items__*`, `int_orders__*` → `sales`; `int_identity__lead_to_customer` → `customers`). Intermediate models used across groups (`int_events__sessionized`, `int_identity__anonymous_to_customer`) are `protected` in `marketing_web`. This is possible because `dim_customers` aggregates from `fct_orders`, not from `int_orders__*`.
 - **Exposures:** 3 dashboards (Executive Sales, Marketing Performance, Customer Retention).
@@ -443,10 +455,10 @@ Targets added by later milestones:
 The agent may rely on exactly these:
 
 - **Schema** `marts` (prod target) with the models in §6.5. Intermediate, staging and snapshot models are not part of the interface.
-- **Role** `sherpa_agent`: read-only, `SELECT` on `marts` only, `statement_timeout = 5s`.
+- **Role** `sherpa_agent`: read-only, `SELECT` on `marts` only, `USAGE` on `extensions` (for `pg_trgm`), `statement_timeout = 5s`.
 - **Artifacts** `dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod && make docs-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, exposures, and (from data-platform-4) model versions.
 - **Eval dataset:** database `sherpa_eval` with artifacts in `dbt/target-eval/` (§3), built by `make eval-db`.
-- **dbt target `agent`** for read-only compilation with `sherpa_agent` credentials.
+- **dbt target `agent`** (from agent-design-10) for read-only compilation with `sherpa_agent` credentials.
 - **Postgres comments** on mart tables and columns (`persist_docs`), so the descriptions are available without the manifest.
 - **`pg_trgm`** with GIN trigram indexes on product/brand/category name columns for fuzzy value search.
 - **Determinism:** `as_of_date` semantics (§6.5) — time-relative columns never depend on `now()`.

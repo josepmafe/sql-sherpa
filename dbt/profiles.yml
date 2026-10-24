@@ -2,7 +2,7 @@
 # connection (dev / prod). Everything comes from environment variables (loaded from
 # .env by the Makefile), so no credentials live in this committed file.
 sherpa:
-  target: dev # default target; prod is selected explicitly with --target
+  target: dev # default target; prod and eval are selected explicitly with --target
   outputs:
     dev:
       type: postgres
@@ -21,5 +21,15 @@ sherpa:
       user: "{{ env_var('SHERPA_ADMIN_USER') }}"
       password: "{{ env_var('SHERPA_ADMIN_PASSWORD') }}"
       dbname: "{{ env_var('SHERPA_DB_NAME') }}"
+      schema: public
+      threads: 4
+    # Frozen, reproducible warehouse for evals: a separate database built by `make eval-db`.
+    eval:
+      type: postgres
+      host: "{{ env_var('SHERPA_DB_HOST') }}"
+      port: "{{ env_var('SHERPA_DB_PORT') | as_number }}"
+      user: "{{ env_var('SHERPA_ADMIN_USER') }}"
+      password: "{{ env_var('SHERPA_ADMIN_PASSWORD') }}"
+      dbname: "{{ env_var('SHERPA_EVAL_DB_NAME') }}"
       schema: public
       threads: 4

@@ -18,7 +18,7 @@ Records are frozen Pydantic models in `generator/src/sherpa_generator/records/`,
 
 ```bash
 uv run --env-file .env pytest generator/tests/<path>   # some generator tests
-make test                                              # every test except the slow ones
+make test                                              # every test except the slow and warehouse ones
 make lint                                              # ruff, ruff format, mypy, sqlfluff
 make reset && uv run sherpa-generate generate --days 30 --scale 0.1   # fresh small dataset
 make build                                             # dbt on the dev target
@@ -150,6 +150,8 @@ make docs-check
 12:58:06  Done. PASS=174 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=174
 ```
 
+**8. Carry it into the marts** (when consumers should see it). The staging view now has the column; a mart only exposes it once its SQL selects it, its YAML declares it (with `data_type`, description and tests) and the build passes the mart's contract. For `preferred_language`, that is a new column on `dim_customers`. [Adding or changing a mart](adding-or-changing-a-mart.md) lists the files and the tests, in order.
+
 Finish with `make test`, `make lint` and `make reset && make backfill DAYS=365 && make build`.
 
 ## 2. Add a new table
@@ -274,7 +276,7 @@ The wishlist simulator needs only the snapshot, so it sits with the browsing beh
 uv run --env-file .env pytest generator/tests -q
 ```
 
-Every test passes; the summary line also reports the 3 slow full-year tests as deselected.
+Every test passes; the summary line also reports the 3 slow full-year tests under `generator/tests` as deselected.
 
 **8. dbt.** A source table entry in `_shop__sources.yml` with every column described, the staging model `dbt/models/staging/shop/stg_shop__wishlist_items.sql`:
 
@@ -445,11 +447,11 @@ The simulation takes about as long as `make backfill DAYS=365` (3.5 to 4 minutes
 A passing run ends with:
 
 ```
-collected 288 items / 285 deselected / 3 selected
+collected 319 items / 316 deselected / 3 selected
 
 generator\tests\simulation\test_full_year_volume.py ...                  [100%]
 
-================ 3 passed, 285 deselected in 224.43s (0:03:44) ================
+================ 3 passed, 316 deselected in 225.94s (0:03:45) ================
 ```
 
 ## 6. Keep determinism intact

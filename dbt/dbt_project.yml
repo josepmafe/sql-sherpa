@@ -9,7 +9,7 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
-clean-targets: ["target", "target-prod", "dbt_packages"]
+clean-targets: ["target", "target-prod", "target-eval", "target-sqlfluff", "target-scratch", "dbt_packages"]
 
 # Project variables, read in models with {{ var('tax_rate') }}.
 vars:
@@ -17,6 +17,13 @@ vars:
   session_timeout_minutes: 30
   date_spine_start: "2024-01-01"
   date_spine_end: "2028-12-31"
+  # Required by dbt_date (used by dbt_expectations); all timestamps are UTC.
+  "dbt_date:time_zone": "UTC"
+
+# Runs once at the start of every dbt invocation.
+on-run-start: "{{ ensure_extensions() }}"
+# Runs once at the end of every dbt invocation: read access to the marts for the agent, on prod and eval only.
+on-run-end: "{{ grant_agent_access() }}"
 
 # Folder-level defaults. "+schema" is a *custom* schema; the generate_schema_name macro
 # turns it into the real schema name (dev_<name> on dev, <name> on prod).
@@ -25,9 +32,25 @@ models:
     staging:
       +schema: staging
       +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: ephemeral
     marts:
       +schema: marts
       +materialized: table
+      # Contracts make dbt check column names and types against the YAML before building.
+      +contract:
+        enforced: true
+      # persist_docs copies descriptions into Postgres comments, where the agent can read them.
+      +persist_docs:
+        relation: true
+        columns: true
+      +post-hook: "analyze {{ this }}"
+      # SELECT for the agent on every target; it only takes effect where the agent also has schema USAGE (prod, eval).
+      # The default (the role name from .env.example) lets commands that only parse, like deps, run without .env.
+      # dbt does not quote grantees; the on-run-start hook (ensure_extensions) rejects a malformed role name.
+      +grants:
+        select: ["{{ env_var('SHERPA_AGENT_USER', 'sherpa_agent') }}"]
 
 seeds:
   sherpa:

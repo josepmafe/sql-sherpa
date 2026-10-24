@@ -15,18 +15,29 @@ models:
     columns:
       - name: date_day
         description: The calendar day. Primary key.
+        data_type: date
+        constraints:
+          - type: not_null
+          - type: primary_key
         data_tests: [unique, not_null]
       - name: week_start
         description: Monday of the week the day belongs to.
+        data_type: date
       - name: month_start
         description: First day of the month.
+        data_type: date
       - name: quarter
         description: Calendar quarter, 1 to 4.
+        data_type: integer
       - name: year
         description: Calendar year.
+        data_type: integer
       - name: day_of_week_name
         description: English day name, Monday to Sunday.
+        data_type: text
       - name: is_weekend
         description: True on Saturday and Sunday.
+        data_type: boolean
       - name: is_black_friday_week
         description: True from Monday to Sunday of the week containing Black Friday, the day after US Thanksgiving (the 4th Thursday of November).
+        data_type: boolean

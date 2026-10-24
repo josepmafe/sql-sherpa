@@ -127,7 +127,8 @@ The role's settings are defaults that a session could override. **`sql_guard` is
 2. **Role:** the server connects as `sherpa_agent` (read-only, `SELECT` on `marts`). System catalogs are readable by every Postgres role, which is why the guard has to block them.
 3. **Timeout:** the server runs `SET LOCAL statement_timeout = '5s'` in every transaction itself, rather than relying on the role default. A timeout returns a tool error suggesting aggregation or a narrower filter.
 4. **Row cap:** 100 rows to the model (above).
-5. **PII masking:** any output column whose name matches a column flagged `meta.pii` in any mart (`email`, `first_name`, `last_name`) is replaced by `'***'`. Name-based by design; documented as a known limitation (aliases evade it — acceptable for synthetic data, called out in docs).
+5. **Connection settings:** the server's connection string sets `options=-c default_transaction_read_only=on -c statement_timeout=5s`, so every session starts read-only with the timeout whatever the role defaults say. `sql_guard` rejects `ALTER ROLE`, `SET` and `RESET`, so a query cannot change them for the session or for later ones, and a test asserts the agent's `pg_db_role_setting` rows are unchanged after the MCP server's tests run.
+6. **PII masking:** any output column whose name matches a column flagged `meta.pii` in any mart (`email`, `first_name`, `last_name`) is replaced by `'***'`. Name-based by design; documented as a known limitation (aliases evade it — acceptable for synthetic data, called out in docs).
 
 ### 4.3 Few-shot examples
 `examples.yaml` holds ~15 question/SQL pairs covering common patterns (aggregation by period, top-N, ratio metrics, funnel flags). They are **disjoint from the eval gold set**: no example question may be a paraphrase of a gold question. agent-design-2 checks this by reviewing the closest example per gold case (Jaccard, listed in the agent-design-2 report).
@@ -321,7 +322,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent
 | **agent-design-4 — Gold set batch 2** (needs data-platform-4) | Tranche 2 of `cases.yaml`: 10 more cases (marketing and web), `gold_version: 2` | Same checks as agent-design-2; `v0_baseline` is re-run on the full 50 cases as the baseline every technique is compared against |
 | **agent-design-5–agent-design-8 — Techniques** | `v1_grounding`, `v2_linking`, `v3_critic`, `v4_voting`, one per milestone | Each: a report against the current default, plus a `FINDINGS.md` entry (what changed, per-category effect, cost/latency effect, the decision) |
 | **agent-design-9 — Checkpoint** | `v5_checkpoint`, `--confirm` flow | Manual check: approve, edit and abort paths work in the CLI; the eval report runs non-interactively |
-| **agent-design-10 — MetricFlow** (needs data-platform-5) | `compile_metrics` tool, `v6_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
+| **agent-design-10 — MetricFlow** (needs data-platform-5) | the `agent` dbt target (data platform spec §3), `compile_metrics` tool, `v6_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
 
 **Promotion rule (agent-design-5–agent-design-10):** a technique becomes the default variant if, with `--repeat 2` against a same-session run of the current default (same `gold_version` and `dataset_version`), it improves accepted-case EX by **≥ 2 cases in both repeats**, without more than doubling p50 latency or mean cost. Otherwise it stays a non-default variant, and the finding is recorded. With 40–50 cases this rule is coarse on purpose: it only detects large effects, and `FINDINGS.md` says so.
 
@@ -365,7 +366,7 @@ The agent relies only on the data platform spec's §11 (Interface to the Agent).
 - the `marts` schema and the `sherpa_agent` role
 - the `target-prod` and `target-eval` artifacts, including `meta.{domain, grain, primary_key, pii, synonyms}`, `metric_<name>` doc blocks and `accepted_values` tests
 - `pg_trgm` and `as_of_date`
-- the `eval` and `agent` dbt targets
+- the `eval` dbt target, and the `agent` target that agent-design-10 adds
 
 Everything the agent needs from the warehouse is defined there, not here.
 

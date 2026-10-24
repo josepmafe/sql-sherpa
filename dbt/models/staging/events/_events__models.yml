@@ -39,7 +39,14 @@ models:
         data_tests: [not_null]
       - name: received_at
         description: When the tracker received the event (UTC); late events (R2) arrive 1 to under 4 days after occurred_at.
-        data_tests: [not_null]
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_row_values_to_have_recent_data:
+              arguments:
+                datepart: day
+                interval: 3
+              config:
+                severity: warn
       - name: device_type
         description: desktop, mobile or tablet.
         data_tests:
