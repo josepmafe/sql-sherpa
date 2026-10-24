@@ -195,7 +195,7 @@ get_examples {"question": "top products by revenue", "k": 1}
 {"examples": [{
   "question": "Which 10 products bring in the most net revenue?",
   "sql": "select\n    p.product_id,\n    p.product_name,\n    sum(i.net_amount - i.refunded_revenue) as net_revenue\nfrom marts.fct_order_items as i\ninner join marts.dim_products as p on p.variant_id = i.variant_id\nwhere not i.is_cancelled\ngroup by p.product_id, p.product_name\norder by net_revenue desc\nlimit 10\n",
-  "notes": "dim_products has one row per variant, so group by product_id; line net revenue is net_amount minus refunded_revenue."
+  "notes": "dim_products has one row per variant, so group by product_id; line net revenue is net_amount minus refunded_revenue. Line refunded_revenue covers return refunds only, not goodwill refunds, so product net revenue does not add up to fct_orders.net_revenue."
 }]}
 ```
 

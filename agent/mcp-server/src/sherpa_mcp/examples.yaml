@@ -22,7 +22,10 @@
     group by p.product_id, p.product_name
     order by net_revenue desc
     limit 10
-  notes: dim_products has one row per variant, so group by product_id; line net revenue is net_amount minus refunded_revenue.
+  notes: >-
+    dim_products has one row per variant, so group by product_id; line net revenue is net_amount minus
+    refunded_revenue. Line refunded_revenue covers return refunds only, not goodwill refunds, so product net revenue
+    does not add up to fct_orders.net_revenue.
 
 - question: Compare the average order value of web and app orders
   sql: |
@@ -56,10 +59,9 @@
         customer_segment,
         count(*) as customers
     from marts.dim_customers
-    where not is_deleted
     group by customer_segment
     order by customers desc
-  notes: customer_segment is one of prospect, new, active, at_risk, churned; soft-deleted customers are left out.
+  notes: customer_segment is one of prospect, new, active, at_risk, churned; soft-deleted customers stay in dim_customers.
 
 - question: What fraction of net revenue comes from VIP buyers?
   sql: |
@@ -176,7 +178,10 @@
     where not i.is_cancelled
     group by p.brand
     order by gross_margin desc
-  notes: Line gross_margin already nets refunds and recovered returned cost; costs use the current cost price.
+  notes: >-
+    Line gross_margin already nets refunds and recovered returned cost; costs use the current cost price. Line
+    refunded_revenue covers return refunds only, not goodwill refunds, so brand net revenue does not add up to
+    fct_orders.net_revenue.
 
 - question: How are orders split across payment methods?
   sql: |
