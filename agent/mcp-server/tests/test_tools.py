@@ -22,7 +22,7 @@ METRICS = (
     *("gross_revenue", "discount_amount", "refunded_revenue", "net_revenue"),
     *("cogs", "gross_margin", "aov", "refund_rate"),
 )
-HOSTILE_TERMS = ("%", "_", "o'neil", "\\")
+SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 
 
 def _expected_marts() -> tuple[str, ...]:
@@ -92,11 +92,40 @@ class TestWarehouseTools:
         assert 0 < matches[0].similarity <= 1
         assert matches[0].row_count > 0
 
-    @pytest.mark.parametrize("term", HOSTILE_TERMS)
-    def test_search_values_term_with_metacharacters(self, tools: WarehouseTools, term: str) -> None:
+    @pytest.mark.parametrize("term", ["%", "_"])
+    def test_search_values_wildcards_do_not_widen_the_match(
+        self, tools: WarehouseTools, agent_database: AgentDatabase, term: str
+    ) -> None:
+        brands = int(str(agent_database.scalar("select count(distinct brand) from marts.dim_products")))
+
+        matches = tools.search_values("dim_products", "brand", term, limit=50).matches
+
+        # Interpolated into a LIKE, `%` would match every brand and `_` every brand of any length.
+        assert brands > 2
+        assert len(matches) < brands
+        assert all(match.similarity >= SIMILARITY_FLOOR for match in matches)
+
+    def test_search_values_trailing_metacharacter_keeps_the_real_brand_first(
+        self, tools: WarehouseTools, agent_database: AgentDatabase
+    ) -> None:
+        brand = str(agent_database.scalar("select brand from marts.dim_products group by 1 order by count(*) desc, 1"))
+
+        for suffix in ("%", "_", "\\", "'"):
+            matches = tools.search_values("dim_products", "brand", brand + suffix, limit=50).matches
+            assert matches[0].value == brand, suffix
+            assert all(match.similarity >= SIMILARITY_FLOOR for match in matches)
+
+        # A LIKE prefix pattern would return every brand sharing these letters; the trigram bound does not.
+        prefix = tools.search_values("dim_products", "brand", brand[:2] + "%", limit=50).matches
+        assert all(match.similarity >= SIMILARITY_FLOOR for match in prefix)
+
+    @pytest.mark.parametrize("term", ["o'neil", "\\"])
+    def test_search_values_quote_and_backslash_terms_return_without_error(
+        self, tools: WarehouseTools, term: str
+    ) -> None:
         matches = tools.search_values("dim_products", "brand", term).matches
 
-        assert isinstance(matches, tuple)
+        assert all(match.similarity >= SIMILARITY_FLOOR for match in matches)
 
     def test_search_values_unknown_column_lists_valid_ones(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError, match=r"nope.*brand"):
@@ -155,6 +184,31 @@ class TestWarehouseTools:
         assert plain.execution_id == spaced.execution_id
         assert plain.execution_id == hashlib.sha256(b"select order_id from marts.fct_orders limit 2").hexdigest()[:16]
 
+    def test_error_text_never_carries_pii_values(self, tools: WarehouseTools, admin: psycopg.Connection) -> None:
+        row = admin.execute("select email from marts.dim_customers where email is not null limit 1").fetchone()
+        assert row is not None
+        email = str(row[0])
+
+        with pytest.raises(WarehouseToolError) as error:
+            tools.run_sql("select cast(email as integer) from marts.dim_customers limit 1")
+        validation = tools.validate_sql("select cast(email as integer) from marts.dim_customers limit 1")
+
+        assert email not in str(error.value)
+        assert "explicit, safe casts" in str(error.value)
+        assert email not in " ".join(validation.errors)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "select c from marts.dim_customers c limit 1",
+            "select dim_customers from marts.dim_customers limit 1",
+            "select to_json(c) from marts.dim_customers c limit 1",
+        ],
+    )
+    def test_run_sql_refuses_whole_row_pii_leaks(self, tools: WarehouseTools, query: str) -> None:
+        with pytest.raises(WarehouseToolError):
+            tools.run_sql(query)
+
     def test_run_sql_rejects_hostile_sql_with_guard_errors(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError, match="staging"):
             tools.run_sql("select * from staging.stg_shop__orders")
@@ -168,6 +222,7 @@ class TestToolsWithoutArtifacts:
             """Any use of the database would be a bug: the catalog is read first."""
 
         tools = WarehouseTools(MartCatalogLoader(tmp_path), NoDatabase(), ExampleIndex([]))  # type: ignore[arg-type]
+        # Every tool that reads the catalog; get_examples is covered separately below.
         calls = (
             tools.get_context,
             tools.list_tables,
@@ -181,3 +236,13 @@ class TestToolsWithoutArtifacts:
         for call in calls:
             with pytest.raises(WarehouseToolError, match="make build-prod"):
                 call()
+
+    def test_get_examples_is_static_and_needs_no_artifacts(self, tmp_path: Path) -> None:
+        # get_examples reads examples.yaml only, so it is intentionally independent of the dbt catalog.
+        tools = WarehouseTools(
+            MartCatalogLoader(tmp_path),
+            None,  # type: ignore[arg-type]
+            ExampleIndex.from_yaml(EXAMPLES_PATH),
+        )
+
+        assert len(tools.get_examples("net revenue by month", k=2).examples) == 2

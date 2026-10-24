@@ -141,6 +141,8 @@ class WarehouseTools:
         catalog = self._catalog()
         latest = self._database.scalar("select max(order_date) from marts.fct_orders")
         earliest = self._database.scalar("select min(order_date) from marts.fct_orders")
+        if latest is None or earliest is None:
+            raise WarehouseToolError("fct_orders has no rows; run make build-prod")
         covers = tuple(
             f"{domain}: {', '.join(mart.name for mart in catalog.marts if mart.domain == domain)}"
             for domain in catalog.domains()
@@ -228,21 +230,22 @@ class WarehouseTools:
         return ExampleList(examples=tuple(self._examples.top(question, k)))
 
     def validate_sql(self, sql_text: str) -> Validation:
-        guard = SqlGuard(self._catalog().visible_names()).check(sql_text)
+        executed = _as_executed(sql_text)
+        guard = SqlGuard(self._catalog().visible_names()).check(executed)
         if not guard.ok:
             return Validation(ok=False, errors=guard.errors, tables=guard.tables)
         try:
-            self._database.explain(_as_executed(sql_text))
+            self._database.explain(executed)
         except WarehouseToolError as error:
             return Validation(ok=False, errors=(str(error),), tables=guard.tables)
         return Validation(ok=True, errors=(), tables=guard.tables)
 
     def run_sql(self, sql_text: str) -> SqlResult:
         catalog = self._catalog()
-        guard = SqlGuard(catalog.visible_names()).check(sql_text)
+        executed = _as_executed(sql_text)
+        guard = SqlGuard(catalog.visible_names()).check(executed)
         if not guard.ok:
             raise WarehouseToolError("; ".join(guard.errors))
-        executed = _as_executed(sql_text)
         result = self._database.fetch(executed)
         masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
         return SqlResult(
@@ -262,7 +265,6 @@ class WarehouseTools:
 
 
 def _as_executed(sql_text: str) -> str:
-    stripped = sql_text.rstrip()
     stripped = sql_text.rstrip()
     while stripped.endswith(";"):
         stripped = stripped[:-1].rstrip()

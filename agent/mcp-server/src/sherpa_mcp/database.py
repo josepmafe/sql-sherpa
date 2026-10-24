@@ -74,6 +74,12 @@ def json_safe(value: object) -> object:
 def to_tool_error(error: psycopg.Error) -> WarehouseToolError:
     if isinstance(error, errors.QueryCanceled):
         return WarehouseToolError(TIMEOUT_MESSAGE)
+    if isinstance(error, errors.DataError):
+        # Data exceptions quote the offending value (`invalid input syntax for type integer: "a@b.com"`): PII.
+        return WarehouseToolError(
+            f"a value could not be converted or computed ({type(error).__name__}); "
+            "check the column types and use explicit, safe casts"
+        )
     return WarehouseToolError(error.diag.message_primary or str(error))
 
 

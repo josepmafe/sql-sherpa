@@ -339,3 +339,52 @@ class TestSqlGuard:
         assert not result.ok
         assert result.errors[0].startswith("could not parse the query")
         assert result.tables == ()
+
+
+class TestWholeRowReferences:
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select c from marts.dim_customers c",
+            "select c from marts.dim_customers as c",
+            "select dim_customers from marts.dim_customers",
+            "select C from marts.dim_customers c",
+            "select o.order_id, c from marts.fct_orders o join marts.dim_customers c on c.customer_id = o.customer_id",
+            "with x as (select 1 as a) select x from x",
+            "select s from (select email from marts.dim_customers) s",
+            "select * from marts.fct_orders where exists (select c from marts.dim_customers c)",
+        ],
+    )
+    def test_rejects_unqualified_table_alias_name_or_cte(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok
+        assert any("whole-row reference" in error and "select named columns" in error for error in result.errors)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select to_json(c) from marts.dim_customers c",
+            "select row_to_json(c) from marts.dim_customers c",
+            "select row(c.email) from marts.dim_customers c",
+            "select c::text from marts.dim_customers c",
+        ],
+    )
+    def test_record_conversions_stay_rejected(self, guard: SqlGuard, sql: str) -> None:
+        assert not guard.check(sql).ok
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select c.email, c.customer_id from marts.dim_customers c",
+            "select count(*) from marts.dim_customers",
+            "select c.* from marts.dim_customers c",
+            "select customer_id from marts.dim_customers c where c.customer_id > 1",
+            "with x as (select 1 as a) select a from x",
+            "select s.email from (select email from marts.dim_customers) s",
+        ],
+    )
+    def test_ordinary_queries_still_pass(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert result.ok, result.errors

@@ -168,3 +168,20 @@ class TestMartCatalog:
     def test_visible_names_and_domains(self, catalog: MartCatalog) -> None:
         assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers"})
         assert catalog.domains() == ("customers", "sales")
+
+
+class TestCatalogShape:
+    @pytest.mark.parametrize("manifest", ["{}", "[]", '{"nodes": 3}'])
+    def test_wrong_shape_raises_catalog_unavailable(self, target: Path, manifest: str) -> None:
+        (target / "manifest.json").write_text(manifest, encoding="utf-8")
+
+        with pytest.raises(CatalogUnavailable, match="make build-prod"):
+            MartCatalogLoader(target).load()
+
+    def test_message_does_not_expose_the_path(self, target: Path) -> None:
+        (target / "catalog.json").unlink()
+
+        with pytest.raises(CatalogUnavailable) as error:
+            MartCatalogLoader(target).load()
+
+        assert str(target) not in str(error.value)

@@ -57,6 +57,16 @@ class TestErrorMapping:
 
         assert str(error) == "the query took longer than 5 s; aggregate or filter more narrowly"
 
+    def test_data_exceptions_never_carry_the_value(self) -> None:
+        error = to_tool_error(errors.InvalidTextRepresentation('invalid input syntax for type integer: "alice@x.com"'))
+
+        assert "alice" not in str(error)
+        assert "InvalidTextRepresentation" in str(error)
+        assert "explicit, safe casts" in str(error)
+
+    def test_syntax_and_column_errors_keep_postgres_message(self) -> None:
+        assert "no_such" in str(to_tool_error(errors.UndefinedColumn('column "no_such" does not exist')))
+
     def test_other_errors_keep_postgres_message(self) -> None:
         error = to_tool_error(errors.InsufficientPrivilege("permission denied for table x"))
 

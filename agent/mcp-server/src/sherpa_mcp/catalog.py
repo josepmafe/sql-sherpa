@@ -92,7 +92,13 @@ class MartCatalogLoader:
     def load(self) -> MartCatalog:
         stamp = self._mtimes()
         if self._catalog is None or stamp != self._stamp:
-            self._catalog = _build_catalog(self._read(MANIFEST_FILE), self._read(CATALOG_FILE))
+            manifest, catalog = self._read(MANIFEST_FILE), self._read(CATALOG_FILE)
+            try:
+                self._catalog = _build_catalog(manifest, catalog)
+            except (KeyError, TypeError, AttributeError, ValueError) as exc:
+                raise CatalogUnavailable(
+                    f"unexpected layout in {MANIFEST_FILE} or {CATALOG_FILE}: {_MISSING_HINT}"
+                ) from exc
             self._stamp = stamp
         return self._catalog
 
@@ -104,7 +110,7 @@ class MartCatalogLoader:
             )
         except OSError as exc:
             raise CatalogUnavailable(
-                f"dbt artifacts not found in {self._target_path} ({MANIFEST_FILE}, {CATALOG_FILE}): {_MISSING_HINT}"
+                f"dbt artifacts not found ({MANIFEST_FILE}, {CATALOG_FILE}): {_MISSING_HINT}"
             ) from exc
 
     def _read(self, file_name: str) -> dict[str, Any]:
@@ -112,7 +118,7 @@ class MartCatalogLoader:
         try:
             content: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            raise CatalogUnavailable(f"cannot read {path}: {_MISSING_HINT}") from exc
+            raise CatalogUnavailable(f"cannot read {file_name}: {_MISSING_HINT}") from exc
         return content
 
 
