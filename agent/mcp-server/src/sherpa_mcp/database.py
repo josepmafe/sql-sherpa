@@ -8,6 +8,8 @@ several statements is refused by Postgres itself even if `sql_guard` and Postgre
 from __future__ import annotations
 
 import datetime as dt
+import ipaddress
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -47,12 +49,26 @@ class QueryResult:
 
 
 def json_safe(value: object) -> object:
-    """Convert the values Postgres returns that JSON cannot carry: `Decimal` and dates/timestamps become strings."""
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, dt.date | dt.time):  # datetime is a date
-        return value.isoformat()
-    return value
+    """Convert what Postgres returns into values `json.dumps` accepts, recursing into arrays and jsonb."""
+    match value:
+        case None | bool() | int() | str():
+            return value
+        case float():
+            return value if math.isfinite(value) else str(value)
+        case Decimal() | uuid.UUID() | dt.timedelta() | ipaddress.IPv4Address() | ipaddress.IPv6Address():
+            return str(value)
+        case ipaddress.IPv4Interface() | ipaddress.IPv6Interface() | ipaddress.IPv4Network() | ipaddress.IPv6Network():
+            return str(value)
+        case dt.date() | dt.time():  # datetime is a date
+            return value.isoformat()
+        case bytes() | bytearray() | memoryview():
+            return bytes(value).hex()
+        case list() | tuple():
+            return [json_safe(item) for item in value]
+        case dict():
+            return {str(key): json_safe(item) for key, item in value.items()}
+        case _:
+            return str(value)
 
 
 def to_tool_error(error: psycopg.Error) -> WarehouseToolError:
@@ -101,7 +117,7 @@ class AgentDatabase:
             with self._pool.connection() as conn, conn.transaction():
                 self._begin(conn)
                 # prepare=True forces the extended protocol, as for `fetch`.
-                conn.execute(sql.SQL("explain {}").format(sql.SQL(sql_text)), prepare=True)  # type: ignore[arg-type]
+                conn.execute(sql.SQL("explain (analyze false) {}").format(sql.SQL(sql_text)), prepare=True)  # type: ignore[arg-type]
         except psycopg.Error as error:
             raise to_tool_error(error) from error
 
