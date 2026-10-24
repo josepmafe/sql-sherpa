@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import sqlglot
 from pydantic import BaseModel, ConfigDict
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from sherpa_mcp.catalog import MARTS_SCHEMA
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 DIALECT: Final = "postgres"
 # Agent spec §4.2. Names as sqlglot reports them (`sql_name()`, or the name for an unknown function). Where sqlglot
@@ -77,8 +82,9 @@ class GuardResult(BaseModel):
 class SqlGuard:
     """Never rewrites the SQL and never raises on bad SQL: every problem is an error in the result."""
 
-    def __init__(self, visible_marts: frozenset[str]) -> None:
-        self._visible_marts = visible_marts
+    def __init__(self, mart_columns: Mapping[str, frozenset[str]]) -> None:
+        """`mart_columns`: every visible mart and the names of its columns, as Postgres stores them."""
+        self._mart_columns = mart_columns
 
     def check(self, sql: str) -> GuardResult:
         try:
@@ -100,6 +106,7 @@ class SqlGuard:
         tables: list[str] = []
         for node in statement.walk():
             errors.extend(self._node_errors(node, tables))
+        errors.extend(self._qualified_column_errors(statement))
 
         unique_errors = tuple(dict.fromkeys(errors))
         return GuardResult(ok=not unique_errors, errors=unique_errors, tables=tuple(dict.fromkeys(tables)))
@@ -116,6 +123,9 @@ class SqlGuard:
                 return [f"cast to type {node.sql(dialect=DIALECT)} is not allowed"]
             case exp.Dot(expression=exp.Func() as func):
                 return [f"function {node.this.sql(dialect=DIALECT)}.{_written_name(func)} is not allowed"]
+            case exp.Dot():
+                # `(expr).name` or a five-part name: Postgres may read the last part as a function of the rest.
+                return [f"field selection `{_cut(node.sql(dialect=DIALECT))}` is not allowed; select named columns"]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):
                 if _function_name(node) in ALLOWED_FUNCTIONS:
                     return []
@@ -158,11 +168,142 @@ class SqlGuard:
         if _identifier_value(schema) != MARTS_SCHEMA:
             return [f"table {qualified} is outside {MARTS_SCHEMA}"]
 
-        if name not in self._visible_marts:
+        if name not in self._mart_columns:
             return [f"table {qualified} is not a visible mart"]
 
         tables.append(qualified)
         return []
+
+    def _qualified_column_errors(self, statement: exp.Expr) -> list[str]:
+        """Every qualified column must be a real column of the source its qualifier names.
+
+        Postgres reads `t.f` as the call `f(t)` when `f` is not a column of `t`, so `c.row_to_json` or `c.to_jsonb`
+        would return the whole row past the function allow-list and the name-based masking. A qualifier that does not
+        resolve to a mart or a derived table whose columns are known fails closed. Identifiers are folded as Postgres
+        folds them (unquoted to lower case), on a copy: the query itself is never rewritten.
+        """
+        tree = normalize_identifiers(statement.copy(), dialect=DIALECT)
+        try:
+            scopes = {id(scope.expression): scope for scope in traverse_scope(tree)}
+        except (SqlglotError, RecursionError):
+            return ["could not resolve the column references of the query; simplify it"]
+
+        errors: list[str] = []
+        for column in tree.find_all(exp.Column):
+            if not column.table or isinstance(column.this, exp.Star):
+                continue  # unqualified (never a function call) or `t.*` (checked as a whole-row reference)
+
+            scope = _enclosing_scope(column, scopes)
+            source = None if scope is None or column.args.get("catalog") else _find_source(scope, column)
+            outputs = None if source is None else self._outputs(source, scopes, frozenset())
+            if outputs is None or column.name not in outputs:
+                errors.append(_not_a_column(column, source))
+        return errors
+
+    def _outputs(
+        self, source: exp.Expr | Scope, scopes: dict[int, Scope], seen: frozenset[int]
+    ) -> frozenset[str] | None:
+        """The column names a FROM source exposes, or None when they cannot be known (the caller fails closed)."""
+        if isinstance(source, exp.Table):
+            renamed = _alias_columns(source)
+            if renamed is not None:
+                return renamed  # Postgres renames by position; only the new names are certain
+
+            if source.db != MARTS_SCHEMA or not isinstance(source.this, exp.Identifier) or source.args.get("catalog"):
+                return None
+            return self._mart_columns.get(source.name)
+
+        if not isinstance(source, Scope) or id(source) in seen:
+            return None  # not a query, or a recursive reference
+
+        seen = seen | {id(source)}
+        expression = source.expression
+        renamed = _alias_columns(expression)
+        if renamed is not None:
+            return renamed
+
+        match expression:
+            case exp.SetOperation():
+                # A set operation's columns are named by its first query.
+                left = expression.left.unnest()
+                return self._outputs(scopes[id(left)], scopes, seen) if id(left) in scopes else None
+            case exp.Lateral(this=exp.Subquery(this=inner)) if id(inner) in scopes:
+                return self._outputs(scopes[id(inner)], scopes, seen)
+            case exp.Select():
+                return self._select_outputs(source, expression, scopes, seen)
+            case _:
+                return None
+
+    def _select_outputs(
+        self, scope: Scope, select: exp.Select, scopes: dict[int, Scope], seen: frozenset[int]
+    ) -> frozenset[str] | None:
+        names: set[str] = set()
+        for projection in select.expressions:
+            expanded: list[frozenset[str] | None]
+            match projection:
+                case exp.Star():
+                    expanded = [self._outputs(item, scopes, seen) for _, item in scope.selected_sources.values()]
+                case exp.Column(this=exp.Star()):
+                    item = _find_source(scope, projection)
+                    expanded = [None if item is None else self._outputs(item, scopes, seen)]
+                case _:
+                    expanded = [frozenset({projection.output_name})]
+            for outputs in expanded:
+                if outputs is None:
+                    return None
+                names.update(outputs)
+        return frozenset(names)
+
+
+def _enclosing_scope(column: exp.Column, scopes: dict[int, Scope]) -> Scope | None:
+    node = column.parent
+    while node is not None and id(node) not in scopes:
+        node = node.parent
+    return None if node is None else scopes[id(node)]
+
+
+def _find_source(scope: Scope, column: exp.Column) -> exp.Expr | Scope | None:
+    """The FROM item that `column`'s qualifier names, searched outwards from the innermost query as Postgres does."""
+    current: Scope | None = scope
+    while current is not None:
+        selected = current.selected_sources.get(column.table)
+        if selected is not None:
+            source: exp.Expr | Scope = selected[1]
+            schema = column.args.get("db")
+            if schema is None:
+                return source
+            # `schema.table.column` only names a table that has no alias.
+            if isinstance(source, exp.Table) and not source.alias and source.db == schema.name:
+                return source
+            return None
+
+        current = current.parent
+    return None
+
+
+def _alias_columns(node: exp.Expr) -> frozenset[str] | None:
+    """The column names an alias list gives a source (`s(a, b)`, `with t(a, b) as`), if it has one."""
+    alias = node.args.get("alias")
+    if alias is None and isinstance(node.parent, exp.Subquery | exp.CTE):
+        alias = node.parent.args.get("alias")
+    if not isinstance(alias, exp.TableAlias) or not alias.columns:
+        return None
+    return frozenset(column.name for column in alias.columns)
+
+
+def _not_a_column(column: exp.Column, source: exp.Expr | Scope | None) -> str:
+    match source:
+        case exp.Table():
+            target = f"{source.db}.{source.name}" if source.db else source.name
+        case None:
+            target = "a table in scope"
+        case _:
+            target = column.table
+    return f"column {column.sql(dialect=DIALECT)} is not a column of {target}; use a column listed by describe_table"
+
+
+def _cut(text: str) -> str:
+    return f"{text[:ERROR_SNIPPET_LENGTH]}..." if len(text) > ERROR_SNIPPET_LENGTH else text
 
 
 def _rejected(error: str) -> GuardResult:

@@ -5,7 +5,13 @@ import re
 import pytest
 from sherpa_mcp.sql_guard import SqlGuard
 
-VISIBLE_MARTS = frozenset({"fct_orders", "dim_customers", "fct_order_items"})
+MART_COLUMNS = {
+    "fct_orders": frozenset(
+        {"order_id", "customer_id", "order_date", "net_revenue", "channel", "country_code", "is_first_order"}
+    ),
+    "dim_customers": frozenset({"customer_id", "email", "first_name", "customer_segment"}),
+    "fct_order_items": frozenset({"order_id", "variant_id", "quantity", "net_amount"}),
+}
 # sqlglot node names that are not the Postgres spelling of a function
 SQLGLOT_NODE_NAME = re.compile(
     r"\b(j_s_o_n\w*|unix_to_time|rand|exploding_generate_series|json_extract_scalar|array_contains_all|array_size"
@@ -15,7 +21,7 @@ SQLGLOT_NODE_NAME = re.compile(
 
 @pytest.fixture
 def guard() -> SqlGuard:
-    return SqlGuard(VISIBLE_MARTS)
+    return SqlGuard(MART_COLUMNS)
 
 
 class TestSqlGuard:
@@ -318,7 +324,8 @@ class TestSqlGuard:
             "select * from marts.fct_orders as pg_roles",
             "select * from marts.fct_orders tablesample bernoulli (10)",
             "select * from (values (1), (2)) v(a)",
-            "select * from marts.fct_orders o, lateral (select * from marts.dim_customers c where c.id = o.id) c",
+            "select * from marts.fct_orders o, "
+            "lateral (select * from marts.dim_customers c where c.customer_id = o.customer_id) c",
         ],
     )
     def test_accepts_hostile_looking_text_that_postgres_reads_as_one_safe_query(
@@ -505,3 +512,140 @@ class TestWholeRowReferences:
         result = guard.check(sql)
 
         assert result.ok, result.errors
+
+
+class TestQualifiedColumns:
+    """Postgres reads `t.f` as the call `f(t)` when `f` is not a column of `t`: `c.row_to_json` is the whole row."""
+
+    @pytest.mark.parametrize(
+        "function", ["row_to_json", "to_json", "to_jsonb", "record_out", "pg_column_size", "num_nulls", "textin"]
+    )
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "select c.{f} from marts.dim_customers c limit 1",
+            "select c.{f} from marts.dim_customers as c",
+            "select dim_customers.{f} from marts.dim_customers",
+            "select marts.dim_customers.{f} from marts.dim_customers",
+            "select C.{f} from marts.dim_customers c",
+            'select "c".{f} from marts.dim_customers c',
+            'select "C".{f} from marts.dim_customers "C"',
+            'select c."{f}" from marts.dim_customers c',
+            "select upper(c.{f}::text) from marts.dim_customers c",
+            "select c.email from marts.dim_customers c where c.{f} is not null",
+            "select c.email from marts.dim_customers c order by c.{f}",
+            "select o.order_id from marts.fct_orders o join marts.dim_customers c on c.{f} is not null",
+            "with x as (select * from marts.dim_customers) select x.{f} from x",
+            "with x as (select c.* from marts.dim_customers c) select x.{f} from x",
+            "with x as (select email from marts.dim_customers) select x.{f} from x",
+            "with x as (select * from marts.dim_customers), y as (select * from x) select y.{f} from y",
+            "select s.{f} from (select * from marts.dim_customers) s",
+            "select s.{f} from (select email, first_name from marts.dim_customers) s",
+            "select s.{f} from (select email from marts.dim_customers union select email from marts.dim_customers) s",
+            "select l.{f} from marts.fct_orders o, lateral (select c.email from marts.dim_customers c) l",
+            "select o.order_id from marts.fct_orders o where exists (select 1 from marts.dim_customers c where c.{f})",
+            "select (select c.{f} from marts.dim_customers c limit 1) from marts.fct_orders",
+            "select o.order_id from marts.fct_orders o where o.customer_id in (select c.{f} from marts.dim_customers c)"
+            " limit 1",
+        ],
+    )
+    def test_a_name_that_is_not_a_column_of_its_source_is_rejected(
+        self, guard: SqlGuard, template: str, function: str
+    ) -> None:
+        result = guard.check(template.format(f=function))
+
+        assert not result.ok
+        assert any("is not a column of" in error for error in result.errors), result.errors
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # the qualifier is not a source in scope, or names more than a table
+            "select x.email from marts.dim_customers c",
+            "select c.email.row_to_json from marts.dim_customers c",
+            "select sherpa.marts.dim_customers.email from marts.dim_customers",
+            "select other.dim_customers.email from marts.dim_customers",
+            "select marts.dim_customers.email from marts.dim_customers c",
+            # a CTE that is not in FROM is not a source
+            "with x as (select email from marts.dim_customers) select x.email from marts.dim_customers",
+            # a quoted qualifier is case-sensitive, as in Postgres
+            'select "C".email from marts.dim_customers c',
+            # a derived table's column list renames its columns
+            "select s.email from (select email from marts.dim_customers) s(e)",
+            "select c.email from marts.dim_customers c(id, mail)",
+            # field selection on a parenthesised value
+            "select (c.email).row_to_json from marts.dim_customers c",
+        ],
+    )
+    def test_unresolvable_qualified_columns_fail_closed(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok, sql
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select c.email, c.customer_id from marts.dim_customers c",
+            "select C.Email from marts.dim_customers c",
+            'select "c"."email" from marts.dim_customers c',
+            "select dim_customers.email, marts.dim_customers.customer_id from marts.dim_customers",
+            "select c.*, c.email from marts.dim_customers c",
+            """
+            select o.order_id, c.customer_segment, i.quantity
+            from marts.fct_orders o
+            join marts.dim_customers c on c.customer_id = o.customer_id
+            left join marts.fct_order_items i on i.order_id = o.order_id
+            where o.net_revenue > 0
+            order by o.order_date desc
+            """,
+            """
+            with monthly as (
+                select o.customer_id, date_trunc('month', o.order_date) as month, sum(o.net_revenue) as revenue
+                from marts.fct_orders o
+                group by 1, 2
+            ),
+            ranked as (
+                select m.*, rank() over (partition by m.month order by m.revenue desc) as rn from monthly m
+            )
+            select r.month, r.revenue, c.customer_segment
+            from ranked r join marts.dim_customers c on c.customer_id = r.customer_id
+            where r.rn <= 3
+            """,
+            "with x as (select * from marts.dim_customers) select x.email, x.customer_segment from x",
+            "with x(id, mail) as (select customer_id, email from marts.dim_customers) select x.id, x.mail from x",
+            "select s.e from (select email from marts.dim_customers) s(e)",
+            "select s.total from (select sum(net_revenue) as total from marts.fct_orders) s",
+            "select s.email from (select email from marts.dim_customers union select email from marts.dim_customers) s",
+            "select v.a from (values (1), (2)) v(a)",
+            "select o.order_id, l.email from marts.fct_orders o, lateral ("
+            "select c.email from marts.dim_customers c where c.customer_id = o.customer_id) l",
+            "select o.order_id from marts.fct_orders o "
+            "where exists (select 1 from marts.dim_customers c where c.customer_id = o.customer_id)",
+            "select o.order_id, (select max(i.quantity) from marts.fct_order_items i where i.order_id = o.order_id) "
+            "from marts.fct_orders o",
+            # an inner alias shadows the outer one, as in Postgres
+            "select c.order_id from marts.fct_orders c "
+            "where exists (select 1 from marts.dim_customers c where c.email is not null)",
+            "select count(*) over (partition by o.channel order by o.order_date) from marts.fct_orders o",
+            # unqualified names are not the attribute form; Postgres reports an unknown one as a missing column
+            "select row_to_json from marts.dim_customers c",
+        ],
+    )
+    def test_ordinary_qualified_queries_pass(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert result.ok, result.errors
+
+    def test_error_names_the_column_and_its_source(self, guard: SqlGuard) -> None:
+        result = guard.check("select c.row_to_json from marts.dim_customers c")
+
+        assert result.errors == (
+            "column c.row_to_json is not a column of marts.dim_customers; use a column listed by describe_table",
+        )
+
+    def test_a_mart_with_no_known_columns_resolves_nothing(self) -> None:
+        guard = SqlGuard({"dim_customers": frozenset()})
+
+        result = guard.check("select c.email from marts.dim_customers c")
+
+        assert not result.ok

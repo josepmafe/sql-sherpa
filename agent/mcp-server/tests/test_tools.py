@@ -201,10 +201,14 @@ class TestWarehouseTools:
             "select concat(c.*) from marts.dim_customers c limit 1",
             "select (c.*)::text as x from marts.dim_customers c limit 1",
             "select array_agg(c.*) from marts.dim_customers c",
+            # attribute notation: Postgres reads c.f as f(c) when f is not a column of c
+            "select c.row_to_json from marts.dim_customers c limit 1",
+            "select c.record_out from marts.dim_customers c limit 1",
+            "with x as (select * from marts.dim_customers) select x.to_jsonb from x limit 1",
         ],
     )
     def test_run_sql_refuses_whole_row_pii_leaks(self, tools: WarehouseTools, query: str) -> None:
-        with pytest.raises(WarehouseToolError, match=r"whole-row reference|is not allowed"):
+        with pytest.raises(WarehouseToolError, match=r"whole-row reference|is not allowed|is not a column of"):
             tools.run_sql(query)
 
     def test_run_sql_rejects_hostile_sql_with_guard_errors(self, tools: WarehouseTools) -> None:

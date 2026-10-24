@@ -284,7 +284,8 @@ class WarehouseTools:
         """Run the guard inside a `sherpa.guard` span (agent spec §6). Never the SQL or the error texts on the trace:
         both can carry literals, and literals can be PII."""
         with logfire.span(GUARD_SPAN, tool=tool) as span:
-            guard = SqlGuard(catalog.visible_names()).check(executed)
+            # Built per call from the catalog of this call, so its columns always match the marts it checks against.
+            guard = SqlGuard(catalog.mart_columns()).check(executed)
             span.set_attributes({"ok": guard.ok, "error_count": len(guard.errors), "tables": guard.tables})
             if execution_id is not None:
                 span.set_attribute("execution_id", execution_id)

@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.examples import Example, ExampleIndex
 from sherpa_mcp.sql_guard import SqlGuard
 
 EXAMPLES_YAML = Path(__file__).parents[1] / "src" / "sherpa_mcp" / "examples.yaml"
 PROD_TARGET = Path(__file__).parents[3] / "data-platform" / "dbt" / "target-prod"
+MARTS_MODELS = Path(__file__).parents[3] / "data-platform" / "dbt" / "models" / "marts"
 # Data platform spec §6.5.
 MARTS = frozenset(
     {
@@ -16,6 +18,18 @@ MARTS = frozenset(
         *("fct_orders", "fct_order_items", "fct_order_discounts", "fct_returns", "fct_refunds"),
     }
 )
+
+
+def _mart_columns() -> dict[str, frozenset[str]]:
+    """The built catalog's marts and columns; without a prod build, the same names from the marts' dbt YAML."""
+    if PROD_TARGET.joinpath("catalog.json").exists():
+        return MartCatalogLoader(PROD_TARGET).load().mart_columns()
+    models = [
+        model
+        for path in MARTS_MODELS.glob("*/_*__models.yml")
+        for model in yaml.safe_load(path.read_text(encoding="utf-8"))["models"]
+    ]
+    return {model["name"]: frozenset(column["name"] for column in model.get("columns", [])) for model in models}
 
 
 def _example(question: str) -> Example:
@@ -64,12 +78,10 @@ class TestExampleIndex:
 
 
 def test_examples_yaml_passes_the_guard() -> None:
-    marts = MARTS
-    if PROD_TARGET.joinpath("catalog.json").exists():
-        marts = MartCatalogLoader(PROD_TARGET).load().visible_names()
-        assert marts == MARTS
+    mart_columns = _mart_columns()
+    assert set(mart_columns) == MARTS
     index = ExampleIndex.from_yaml(EXAMPLES_YAML)
-    guard = SqlGuard(marts)
+    guard = SqlGuard(mart_columns)
 
     assert len(index.examples) == 15
     for example in index.examples:

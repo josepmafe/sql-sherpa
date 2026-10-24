@@ -169,6 +169,12 @@ class TestMartCatalog:
         assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers"})
         assert catalog.domains() == ("customers", "sales")
 
+    def test_mart_columns_name_every_column_of_every_visible_mart(self, catalog: MartCatalog) -> None:
+        assert catalog.mart_columns() == {
+            "fct_orders": frozenset({"order_id", "customer_id", "order_date", "net_revenue", "current_status"}),
+            "dim_customers": frozenset({"customer_id", "email", "customer_segment"}),
+        }
+
 
 class TestCatalogShape:
     @pytest.mark.parametrize("manifest", ["{}", "[]", '{"nodes": 3}'])
