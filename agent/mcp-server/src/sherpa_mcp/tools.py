@@ -290,7 +290,10 @@ class WarehouseTools:
         return MetricList(metrics=self._catalog().metrics)
 
     def get_examples(self, question: str, k: int = 3) -> ExampleList:
-        return ExampleList(examples=tuple(self._examples.top(question, k)))
+        try:
+            return ExampleList(examples=tuple(self._examples.top(question, k)))
+        except ValueError as exc:  # `k` out of range; ExampleIndex checks it
+            raise WarehouseToolError(str(exc)) from exc
 
     def validate_sql(self, sql_text: str) -> Validation:
         executed = _as_executed(sql_text)
