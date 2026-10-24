@@ -26,13 +26,16 @@ STOP_WORDS: Final = (
     *("do", "does", "did", "our", "we", "my", "all", "each", "that", "this", "it", "as", "so", "be", "have", "has"),
 )
 # Crude stemming, so that "monthly", "months" and "month" meet: the first suffix that leaves at least MIN_STEM
-# characters is cut. "ies" becomes "y"; "es" only goes after s, x, z, ch or sh (boxes, but sales -> sale); a
-# trailing "s" stays after ss, us or is (status); a doubled consonant other than ss left by "ed"/"ing" is halved
-# (cancelled -> cancel, shipping -> ship).
+# characters is cut. "ies" becomes "y"; "es" only goes after ss, us, x, zz, ch or sh (boxes, statuses), otherwise
+# just the "s" (purchases -> purchase, sales -> sale); a trailing "s" stays after ss, us or is (status); a doubled
+# consonant other than ss left by "ed"/"ing" is halved (cancelled -> cancel, shipping -> ship), and a stem they leave
+# ending in c, v, z or a, e, i or o and s gets its "e" back (placed -> place, increased -> increase). Accepted
+# misses: caused -> caus, changed -> chang.
 SUFFIXES: Final = ("ing", "ies", "ed", "ly", "es", "s")
 MIN_STEM: Final = 3
-ES_AFTER: Final = ("s", "x", "z", "ch", "sh")
+ES_AFTER: Final = ("ss", "us", "x", "zz", "ch", "sh")
 KEEP_S_AFTER: Final = ("ss", "us", "is")
+E_AFTER: Final = ("c", "v", "z", "as", "es", "is", "os")
 # Words people use for what the examples name otherwise: a word or its stem -> the stems it also stands for.
 SYNONYMS: Final[dict[str, tuple[str, ...]]] = {
     "aov": ("average", "order", "value"),
@@ -120,6 +123,8 @@ def _stem(word: str) -> str:
                 continue
             case "ed" | "ing" if stem[-1] == stem[-2] and stem[-1] not in "aeious":
                 return stem[:-1]
+            case "ed" | "ing" if stem.endswith(E_AFTER):
+                return stem + "e"
         return stem
     return word
 

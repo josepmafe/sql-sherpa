@@ -91,6 +91,15 @@ class TestExampleIndex:
             ("cancelled orders", "cancel an order"),
             ("refunded categories", "refund per category"),
             ("boxes shipped", "box shipping"),
+            ("purchases", "purchase"),
+            ("increases", "increase"),
+            ("purchased", "purchasing"),
+            ("placed", "place"),
+            ("received", "receive"),
+            ("sizes", "size"),
+            ("classes", "class"),
+            ("statuses", "status"),
+            ("pressed", "press"),
         ],
     )
     def test_word_forms_meet_on_their_stem(self, question: str, example: str) -> None:
