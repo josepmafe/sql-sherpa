@@ -39,6 +39,7 @@ SERVICE_NAME: Final = "sherpa-mcp"
 MCP_PATH: Final = "/mcp"  # agent spec §10: MCP_HTTP_URL = http://127.0.0.1:8765/mcp
 EXAMPLES_PATH: Final = Path(__file__).with_name("examples.yaml")
 LOG_FORMAT: Final = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+SDK_TOOL_LOGGER: Final = "mcp.server.mcpserver.server"  # logs "Tool ... failed: <message>" at INFO
 LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})  # where the SDK enables DNS-rebinding protection
 # Host names a client may use when the server binds a non-loopback host: loopback, and the compose service `mcp`.
 ALLOWED_HOST_NAMES: Final = ("127.0.0.1", "localhost", "[::1]", "mcp")
@@ -178,7 +179,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=LOG_FORMAT)
+    configure_logging()
     logfire.configure(service_name=SERVICE_NAME, console=False, send_to_logfire="if-token-present")
     # Named: without an argument Logfire instruments every psycopg it finds, and dbt brings psycopg2 to the same venv.
     # Before the pool opens its first connection.
@@ -220,6 +221,13 @@ def main() -> None:
                 )
     finally:
         database.close()
+
+
+def configure_logging() -> None:
+    """INFO to stderr, except the SDK's per-tool-error INFO lines: they repeat the error text, and a guard error
+    quotes the query, literals (possibly PII) included. Its WARNING and ERROR lines (crashes) still show."""
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=LOG_FORMAT)
+    logging.getLogger(SDK_TOOL_LOGGER).setLevel(logging.WARNING)
 
 
 def _transport_security(host: str) -> TransportSecuritySettings | None:

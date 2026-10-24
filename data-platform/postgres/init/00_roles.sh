@@ -11,12 +11,15 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
 CREATE ROLE :"admin_user" LOGIN CREATEDB PASSWORD :'admin_password';
 ALTER DATABASE :"db_name" OWNER TO :"admin_user";
 
-CREATE ROLE :"agent_user" LOGIN PASSWORD :'agent_password';
+-- At most 20 sessions at once: each MCP server holds a pool of a few, and a runaway client cannot take them all.
+CREATE ROLE :"agent_user" LOGIN CONNECTION LIMIT 20 PASSWORD :'agent_password';
 -- default_transaction_read_only and statement_timeout are role defaults that a session can override with SET, so
 -- they are defence in depth. The real enforcement is the privileges (SELECT only on the marts, granted by dbt), a
 -- SQL guard and a read-only connection option in the MCP server.
 ALTER ROLE :"agent_user" SET default_transaction_read_only = on;
 ALTER ROLE :"agent_user" SET statement_timeout = '5s';
+-- Caps the temporary files one query may write (a huge sort or hash); only a superuser can change it, not a session.
+ALTER ROLE :"agent_user" SET temp_file_limit = '256MB';
 
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 -- No temporary tables for roles other than the owner (the admin), and no connections to the maintenance database.

@@ -13,7 +13,7 @@ from mcp import Client
 from mcp.client.stdio import get_default_environment
 from mcp.types import TextContent
 from sherpa_mcp.database import WarehouseToolError
-from sherpa_mcp.server import build_server
+from sherpa_mcp.server import build_server, configure_logging
 from sherpa_mcp.tools import WarehouseTools
 
 if TYPE_CHECKING:
@@ -102,6 +102,27 @@ class TestBuildServer:
             if event["name"] == "exception"
         ]
         assert [event["attributes"]["exception.message"] for event in events] == ["boom secret"]
+
+    async def test_tool_error_text_stays_out_of_the_server_log(self, caplog: pytest.LogCaptureFixture) -> None:
+        tools = create_autospec(WarehouseTools, instance=True)
+        tools.run_sql.side_effect = WarehouseToolError("[guard:function] function md5 is not allowed: 'leak@x.com'")
+        sdk_logger = logging.getLogger("mcp.server.mcpserver.server")
+        level = sdk_logger.level
+
+        try:
+            with caplog.at_level(logging.INFO):
+                async with Client(build_server(tools)) as client:
+                    await client.call_tool("run_sql", {"sql": COUNT_ORDERS})
+                    unconfigured = caplog.text
+                    configure_logging()
+                    caplog.clear()
+                    result = await client.call_tool("run_sql", {"sql": COUNT_ORDERS})
+        finally:
+            sdk_logger.setLevel(level)
+
+        assert "leak@x.com" in unconfigured  # what the SDK logs on its own
+        assert "leak@x.com" in _text(result)
+        assert "leak@x.com" not in caplog.text
 
     async def test_tool_schemas_bound_every_argument(self) -> None:
         async with Client(build_server(create_autospec(WarehouseTools, instance=True))) as client:
