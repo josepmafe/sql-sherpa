@@ -44,7 +44,9 @@ services:
       # Optional: empty means no export.
       LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
     volumes:
-      - ./data-platform/dbt/target-prod:/app/dbt/target-prod:ro
+      # The dbt folder, not target-prod itself: Docker would create a missing target-prod as an empty root-owned
+      # directory, and a target-prod deleted and rebuilt on the host would leave the container on a stale mount.
+      - ./data-platform/dbt:/app/dbt:ro
     # A ceiling for a query whose rows are huge before the server cuts each cell to 10,000 characters.
     mem_limit: 512m
     ports:

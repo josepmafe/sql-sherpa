@@ -19,7 +19,7 @@ On top of those, every query runs over Postgres' extended protocol on a server-s
 
 The server reads its settings from `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`, `SHERPA_DBT_TARGET_PATH`, `MCP_TRANSPORT`, `SHERPA_MCP_PORT`) and needs two dbt artifacts in `data-platform/dbt/target-prod/`: `manifest.json` from `make build-prod` and `catalog.json` from `make docs-prod` (it is written when the docs are generated; stop the docs server with Ctrl+C once it is up).
 
-**In the container, with everything else.** `make up` builds and starts every compose service, Postgres and `mcp`, and waits until both are healthy. The `mcp` service publishes `127.0.0.1:8765` (localhost only) and mounts `data-platform/dbt/target-prod` read-only. Its environment lists only what it needs (the database host and name, the `sherpa_agent` login, the transport, the port, the artifacts path and an optional `LOGFIRE_TOKEN`), never the admin login. Check it:
+**In the container, with everything else.** `make up` builds and starts every compose service, Postgres and `mcp`, and waits until both are healthy. The `mcp` service publishes `127.0.0.1:8765` (localhost only) mounts `data-platform/dbt` read-only at `/app/dbt` (it reads the artifacts from `/app/dbt/target-prod`, so a `target-prod` deleted and rebuilt on the host is picked up without a restart). It has a 512 MB memory limit. Its environment lists only what it needs, never the admin login: `SHERPA_DB_HOST`, `SHERPA_DB_PORT`, `SHERPA_DB_NAME`, `SHERPA_AGENT_USER`, `SHERPA_AGENT_PASSWORD`, `MCP_TRANSPORT`, `SHERPA_MCP_HOST`, `SHERPA_MCP_PORT`, `SHERPA_DBT_TARGET_PATH` and an optional `LOGFIRE_TOKEN`. Check it:
 
 ```
 $ docker compose ps

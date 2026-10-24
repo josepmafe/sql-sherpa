@@ -161,7 +161,7 @@ Nothing in the server's code changes. The marts come from the dbt artifacts: a m
 
 What to do after the data platform builds a new or changed mart:
 
-1. Run `make build-prod` and `make docs-prod`, so `manifest.json` and `catalog.json` in `data-platform/dbt/target-prod/` are current. The server reloads when either file's modification time changes, so a running server (including the container, which mounts the folder read-only) picks the change up on the next call, with no restart. If the new mart has a PII column, mark it `meta.pii: true` in the dbt YAML first: the masking and `search_values` follow that flag.
+1. Run `make build-prod` and `make docs-prod`, so `manifest.json` and `catalog.json` in `data-platform/dbt/target-prod/` are current. The server reloads when either file's modification time changes, so a running server (including the container, which mounts `data-platform/dbt` read-only) picks the change up on the next call, with no restart. If the new mart has a PII column, mark it `meta.pii: true` in the dbt YAML first: the masking and `search_values` follow that flag.
 2. Update the `MARTS` lists in the tests:
    - `data-platform/tests/dbt/test_agent_access.py` has the data platform's list of marts, which `tests/test_tools.py` reads to check that `list_tables` returns exactly those marts;
    - `agent/mcp-server/tests/test_examples.py` has its own `MARTS` set, which the example test compares to the catalog when `catalog.json` exists.
