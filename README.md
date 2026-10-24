@@ -62,6 +62,8 @@ make docs                # generate and serve the dbt docs until you press Ctrl+
 
 `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy and sqlfluff.
 
+The database lives in one Docker volume, `sherpa_pgdata`, shared by every checkout and git worktree of the repository (the compose project is pinned to `sql-sherpa`). `make up` in a new worktree reuses the existing warehouse instead of starting an empty one. The flip side is that `make down` or `make reset` from any of them affects that one database.
+
 To add days later, run `make generate DAYS=<n>`. Days added after the first run have no paid campaigns, promotions or ad spend, because the catalog is built once, on the first run.
 
 ### Windows and corporate networks

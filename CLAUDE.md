@@ -142,4 +142,5 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 - The development machine is Windows with Git Bash. Run `make` from Git Bash: in PowerShell, GNU make runs recipes with `cmd.exe`, and they need a POSIX shell. `make` must be installed separately (Scoop, Chocolatey or WSL).
 - GitHub: personal account `josepmafe` on **github.com**, not the corporate GitHub Enterprise host. Commits use the repo-local identity `Josep Martinez <57620224+josepmafe@users.noreply.github.com>`. Don't use the corporate email.
+- Docker: the compose project is pinned to `sql-sherpa` and the data volume to `sherpa_pgdata`, so every checkout and worktree shares one Postgres container and one warehouse; `make reset` anywhere resets it for all.
 - The repo is public. Never commit credentials, corporate data or references to internal systems.
