@@ -51,6 +51,26 @@ ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
     }
 )
 ERROR_SNIPPET_LENGTH: Final = 60  # longest expression an error quotes for an operator the guard rejects
+# Every error starts with `[guard:<rule>]`, a stable code a caller can match on; the rest may quote the query.
+ERROR_CODE: Final = "[guard:{rule}] "
+# One-line remedies for rejected functions the model reaches for most often, by the name as written.
+FUNCTION_HINTS: Final[dict[str, str]] = {
+    "generate_series": "use marts.dim_date for a series of dates",
+    "to_timestamp": "use to_char, make_date or date_trunc",
+    "grouping": "use a plain GROUP BY, or one query per grouping level",
+}
+JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_json")
+JSON_HINT: Final = "aggregate with string_agg, or select the columns"
+DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
+DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
+_MARTS_HINT: Final = "query only the marts that list_tables returns"
+_OPERATOR_HINTS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
+    (exp.Array, "use IN (...) instead of = ANY(ARRAY[...])"),
+    (exp.RegexpLike, "use LIKE or ILIKE instead of a regular expression"),
+    (exp.RegexpILike, "use LIKE or ILIKE instead of a regular expression"),
+)
+# Calls that read the real clock; allowed, but the warehouse's "today" is its as-of date (agent spec §4.1).
+_CLOCK_NODES: Final = (exp.CurrentTimestamp, exp.CurrentDate, exp.CurrentTime, exp.Localtimestamp, exp.Localtime)
 _CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
@@ -77,6 +97,7 @@ class GuardResult(BaseModel):
     ok: bool
     errors: tuple[str, ...]
     tables: tuple[str, ...]
+    clock_calls: tuple[str, ...] = ()  # now(), current_date, ... as written; not errors
 
 
 class SqlGuard:
@@ -90,61 +111,97 @@ class SqlGuard:
         try:
             parsed = sqlglot.parse(sql, read=DIALECT)
         except (SqlglotError, RecursionError) as exc:
-            first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
-            return _rejected(f"could not parse the query: {first_line}")
+            first_line = str(exc).splitlines()[0].rstrip(".") if str(exc) else type(exc).__name__
+            return _rejected(_error("parse", f"could not parse the query: {first_line}", "write one Postgres SELECT"))
 
         # A trailing `;` gives None, a trailing comment an empty Semicolon.
         statements = [stmt for stmt in parsed if stmt is not None and not isinstance(stmt, exp.Semicolon)]
         if len(statements) != 1:
-            return _rejected(f"expected exactly one statement, got {len(statements)}")
+            return _rejected(
+                _error("statement_count", f"expected exactly one statement, got {len(statements)}", "send one SELECT")
+            )
 
         statement = statements[0]
         if not isinstance(statement, _QUERY_NODES):
-            return _rejected(f"the statement must be a SELECT query, not {_statement_kind(statement)}")
+            hint = "remove the outer parentheses" if isinstance(statement, exp.Subquery) else "write one SELECT"
+            return _rejected(
+                _error("not_select", f"the statement must be a SELECT query, not {_statement_kind(statement)}", hint)
+            )
 
         errors: list[str] = []
         tables: list[str] = []
+        clock_calls: list[str] = []
         for node in statement.walk():
             errors.extend(self._node_errors(node, tables))
+            if isinstance(node, _CLOCK_NODES):
+                clock_calls.append(_written_name(node))
         errors.extend(self._qualified_column_errors(statement))
 
         unique_errors = tuple(dict.fromkeys(errors))
-        return GuardResult(ok=not unique_errors, errors=unique_errors, tables=tuple(dict.fromkeys(tables)))
+        return GuardResult(
+            ok=not unique_errors,
+            errors=unique_errors,
+            tables=tuple(dict.fromkeys(tables)),
+            clock_calls=tuple(dict.fromkeys(clock_calls)),
+        )
 
     def _node_errors(self, node: exp.Expr, tables: list[str]) -> list[str]:
         match node:
             case exp.Into():
-                return ["SELECT ... INTO is not allowed"]
+                return [_error("select_into", "SELECT ... INTO is not allowed", "remove INTO")]
             case exp.Lock():
-                return ["locking clause FOR UPDATE/SHARE is not allowed"]
+                return [_error("locking", "locking clause FOR UPDATE/SHARE is not allowed", "remove it")]
             case _ if isinstance(node, _WRITE_NODES):
-                return [f"{_statement_kind(node)} is not allowed"]
+                return [_error("write", f"{_statement_kind(node)} is not allowed", "only SELECT queries run")]
             case exp.DataType() if not _is_built_in_type(node):
-                return [f"cast to type {node.sql(dialect=DIALECT)} is not allowed"]
+                return [
+                    _error(
+                        "cast",
+                        f"cast to type {node.sql(dialect=DIALECT)} is not allowed",
+                        "cast to a built-in type such as text, numeric, date or timestamp",
+                    )
+                ]
             case exp.Dot(expression=exp.Func() as func):
-                return [f"function {node.this.sql(dialect=DIALECT)}.{_written_name(func)} is not allowed"]
+                return [
+                    _error(
+                        "function",
+                        f"function {node.this.sql(dialect=DIALECT)}.{_written_name(func)} is not allowed",
+                        "call functions without a schema",
+                    )
+                ]
             case exp.Dot():
                 # `(expr).name` or a five-part name: Postgres may read the last part as a function of the rest.
-                return [f"field selection `{_cut(node.sql(dialect=DIALECT))}` is not allowed; select named columns"]
+                return [
+                    _error(
+                        "field",
+                        f"field selection `{_cut(node.sql(dialect=DIALECT))}` is not allowed",
+                        "select named columns",
+                    )
+                ]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):
                 if _function_name(node) in ALLOWED_FUNCTIONS:
                     return []
 
                 name = _written_name(node)
                 if _WRITTEN_NAME.fullmatch(name) is None:
-                    return [f"function or operator `{name}` is not allowed"]
+                    return [_error("function", f"function or operator `{name}` is not allowed", _operator_hint(node))]
 
-                return [f"function {name} is not allowed"]
+                return [_error("function", f"function {name} is not allowed", _function_hint(name))]
             case exp.Table():
                 return self._table_errors(node, tables)
             case exp.Column(this=exp.Star()) if not _is_projection_item(node):
                 # `c.*` expands to named (maskable) columns only as a select-list item; anywhere else it is one record.
                 return [
-                    f"whole-row reference `{node.sql(dialect=DIALECT)}` inside an expression is not allowed; "
-                    "select named columns"
+                    _error(
+                        "whole_row",
+                        f"whole-row reference `{node.sql(dialect=DIALECT)}` inside an expression is not allowed",
+                        "select named columns",
+                    )
                 ]
             case exp.Column(table="") if _is_whole_row(node):
-                return [f"whole-row reference `{node.name}` is not allowed; select named columns"]
+                return [
+                    _error("whole_row", f"whole-row reference `{node.name}` is not allowed", "select named columns")
+                ]
             case _:
                 return []
 
@@ -154,7 +211,7 @@ class SqlGuard:
             return []  # a table function: checked as a function
 
         if not isinstance(source, exp.Identifier) or table.args.get("catalog") is not None:
-            return [f"table {table.sql(dialect=DIALECT)} is not allowed; use marts.<name>"]
+            return [_error("table", f"table {table.sql(dialect=DIALECT)} is not allowed", "use marts.<name>")]
 
         name = _identifier_value(source)
         schema = table.args.get("db")
@@ -162,14 +219,14 @@ class SqlGuard:
             if name in _ctes_in_scope(table):
                 return []
 
-            return [f"table {name} is not schema-qualified; qualify it as {MARTS_SCHEMA}.{name}"]
+            return [_error("table", f"table {name} is not schema-qualified", f"qualify it as {MARTS_SCHEMA}.{name}")]
 
         qualified = f"{_identifier_value(schema)}.{name}"
         if _identifier_value(schema) != MARTS_SCHEMA:
-            return [f"table {qualified} is outside {MARTS_SCHEMA}"]
+            return [_error("table", f"table {qualified} is outside {MARTS_SCHEMA}", _MARTS_HINT)]
 
         if name not in self._mart_columns:
-            return [f"table {qualified} is not a visible mart"]
+            return [_error("table", f"table {qualified} is not a visible mart", _MARTS_HINT)]
 
         tables.append(qualified)
         return []
@@ -186,7 +243,7 @@ class SqlGuard:
         try:
             scopes = {id(scope.expression): scope for scope in traverse_scope(tree)}
         except (SqlglotError, RecursionError):
-            return ["could not resolve the column references of the query; simplify it"]
+            return [_error("column", "could not resolve the column references of the query", "simplify it")]
 
         errors: list[str] = []
         for column in tree.find_all(exp.Column):
@@ -299,7 +356,27 @@ def _not_a_column(column: exp.Column, source: exp.Expr | Scope | None) -> str:
             target = "a table in scope"
         case _:
             target = column.table
-    return f"column {column.sql(dialect=DIALECT)} is not a column of {target}; use a column listed by describe_table"
+    return _error(
+        "column",
+        f"column {column.sql(dialect=DIALECT)} is not a column of {target}",
+        "use a column listed by describe_table",
+    )
+
+
+def _error(rule: str, message: str, hint: str) -> str:
+    return f"{ERROR_CODE.format(rule=rule)}{message}; {hint}"
+
+
+def _function_hint(name: str) -> str:
+    if name in FUNCTION_HINTS:
+        return FUNCTION_HINTS[name]
+    if name.startswith(JSON_FUNCTION_PREFIXES):
+        return JSON_HINT
+    return DEFAULT_FUNCTION_HINT
+
+
+def _operator_hint(node: exp.Expr) -> str:
+    return next((hint for kind, hint in _OPERATOR_HINTS if isinstance(node, kind)), DEFAULT_OPERATOR_HINT)
 
 
 def _cut(text: str) -> str:

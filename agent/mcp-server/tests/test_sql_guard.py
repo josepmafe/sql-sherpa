@@ -12,6 +12,8 @@ MART_COLUMNS = {
     "dim_customers": frozenset({"customer_id", "email", "first_name", "customer_segment"}),
     "fct_order_items": frozenset({"order_id", "variant_id", "quantity", "net_amount"}),
 }
+MARTS_HINT = "query only the marts that list_tables returns"
+FUNCTION_HINT = "rewrite it with the common aggregate, window, string, date and math functions"
 # sqlglot node names that are not the Postgres spelling of a function
 SQLGLOT_NODE_NAME = re.compile(
     r"\b(j_s_o_n\w*|unix_to_time|rand|exploding_generate_series|json_extract_scalar|array_contains_all|array_size"
@@ -154,15 +156,15 @@ class TestSqlGuard:
         assert mixed_case.ok
         assert quoted.tables == mixed_case.tables == ("marts.fct_orders",)
         assert not other_schema.ok
-        assert "table staging.fct_orders is outside marts" in other_schema.errors
+        assert f"[guard:table] table staging.fct_orders is outside marts; {MARTS_HINT}" in other_schema.errors
 
     def test_quoted_identifiers_keep_their_case(self, guard: SqlGuard) -> None:
         # Postgres folds unquoted names to lower case but keeps quoted ones verbatim, so these name other relations.
         upper_table = guard.check('select * from marts."FCT_ORDERS"')
         upper_schema = guard.check('select * from "MARTS".fct_orders')
 
-        assert upper_table.errors == ("table marts.FCT_ORDERS is not a visible mart",)
-        assert upper_schema.errors == ("table MARTS.fct_orders is outside marts",)
+        assert upper_table.errors == (f"[guard:table] table marts.FCT_ORDERS is not a visible mart; {MARTS_HINT}",)
+        assert upper_schema.errors == (f"[guard:table] table MARTS.fct_orders is outside marts; {MARTS_HINT}",)
 
     def test_trailing_semicolon_and_comment_ok(self, guard: SqlGuard) -> None:
         sql = "/* top */ select 1 from marts.fct_orders -- why\n; -- trailing comment\n"
@@ -339,17 +341,82 @@ class TestSqlGuard:
         result = guard.check("select pg_sleep(1) from staging.stg_shop__orders")
 
         assert result.errors == (
-            "function pg_sleep is not allowed",
-            "table staging.stg_shop__orders is outside marts",
+            f"[guard:function] function pg_sleep is not allowed; {FUNCTION_HINT}",
+            f"[guard:table] table staging.stg_shop__orders is outside marts; {MARTS_HINT}",
         )
 
     def test_repeated_violation_is_reported_once(self, guard: SqlGuard) -> None:
         result = guard.check("select pg_sleep(1), pg_sleep(2) from pg_catalog.pg_roles a, pg_catalog.pg_roles b")
 
         assert result.errors == (
-            "function pg_sleep is not allowed",
-            "table pg_catalog.pg_roles is outside marts",
+            f"[guard:function] function pg_sleep is not allowed; {FUNCTION_HINT}",
+            f"[guard:table] table pg_catalog.pg_roles is outside marts; {MARTS_HINT}",
         )
+
+    @pytest.mark.parametrize(
+        ("sql", "rule"),
+        [
+            ("select 1 from", "parse"),
+            ("select 1 from marts.fct_orders; select 2 from marts.fct_orders", "statement_count"),
+            ("delete from marts.fct_orders", "not_select"),
+            ("with d as (delete from marts.fct_orders returning *) select * from d", "write"),
+            ("select * into x from marts.fct_orders", "select_into"),
+            ("select * from marts.fct_orders for update", "locking"),
+            ("select 1::regclass from marts.fct_orders", "cast"),
+            ("select pg_sleep(1)", "function"),
+            ("select (c.email).x from marts.dim_customers c", "field"),
+            ("select c from marts.dim_customers c", "whole_row"),
+            ("select c.nope from marts.dim_customers c", "column"),
+            ("select * from pg_roles", "table"),
+        ],
+    )
+    def test_every_error_starts_with_its_rule_code(self, guard: SqlGuard, sql: str, rule: str) -> None:
+        result = guard.check(sql)
+
+        assert result.errors
+        assert result.errors[0].startswith(f"[guard:{rule}] "), result.errors
+        assert all(re.match(r"\[guard:\w+\] ", error) for error in result.errors), result.errors
+
+    @pytest.mark.parametrize(
+        ("sql", "hint"),
+        [
+            ("select 1 from marts.fct_orders where order_id = any(array[1, 2])", "use IN (...)"),
+            ("select 1 from marts.fct_orders where channel ~ 'web'", "use LIKE or ILIKE"),
+            ("select 1 from marts.fct_orders where channel ~* 'web'", "use LIKE or ILIKE"),
+            ("(select 1 from marts.fct_orders)", "remove the outer parentheses"),
+            ("select * from generate_series(1, 3)", "use marts.dim_date for a series of dates"),
+            ("select to_timestamp(0) from marts.fct_orders", "use to_char, make_date or date_trunc"),
+            ("select json_agg(order_id) from marts.fct_orders", "aggregate with string_agg, or select the columns"),
+            ("select jsonb_build_object('a', 1) from marts.fct_orders", "aggregate with string_agg"),
+            ("select row_to_json(o) from marts.fct_orders o", "aggregate with string_agg"),
+            ("select grouping(channel) from marts.fct_orders group by channel", "one query per grouping level"),
+            ("select random() from marts.fct_orders", FUNCTION_HINT),
+            ("select channel @> 'x' from marts.fct_orders", "use comparison operators, LIKE/ILIKE or IN (...)"),
+        ],
+    )
+    def test_rejection_carries_a_remedy_hint(self, guard: SqlGuard, sql: str, hint: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok
+        assert any(error.endswith(hint) or f"; {hint}" in error for error in result.errors), result.errors
+
+    @pytest.mark.parametrize(
+        ("sql", "calls"),
+        [
+            ("select now() - interval '1 day' from marts.fct_orders", ("current_timestamp",)),
+            ("select 1 from marts.fct_orders where order_date >= current_date - 30", ("current_date",)),
+            (
+                "select current_timestamp, current_date, now() from marts.fct_orders",
+                ("current_timestamp", "current_date"),
+            ),
+            ("select max(order_date) from marts.fct_orders", ()),
+        ],
+    )
+    def test_clock_calls_are_reported_without_failing(self, guard: SqlGuard, sql: str, calls: tuple[str, ...]) -> None:
+        result = guard.check(sql)
+
+        assert result.ok, result.errors
+        assert result.clock_calls == calls
 
     @pytest.mark.parametrize(
         ("sql", "error"),
@@ -385,7 +452,7 @@ class TestSqlGuard:
         result = guard.check("select from where (")
 
         assert not result.ok
-        assert result.errors[0].startswith("could not parse the query")
+        assert result.errors[0].startswith("[guard:parse] could not parse the query")
         assert result.tables == ()
 
 
@@ -456,8 +523,9 @@ class TestWholeRowReferences:
         result = guard.check(sql)
 
         assert not result.ok
-        assert f"whole-row reference `{star}` inside an expression is not allowed; select named columns" in (
-            result.errors
+        assert (
+            f"[guard:whole_row] whole-row reference `{star}` inside an expression is not allowed; select named columns"
+            in (result.errors)
         ), result.errors
 
     @pytest.mark.parametrize(
@@ -640,7 +708,8 @@ class TestQualifiedColumns:
         result = guard.check("select c.row_to_json from marts.dim_customers c")
 
         assert result.errors == (
-            "column c.row_to_json is not a column of marts.dim_customers; use a column listed by describe_table",
+            "[guard:column] column c.row_to_json is not a column of marts.dim_customers; "
+            "use a column listed by describe_table",
         )
 
     def test_a_mart_with_no_known_columns_resolves_nothing(self) -> None:

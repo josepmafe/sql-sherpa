@@ -164,6 +164,21 @@ class TestWarehouseTools:
         assert good.ok
         assert good.errors == ()
         assert good.tables == ("marts.fct_orders",)
+        assert good.warnings == ()
+
+    def test_validate_sql_warns_when_the_query_reads_the_clock(
+        self, tools: WarehouseTools, admin: psycopg.Connection
+    ) -> None:
+        row = admin.execute("select max(order_date) from marts.fct_orders").fetchone()
+        assert row is not None
+
+        validation = tools.validate_sql("select count(*) from marts.fct_orders where order_date >= current_date - 30")
+
+        assert validation.ok
+        assert validation.warnings == (
+            f"current_date reads the real clock, but the warehouse is as of {row[0]}; "
+            "derive periods from (select max(order_date) from marts.fct_orders)",
+        )
 
     def test_run_sql_truncates_masks_and_ids(self, tools: WarehouseTools) -> None:
         big = tools.run_sql("select * from marts.fct_order_items")
@@ -235,6 +250,12 @@ class TestGuardTracing:
         assert rejected["attributes"]["error_count"] == 1
         assert PII_LITERAL not in str(spans)
         assert "drop table" not in str(spans)
+
+    def test_rejection_rule_comes_from_the_error_code(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+        tools.validate_sql("select c.row_to_json from marts.dim_customers c")
+
+        rejected = _only_span(capfire.exporter.exported_spans_as_dict(), "guard rejected")
+        assert rejected["attributes"]["rule"] == "column"
 
     def test_accepted_query_is_traced_with_its_marts(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
         tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")

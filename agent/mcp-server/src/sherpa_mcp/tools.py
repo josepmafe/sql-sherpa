@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
+import re
 from typing import TYPE_CHECKING, Final
 
 import logfire
@@ -29,19 +30,14 @@ MAX_LIMIT: Final = 50
 EXECUTION_ID_LENGTH: Final = 16
 TEXT_TYPE: Final = "text"
 GUARD_SPAN: Final = "sherpa.guard"
-# The fixed start of each sql_guard error message and the rule it names; what follows the prefix may quote the query.
-GUARD_RULE_PREFIXES: Final = (
-    ("could not parse", "parse"),
-    ("expected exactly one statement", "statement_count"),
-    ("the statement must be a SELECT", "not_select"),
-    ("SELECT ... INTO", "select_into"),
-    ("locking clause", "locking"),
-    ("cast to type", "cast"),
-    ("function ", "function"),
-    ("whole-row reference", "whole_row"),
-    ("table ", "table"),
+# The `[guard:<rule>]` code every sql_guard error starts with; what follows it may quote the query.
+GUARD_RULE: Final = re.compile(r"\[guard:(\w+)\]")
+UNKNOWN_RULE: Final = "unknown"
+AS_OF_QUERY: Final = "select max(order_date) from marts.fct_orders"
+CLOCK_WARNING: Final = (
+    "{calls} reads the real clock, but the warehouse is as of {as_of}; "
+    "derive periods from (select max(order_date) from marts.fct_orders)"
 )
-OTHER_RULE: Final = "write"  # the one unprefixed message: "<DML/DDL kind> is not allowed"
 # Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The last three leave this
 # tuple when data-platform-3 and -4 land.
 DOES_NOT_COVER: Final = (
@@ -134,6 +130,7 @@ class Validation(BaseModel):
     ok: bool
     errors: tuple[str, ...]
     tables: tuple[str, ...]
+    warnings: tuple[str, ...] = ()  # non-blocking: the query may run, but likely answers the wrong question
 
 
 class SqlResult(BaseModel):
@@ -155,7 +152,7 @@ class WarehouseTools:
 
     def get_context(self) -> WarehouseContext:
         catalog = self._catalog()
-        latest = self._database.scalar("select max(order_date) from marts.fct_orders")
+        latest = self._database.scalar(AS_OF_QUERY)
         earliest = self._database.scalar("select min(order_date) from marts.fct_orders")
         if latest is None or earliest is None:
             raise WarehouseToolError("fct_orders has no rows; run make build-prod")
@@ -250,11 +247,12 @@ class WarehouseTools:
         guard = self._guard("validate_sql", executed, self._catalog())
         if not guard.ok:
             return Validation(ok=False, errors=guard.errors, tables=guard.tables)
+        warnings = self._clock_warnings(guard)
         try:
             self._database.explain(executed)
         except WarehouseToolError as error:
-            return Validation(ok=False, errors=(str(error),), tables=guard.tables)
-        return Validation(ok=True, errors=(), tables=guard.tables)
+            return Validation(ok=False, errors=(str(error),), tables=guard.tables, warnings=warnings)
+        return Validation(ok=True, errors=(), tables=guard.tables, warnings=warnings)
 
     def run_sql(self, sql_text: str) -> SqlResult:
         catalog = self._catalog()
@@ -279,6 +277,13 @@ class WarehouseTools:
         except CatalogUnavailable as error:
             raise WarehouseToolError(str(error)) from error
 
+    def _clock_warnings(self, guard: GuardResult) -> tuple[str, ...]:
+        """A query that reads today's date answers for the wrong period: the data stops at the as-of date."""
+        if not guard.clock_calls:
+            return ()
+        as_of = self._database.scalar(AS_OF_QUERY)
+        return (CLOCK_WARNING.format(calls=", ".join(guard.clock_calls), as_of=as_of),)
+
     @staticmethod
     def _guard(tool: str, executed: str, catalog: MartCatalog, execution_id: str | None = None) -> GuardResult:
         """Run the guard inside a `sherpa.guard` span (agent spec §6). Never the SQL or the error texts on the trace:
@@ -302,8 +307,9 @@ def _execution_id(executed: str) -> str:
 
 
 def _rule_class(error: str) -> str:
-    """The guard rule an error message comes from, by its fixed prefix; the rest may quote the query."""
-    return next((rule for prefix, rule in GUARD_RULE_PREFIXES if error.startswith(prefix)), OTHER_RULE)
+    """The guard rule an error message comes from, by its `[guard:<rule>]` code; the rest may quote the query."""
+    code = GUARD_RULE.match(error)
+    return UNKNOWN_RULE if code is None else code.group(1)
 
 
 def _as_executed(sql_text: str) -> str:
