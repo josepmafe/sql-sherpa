@@ -50,8 +50,9 @@ ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
         "similarity",
     }
 )
-# lpad/rpad build a string of the length they are given, so only a literal length up to the cell cap the server
-# returns (database.MAX_CELL_CHARS) is allowed: a computed or huge length could fill the server's memory.
+# lpad/rpad build a string of the length they are given, and char(n)/bit(n) pad every value to n, so only a literal
+# length up to the cell cap the server returns (database.MAX_CELL_CHARS) is allowed: a computed or huge length could
+# fill the server's memory.
 MAX_PAD_LENGTH: Final = 10_000
 ERROR_SNIPPET_LENGTH: Final = 60  # longest expression an error quotes for an operator the guard rejects
 # Every error starts with `[guard:<rule>]`, a stable code a caller can match on; the rest may quote the query.
@@ -186,6 +187,14 @@ class SqlGuard:
                         "cast",
                         f"cast to type {node.sql(dialect=DIALECT)} is not allowed",
                         "cast to a built-in type such as text, numeric, date or timestamp",
+                    )
+                ]
+            case exp.DataType() if not all(_is_small_literal(param.this) for param in _type_params(node)):
+                return [
+                    _error(
+                        "type_length",
+                        f"type {node.sql(dialect=DIALECT)} has a length over {MAX_PAD_LENGTH:,}",
+                        f"use lengths up to {MAX_PAD_LENGTH:,}, or cast to text",
                     )
                 ]
             case exp.Dot(expression=exp.Func() as func):
@@ -459,6 +468,11 @@ def _written_name(func: exp.Func) -> str:
 def _is_built_in_type(data_type: exp.DataType) -> bool:
     """sqlglot knows the standard types; reg* types (catalog lookups), domains and qualified types it does not."""
     return isinstance(data_type.this, exp.DataType.Type) and data_type.this != exp.DataType.Type.USERDEFINED
+
+
+def _type_params(data_type: exp.DataType) -> list[exp.DataTypeParam]:
+    """A type's length or precision parameters (`char(n)`, `numeric(p, s)`), not the element type of an array."""
+    return [param for param in data_type.expressions if isinstance(param, exp.DataTypeParam)]
 
 
 def _identifier_value(identifier: exp.Identifier) -> str:

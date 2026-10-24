@@ -190,6 +190,45 @@ class TestSqlGuard:
             f"write the length as a number, e.g. {name}(x::text, 2, '0')",
         )
 
+    @pytest.mark.parametrize(
+        ("sql", "type_sql"),
+        [
+            ("select 1::bit(83886080) from marts.fct_orders", "BIT(83886080)"),
+            ("select ''::char(10485760) from marts.fct_orders", "CHAR(10485760)"),
+            ("select cast(channel as varchar(10001)) from marts.fct_orders", "VARCHAR(10001)"),
+            ("select channel::character varying(20000) from marts.fct_orders", "VARCHAR(20000)"),
+            ("select channel::bpchar(20000) from marts.fct_orders", "BPCHAR(20000)"),
+            ("select channel::nchar(20000) from marts.fct_orders", "CHAR(20000)"),
+            ("select char(20000) 'a' from marts.fct_orders", "CHAR(20000)"),
+            ("select channel::varchar(20000)[] from marts.fct_orders", "VARCHAR(20000)"),
+            ("select channel::char(1e7) from marts.fct_orders", "CHAR(1e7)"),
+            ("select 1 from marts.fct_orders where channel = ''::char(10485760)", "CHAR(10485760)"),
+        ],
+    )
+    def test_type_length_over_the_cell_cap_is_rejected(self, guard: SqlGuard, sql: str, type_sql: str) -> None:
+        result = guard.check(sql)
+
+        assert result.errors == (
+            f"[guard:type_length] type {type_sql} has a length over 10,000; use lengths up to 10,000, or cast to text",
+        )
+
+    @pytest.mark.parametrize(
+        "cast",
+        [
+            "net_revenue::numeric(12, 2)",
+            "cast(net_revenue as numeric(38, 4))",
+            "channel::varchar(10000)",
+            "channel::char(2)",
+            "1::bit(8)",
+            "order_date::timestamp(3)",
+            "char(10) 'a'",
+        ],
+    )
+    def test_type_length_up_to_the_cell_cap_passes(self, guard: SqlGuard, cast: str) -> None:
+        result = guard.check(f"select {cast} from marts.fct_orders")
+
+        assert result.ok, result.errors
+
     def test_pad_limit_is_the_cell_cap(self) -> None:
         assert MAX_PAD_LENGTH == MAX_CELL_CHARS
 

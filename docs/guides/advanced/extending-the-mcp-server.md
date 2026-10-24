@@ -87,7 +87,7 @@ Then add the tool to [Using the MCP server](../basic/using-the-mcp-server.md) wi
 
 The guard rejects every function that is not on the list, so the common case is a query that fails with `[guard:function] function xyz is not allowed`. Before you allow it, ask whether the model can do without; every addition widens what a hostile or confused query can reach.
 
-**What to check first.** The function must be harmless in a read-only role: no side effects, no file or network access, no catalog or session introspection (`pg_*`, `current_setting`, `dblink*`, `lo_*`, `query_to_xml` stay out), no unbounded output (`generate_series`, `repeat`; `lpad` and `rpad` pass only with a literal length up to 10,000), and no way to run a nested query from a string.
+**What to check first.** The function must be harmless in a read-only role: no side effects, no file or network access, no catalog or session introspection (`pg_*`, `current_setting`, `dblink*`, `lo_*`, `query_to_xml` stay out), no unbounded output (`generate_series`, `repeat`; `lpad` and `rpad` pass only with a literal length up to 10,000, as do type lengths such as `char(n)`), and no way to run a nested query from a string.
 
 **1. The list** (`sql_guard.py`, `ALLOWED_FUNCTIONS`). The names are the ones **sqlglot** reports, not always the Postgres spelling. sqlglot parses some Postgres functions into nodes with another name (`string_agg` becomes `group_concat`, `date_trunc` becomes `timestamp_trunc`, `~` becomes `regexp_like`), and the comment above the list records the mapping. The guard's error message names the function as the model wrote it (`function string_agg ...`), so find the name the list compares against by asking sqlglot:
 
