@@ -362,16 +362,38 @@ class TestWholeRowReferences:
         assert any("whole-row reference" in error and "select named columns" in error for error in result.errors)
 
     @pytest.mark.parametrize(
-        "sql",
+        ("sql", "fragment"),
         [
-            "select to_json(c) from marts.dim_customers c",
-            "select row_to_json(c) from marts.dim_customers c",
-            "select row(c.email) from marts.dim_customers c",
-            "select c::text from marts.dim_customers c",
+            ("select to_json(c) from marts.dim_customers c", "function to_json is not allowed"),
+            ("select row_to_json(c) from marts.dim_customers c", "function row_to_json is not allowed"),
+            ("select row(c.email) from marts.dim_customers c", "function row is not allowed"),
+            ("select c::text from marts.dim_customers c", "whole-row reference `c`"),
         ],
     )
-    def test_record_conversions_stay_rejected(self, guard: SqlGuard, sql: str) -> None:
-        assert not guard.check(sql).ok
+    def test_record_conversions_stay_rejected(self, guard: SqlGuard, sql: str, fragment: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok
+        assert any(fragment in error for error in result.errors), result.errors
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            'select "C" from marts.dim_customers "C"',
+            'select "Foo" from marts.dim_customers as "Foo"',
+            'select "dim_customers" from marts.dim_customers',
+            'select "DIM_CUSTOMERS" from marts.dim_customers',
+            'with "X" as (select 1) select "X" from "X"',
+            # Postgres folds unquoted Foo to foo, a plain unknown column; the guard fails closed and rejects it too.
+            'select Foo from marts.dim_customers as "Foo"',
+            'select "C" from marts.dim_customers c',
+        ],
+    )
+    def test_quoted_names_are_matched_case_insensitively(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert not result.ok
+        assert any("whole-row reference" in error for error in result.errors), result.errors
 
     @pytest.mark.parametrize(
         "sql",

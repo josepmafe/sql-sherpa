@@ -246,3 +246,17 @@ class TestToolsWithoutArtifacts:
         )
 
         assert len(tools.get_examples("net revenue by month", k=2).examples) == 2
+
+
+@pytest.mark.warehouse  # needs the built catalog, not the database
+class TestGetContextOnEmptyTable:
+    def test_empty_fct_orders_is_a_tool_error(self) -> None:
+        class EmptyDatabase:
+            def scalar(self, query: str, params: object = ()) -> object:
+                return None  # max/min over no rows
+
+        loader = MartCatalogLoader(REPO_ROOT / "data-platform" / "dbt" / "target-prod")
+        tools = WarehouseTools(loader, EmptyDatabase(), ExampleIndex([]))  # type: ignore[arg-type]
+
+        with pytest.raises(WarehouseToolError, match=r"fct_orders has no rows; run make build-prod"):
+            tools.get_context()

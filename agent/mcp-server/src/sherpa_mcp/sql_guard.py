@@ -210,8 +210,9 @@ def _is_whole_row(column: exp.Column) -> bool:
     Postgres resolves a real column first, so this also rejects a column that shares such a name; that is rare and the
     model can qualify it (`alias.column`).
     """
-    name = _identifier_value(column.this)
-    if name in _ctes_in_scope(column):
+    # Fails closed: compared case-insensitively on both sides, so `"C"`, `C` and `c` all count as the same name.
+    name = _identifier_value(column.this).lower()
+    if name in {cte.lower() for cte in _ctes_in_scope(column)}:
         return True
 
     scope = column.parent
