@@ -33,17 +33,25 @@ generator = [
     "tzdata>=2026.5",
     "typer>=0.27.3",
 ]
+mcp = [
+    "mcp==2.3.0",
+    "psycopg[binary,pool]>=3.3.6",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.1",
+    "pyyaml>=6.0.3",
+    "sqlglot>=30.24.0",
+]
 
 [tool.uv]
-default-groups = ["dev", "generator", "dbt"]
+default-groups = ["dev", "generator", "dbt", "mcp"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["data-platform/generator/src/sherpa_generator"]
+packages = ["data-platform/generator/src/sherpa_generator", "agent/mcp-server/src/sherpa_mcp"]
 
 [tool.pytest.ini_options]
-testpaths = ["data-platform/generator/tests", "data-platform/tests"]
-pythonpath = ["data-platform/scripts"]  # data-platform/scripts/ is not a package; this lets its tests import its modules
-addopts = '-m "not slow and not warehouse"'  # an explicit -m on the command line replaces this
+testpaths = ["data-platform/generator/tests", "data-platform/tests", "agent/mcp-server/tests"]
+pythonpath = ["data-platform/scripts", "data-platform/generator/tests"]  # scripts is not a package, and the generator tests import their helpers module
+addopts = '-m "not slow and not warehouse" --import-mode=importlib'  # an explicit -m on the command line replaces the marker default; importlib lets two components both have a test_settings.py
 markers = [
     "integration: needs Postgres",
     "slow: full-year runs",
@@ -68,7 +76,7 @@ runtime-evaluated-base-classes = [
 ]
 
 [tool.mypy]
-files = ["data-platform/generator/src"]
+files = ["data-platform/generator/src", "agent/mcp-server/src"]
 python_version = "3.12"
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]  # lets GeneratorSettings() be built from the environment without arguments
