@@ -1,3 +1,7 @@
+# One compose project for every checkout and worktree of the repo, so they all share one Postgres container and
+# one data volume instead of each folder getting its own (which would also clash on the port).
+name: sql-sherpa
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -22,3 +26,4 @@ services:
 
 volumes:
   pgdata:
+    name: sherpa_pgdata
