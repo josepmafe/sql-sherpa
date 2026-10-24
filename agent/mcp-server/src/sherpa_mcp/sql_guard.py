@@ -50,6 +50,9 @@ ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
         "similarity",
     }
 )
+# lpad/rpad build a string of the length they are given, so only a literal length up to the cell cap the server
+# returns (database.MAX_CELL_CHARS) is allowed: a computed or huge length could fill the server's memory.
+MAX_PAD_LENGTH: Final = 10_000
 ERROR_SNIPPET_LENGTH: Final = 60  # longest expression an error quotes for an operator the guard rejects
 # Every error starts with `[guard:<rule>]`, a stable code a caller can match on; the rest may quote the query.
 ERROR_CODE: Final = "[guard:{rule}] "
@@ -103,9 +106,16 @@ class GuardResult(BaseModel):
 class SqlGuard:
     """Never rewrites the SQL and never raises on bad SQL: every problem is an error in the result."""
 
-    def __init__(self, mart_columns: Mapping[str, frozenset[str]]) -> None:
-        """`mart_columns`: every visible mart and the names of its columns, as Postgres stores them."""
+    def __init__(
+        self, mart_columns: Mapping[str, frozenset[str]], allowed_functions: frozenset[str] = ALLOWED_FUNCTIONS
+    ) -> None:
+        """`mart_columns`: every visible mart and the names of its columns, as Postgres stores them.
+
+        `allowed_functions` defaults to the agent's list; another caller (the UI) may pass its own, named as in
+        `ALLOWED_FUNCTIONS` (sqlglot's names next to the Postgres ones).
+        """
         self._mart_columns = mart_columns
+        self._allowed_functions = allowed_functions
 
     def check(self, sql: str) -> GuardResult:
         try:
@@ -153,6 +163,23 @@ class SqlGuard:
                 return [_error("locking", "locking clause FOR UPDATE/SHARE is not allowed", "remove it")]
             case _ if isinstance(node, _WRITE_NODES):
                 return [_error("write", f"{_statement_kind(node)} is not allowed", "only SELECT queries run")]
+            case exp.With() if node.args.get("recursive"):
+                # A recursive CTE can grow without bound inside the 5 s timeout.
+                return [
+                    _error(
+                        "recursive",
+                        "WITH RECURSIVE is not allowed",
+                        "use marts.dim_date for a series of dates, or a non-recursive query",
+                    )
+                ]
+            case exp.Pad() if not _is_small_literal(node.expression):
+                return [
+                    _error(
+                        "pad",
+                        f"{_written_name(node)} needs a literal length of at most {MAX_PAD_LENGTH:,}",
+                        f"write the length as a number, e.g. {_written_name(node)}(x::text, 2, '0')",
+                    )
+                ]
             case exp.DataType() if not _is_built_in_type(node):
                 return [
                     _error(
@@ -179,7 +206,7 @@ class SqlGuard:
                     )
                 ]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):
-                if _function_name(node) in ALLOWED_FUNCTIONS:
+                if _function_name(node) in self._allowed_functions:
                     return []
 
                 name = _written_name(node)
@@ -377,6 +404,15 @@ def _function_hint(name: str) -> str:
 
 def _operator_hint(node: exp.Expr) -> str:
     return next((hint for kind, hint in _OPERATOR_HINTS if isinstance(node, kind)), DEFAULT_OPERATOR_HINT)
+
+
+def _is_small_literal(length: exp.Expr | None) -> bool:
+    return (
+        isinstance(length, exp.Literal)
+        and not length.is_string
+        and length.is_int
+        and int(length.this) <= MAX_PAD_LENGTH
+    )
 
 
 def _cut(text: str) -> str:

@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 
 import pytest
-from sherpa_mcp.sql_guard import SqlGuard
+from sherpa_mcp.database import MAX_CELL_CHARS
+from sherpa_mcp.sql_guard import ALLOWED_FUNCTIONS, MAX_PAD_LENGTH, SqlGuard
 
 MART_COLUMNS = {
     "fct_orders": frozenset(
@@ -140,12 +141,71 @@ class TestSqlGuard:
         assert result.ok
         assert result.tables == ("marts.fct_orders",)
 
-    def test_recursive_cte_may_reference_itself(self, guard: SqlGuard) -> None:
-        sql = "with recursive n as (select 1 as i union all select i + 1 from n where i < 5) select * from n"
-
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "with recursive n as (select 1 as i union all select i + 1 from n where i < 5) select * from n",
+            "with recursive n as (select 1 as i) select * from n",
+            "select * from (with recursive n as (select 1 as i union all select i + 1 from n) select * from n) s",
+            "select * from marts.fct_orders where order_id in (with recursive n(i) as (select 1) select i from n)",
+        ],
+    )
+    def test_recursive_cte_is_rejected(self, guard: SqlGuard, sql: str) -> None:
         result = guard.check(sql)
 
-        assert result.ok
+        assert not result.ok
+        assert (
+            "[guard:recursive] WITH RECURSIVE is not allowed; "
+            "use marts.dim_date for a series of dates, or a non-recursive query"
+        ) in result.errors
+
+    @pytest.mark.parametrize(
+        "call",
+        ["lpad(channel, 2, '0')", "lpad(order_id::text, 8, '0')", "rpad(channel, 10)", "lpad(channel, 10000, '-')"],
+    )
+    def test_pad_with_a_small_literal_length_passes(self, guard: SqlGuard, call: str) -> None:
+        result = guard.check(f"select {call} from marts.fct_orders")
+
+        assert result.ok, result.errors
+
+    @pytest.mark.parametrize(
+        ("call", "name"),
+        [
+            ("lpad('a', 100000000, 'b')", "lpad"),
+            ("rpad('a', 10001)", "rpad"),
+            ("lpad('a', order_id::int)", "lpad"),
+            ("lpad('a', 5 * 1000)", "lpad"),
+            ("lpad('a', (5))", "lpad"),
+            ("lpad('a', '5')", "lpad"),
+            ("lpad('a', 5.0)", "lpad"),
+            ("rpad('a', -1)", "rpad"),
+            ("lpad('a', (select max(order_id) from marts.fct_orders)::int)", "lpad"),
+        ],
+    )
+    def test_pad_with_a_computed_or_huge_length_is_rejected(self, guard: SqlGuard, call: str, name: str) -> None:
+        result = guard.check(f"select {call} from marts.fct_orders")
+
+        assert result.errors == (
+            f"[guard:pad] {name} needs a literal length of at most 10,000; "
+            f"write the length as a number, e.g. {name}(x::text, 2, '0')",
+        )
+
+    def test_pad_limit_is_the_cell_cap(self) -> None:
+        assert MAX_PAD_LENGTH == MAX_CELL_CHARS
+
+    def test_repeat_stays_rejected(self, guard: SqlGuard) -> None:
+        result = guard.check("select repeat('a', 5) from marts.fct_orders")
+
+        assert not result.ok
+
+    def test_allowed_functions_can_be_replaced(self) -> None:
+        narrow = SqlGuard(MART_COLUMNS, allowed_functions=frozenset({"count"}))
+        wide = SqlGuard(MART_COLUMNS, allowed_functions=ALLOWED_FUNCTIONS | {"md5"})
+
+        assert narrow.check("select count(*) from marts.fct_orders").ok
+        assert not narrow.check("select upper(channel) from marts.fct_orders").ok
+        assert wide.check("select md5(channel) from marts.fct_orders").ok
+        assert not SqlGuard(MART_COLUMNS).check("select md5(channel) from marts.fct_orders").ok
 
     def test_identifier_case_and_quotes(self, guard: SqlGuard) -> None:
         quoted = guard.check('select * from "marts"."fct_orders"')
