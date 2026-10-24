@@ -502,11 +502,11 @@ class TestSqlGuard:
     @pytest.mark.parametrize(
         ("sql", "calls"),
         [
-            ("select now() - interval '1 day' from marts.fct_orders", ("current_timestamp",)),
+            ("select now() - interval '1 day' from marts.fct_orders", ("now()/current_timestamp",)),
             ("select 1 from marts.fct_orders where order_date >= current_date - 30", ("current_date",)),
             (
                 "select current_timestamp, current_date, now() from marts.fct_orders",
-                ("current_timestamp", "current_date"),
+                ("now()/current_timestamp", "current_date"),
             ),
             ("select max(order_date) from marts.fct_orders", ()),
         ],
@@ -516,6 +516,12 @@ class TestSqlGuard:
 
         assert result.ok, result.errors
         assert result.clock_calls == calls
+
+    @pytest.mark.parametrize("call", ["localtimestamp", "localtime", "current_time"])
+    def test_other_clock_keywords_are_rejected(self, guard: SqlGuard, call: str) -> None:
+        result = guard.check(f"select {call} from marts.fct_orders")
+
+        assert result.errors == (f"[guard:function] function {call} is not allowed; {FUNCTION_HINT}",)
 
     @pytest.mark.parametrize(
         ("sql", "error"),

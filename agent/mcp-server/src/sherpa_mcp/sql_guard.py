@@ -85,8 +85,12 @@ _OPERATOR_HINTS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
     (exp.RegexpLike, "use LIKE or ILIKE instead of a regular expression"),
     (exp.RegexpILike, "use LIKE or ILIKE instead of a regular expression"),
 )
-# Calls that read the real clock; allowed, but the warehouse's "today" is its as-of date (agent spec §4.1).
-_CLOCK_NODES: Final = (exp.CurrentTimestamp, exp.CurrentDate, exp.CurrentTime, exp.Localtimestamp, exp.Localtime)
+# Allowed calls that read the real clock, named as the model may have written them (sqlglot parses `now()` as
+# CURRENT_TIMESTAMP); the warehouse's "today" is its as-of date (agent spec §4.1).
+_CLOCK_CALLS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
+    (exp.CurrentTimestamp, "now()/current_timestamp"),
+    (exp.CurrentDate, "current_date"),
+)
 _CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
@@ -113,7 +117,7 @@ class GuardResult(BaseModel):
     ok: bool
     errors: tuple[str, ...]
     tables: tuple[str, ...]
-    clock_calls: tuple[str, ...] = ()  # now(), current_date, ... as written; not errors
+    clock_calls: tuple[str, ...] = ()  # "now()/current_timestamp", "current_date"; not errors
 
 
 class SqlGuard:
@@ -156,8 +160,7 @@ class SqlGuard:
         clock_calls: list[str] = []
         for node in statement.walk():
             errors.extend(self._node_errors(node, tables))
-            if isinstance(node, _CLOCK_NODES):
-                clock_calls.append(_written_name(node))
+            clock_calls.extend(name for kind, name in _CLOCK_CALLS if isinstance(node, kind))
         errors.extend(self._qualified_column_errors(statement))
 
         unique_errors = tuple(dict.fromkeys(errors))

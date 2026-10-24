@@ -263,7 +263,7 @@ get_examples {"question": "what is the weather like", "k": 3}
 
 ### `validate_sql`
 
-Checks a query without running it: the guard first, then a Postgres `EXPLAIN` (no execution). It returns `ok`, the `errors` to fix, the `tables` the query reads and `warnings`. A bad query is a normal result here, not a tool error. A warning does not block the query: today it flags a query that reads the real clock (`now()`, `current_date`, ...), which answers for the wrong period because the data stops at the as-of date.
+Checks a query without running it: the guard first, then a Postgres `EXPLAIN` (no execution). It returns `ok`, the `errors` to fix, the `tables` the query reads and `warnings`. A bad query is a normal result here, not a tool error. A warning does not block the query: today it flags a query that reads the real clock (`now()`, `current_timestamp` or `current_date`), which answers for the wrong period because the data stops at the as-of date.
 
 ```
 validate_sql {"sql": "select current_status, count(*) as orders from marts.fct_orders group by 1 order by 1"}
