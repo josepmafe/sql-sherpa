@@ -30,6 +30,7 @@ There are no accounts: everyone uses the same anonymous, read-only access (§5).
 2. **Always live.** No data is baked into the frontend build or cached long enough to go stale. After adding data in the backend (`make generate` + `make build-prod`), a browser refresh shows it on every screen.
 3. **Every query really hits the warehouse.** Explorer and Ask results come from executing SQL against Postgres through the read-only path, never from mocks or stored results.
 4. **Every visual is drawn from data.** Home and Lineage render from live warehouse and dbt-artifact data, never from static images or hand-maintained JSON.
+5. **One command to try it (ui-5).** Someone with only Docker can clone the repository and get the whole product with data, without Python, uv or make on their machine. This doesn't change the host-based development workflow.
 
 ### Non-goals
 - Login, accounts and per-user permissions (and therefore staging or raw access for analysts).
@@ -123,6 +124,25 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
 - **Bound to localhost** like Postgres: no auth, so the port must not be reachable from the LAN. A trusted-host check (`TrustedHostMiddleware`, allowing `localhost` and `127.0.0.1`) also rejects requests whose `Host` header is anything else, which stops DNS-rebinding pages from calling the API (and spending Bedrock credits).
 
 ---
+
+### Demo mode (ui-5)
+
+For people who want to *try* SQL Sherpa rather than develop on it:
+
+```bash
+cp .env.example .env
+docker compose --profile demo up -d
+# open http://127.0.0.1:8090 (the first start builds the warehouse, ~5 minutes)
+```
+
+- **The `demo` profile adds one one-shot service, `bootstrap`,** defined in `data-platform/bootstrap/`. Its image holds a **copy** of the code and the dbt packages, so dbt parses from the image, not from a slow host bind mount.
+- **On start** it waits for `postgres` and checks, as `sherpa_admin`, whether `marts.fct_orders` exists and has rows.
+  - **Yes:** it exits at once with "warehouse present". A warehouse you built yourself is never touched.
+  - **No:** it runs the generator (`generate --days 365`, ending yesterday), then `dbt build` and `dbt docs generate` on the prod target with `--target-path target-prod`, then exits 0. On any failure it exits non-zero with the failing step's output.
+- **It bind-mounts only `data-platform/dbt/target-prod/`** (read-write), the same folder the host's `make build-prod` writes and `mcp` and `ui` read. Both workflows share artifacts as they share the database.
+- **Nothing depends on `bootstrap`.** `make up` (no profile) never starts it, so a development `make up` never kicks off a surprise build. In the demo, `mcp` and `ui` start immediately, the health banner reports the missing artifacts and the build in progress, and the screens fill in once the artifacts land (the backend reloads them on change, §3).
+- **Ask in the demo** needs model credentials. Setting `ANTHROPIC_API_KEY` and `SHERPA_MODEL_DEFAULT=anthropic:<model>` in `.env` is enough (the agent spec supports the Anthropic API by model string), or a Bedrock profile in `~/.aws`. Without either, Ask shows "model unavailable", and Home, Explorer and Lineage work fully (criterion 1).
+- **Ports** `5432`, `8765` and `8090` must be free on localhost; the README says which variable moves each.
 
 ## 4. Backend API
 
@@ -329,7 +349,7 @@ Browser storage never holds result rows; results are always re-fetched (criteria
 | `SHERPA_UI_DBT_TARGET_PATH` | `/app/dbt/target-prod` (in the container) | Mounted artifacts |
 | `MCP_HTTP_URL` | `http://mcp:8765/mcp` (in the container) | The agent's tool server |
 
-The container also receives `AWS_PROFILE`, `AWS_REGION`, `LOGFIRE_TOKEN` and, when set, `SSL_CERT_FILE` / `AWS_CA_BUNDLE` (§3).
+The container also receives `AWS_PROFILE`, `AWS_REGION`, `LOGFIRE_TOKEN`, `ANTHROPIC_API_KEY` and `SHERPA_MODEL_DEFAULT` (for the demo's Anthropic-API option, §3) and, when set, `SSL_CERT_FILE` / `AWS_CA_BUNDLE` (§3).
 
 ---
 
@@ -343,6 +363,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 | **ui-2 — Lineage** | Lineage endpoints and selector subset, the graph, node panel, run-status overlay, "Failing only" | ui-1 | Table-path and domain e2e flows; the selector subset matches `dbt ls` and rejects an unsupported form; a failing test in the prod build shows its node red and appears under "Failing only" |
 | **ui-3 — Home** | `home_queries.yaml`, `HomeService`, the data-status strip, Home screen | ui-2 (the failing-tests link) | Every tile equals a direct SQL check in the e2e test; after `make generate DAYS=1 && make build-prod`, a refresh changes `as_of_date` and the tiles (criterion 2) |
 | **ui-4 — Ask** | Ask endpoints with SSE, chart rules, draft/corrections/answer screens, history with re-runs, trace links, model-health tracking and the offline compose override | ui-1, agent-design-3 | The Ask backend tests pass with agent fakes; the `live` e2e flow (question → draft → one correction → re-plan → Show results) passes once against Bedrock; the offline compose check shows "model unavailable" within seconds while the other screens work |
+| **ui-5 — One-command demo** | `data-platform/bootstrap/` (Dockerfile + entrypoint), the compose `demo` profile, the health banner's "warehouse being built" state, the README "Try it" section | ui-4 | On a clean clone with only Docker: `cp .env.example .env && docker compose --profile demo up -d` brings up a working product (Home shows numbers, Explorer runs a query, Lineage shows the graph, Ask shows "model unavailable" without credentials); a second `up` finishes `bootstrap` in seconds; with a host-built warehouse, `bootstrap` changes nothing (`ops.dbt_run_results` gains no rows) |
 
 ---
 
@@ -353,6 +374,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
   - `meta.{domain, grain, primary_key, pii, synonyms}`, `metric_<name>` doc blocks, `accepted_values` tests, `as_of_date` and `fct_orders.is_first_order` (§6.5, §11)
   - the prod artifacts in `target-prod/` (`manifest.json`, `catalog.json`, `sources.json`) and the `ops.dbt_run_results` audit table
   - the `sherpa_ui` role, created by its idempotent roles script and granted like `sherpa_agent`
+  - for ui-5's `bootstrap`: the generator CLI and the dbt project, run as `make backfill` and `make build-prod` would run them
 - **Agent spec:**
   - `sherpa_mcp.sql_guard` and masking as a library (§4.2)
   - the `mcp` service over HTTP (§3)
@@ -378,6 +400,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 - Lineage shows and accepts real dbt selector syntax, a tested subset of it.
 - Refund rate on Home counts refunds by refund date, so the latest period isn't biased by refunds that haven't happened yet.
 - `~/.aws` is mounted read-only into `ui` for Bedrock; nothing credential-related is in the image or the repo.
+- Trying and developing are separate paths that share only the database and the artifacts folder: visitors use the `demo` profile and its one-shot `bootstrap`, while development stays host-based (fast, no bind-mounted dbt). `bootstrap` never rebuilds an existing warehouse, and nothing waits on it.
 
 ---
 
@@ -389,3 +412,5 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 - Column-level lineage (would need SQL parsing of compiled models).
 - Explaining SQL in plain language (a new agent capability with its own evals).
 - CSV export (a row-cap policy question), column profiling, and 👍/👎 feedback on answers as eval-case candidates.
+- A containerised development environment (a "toolbox" image with every dependency group, the Makefile delegating to it). It would make the repo developable with only Docker, at the cost of slow bind-mounted dbt on Windows and awkward pre-commit hooks.
+- **Bring your own dbt project** (Postgres-based ones only): a guide and a small milestone after ui-5. The agent's project-specific constants become settings: the consumption schema (`MARTS_SCHEMA`), the `as_of_date` and first-order queries, the `does_not_cover` scope, the examples file, the tool-description wording. Home's `home_queries.yaml` becomes a setting too. PII masking also needs a name-pattern fallback, because a project without `meta.pii` tags would otherwise send personal data to the model unmasked. Other warehouses are out of scope (dialect, drivers, no `pg_trgm`).
