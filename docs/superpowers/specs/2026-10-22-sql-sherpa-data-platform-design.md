@@ -52,34 +52,36 @@ Even though it is a toy project, the output must be **production-like**: a compl
 
 ```
 sql-sherpa/
-├── docker-compose.yml
-├── .env.example
-├── Makefile
-├── pyproject.toml
-├── docker/postgres/init/00_roles.sh       # roles + raw schemas (.sh so it can read passwords from env)
-├── generator/                             # package: sherpa_generator
-│   ├── src/sherpa_generator/
-│   │   ├── cli.py, settings.py
-│   │   ├── records/        # Pydantic models of every raw table + StrEnums (the §4 source contract)
-│   │   ├── database/       # connection, raw schema DDL, COPY writer for records
-│   │   ├── simulation/     # day loop, state, deterministic randomness, primary keys,
-│   │   │                   #   per-day changes, store snapshot, realism rules R1–R12 (§4.4)
-│   │   └── behaviour/      # one simulator class per business area (catalog, traffic, CRM,
-│   │                       #   orders, after-sales, ad spend, …)
-│   └── tests/              # mirrors the package layout
-├── dbt/                                   # dbt project: `sherpa`
-│   ├── dbt_project.yml  profiles.yml  packages.yml  selectors.yml
-│   ├── models/{staging,intermediate,marts}/
-│   ├── snapshots/  seeds/  macros/  tests/  analyses/
+├── docker-compose.yml  .env.example  Makefile  pyproject.toml
+├── data-platform/                   # everything this spec builds
+│   ├── postgres/init/00_roles.sh    #   roles (.sh so it can read passwords from the environment)
+│   ├── generator/                   #   package: sherpa_generator
+│   │   ├── src/sherpa_generator/
+│   │   │   ├── cli.py, settings.py
+│   │   │   ├── records/        # Pydantic models of every raw table + StrEnums (the §4 source contract)
+│   │   │   ├── database/       # connection, raw schema DDL, COPY writer for records
+│   │   │   ├── simulation/     # day loop, state, deterministic randomness, primary keys,
+│   │   │   │                   #   per-day changes, store snapshot, realism rules R1–R12 (§4.4)
+│   │   │   └── behaviour/      # one simulator class per business area (catalog, traffic, CRM,
+│   │   │                       #   orders, after-sales, ad spend, …)
+│   │   └── tests/              # mirrors the package layout
+│   ├── dbt/                         #   dbt project: `sherpa`
+│   │   ├── dbt_project.yml  profiles.yml  packages.yml  selectors.yml
+│   │   ├── models/{staging,intermediate,marts}/
+│   │   └── snapshots/  seeds/  macros/  tests/  analyses/
+│   ├── scripts/                     #   helper scripts (the dbt docs-coverage check)
+│   └── tests/                       #   tests across generator and dbt (seeds, agent access to the marts, scripts)
+├── agent/                           # the agent spec
+├── ui/                              # the UI spec
 ├── .github/workflows/ci.yml
-└── docs/superpowers/specs/
+└── docs/                            # specs, plans, guides
 ```
 
 ---
 
 ## 3. Database Topology
 
-### Roles (created by `docker/postgres/init/00_roles.sh`)
+### Roles (created by `data-platform/postgres/init/00_roles.sh`)
 
 The init script is a shell script (not `.sql`) because the Postgres image runs `.sql` init files without environment substitution; the script calls `psql` with passwords taken from the container environment (`.env`).
 
@@ -102,7 +104,7 @@ Passwords come from `.env`.
 
 **Schema naming:** a custom `generate_schema_name` macro uses the custom schema name verbatim on the `prod` target and prefixes it with `dev_` on the `dev` target (e.g. `dev_marts`). Nodes without a custom schema use the target's schema: `dev_public` on `dev`, `public` on `prod`. **Exception: snapshots always write to `snapshots`** regardless of target — a snapshot is captured history that cannot be rebuilt, so there is exactly one copy, and dev and prod models both read it. `dev` is the default target; the agent reads the `prod` `marts` schema.
 
-**Artifacts:** prod commands use `--target-path target-prod`, so `dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `dbt/target/`.
+**Artifacts:** prod commands use `--target-path target-prod`, so `data-platform/dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `data-platform/dbt/target/`.
 
 **Additional targets:**
 - `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database and revokes all privileges on its `public` schema and `TEMPORARY` on the database from `PUBLIC` (as the init script does for the main database; the large-object revokes come from `template1`), runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
@@ -468,14 +470,14 @@ The agent may rely on exactly these:
 
 - **Schema** `marts` (prod target) with the models in §6.5. Intermediate, staging and snapshot models are not part of the interface.
 - **Role** `sherpa_agent`: read-only, `SELECT` on `marts` only, `USAGE` on `extensions` (for `pg_trgm`), `statement_timeout = 5s`.
-- **Artifacts** `dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod`, and by `make docs-prod` until ui-1 adds `catalog.json` to `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, and (from data-platform-4) exposures.
-- **Eval dataset:** database `sherpa_eval` with artifacts in `dbt/target-eval/` (§3), built by `make eval-db`.
+- **Artifacts** `data-platform/dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod`, and by `make docs-prod` until ui-1 adds `catalog.json` to `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, and (from data-platform-4) exposures.
+- **Eval dataset:** database `sherpa_eval` with artifacts in `data-platform/dbt/target-eval/` (§3), built by `make eval-db`.
 - **dbt target `agent`** (from agent-design-9) for read-only compilation with `sherpa_agent` credentials.
 - **Postgres comments** on mart tables and columns (`persist_docs`), so the descriptions are available without the manifest.
 - **`pg_trgm`** with GIN trigram indexes on product/brand/category name columns for fuzzy value search.
 - **Determinism:** `as_of_date` semantics (§6.5) — time-relative columns never depend on `now()`.
 
-**The UI** (UI spec) relies on the same interface, with its own read-only role `sherpa_ui` (§3). It also reads build history from `ops.dbt_run_results` (§8, "Added by ui-1") and freshness from `dbt/target-prod/sources.json`, which only `dbt source freshness` writes.
+**The UI** (UI spec) relies on the same interface, with its own read-only role `sherpa_ui` (§3). It also reads build history from `ops.dbt_run_results` (§8, "Added by ui-1") and freshness from `data-platform/dbt/target-prod/sources.json`, which only `dbt source freshness` writes.
 
 Agent and UI work can start once data-platform-2 is done; data-platform-3–data-platform-5 add tables and metadata without breaking the data-platform-2 interface.
 
@@ -493,7 +495,7 @@ Agent and UI work can start once data-platform-2 is done; data-platform-3–data
 - CI does a full build on tiny data; slim/defer is local-only.
 - Backfill runs in 7-day chunks with snapshots between chunks.
 - Scale of ~8k orders / ~600k events per simulated year, consistent with a realistic ~3.1% session conversion. Volume, rate and distribution numbers are approximate targets, not exact goals.
-- Snapshots live in one shared `snapshots` schema for all targets; prod artifacts in `dbt/target-prod/`.
+- Snapshots live in one shared `snapshots` schema for all targets; prod artifacts in `data-platform/dbt/target-prod/`.
 - Cancellation refunds don't reduce revenue (the cancelled order already contributes 0); goodwill refunds never include shipping.
 - `new_customers` / CAC are campaign-level (via `acquisition_campaign_id`), so they sum correctly.
 - Late events are held in `raw_meta.pending_events` until their `received_at` day; the generator assigns its own PKs.

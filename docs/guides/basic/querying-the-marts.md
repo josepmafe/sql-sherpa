@@ -28,7 +28,7 @@ Facts (`fct_`) record events; dimensions (`dim_`) describe things you group or f
 
 ## Which revenue to use
 
-The metric definitions are written once, in `dbt/models/marts/_metrics.md` (one *doc block* per metric: reusable Markdown that column descriptions pull in with `doc('metric_net_revenue')`). So the text below is the same text the column comments carry.
+The metric definitions are written once, in `data-platform/dbt/models/marts/_metrics.md` (one *doc block* per metric: reusable Markdown that column descriptions pull in with `doc('metric_net_revenue')`). So the text below is the same text the column comments carry.
 
 | Column | Meaning | Use it for |
 |---|---|---|

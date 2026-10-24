@@ -38,11 +38,11 @@ generator = [
 default-groups = ["dev", "generator", "dbt"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["generator/src/sherpa_generator"]
+packages = ["data-platform/generator/src/sherpa_generator"]
 
 [tool.pytest.ini_options]
-testpaths = ["generator/tests", "tests"]
-pythonpath = ["scripts"]  # scripts/ is not a package; this lets tests/scripts import its modules
+testpaths = ["data-platform/generator/tests", "data-platform/tests"]
+pythonpath = ["data-platform/scripts"]  # data-platform/scripts/ is not a package; this lets its tests import its modules
 addopts = '-m "not slow and not warehouse"'  # an explicit -m on the command line replaces this
 markers = [
     "integration: needs Postgres",
@@ -58,7 +58,7 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "T20", "LOG", "G", "C4", "TC", "PT", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/**" = ["T20"]  # scripts print their results (CLAUDE.md)
+"data-platform/scripts/**" = ["T20"]  # scripts print their results (CLAUDE.md)
 
 [tool.ruff.lint.flake8-type-checking]
 runtime-evaluated-base-classes = [
@@ -68,7 +68,7 @@ runtime-evaluated-base-classes = [
 ]
 
 [tool.mypy]
-files = ["generator/src"]
+files = ["data-platform/generator/src"]
 python_version = "3.12"
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]  # lets GeneratorSettings() be built from the environment without arguments

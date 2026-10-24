@@ -13,7 +13,7 @@ import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-DEFAULT_TARGET_PATH = "dbt/target"
+DEFAULT_TARGET_PATH = "data-platform/dbt/target"
 DEFAULT_PATH_PREFIX = "models"
 
 

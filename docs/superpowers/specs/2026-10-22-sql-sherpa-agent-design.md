@@ -49,35 +49,44 @@ The output must be production-like: not necessarily complex, but well-built, wit
 | CLI / rendering | Typer + Rich |
 | Tests | pytest; PydanticAI `TestModel` / `FunctionModel` for every agent test. No live Bedrock calls in the unit suite |
 
-### Repository layout (additions)
+### Repository layout
+
+Everything this spec builds lives under `agent/`, one folder per component, each `<component>/src/<package>/` plus `tests/`:
 
 ```
-mcp_server/src/sherpa_mcp/
-  server.py        # FastMCP app, tool registration, transport selection
-  manifest.py      # loads target-prod manifest/catalog → Catalog model
-  sql_guard.py     # sqlglot static checks
-  masking.py       # PII masking
-  db.py            # psycopg pool as sherpa_agent
-  examples.yaml    # few-shot examples (disjoint from the eval gold set)
-mcp_server/tests/
-agent/src/sherpa_agent/
-  config.py        # settings: models per step, limits, provider
-  outcomes.py      # PlanOutcome, AnswerOutcome, Draft, Interpretation, Correction, Step, RunStats
-  recording.py     # records every MCP tool call/result for a run
-  guards.py        # output validators (execution reference, numbers check)
-  variants/        # one module per variant + registry
-  service.py       # AgentService: plan / answer, the API the CLI and the UI call
-  render.py        # Rich rendering of drafts and outcomes
-  cli.py           # `sherpa ask`
-agent/tests/
-evals/
-  cases.yaml       # gold set
-  run.py           # runner (CLI)
-  compare.py       # result-set comparison
-  report.py        # markdown + jsonl report
-  prices.yaml      # per-model token prices (maintained by hand)
-  FINDINGS.md      # what each technique did to the scores
-  runs/            # one directory per run (jsonl gitignored, report.md committed)
+agent/
+├── mcp-server/
+│   ├── Dockerfile         # the compose `mcp` service
+│   ├── src/sherpa_mcp/
+│   │   ├── server.py      # FastMCP app, tool registration, transport selection
+│   │   ├── manifest.py    # loads target-prod manifest/catalog → Catalog model
+│   │   ├── sql_guard.py   # sqlglot static checks (also used by the UI)
+│   │   ├── masking.py     # PII masking (also used by the UI)
+│   │   ├── db.py          # psycopg pool as sherpa_agent
+│   │   └── examples.yaml  # few-shot examples (disjoint from the eval gold set)
+│   └── tests/
+├── core/
+│   ├── src/sherpa_agent/
+│   │   ├── config.py      # settings: models per step, limits, provider
+│   │   ├── outcomes.py    # PlanOutcome, AnswerOutcome, Draft, Interpretation, Correction, Step, RunStats
+│   │   ├── recording.py   # records every MCP tool call/result for a run
+│   │   ├── guards.py      # output validators (execution reference, numbers check)
+│   │   ├── variants/      # one module per variant + registry
+│   │   ├── service.py     # AgentService: plan / answer, the API the CLI and the UI call
+│   │   ├── render.py      # Rich rendering of drafts and outcomes
+│   │   └── cli.py         # `sherpa ask`
+│   └── tests/
+└── evals/
+    ├── src/sherpa_evals/
+    │   ├── run.py         # runner (CLI)
+    │   ├── compare.py     # result-set comparison
+    │   └── report.py      # markdown + jsonl report
+    ├── tests/
+    ├── cases.yaml         # gold set
+    ├── prices.yaml        # per-model token prices (maintained by hand)
+    ├── REVIEW_PROMPT.md   # the gold-set review prompt
+    ├── FINDINGS.md        # what each technique did to the scores
+    └── runs/              # one directory per run (jsonl gitignored, report.md committed)
 ```
 
 ---
@@ -91,7 +100,7 @@ sherpa ask "…" ──► Variant pipeline (PydanticAI agents) ──MCP──�
                          └── Logfire spans ───────────────────────────────────────────────► Logfire / Phoenix
 ```
 
-- **Transport:** the server supports `MCP_TRANSPORT=stdio|http`. **stdio is the default**: the CLI and the eval runner each start one server subprocess, shared by every agent in that process, with concurrent requests allowed. **HTTP** (Streamable HTTP) runs as the `mcp` service in docker-compose, bound to `127.0.0.1:8765`, with `dbt/target-prod` mounted read-only. It serves multiple simultaneous client processes, notably the UI backend, which runs `AgentService` in-process and reaches `mcp` over HTTP (UI spec §3); stdio stays the fast development loop.
+- **Transport:** the server supports `MCP_TRANSPORT=stdio|http`. **stdio is the default**: the CLI and the eval runner each start one server subprocess, shared by every agent in that process, with concurrent requests allowed. **HTTP** (Streamable HTTP) runs as the `mcp` service in docker-compose, bound to `127.0.0.1:8765`, with `data-platform/dbt/target-prod` mounted read-only. It serves multiple simultaneous client processes, notably the UI backend, which runs `AgentService` in-process and reaches `mcp` over HTTP (UI spec §3); stdio stays the fast development loop.
 - **Metadata freshness:** the server loads the manifest/catalog at startup and reloads when `manifest.json`'s mtime changes (checked on each `list_tables` / `describe_table` call).
 - **stdio specifics:**
   - The MCP SDK's stdio client passes only a minimal environment to the subprocess, so the client passes the server's variables **explicitly** (`env=` with `SHERPA_*`, `LOGFIRE_*`, `AWS_*`). The server also loads `.env` itself as a fallback.
@@ -213,7 +222,7 @@ Default interpretations (documented in the system prompt and the metric doc bloc
 
 ### 5.4 Variants
 
-Each variant is a module in `agent/variants/` exposing `async def plan(question, corrections, ctx) -> PlanOutcome` and `async def answer(draft, ctx) -> AnswerOutcome`, registered by name. `AgentService` dispatches to the configured variant. All variants stay runnable, so ablations can be rerun at any time. `sherpa ask --variant <name>` and `evals/run.py --variant <name>` select one; the configured default is used otherwise.
+Each variant is a module in `agent/core/src/sherpa_agent/variants/` exposing `async def plan(question, corrections, ctx) -> PlanOutcome` and `async def answer(draft, ctx) -> AnswerOutcome`, registered by name. `AgentService` dispatches to the configured variant. All variants stay runnable, so ablations can be rerun at any time. `sherpa ask --variant <name>` and `sherpa_evals.run --variant <name>` select one; the configured default is used otherwise.
 
 | Variant | Milestone | Technique |
 |---|---|---|
@@ -257,9 +266,9 @@ Evals never run against the development warehouse, because `make advance` change
 - `make eval-db` runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`.
 - It then runs `dbt build` and `dbt docs generate` with target `eval` (`SHERPA_DB_NAME=sherpa_eval`, `--target-path target-eval`). Both the target and `make eval-db` are defined in the data platform spec §3.
 
-The MCP server used by the eval runner points at `sherpa_eval` and `dbt/target-eval`. `as_of_date` is therefore fixed at 2025-12-31, and every run sees the same data. The dataset is rebuilt only when the data platform spec changes. A rebuild bumps `dataset_version` in `cases.yaml` and requires re-running the default variant before any comparison.
+The MCP server used by the eval runner points at `sherpa_eval` and `data-platform/dbt/target-eval`. `as_of_date` is therefore fixed at 2025-12-31, and every run sees the same data. The dataset is rebuilt only when the data platform spec changes. A rebuild bumps `dataset_version` in `cases.yaml` and requires re-running the default variant before any comparison.
 
-### 7.1 Gold set (`evals/cases.yaml`)
+### 7.1 Gold set (`agent/evals/cases.yaml`)
 
 Written in **two tranches**, so agent-design-1–agent-design-3 can start right after data-platform-2:
 - **Tranche 1 (agent-design-2, 40 cases):** only needs the data-platform-2 marts.
@@ -300,16 +309,16 @@ Case schema:
 
 **Authoring workflow (agent-design-2):**
 1. Opus 5.5 drafts the tranche's cases (question, gold SQL, rationale, tables) from the data platform spec §6 and the `sherpa_eval` marts.
-2. **Automatic checks** (`evals/run.py --check-gold`): every `answered` case executes, returns ≥ 1 row (unless the rationale says an empty result is expected), returns identical results on two runs, and passes `sql_guard` (so gold SQL follows the same rules as the agent). Cases whose rationale cites a raw-data reconciliation also run a small hand-written raw-schema query (as `sherpa_admin`, stored in the case as `reconcile_sql`) that must give the same totals.
-3. **Cross-model review:** Codex and Gemini each review every case against the data platform spec §6.6 (semantics, not just syntax). The owner runs them through their own CLIs or chat with a fixed review prompt stored in `evals/REVIEW_PROMPT.md`, and records each verdict in `reviews`. If either reviewer is unavailable, a fresh Opus session with no access to the drafting conversation takes its place, and this is noted in `reviews`. The owner resolves disagreements. Only `accepted` cases count in reports.
+2. **Automatic checks** (`sherpa_evals.run --check-gold`): every `answered` case executes, returns ≥ 1 row (unless the rationale says an empty result is expected), returns identical results on two runs, and passes `sql_guard` (so gold SQL follows the same rules as the agent). Cases whose rationale cites a raw-data reconciliation also run a small hand-written raw-schema query (as `sherpa_admin`, stored in the case as `reconcile_sql`) that must give the same totals.
+3. **Cross-model review:** Codex and Gemini each review every case against the data platform spec §6.6 (semantics, not just syntax). The owner runs them through their own CLIs or chat with a fixed review prompt stored in `agent/evals/REVIEW_PROMPT.md`, and records each verdict in `reviews`. If either reviewer is unavailable, a fresh Opus session with no access to the drafting conversation takes its place, and this is noted in `reviews`. The owner resolves disagreements. Only `accepted` cases count in reports.
 4. The few-shot disjointness check (§4.3).
 
 Gold dates are absolute (e.g. "March 2025"), except in the `time` category, where relative questions are expected. Those cases' gold SQL is written relative to `as_of_date` (`(select max(order_date) from marts.fct_orders)`). That is fixed at 2025-12-31 on the frozen eval dataset, and the relative form still documents intent.
 
-### 7.2 Runner (`evals/run.py`)
+### 7.2 Runner (`sherpa_evals.run`)
 
 ```
-uv run python -m evals.run --variant v0_baseline [--category metrics] [--case metrics-003] [--repeat 1] [--concurrency 4] [--check-gold]
+uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--case metrics-003] [--repeat 1] [--concurrency 4] [--check-gold]
 ```
 
 - Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` questions are in flight at once.
@@ -339,7 +348,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent
 |---|---|---|
 | **agent-design-1 — MCP server** (needs data-platform-2) | `sherpa_mcp` with all §4.1 tools, `sql_guard`, masking, manifest loader with reload, both transports, compose `mcp` service, Logfire in the server (stderr only) | Tool tests run over **both stdio and HTTP** with identical results. `sql_guard` rejects a fixed list of ≥ 20 hostile inputs, including: multi-statement; `DELETE`; `SET`; `SELECT … INTO`; a data-modifying CTE; `pg_sleep`; `query_to_xml`; `current_setting`; `pg_catalog`/`information_schema` references; unqualified tables; comment tricks; a trailing `--` comment. `run_sql` on `select * from marts.fct_order_items` returns 100 rows and `truncated = true`. PII is masked in `describe_table` samples and `run_sql` output. Nothing is ever written to stdout. Works in MCP Inspector |
 | **agent-design-2 — Gold set + evals** | `make eval-db`; tranche 1 of `cases.yaml` (40, accepted); `REVIEW_PROMPT.md`; `run.py`, `compare.py`, `report.py`, `--check-gold`, `prices.yaml`; an **oracle variant** (`oracle`, test-only: returns the gold SQL) | `--check-gold` green. The oracle scores 100% on answered cases, which proves the comparison rules. `compare.py` unit tests cover column permutation, extra columns, ordered vs unordered, rounding and NULLs, and **a wrong key/value pairing that per-column matching would accept** |
-| **agent-design-3 — Baseline** | `AgentService` with the two-step contract (§5.1): `plan`/`answer`, `Draft`, step-attributed `Interpretation`, `Correction`s, progress events. Plus `v0_baseline`, RecordingToolset, guards, the CLI with `--confirm`, agent Logfire, trace propagation, output mode verified on Bedrock, and the optional `phoenix` compose profile (`arizephoenix/phoenix`, pinned, OTLP on `127.0.0.1:4317`, UI on `:6006`) | First baseline report committed to `evals/runs/`. Guard tests (FunctionModel) prove that fabricated numbers and stale `execution_id`s trigger retries and then `Failed`, and that allowed number forms (rounded magnitudes, dates, counts) pass. A test proves `plan` never calls `run_sql`. A correction test shows a corrected value appearing in the re-planned SQL with `grounded_by = correction`. Failure-handling tests cover throttling, the 4th SQL attempt and budget limits. The budget is re-set from the baseline p99 |
+| **agent-design-3 — Baseline** | `AgentService` with the two-step contract (§5.1): `plan`/`answer`, `Draft`, step-attributed `Interpretation`, `Correction`s, progress events. Plus `v0_baseline`, RecordingToolset, guards, the CLI with `--confirm`, agent Logfire, trace propagation, output mode verified on Bedrock, and the optional `phoenix` compose profile (`arizephoenix/phoenix`, pinned, OTLP on `127.0.0.1:4317`, UI on `:6006`) | First baseline report committed to `agent/evals/runs/`. Guard tests (FunctionModel) prove that fabricated numbers and stale `execution_id`s trigger retries and then `Failed`, and that allowed number forms (rounded magnitudes, dates, counts) pass. A test proves `plan` never calls `run_sql`. A correction test shows a corrected value appearing in the re-planned SQL with `grounded_by = correction`. Failure-handling tests cover throttling, the 4th SQL attempt and budget limits. The budget is re-set from the baseline p99 |
 | **agent-design-4 — Gold set batch 2** (needs data-platform-4) | Tranche 2 of `cases.yaml`: 10 more cases (marketing and web), `gold_version: 2` | Same checks as agent-design-2; `v0_baseline` is re-run on the full 50 cases as the baseline every technique is compared against |
 | **agent-design-5–agent-design-8 — Techniques** | `v1_grounding`, `v2_linking`, `v3_critic`, `v4_voting`, one per milestone | Each: a report against the current default, plus a `FINDINGS.md` entry (what changed, per-category effect, cost/latency effect, the decision). `v3_critic` and `v4_voting` also report how often `sql_revision` is set, since every revision changes SQL a person already approved |
 | **agent-design-9 — MetricFlow** (needs data-platform-5) | the `agent` dbt target (data platform spec §3), `compile_metrics` tool, `v5_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
@@ -370,10 +379,10 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent
 | `SHERPA_MODEL_FAST` | `bedrock:eu.anthropic.claude-haiku-5-5` | Grounding, linking, critic |
 | `SHERPA_EFFORT_DEFAULT`, `SHERPA_EFFORT_FAST` | `medium` | Thinking effort per step |
 | `SHERPA_DEFAULT_VARIANT` | `v0_baseline` | Updated as techniques are promoted |
-| `SHERPA_EVAL_DB_NAME`, `SHERPA_EVAL_TARGET_PATH` | `sherpa_eval`, `dbt/target-eval` | Frozen eval dataset |
+| `SHERPA_EVAL_DB_NAME`, `SHERPA_EVAL_TARGET_PATH` | `sherpa_eval`, `data-platform/dbt/target-eval` | Frozen eval dataset |
 | `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
 | `MCP_HTTP_URL` | `http://127.0.0.1:8765/mcp` | Client URL when `http` |
-| `SHERPA_DBT_TARGET_PATH` | `dbt/target-prod` | Manifest/catalog location |
+| `SHERPA_DBT_TARGET_PATH` | `data-platform/dbt/target-prod` | Manifest/catalog location |
 | `LOGFIRE_TOKEN`, `LOGFIRE_SEND_TO_LOGFIRE` | — / `true` | Tracing backend |
 
 `.env.example` documents all of them. Nothing account-specific is committed.

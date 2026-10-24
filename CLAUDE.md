@@ -11,9 +11,8 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-4` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`) and data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`) are done. Current plan: data-platform-3, to be planned.
 - **Sequencing:**
   1. data-platform-1 → data-platform-2 (defines the agent-facing interface).
-  2. **Repository regrouping** (one chore PR, pure moves plus path updates in code, config and docs): `generator/`, `dbt/` and the Postgres init script move under `data-platform/`. The agent's code is created under `agent/` (`mcp-server/`, `core/`, `evals/`) and the UI's under `ui/`. Each component keeps its Dockerfile next to its code, and the root `docker-compose.yml` wires them together.
-  3. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-3 once agent-design-1 exists; ui-4 after agent-design-3.
-  4. data-platform-4 → agent-design-4 (gold set batch 2) → agent-design-5 to agent-design-8; data-platform-5 → agent-design-9.
+  2. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-3 once agent-design-1 exists; ui-4 after agent-design-3.
+  3. data-platform-4 → agent-design-4 (gold set batch 2) → agent-design-5 to agent-design-8; data-platform-5 → agent-design-9.
 - **Every plan ends with a documentation task**, and writing a plan includes writing it. The task does two things:
   - **Checks `CLAUDE.md` and `README.md`** against what the milestone changed (commands, layout, status, conventions) and updates them.
   - **Writes or updates how-to guides** in `docs/guides/`:
@@ -44,12 +43,18 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make grant-agent`: re-apply the `sherpa_agent` read grants on `marts` (prod) without a build; the build runs the same macro as its `on-run-end` hook.
 - `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
-- `make docs-check`: fail if a model or column under `dbt/models` has no description.
+- `make docs-check`: fail if a model or column under `data-platform/dbt/models` has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.
 - `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`make up`).
 
 ## Conventions
 
+- **Repository layout, grouped by spec:**
+  - `data-platform/`: `postgres/init/` (roles), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
+  - `agent/` (`mcp-server/`, `core/`, `evals/`) and `ui/` (`backend/`, `frontend/`) appear with their first milestones.
+  - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
+  - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
+  - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
 - Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `dev`). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
 - dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
@@ -96,7 +101,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - Async code (MCP server, agent, eval runner) must not make blocking calls (ruff `ASYNC`). The generator is synchronous on purpose.
 
 ### Logging and output
-- Stdlib `logging` only: `logger = logging.getLogger(__name__)` per module, with `%`-style arguments (`logger.info("wrote %d rows", n)`, not f-strings). No `print()` outside CLI output (Typer/Rich) and `scripts/`.
+- Stdlib `logging` only: `logger = logging.getLogger(__name__)` per module, with `%`-style arguments (`logger.info("wrote %d rows", n)`, not f-strings). No `print()` outside CLI output (Typer/Rich) and helper scripts (`data-platform/scripts/`).
 - **The MCP server never writes to stdout** (it carries the JSON-RPC stream): logs go to stderr, and Logfire runs with `console=False`.
 
 ### Formatting
@@ -105,7 +110,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - Docstrings only where the *why* isn't obvious from the name and signature; keep them to a few lines. Comments explain intent and constraints, not what the code does.
 
 ### Tests
-- `tests/` mirror the package layout. For a class: one test class per target class, with one or more test methods per method under test. For a function: top-level test functions.
+- Each component's `tests/` mirrors its package layout. For a class: one test class per target class, with one or more test methods per method under test. For a function: top-level test functions.
 - Arrange, act and assert are separated by blank lines. Assertions use the spec's exact values.
 - **No shallow tests.** Don't test what is obvious or what a third-party package already guarantees: config defaults, enum values, that a dataclass stores its fields, that Pydantic rejects a wrong type, that psycopg can insert a row. Test *our* logic and *our* use of the library (e.g. that we pass the right `UsageLimits`, not that PydanticAI enforces them).
 - **Edge cases and the unhappy path, not just the happy path.** For every unit, ask what happens on:
@@ -131,10 +136,10 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ### Tooling
 - Every Python command runs through uv: `uv run pytest`, `uv run python`, `uv add <pkg> --group <group>`.
-- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `generator/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
+- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `data-platform/generator/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
 
 ## Environment notes
 
-- The development machine is Windows with Git Bash. `make` must be installed separately (Scoop, Chocolatey or WSL).
+- The development machine is Windows with Git Bash. Run `make` from Git Bash: in PowerShell, GNU make runs recipes with `cmd.exe`, and they need a POSIX shell. `make` must be installed separately (Scoop, Chocolatey or WSL).
 - GitHub: personal account `josepmafe` on **github.com**, not the corporate GitHub Enterprise host. Commits use the repo-local identity `Josep Martinez <57620224+josepmafe@users.noreply.github.com>`. Don't use the corporate email.
 - The repo is public. Never commit credentials, corporate data or references to internal systems.

@@ -4,13 +4,13 @@ dbt turns the raw schemas the generator writes into tested, documented models. T
 
 A few dbt terms first:
 
-- A **model** is a `SELECT` in a `.sql` file under `dbt/models/`. dbt wraps it in `CREATE VIEW` or `CREATE TABLE` (its *materialization*) and runs the models in dependency order.
+- A **model** is a `SELECT` in a `.sql` file under `data-platform/dbt/models/`. dbt wraps it in `CREATE VIEW` or `CREATE TABLE` (its *materialization*) and runs the models in dependency order.
 - A **source** declares a table dbt did not build, here the generator's `raw_*` tables. Models read it with `{{ source('shop', 'orders') }}`, other models with `{{ ref('stg_shop__orders') }}`. These two functions give dbt the dependency graph (the *DAG*).
-- A **seed** is a small CSV in `dbt/seeds/` that dbt loads as a table, such as `countries`.
-- A **data test** is a query that returns the rows breaking a rule (`unique`, `not_null`, `accepted_values`, `relationships`, ...). Zero rows means it passes. A **singular test** is a plain SQL file in `dbt/tests/` that returns the failing rows (for example `assert_customer_segment_boundaries` and `assert_fct_orders_keeps_every_order`). A **generic test** is a reusable test written once as a Jinja `{% test %}` block and applied from YAML; `dbt/tests/generic/column_sums_match.sql` is ours.
+- A **seed** is a small CSV in `data-platform/dbt/seeds/` that dbt loads as a table, such as `countries`.
+- A **data test** is a query that returns the rows breaking a rule (`unique`, `not_null`, `accepted_values`, `relationships`, ...). Zero rows means it passes. A **singular test** is a plain SQL file in `data-platform/dbt/tests/` that returns the failing rows (for example `assert_customer_segment_boundaries` and `assert_fct_orders_keeps_every_order`). A **generic test** is a reusable test written once as a Jinja `{% test %}` block and applied from YAML; `data-platform/dbt/tests/generic/column_sums_match.sql` is ours.
 - A **contract** is a promise in the YAML that a model has exactly the listed columns with the listed types. dbt checks it before it builds the table. The marts enforce one.
 - A **hook** is SQL dbt runs around a build: `on-run-start` and `on-run-end` once per invocation, `post-hook` after one model.
-- A **target** is one named connection in `dbt/profiles.yml`: `dev` (the default), `prod` and `eval`. Credentials come from `.env` through `env_var()`.
+- A **target** is one named connection in `data-platform/dbt/profiles.yml`: `dev` (the default), `prod` and `eval`. Credentials come from `.env` through `env_var()`.
 - `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-agent` uses it).
 - **`persist_docs`** is a config that copies the YAML descriptions into Postgres comments on the tables and columns, so a database client can read them.
 - **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` on the marts).
@@ -19,7 +19,7 @@ The project has the seeds, one staging view per raw table, an intermediate layer
 
 ## Dev and prod
 
-The same project builds into different schemas depending on the target (the `generate_schema_name` macro in `dbt/macros/`):
+The same project builds into different schemas depending on the target (the `generate_schema_name` macro in `data-platform/dbt/macros/`):
 
 | | `dev` (default) | `prod` |
 |---|---|---|
@@ -28,7 +28,7 @@ The same project builds into different schemas depending on the target (the `gen
 | Intermediate | `dev_intermediate` | `intermediate` |
 | Marts | `dev_marts` | `marts` |
 | Agent access | none | `sherpa_agent` reads `marts` |
-| Artifacts (`manifest.json`, `catalog.json`, ...) | `dbt/target/` | `dbt/target-prod/` |
+| Artifacts (`manifest.json`, `catalog.json`, ...) | `data-platform/dbt/target/` | `data-platform/dbt/target-prod/` |
 | Make targets | `make build`, `make docs` | `make build-prod`, `make docs-prod` |
 
 Use `dev` while you work; `prod` is what consumers read. Prod commands always pass `--target-path target-prod`, so a dev run never overwrites the prod artifacts. A third target, `eval`, builds the frozen evaluation database (see [The frozen eval database](#the-frozen-eval-database)). After `make build` and `make build-prod` the database has both sets next to the raw schemas:
@@ -66,7 +66,7 @@ Data flows through three layers, each in its own schema:
 
 ### Hooks and `make grant-agent`
 
-Three hooks in `dbt/dbt_project.yml` do work outside the models:
+Three hooks in `data-platform/dbt/dbt_project.yml` do work outside the models:
 
 - `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name and `SHERPA_AGENT_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
 - A `post-hook: analyze {{ this }}` on every mart, and on the `int_events__sessionized` table, refreshes its table statistics after it is built, so Postgres plans queries well.
@@ -83,15 +83,15 @@ grant_agent_access: granted usage on marts, extensions and select on marts table
 ## Building
 
 ```bash
-make deps        # install the dbt packages (dbt_utils, dbt_expectations) into dbt/dbt_packages/
+make deps        # install the dbt packages (dbt_utils, dbt_expectations) into data-platform/dbt/dbt_packages/
 make build       # source freshness, then dbt build on dev
 make build-prod  # the same on prod
 ```
 
-`make deps` downloads the versions pinned in `dbt/package-lock.yml`: `dbt_utils`, `dbt_expectations` and `dbt_date`, which `dbt_expectations` needs:
+`make deps` downloads the versions pinned in `data-platform/dbt/package-lock.yml`: `dbt_utils`, `dbt_expectations` and `dbt_date`, which `dbt_expectations` needs:
 
 ```
-cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt deps
+cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt deps
 22:23:47  Running with dbt=1.12.6
 22:23:50  Installing dbt-labs/dbt_utils
 22:23:52  Installed from version 1.4.1
@@ -107,7 +107,7 @@ cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt deps
 `dbt build` runs seeds, models and tests together in DAG order, and skips whatever depends on a failure. `make build` took about 63 seconds on a year of data, source freshness included (the build itself 52 s):
 
 ```
-cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt build
+cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt build
 23:10:41  [WARNING]: Configuration paths exist in your dbt_project.yml file which do not apply to any resources.
 There are 1 unused configuration paths:
 - snapshots.sherpa
@@ -165,14 +165,14 @@ The fix is to top the data up to yesterday (`make generate DAYS=<n>`, see the ge
 
 ## Running dbt directly
 
-The Make targets wrap one command line. To run any other dbt command, use the same one from the `dbt/` folder:
+The Make targets wrap one command line. To run any other dbt command, use the same one from the `data-platform/dbt/` folder:
 
 ```bash
-cd dbt
-DBT_PROFILES_DIR=. uv run --env-file ../.env dbt <command>
+cd data-platform/dbt
+DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt <command>
 ```
 
-`DBT_PROFILES_DIR=.` points dbt at `dbt/profiles.yml` and `--env-file ../.env` supplies the `SHERPA_*` variables it reads. The examples below run from `dbt/` with that prefix, shortened to `dbt`. Add `--target prod --target-path target-prod` to run on prod. `dbt debug` checks the setup and the connection; it ends with:
+`DBT_PROFILES_DIR=.` points dbt at `data-platform/dbt/profiles.yml` and `--env-file ../../.env` supplies the `SHERPA_*` variables it reads. The examples below run from `data-platform/dbt/` with that prefix, shortened to `dbt`. Add `--target prod --target-path target-prod` to run on prod. `dbt debug` checks the setup and the connection; it ends with:
 
 ```
 12:52:09    Connection test: [OK connection ok]
@@ -282,7 +282,7 @@ source as (
 ...
 ```
 
-Every compiled model and test is also written to `dbt/target/compiled/sherpa/...`, and the statements dbt actually ran (with the `CREATE VIEW` around them) to `dbt/target/run/sherpa/...`.
+Every compiled model and test is also written to `data-platform/dbt/target/compiled/sherpa/...`, and the statements dbt actually ran (with the `CREATE VIEW` around them) to `data-platform/dbt/target/run/sherpa/...`.
 
 ## Documentation and the lineage graph
 
@@ -290,7 +290,7 @@ Every compiled model and test is also written to `dbt/target/compiled/sherpa/...
 make docs
 ```
 
-`make docs` runs `dbt docs generate` (which writes `manifest.json`, `catalog.json` and `index.html` to `dbt/target/`) and then `dbt docs serve`, a local web server that opens a browser tab:
+`make docs` runs `dbt docs generate` (which writes `manifest.json`, `catalog.json` and `index.html` to `data-platform/dbt/target/`) and then `dbt docs serve`, a local web server that opens a browser tab:
 
 ```
 08:09:31  Running with dbt=1.12.6
@@ -300,17 +300,17 @@ To access from your browser, navigate to: http://localhost:8080
 Press Ctrl+C to exit.
 ```
 
-Stop it with Ctrl+C. `make docs-prod` does the same for prod from `dbt/target-prod/`.
+Stop it with Ctrl+C. `make docs-prod` does the same for prod from `data-platform/dbt/target-prod/`.
 
-The landing page is the `__overview__` doc block in `dbt/models/overview.md`. On the left, the **Project** tab groups the nodes by folder and the **Database** tab by schema. A model page shows its description, its columns with their tests, the SQL (source and compiled) and what it depends on.
+The landing page is the `__overview__` doc block in `data-platform/dbt/models/overview.md`. On the left, the **Project** tab groups the nodes by folder and the **Database** tab by schema. A model page shows its description, its columns with their tests, the SQL (source and compiled) and what it depends on.
 
 The **lineage graph** button (bottom right) draws the DAG: sources on the left, flowing into the staging views, the intermediate models and the marts, with the seeds feeding the models that join them (`country_code_variants` into `stg_shop__customers` and `stg_shop__addresses`). The `channel_mapping` seed feeds `int_events__sessionized`, and `dim_date` stands alone because it reads nothing. The `--select` box at the bottom takes the same syntax as the CLI: `+stg_shop__customers` shows the model with its source and seed. Click a node to open its page.
 
-`make docs-check` regenerates the docs quietly and fails if a model or column under `dbt/models` has no description; it prints nothing when everything is documented.
+`make docs-check` regenerates the docs quietly and fails if a model or column under `data-platform/dbt/models` has no description; it prints nothing when everything is documented.
 
 ## When a test fails
 
-To see what a failure looks like, break the R4 cleanup in `dbt/models/staging/shop/stg_shop__customers.sql` by keeping the raw country instead of the seed's code:
+To see what a failure looks like, break the R4 cleanup in `data-platform/dbt/models/staging/shop/stg_shop__customers.sql` by keeping the raw country instead of the seed's code:
 
 ```sql
         source.country_code as country_code,   -- was: coalesce(country_variants.code, source.country_code)
@@ -451,13 +451,13 @@ Done. PASS=2 WARN=0 ERROR=1 SKIP=7 NO-OP=0 REUSED=0 TOTAL=10
         1 |    201.75 |      211.75
 ```
 
-Order 2's lines add up to 69.98 but the order says 79.98, so one of the two models computes it wrongly. Keep the rows with `dbt test --select fct_order_items --store-failures` (as above), or open the compiled test under `dbt/target/compiled/sherpa/models/marts/sales/_sales__models.yml/`.
+Order 2's lines add up to 69.98 but the order says 79.98, so one of the two models computes it wrongly. Keep the rows with `dbt test --select fct_order_items --store-failures` (as above), or open the compiled test under `data-platform/dbt/target/compiled/sherpa/models/marts/sales/_sales__models.yml/`.
 
 If something goes wrong with dbt itself rather than the data, `dbt debug` checks the connection, and `--no-partial-parse` forces dbt to re-read every file when it seems to ignore an edit.
 
 ## The frozen eval database
 
-`make eval-db` builds a second, separate database, `sherpa_eval`, that never changes: the generator runs with seed 42, start date 2025-01-01 and 365 days, then dbt builds the `eval` target into it and writes its artifacts to `dbt/target-eval/`. The text-to-SQL agent is scored against this database, so the expected answers to its test questions stay valid as long as the generator and the dbt project do not change.
+`make eval-db` builds a second, separate database, `sherpa_eval`, that never changes: the generator runs with seed 42, start date 2025-01-01 and 365 days, then dbt builds the `eval` target into it and writes its artifacts to `data-platform/dbt/target-eval/`. The text-to-SQL agent is scored against this database, so the expected answers to its test questions stay valid as long as the generator and the dbt project do not change.
 
 ```bash
 make eval-db   # about 5 minutes or more
@@ -476,8 +476,8 @@ Makefile:...: *** SHERPA_EVAL_DB_NAME must start with sherpa_eval and differ fro
 The build skips the source freshness check, because the frozen data is old on purpose. For the same reason one test warns on this database, so the eval build ends with `WARN=1`, and the warning is expected: the check that `stg_events__events.received_at` has data from the last 3 days. To run just that test:
 
 ```bash
-cd dbt
-DBT_PROFILES_DIR=. uv run --env-file ../.env dbt test --target eval --target-path target-scratch --select stg_events__events,test_name:expect_row_values_to_have_recent_data
+cd data-platform/dbt
+DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt test --target eval --target-path target-scratch --select stg_events__events,test_name:expect_row_values_to_have_recent_data
 ```
 
 ```

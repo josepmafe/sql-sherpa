@@ -6,18 +6,18 @@ How to change what the generator writes and carry the change through to dbt: whi
 
 **The spec comes first.** The source data model (tables, columns, enum values), the daily volumes and the realism rules are defined in the data platform spec (`docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md`, §4 and §5). A change to any of them is a spec change: agree it with the owner, then update the spec in the same branch as the code.
 
-**How a simulated day works.** `Simulator.run` (`generator/src/sherpa_generator/simulation/simulator.py`) simulates one day at a time, each in its own transaction:
+**How a simulated day works.** `Simulator.run` (`data-platform/generator/src/sherpa_generator/simulation/simulator.py`) simulates one day at a time, each in its own transaction:
 
 1. `StoreSnapshotLoader` reads the shop as it stands at the start of the day into a frozen `StoreSnapshot`.
-2. `_DaySimulator.simulate` calls the behaviour simulators in `generator/src/sherpa_generator/behaviour/` in a fixed order. Each one reads the snapshot and queues inserts and updates in a `DayChanges`; none of them touches the database.
+2. `_DaySimulator.simulate` calls the behaviour simulators in `data-platform/generator/src/sherpa_generator/behaviour/` in a fixed order. Each one reads the snapshot and queues inserts and updates in a `DayChanges`; none of them touches the database.
 3. `RecordWriter` writes the `DayChanges` with `COPY` and saves the simulation state (last day and primary-key counters) in the same transaction.
 
-Records are frozen Pydantic models in `generator/src/sherpa_generator/records/`, one class per raw table. A record's field order is its table's column order, and `RawSchema.TABLE_DDL` (`generator/src/sherpa_generator/database/raw_schema.py`) holds the matching `CREATE TABLE`. The test `TestRawSchema::test_table_columns_match_records` keeps the two in sync.
+Records are frozen Pydantic models in `data-platform/generator/src/sherpa_generator/records/`, one class per raw table. A record's field order is its table's column order, and `RawSchema.TABLE_DDL` (`data-platform/generator/src/sherpa_generator/database/raw_schema.py`) holds the matching `CREATE TABLE`. The test `TestRawSchema::test_table_columns_match_records` keeps the two in sync.
 
 **The commands you will use.** Every Python command goes through uv; `--env-file .env` gives the integration tests the database settings:
 
 ```bash
-uv run --env-file .env pytest generator/tests/<path>   # some generator tests
+uv run --env-file .env pytest data-platform/generator/tests/<path>   # some generator tests
 make test                                              # every test except the slow and warehouse ones
 make lint                                              # ruff, ruff format, mypy, sqlfluff
 make reset && uv run sherpa-generate generate --days 30 --scale 0.1   # fresh small dataset
@@ -31,7 +31,7 @@ The raw schema is created once, so a new column or table only appears after `mak
 
 Example: `customers.preferred_language`, the language a customer chose at signup, one of `de`, `en`, `es`, `fr`, `it`, `nl`.
 
-**1. The record** (`generator/src/sherpa_generator/records/shop.py`). The values are a closed set, so add a `StrEnum`, and add the field where the column goes:
+**1. The record** (`data-platform/generator/src/sherpa_generator/records/shop.py`). The values are a closed set, so add a `StrEnum`, and add the field where the column goes:
 
 ```python
 class Language(StrEnum):
@@ -66,7 +66,7 @@ Raw tables are deliberately loose: enums are `text` and there are no foreign key
 ```
 E             At index 5 diff: 'marketing_opt_in' != 'preferred_language'
 ...
-FAILED generator/tests/database/test_raw_schema.py::TestRawSchema::test_table_columns_match_records
+FAILED data-platform/generator/tests/database/test_raw_schema.py::TestRawSchema::test_table_columns_match_records
 ```
 
 **3. The simulator that sets it.** Customers are created in `VisitorTrafficSimulator._signup` (`behaviour/visitor_traffic.py`). Derive the language from the visitor's locale:
@@ -79,7 +79,7 @@ FAILED generator/tests/database/test_raw_schema.py::TestRawSchema::test_table_co
 
 Deriving instead of drawing keeps every other row identical: note the row count of a 30-day run at scale 0.1 before the change and compare it after: it is the same (one run wrote 7,917 rows; your count depends on the day you run, because the window ends yesterday). A new `day.rng` draw is allowed, but it changes everything drawn after it that day.
 
-**4. The test fixtures and a test.** Every `Customer(...)` must pass the new field, so add `preferred_language=Language.DE` to `make_customer` in `generator/tests/helpers.py`. Then test the rule in `generator/tests/behaviour/test_visitor_traffic.py`:
+**4. The test fixtures and a test.** Every `Customer(...)` must pass the new field, so add `preferred_language=Language.DE` to `make_customer` in `data-platform/generator/tests/helpers.py`. Then test the rule in `data-platform/generator/tests/behaviour/test_visitor_traffic.py`:
 
 ```python
     def test_signup_language_follows_the_signup_country(self) -> None:
@@ -95,21 +95,21 @@ Deriving instead of drawing keeps every other row identical: note the row count 
 ```
 
 ```bash
-uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py generator/tests/database generator/tests/records -q
+uv run --env-file .env pytest data-platform/generator/tests/behaviour/test_visitor_traffic.py data-platform/generator/tests/database data-platform/generator/tests/records -q
 ```
 
 ```
 52 passed in 15.88s
 ```
 
-**5. The source YAML** (`dbt/models/staging/shop/_shop__sources.yml`), under `customers`:
+**5. The source YAML** (`data-platform/dbt/models/staging/shop/_shop__sources.yml`), under `customers`:
 
 ```yaml
           - name: preferred_language
             description: ISO 639-1 code of the language the customer chose at signup.
 ```
 
-**6. The staging model and its tests.** Select the column in `dbt/models/staging/shop/stg_shop__customers.sql`:
+**6. The staging model and its tests.** Select the column in `data-platform/dbt/models/staging/shop/stg_shop__customers.sql`:
 
 ```sql
         source.last_name,
@@ -117,7 +117,7 @@ uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py 
         source.marketing_opt_in,
 ```
 
-and document and test it in `dbt/models/staging/shop/_shop__models.yml`. An enum gets an `accepted_values` test with exactly the `StrEnum` values:
+and document and test it in `data-platform/dbt/models/staging/shop/_shop__models.yml`. An enum gets an `accepted_values` test with exactly the `StrEnum` values:
 
 ```yaml
       - name: preferred_language
@@ -267,18 +267,18 @@ The wishlist simulator needs only the snapshot, so it sits with the browsing beh
 
 **7. The tests.**
 
-- Every test that builds a `StoreSnapshot` must pass the new field: add `"wishlist_items": []` to `_EMPTY_SNAPSHOT` in `generator/tests/helpers.py` and `wishlist_items=[]` to the `_snapshot` helpers of `test_visitor_traffic.py`, `test_order_lifecycle.py` and `test_crm_activity.py`.
-- `test_every_record_type_has_a_table_and_unique_columns` (`generator/tests/records/test_records.py`) counts the record types: 22 becomes 23.
-- A unit test per behaviour in `generator/tests/behaviour/test_wishlists.py`, with `make_snapshot` and `make_customer` from `helpers`: the rate and that every item falls inside the day, that a saved variant is never saved again, and that a shop without variants saves nothing.
-- Nothing to add for determinism: `fingerprint` hashes every raw table, so `test_fresh_runs_are_identical` and `test_resume_equals_single_run` (`generator/tests/simulation/test_simulator.py`) cover the new table automatically.
+- Every test that builds a `StoreSnapshot` must pass the new field: add `"wishlist_items": []` to `_EMPTY_SNAPSHOT` in `data-platform/generator/tests/helpers.py` and `wishlist_items=[]` to the `_snapshot` helpers of `test_visitor_traffic.py`, `test_order_lifecycle.py` and `test_crm_activity.py`.
+- `test_every_record_type_has_a_table_and_unique_columns` (`data-platform/generator/tests/records/test_records.py`) counts the record types: 22 becomes 23.
+- A unit test per behaviour in `data-platform/generator/tests/behaviour/test_wishlists.py`, with `make_snapshot` and `make_customer` from `helpers`: the rate and that every item falls inside the day, that a saved variant is never saved again, and that a shop without variants saves nothing.
+- Nothing to add for determinism: `fingerprint` hashes every raw table, so `test_fresh_runs_are_identical` and `test_resume_equals_single_run` (`data-platform/generator/tests/simulation/test_simulator.py`) cover the new table automatically.
 
 ```bash
-uv run --env-file .env pytest generator/tests -q
+uv run --env-file .env pytest data-platform/generator/tests -q
 ```
 
-Every test passes; the summary line also reports the 3 slow full-year tests under `generator/tests` as deselected.
+Every test passes; the summary line also reports the 3 slow full-year tests under `data-platform/generator/tests` as deselected.
 
-**8. dbt.** A source table entry in `_shop__sources.yml` with every column described, the staging model `dbt/models/staging/shop/stg_shop__wishlist_items.sql`:
+**8. dbt.** A source table entry in `_shop__sources.yml` with every column described, the staging model `data-platform/dbt/models/staging/shop/stg_shop__wishlist_items.sql`:
 
 ```sql
 with
@@ -366,7 +366,7 @@ The draw is still one `choices` call per order, so the other tables keep their r
 12:59:45  Done. PASS=9 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=9
 ```
 
-The generator tests that cover payments still pass (`uv run --env-file .env pytest generator/tests/behaviour/test_order_lifecycle.py generator/tests/behaviour/test_after_sales.py`: 53 passed). Renaming or removing a value works the same way, and also breaks every downstream model that filters on the old value; search `dbt/` for it.
+The generator tests that cover payments still pass (`uv run --env-file .env pytest data-platform/generator/tests/behaviour/test_order_lifecycle.py data-platform/generator/tests/behaviour/test_after_sales.py`: 53 passed). Renaming or removing a value works the same way, and also breaks every downstream model that filters on the old value; search `data-platform/dbt/` for it.
 
 ## 4. Add or tune a realism rule
 
@@ -376,7 +376,7 @@ Where a rule lives:
 
 - **Its rate** is a constant on `RealismRules` (`simulation/realism_rules.py`) with the rule number in a comment, for example `EMAIL_NOISE_RATE: Final = 0.10  # R3`. Behaviour simulators read the rates from there.
 - **Its noise** is a method on `RealismRules` when the rule changes a value (`noisy_email`, `noisy_country`, `duplicate_events`, `late_delivery_delay`, `is_test_account`, `ad_clicks`), or lives in the simulator that owns the behaviour when it changes what happens (split and failed payments in `OrderLifecycleSimulator._insert_payments`, soft deletes in `CustomerDeletionSimulator`).
-- **Its rate test** is in `generator/tests/simulation/test_realism_rules.py`: 20,000 draws with a seeded `random.Random`, asserted within ±20 % of the spec rate (`assert_rate`).
+- **Its rate test** is in `data-platform/generator/tests/simulation/test_realism_rules.py`: 20,000 draws with a seeded `random.Random`, asserted within ±20 % of the spec rate (`assert_rate`).
 - **Its cleanup** is in staging: R3 is `lower(trim(email))` in `stg_shop__customers` and `stg_crm__leads`, R4 the left join to the `country_code_variants` seed, R1 the `row_number()` dedupe in `stg_events__events`, R5 the `is_test_account` flag in `stg_shop__customers`.
 
 Example: tune R3 from 10 % to 15 %. Change the constant:
@@ -391,15 +391,15 @@ The rate test still asserts the spec's old value and fails:
 E         Obtained: 0.14895
 E         Expected: 0.1 ± 0.02
 ...
-FAILED generator/tests/simulation/test_realism_rules.py::TestRealismRules::test_email_noise_rate
+FAILED data-platform/generator/tests/simulation/test_realism_rules.py::TestRealismRules::test_email_noise_rate
 1 failed, 18 passed in 1.01s
 ```
 
 Update it to the new spec value (`assert_rate(noisy, 0.15)`) and run the rule tests and the simulators that use the rule:
 
 ```bash
-uv run pytest generator/tests/simulation/test_realism_rules.py -q
-uv run --env-file .env pytest generator/tests/behaviour/test_visitor_traffic.py generator/tests/behaviour/test_crm_activity.py -q
+uv run pytest data-platform/generator/tests/simulation/test_realism_rules.py -q
+uv run --env-file .env pytest data-platform/generator/tests/behaviour/test_visitor_traffic.py data-platform/generator/tests/behaviour/test_crm_activity.py -q
 ```
 
 ```
@@ -467,7 +467,7 @@ Given the same seed, start date, scale and day of the first run, two runs produc
 The tests that prove it:
 
 ```bash
-uv run --env-file .env pytest generator/tests/simulation/test_simulator.py generator/tests/simulation/test_deterministic_random.py -q
+uv run --env-file .env pytest data-platform/generator/tests/simulation/test_simulator.py data-platform/generator/tests/simulation/test_deterministic_random.py -q
 ```
 
 - `TestSimulator::test_fresh_runs_are_identical`: two fresh 10-day runs (seed 7, scale 0.1) have the same row count and row-level md5 in every raw table.
@@ -478,10 +478,10 @@ uv run --env-file .env pytest generator/tests/simulation/test_simulator.py gener
 Breaking a rule shows up here. With `marketing_opt_in` drawn from the global `random` module instead of `day.rng`:
 
 ```
-FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_fresh_runs_are_identical
-FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_resume_equals_single_run
-FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_crash_mid_day_rolls_back_and_resume_matches
-FAILED generator/tests/simulation/test_simulator.py::TestSimulator::test_crash_on_first_day_keeps_setup_and_resumes_from_start
+FAILED data-platform/generator/tests/simulation/test_simulator.py::TestSimulator::test_fresh_runs_are_identical
+FAILED data-platform/generator/tests/simulation/test_simulator.py::TestSimulator::test_resume_equals_single_run
+FAILED data-platform/generator/tests/simulation/test_simulator.py::TestSimulator::test_crash_mid_day_rolls_back_and_resume_matches
+FAILED data-platform/generator/tests/simulation/test_simulator.py::TestSimulator::test_crash_on_first_day_keeps_setup_and_resumes_from_start
 4 failed, 31 passed in 28.00s
 ```
 
