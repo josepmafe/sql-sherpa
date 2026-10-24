@@ -39,8 +39,8 @@ The target stack. Each tool is introduced in the milestone where it first does a
 | **data-platform-1 · Foundation** | Docker Postgres, the generator, dbt sources + freshness, seeds, documented and tested staging models |
 | **data-platform-2 · Core marts** | Order, promotion, customer and product marts; macros; custom, singular and dbt_expectations tests; contracts; grants and hooks |
 | **data-platform-3 · Time** | Snapshots (price history), incremental models (microbatch, merge, delete+insert), sessionization, unit tests |
-| **data-platform-4 · Governance & CI** | Marketing marts, groups and access, model versions, exposures, selectors, slim builds, GitHub Actions CI |
-| **data-platform-5 · Semantic layer** | MetricFlow semantic models, metrics and saved queries |
+| **data-platform-4 · Governance & CI** | Marketing marts, groups and access, exposures for the UI and the agent, slim builds and `dbt clone`, GitHub Actions CI |
+| **data-platform-5 · Semantic layer** | MetricFlow semantic models and metrics, used by the agent's MetricFlow path |
 | **agent-design-1 … 9 · Agent** | MCP server, eval harness, a baseline agent that plans before it runs, then grounding, schema linking and self-correction, one at a time, measured |
 | **ui-1 … 4 · Web app** | Explorer (browse marts, run read-only SQL), Lineage (dbt flowchart), Home (headline numbers and data health), Ask (review the agent's plan, then see the answer) |
 

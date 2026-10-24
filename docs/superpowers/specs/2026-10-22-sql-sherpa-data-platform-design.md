@@ -23,7 +23,7 @@ Even though it is a toy project, the output must be **production-like**: a compl
 
 ### Non-goals
 - Inventory/warehouse management, product reviews, multi-currency (everything is EUR).
-- BI dashboards (dashboards are declared as dbt exposures only).
+- BI dashboards. The UI's Home screen (UI spec) is the only dashboard, and it is declared as a dbt exposure (data-platform-4).
 - Streaming / real-time ingestion.
 - Scale or performance beyond a laptop.
 - dbt Cloud features (see §9).
@@ -87,7 +87,7 @@ The init script is a shell script (not `.sql`) because the Postgres image runs `
 |---|---|---|
 | `sherpa_admin` | Owner of database `sherpa` | Generator, dbt |
 | `sherpa_agent` | `LOGIN`, no privileges at creation. Receives `USAGE` on `marts` and `SELECT` on mart relations **via dbt** (`grants` + hook, §8). Role default `default_transaction_read_only = on`, `statement_timeout = 5s`. Like every role but the owner it cannot create temporary tables, large objects (`EXECUTE` on `lo_create`, `lo_creat`, `lo_from_bytea`, `lo_open`, `lowrite`, `lo_put` is revoked from `PUBLIC` in the main database and in `template1`, so the eval database inherits it) or connect to the `postgres` database. | The agent's MCP server |
-| `sherpa_ui` (ui-1, created by the idempotent roles script that `make roles` re-runs on existing volumes) | Like `sherpa_agent`: `LOGIN`, `USAGE` on `marts` and `extensions` and `SELECT` on mart relations via the same dbt `grants` and hook, the same `PUBLIC` revokes. Its connections set `statement_timeout = 30s` (UI spec §5). | The UI backend |
+| `sherpa_ui` (ui-1, created by the idempotent roles script that `make roles` re-runs on existing volumes) | Like `sherpa_agent`: `LOGIN`, `USAGE` on `marts` and `extensions` and `SELECT` on mart relations via the same dbt `grants` and hook, the same `PUBLIC` revokes. In addition, `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`, for the UI's build status (§8, "Added by ui-1"). Its connections set `statement_timeout = 30s` (UI spec §5). | The UI backend |
 
 Passwords come from `.env`.
 
@@ -330,11 +330,6 @@ spend_date, campaign_id, channel, spend, impressions, clicks, sessions, orders, 
 **`fct_leads`** — 1 row per lead · PK `lead_id` · domain `customers`
 lead_id, email (pii), lead_source, utm_campaign, lifecycle_stage, created_at, is_converted, converted_customer_id, converted_at, days_to_convert, emails_sent, emails_opened, emails_clicked
 
-#### Consumption
-
-**`agg_daily_sales`** (data-platform-4) — 1 row per `order_date` × `sales_channel` · materialized view · domain `sales`
-order_date, sales_channel, orders, items, gross_revenue, discount_amount, net_revenue, avg_order_value (non-cancelled orders only). No contract (dbt contracts are not supported on materialized views). Part of the marts schema and therefore readable by the agent, but not required by it.
-
 ### 6.6 Metric definitions (single source of truth: doc blocks named `metric_<name>`, e.g. `metric_net_revenue`, reused in YAML)
 
 | Metric | Definition |
@@ -393,24 +388,35 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 **Acceptance:** after `make advance DAYS=3 && make build`, an incremental run gives the same `fct_sessions` as `--full-refresh` (verified by an `analyses/` comparison query returning zero diff rows); late events from R2 end up in the correct sessions.
 
 ### data-platform-4 — Marketing, governance, CI
-**Builds:** `int_identity__anonymous_to_customer`, `fct_leads`, `fct_ad_spend_daily`, `dim_campaigns`, `agg_daily_sales`, GitHub Actions.
+**Builds:** `int_identity__anonymous_to_customer`, `fct_leads`, `fct_ad_spend_daily`, `dim_campaigns`, GitHub Actions.
 **dbt features:**
 - **Groups & access.** Groups mirror the domains: `sales`, `customers`, `products`, `marketing_web`, `shared` (each with an owner). Marts are `public`. Staging is `protected`. Intermediate models used by only one group are `private` to it (`int_order_items__*`, `int_orders__*` → `sales`; `int_identity__lead_to_customer` → `customers`). Intermediate models used across groups (`int_events__sessionized`, `int_identity__anonymous_to_customer`) are `protected` in `marketing_web`. This is possible because `dim_customers` aggregates from `fct_orders`, not from `int_orders__*`.
-- **Exposures:** 3 dashboards (Executive Sales, Marketing Performance, Customer Retention).
+- **Exposures** for the real consumers of the marts, so lineage ends where the data is used (in the dbt docs and the UI's Lineage screen):
+  - `sherpa_home` (type `dashboard`): the UI's Home screen, depending on exactly the marts its curated queries read (`fct_orders`, `fct_refunds`, `dim_date`)
+  - `sherpa_agent` (type `application`): the text-to-SQL agent, used by the CLI and the UI's Ask screen, depending on every public mart
 - **Analyses:** revenue reconciliation raw vs marts; incremental vs full-refresh diff.
-- **Tags + YAML selectors:** `nightly`, `marts_only`, `marketing_web`, `ci`.
-- **Materialized view:** `agg_daily_sales`, feeding the Executive Sales exposure. Postgres drops dependent views with `CASCADE` when `fct_orders` is rebuilt, so every selector and Make target that builds `fct_orders` uses the `+` children operator (`fct_orders+`). `make slim` already does this via `state:modified+`.
-- **Model versions:** `dim_customers` v2 replaces `customer_segment` with an RFM-based `rfm_segment` (recency/frequency/monetary quintiles → `champions`, `loyal`, `potential`, `at_risk`, `hibernating`). **`latest_version: 1`** — v2 is a pre-release that consumers can opt into with `ref('dim_customers', v=2)`; a downstream model or exposure pins v1 explicitly with `ref('dim_customers', v=1)`, and the data-platform-4 plan chooses which. v1 sets `alias: dim_customers`, so the latest version is a real dbt node at the unversioned name, with contract, grants and docs. Promoting v2 later (by flipping `latest_version` and moving the alias) is a deliberate breaking change to the agent interface and out of scope here. v1 gets a `deprecation_date` one year out.
-- **`on-run-end` audit hook** writing `results` to `ops.dbt_run_results`.
-- **State and environment commands.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`. `make clone` runs **`dbt clone`** of prod relations into dev schemas, so dev can query full data without rebuilding. **`--empty`** is used in CI as a first schema-only build that catches SQL and contract errors in seconds. **`--sample`** is used for fast dev builds on recent data, if the pinned dbt version supports it on Postgres; otherwise the reason it was skipped is recorded in §9.
+- **A tag and a YAML selector, for CI:** the generator-distribution tests (`dbt_expectations` row-count and mean checks, the Pareto check) are tagged `distribution`. The `ci` selector builds everything except them, because CI's 30-day, scale-0.05 data can't meet distribution targets meant for a full year.
+- **State and environment commands.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`. `make clone` runs **`dbt clone`** of prod relations into dev schemas, so dev can query full data without rebuilding. **`--empty`** is used in CI as a first schema-only build that catches SQL and contract errors in seconds.
 
-**CI (`.github/workflows/ci.yml`, on PR; adds the `ci` dbt target to `profiles.yml`):** Postgres service container → `uv sync` → `ruff` + `sqlfluff lint` → generator unit tests → generator (30 days, scale 0.05) → `dbt deps/seed` → `dbt build --empty --target ci` → `dbt build --target ci`. Full build on tiny data: deferral needs persistent prod relations, which CI does not have, so slim/defer is demonstrated locally.
-**Acceptance:** CI green on a PR; `ops.dbt_run_results` has one row per node per run; exposures appear in the docs lineage graph; `dbt build --select fct_orders+` leaves `agg_daily_sales` present.
+**CI (`.github/workflows/ci.yml`, on PR; adds the `ci` dbt target to `profiles.yml`):** Postgres service container → `uv sync` → `ruff` + `sqlfluff lint` → generator unit tests → generator (30 days, scale 0.05) → `dbt deps/seed` → `dbt build --empty --target ci --selector ci` → `dbt build --target ci --selector ci`. Full build on tiny data: deferral needs persistent prod relations, which CI does not have, so slim/defer is demonstrated locally.
+**Acceptance:** CI green on a PR; both exposures appear in the docs lineage graph with their dependencies.
 
 ### data-platform-5 — Semantic Layer
-**Builds:** semantic models on `fct_orders`, `fct_order_items`, `fct_sessions`, `fct_ad_spend_daily`; metrics for every row of §6.6; 3 saved queries.
-**dbt features:** MetricFlow (`dbt-metricflow`, open-source CLI `mf`), time spine on `dim_date`, simple/ratio/derived metrics, saved queries.
+**Builds:** semantic models on `fct_orders`, `fct_order_items`, `fct_sessions`, `fct_ad_spend_daily`; metrics for every row of §6.6. Their consumer is the agent's MetricFlow variant (agent spec, agent-design-9).
+**dbt features:** MetricFlow (`dbt-metricflow`, open-source CLI `mf`), time spine on `dim_date`, simple/ratio/derived metrics.
 **Acceptance:** `mf query --metrics net_revenue --group-by metric_time__month` matches `Σ fct_orders.net_revenue` per month (non-cancelled) exactly.
+
+### Added by ui-1 (UI spec)
+The UI's first milestone makes three data-platform changes, because the UI needs them before data-platform-3 to 5:
+- **The `sherpa_ui` role** (§3), with the idempotent roles script and `make roles` (§10).
+- **An `on-run-end` audit hook** that writes one row per executed node to **`ops.dbt_run_results`**:
+  - columns: `invocation_id`, `target_name`, `command`, `is_full_run` (true when the invocation had no `--select`, `--exclude` or `--selector`), `unique_id`, `resource_type`, `status`, `failures`, `execution_time_s`, `message`, `run_started_at`
+  - `ops` is created by the hook if missing and dropped by `make reset`
+
+  dbt rewrites `target-prod/run_results.json` on every command that compiles (`docs generate`, `run-operation`, `snapshot`), so the file can't tell the UI what the last full build did. The table keeps every run, and the UI reads the latest full prod build from it.
+- **`make build-prod` also runs `dbt docs generate`**, so `catalog.json` is always current for the UI.
+
+**Acceptance:** after `make build-prod`, `ops.dbt_run_results` has one row per built node and test for that invocation, with `is_full_run = true`; a `--select` build adds rows with `is_full_run = false` and doesn't change what the UI reports (`run-operation`, e.g. `make grant-agent`, runs no hooks and adds none).
 
 ---
 
@@ -421,7 +427,11 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 | Python models | Not supported by the Postgres adapter |
 | dbt Cloud (IDE, jobs, Explorer, hosted Semantic Layer APIs, Mesh cross-project refs) | Paid / hosted; out of scope for a local project |
 | Mesh cross-project refs | Single project; groups/access cover governance within one project |
-| Contracts on `agg_daily_sales` | dbt does not support contracts on materialized views |
+| Materialized views | No consumer needs pre-aggregation: Home's queries on the marts take milliseconds at this scale |
+| Model versions | No mart needs a breaking change; versioning comes in when one does, with the consumers that need the old version |
+| MetricFlow saved queries | Their only candidate consumer is Home, and Home tiles from saved queries is a UI later idea; they come with it |
+| `--sample` | No workflow needs dev builds on a sample; a full dev build already takes seconds |
+| Selectors and tags beyond `ci` | No scheduler or Make target would use them |
 
 ---
 
@@ -435,7 +445,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 | `make status` | Simulated range and row counts |
 | `make reset` | Drop the dbt schemas (including the dbt test-failure audit schemas), then drop and recreate the raw schemas empty |
 | `make deps` / `make seed` | `dbt deps` / `dbt seed` on `dev` |
-| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then copies `run_results.json` and `sources.json` to `target-prod/last-build/` (dbt rewrites `run_results.json` on every compiling command, so only the copy reliably describes the last full build) and runs `dbt docs generate --no-compile` for `catalog.json`, which leaves the copies untouched |
+| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then also runs `dbt docs generate` on prod, so `catalog.json` is current for the UI |
 | `make docs` / `make docs-prod` | `dbt docs generate && dbt docs serve` on dev / prod (`--target-path target-prod`) |
 | `make docs-check` | `dbt docs generate`, then check every model's YAML columns against the real columns |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt` |
@@ -458,16 +468,16 @@ The agent may rely on exactly these:
 
 - **Schema** `marts` (prod target) with the models in §6.5. Intermediate, staging and snapshot models are not part of the interface.
 - **Role** `sherpa_agent`: read-only, `SELECT` on `marts` only, `USAGE` on `extensions` (for `pg_trgm`), `statement_timeout = 5s`.
-- **Artifacts** `dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod`, and by `make docs-prod` until ui-1 adds `catalog.json` to `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, exposures, and (from data-platform-4) model versions.
+- **Artifacts** `dbt/target-prod/manifest.json` and `catalog.json` (produced by `make build-prod`, and by `make docs-prod` until ui-1 adds `catalog.json` to `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, and (from data-platform-4) exposures.
 - **Eval dataset:** database `sherpa_eval` with artifacts in `dbt/target-eval/` (§3), built by `make eval-db`.
 - **dbt target `agent`** (from agent-design-9) for read-only compilation with `sherpa_agent` credentials.
 - **Postgres comments** on mart tables and columns (`persist_docs`), so the descriptions are available without the manifest.
 - **`pg_trgm`** with GIN trigram indexes on product/brand/category name columns for fuzzy value search.
 - **Determinism:** `as_of_date` semantics (§6.5) — time-relative columns never depend on `now()`.
 
-**The UI** (UI spec) relies on the same interface, with its own read-only role `sherpa_ui` (§3), and also reads the prod build's `run_results.json` and `sources.json` from `dbt/target-prod/`. `make build-prod` writes both, because it runs `dbt source freshness` and `dbt build` with `--target-path target-prod`.
+**The UI** (UI spec) relies on the same interface, with its own read-only role `sherpa_ui` (§3). It also reads build history from `ops.dbt_run_results` (§8, "Added by ui-1") and freshness from `dbt/target-prod/sources.json`, which only `dbt source freshness` writes.
 
-Agent and UI work can start once data-platform-2 is done; data-platform-3–data-platform-5 add tables and metadata without breaking the data-platform-2 interface (data-platform-4's `dim_customers` versioning keeps v1, with `customer_segment`, at the unversioned name; v2 appears additionally as `dim_customers_v2`).
+Agent and UI work can start once data-platform-2 is done; data-platform-3–data-platform-5 add tables and metadata without breaking the data-platform-2 interface.
 
 ---
 
@@ -486,7 +496,6 @@ Agent and UI work can start once data-platform-2 is done; data-platform-3–data
 - Snapshots live in one shared `snapshots` schema for all targets; prod artifacts in `dbt/target-prod/`.
 - Cancellation refunds don't reduce revenue (the cancelled order already contributes 0); goodwill refunds never include shipping.
 - `new_customers` / CAC are campaign-level (via `acquisition_campaign_id`), so they sum correctly.
-- `dim_customers` v2 is a pre-release; v1 stays latest and owns the unversioned name.
 - Late events are held in `raw_meta.pending_events` until their `received_at` day; the generator assigns its own PKs.
 - `stg_events__events` uses microbatch; merge and delete+insert each have their own model.
 - Unit-tested intermediate models are views, not ephemeral.

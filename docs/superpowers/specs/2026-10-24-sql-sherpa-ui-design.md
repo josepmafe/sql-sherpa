@@ -108,11 +108,10 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
   - A corporate proxy's CA bundle, if `.env` sets `SSL_CERT_FILE` / `AWS_CA_BUNDLE`, is mounted read-only at the same path.
   - `LOGFIRE_TOKEN` comes from `.env`.
   - Nothing credential-related is baked into the image or committed. `make ui-dev` runs the backend on the host instead, using the host's credentials directly.
-- **dbt artifacts:** `data-platform/dbt/target-prod/` is mounted read-only. The UI reads `manifest.json` and `catalog.json` from it, and the **last full build's results from `target-prod/last-build/`** (`run_results.json`, `sources.json`).
-  - That sub-folder exists because dbt rewrites `target-prod/run_results.json` on every command that compiles, including `docs generate`, `run-operation` and `snapshot`. The top-level file therefore doesn't reliably describe the last build.
-  - `make build-prod` (data platform spec §10) copies both files there right after `dbt source freshness` and `dbt build`. It then runs `dbt docs generate --no-compile` for `catalog.json`, which doesn't touch the copies.
+- **dbt artifacts:** `data-platform/dbt/target-prod/` is mounted read-only. The UI reads `manifest.json` and `catalog.json` from it (`make build-prod` regenerates `catalog.json` after every build), and `sources.json` for freshness (only `dbt source freshness` writes it).
+  - **Build status comes from the database, not the files:** the `ops.dbt_run_results` audit table (data platform spec §8, "Added by ui-1"). The UI reads the latest invocation with `target_name = 'prod'`, `command = 'build'` and `is_full_run`. The table is needed because dbt rewrites `target-prod/run_results.json` on every compiling command, so the file can't say what the last full build did.
   - The backend reloads a file when its mtime changes, checked on each request that uses it.
-  - A node missing from `last-build/run_results.json` shows "not in the last build".
+  - A node with no row in that invocation shows "not in the last build".
 - **Health:** `GET /api/health` reports each dependency separately:
   - the **database**, which Explorer, Home and history re-runs need
   - the **artifacts**, present and when they were generated, which Lineage and the catalog tree need
@@ -153,7 +152,7 @@ Drafts are kept in the backend's memory, keyed by `draft_id`, for 1 hour (`SHERP
 
 Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own execution goes through the agent's `run_sql` (agent spec §4). Both share the same guard.
 
-- **Role `sherpa_ui`:** read-only, `SELECT` on `marts` and `USAGE` on `marts` and `extensions`, exactly like `sherpa_agent`. It has its own role so its timeout and audit trail are separate from the agent's. Its role defaults are `default_transaction_read_only = on` and `statement_timeout = 30s`, and it gets the same `PUBLIC` revokes.
+- **Role `sherpa_ui`:** read-only, `SELECT` on `marts` and `USAGE` on `marts` and `extensions`, exactly like `sherpa_agent`, plus `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results` for the build status. The build-status query is fixed backend SQL, not user SQL; user queries still go through the guard, which only allows `marts`. It has its own role so its timeout and audit trail are separate from the agent's. Its role defaults are `default_transaction_read_only = on` and `statement_timeout = 30s`, and it gets the same `PUBLIC` revokes.
   - **On a fresh volume,** the data platform's Postgres init script creates it.
   - **On an existing volume** (the init script only runs on an empty one, and `sherpa_admin` can't create roles), ui-1 makes the role SQL idempotent. It moves into `data-platform/postgres/roles.sql`, which the init script runs, and **`make roles`** runs it again as the `postgres` superuser inside the container, so no volume has to be wiped.
   - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with "role does not exist" until `make roles` has run, and the error says so.
@@ -191,8 +190,8 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
 - **Trend:** weekly net revenue for the last 26 calendar weeks (Monday to Sunday, `dim_date.week_start`) up to the week containing `as_of_date`, which is marked as partial. Black Friday weeks are highlighted (`dim_date.is_black_friday_week`).
 - **Data status strip:**
   - `as_of_date`
-  - the last full prod build: time and node count, from `target-prod/last-build/run_results.json` (§3)
-  - freshness warnings and errors, from `target-prod/last-build/sources.json`
+  - the last full prod build: time and node count, from `ops.dbt_run_results` (§3)
+  - freshness warnings and errors, from `target-prod/sources.json`
   - failing tests: a count that links to Lineage with **"failing only"** on (§6.5)
 - **Definitions:** tiles and trend are curated queries in `ui/backend/src/sherpa_ui/home/home_queries.yaml` (id, title, SQL, value format, whether up is good). They are SQL over `marts`, run through the read-only path on every request, and validated against the guard by a test. Metric definitions follow the data platform spec §6.6 (non-cancelled orders, refunds by order date).
 - **When something is missing:** no marts yet shows an empty state pointing to `make backfill && make build-prod`; no artifacts hides the status strip's build items and says why.
@@ -326,7 +325,7 @@ Browser storage never holds result rows; results are always re-fetched (criteria
 | `SHERPA_UI_ROW_CAP` | `1000` | Rows returned per query |
 | `SHERPA_UI_DRAFT_TTL_MINUTES` | `60` | How long Ask drafts are kept |
 | `SHERPA_UI_TRACE_URL_TEMPLATE` | — | e.g. a Logfire or Phoenix URL with `{trace_id}` |
-| `SHERPA_UI_DBT_TARGET_PATH` | `/app/dbt/target-prod` (in the container) | Mounted artifacts (`last-build/` inside it) |
+| `SHERPA_UI_DBT_TARGET_PATH` | `/app/dbt/target-prod` (in the container) | Mounted artifacts |
 | `MCP_HTTP_URL` | `http://mcp:8765/mcp` (in the container) | The agent's tool server |
 
 The container also receives `AWS_PROFILE`, `AWS_REGION`, `LOGFIRE_TOKEN` and, when set, `SSL_CERT_FILE` / `AWS_CA_BUNDLE` (§3).
@@ -339,7 +338,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 
 | Milestone | Builds | Needs | Acceptance |
 |---|---|---|---|
-| **ui-1 — Shell and Explorer** | `sherpa_ui` backend skeleton with health; the `sherpa_ui` role with idempotent `roles.sql`, `make roles` and its dbt grants; `make build-prod`'s `last-build/` copy and `docs generate --no-compile` (data platform spec §10); `QueryRunner` (§5); catalog endpoints; the frontend shell; Explorer (§6.4); the `ui` image and compose service; Make targets `ui-dev` (backend with reload + Vite dev server), `ui-client` and `e2e` | data-platform-2, the repository regrouping, agent-design-1 (`sql_guard`) | Explorer e2e flows pass; guard rejection, truncation banner, both sort modes and cancel work against the real stack; the browser offline check passes for Explorer; `make roles` on an existing volume creates `sherpa_ui` without data loss |
+| **ui-1 — Shell and Explorer** | `sherpa_ui` backend skeleton with health; the `sherpa_ui` role with idempotent `roles.sql`, `make roles` and its dbt grants; the `ops.dbt_run_results` audit hook and `make build-prod` regenerating `catalog.json` (data platform spec §8, "Added by ui-1"); `QueryRunner` (§5); catalog endpoints; the frontend shell; Explorer (§6.4); the `ui` image and compose service; Make targets `ui-dev` (backend with reload + Vite dev server), `ui-client` and `e2e` | data-platform-2, the repository regrouping, agent-design-1 (`sql_guard`) | Explorer e2e flows pass; guard rejection, truncation banner, both sort modes and cancel work against the real stack; the browser offline check passes for Explorer; `make roles` on an existing volume creates `sherpa_ui` without data loss; the build status shown matches the latest full prod build in `ops.dbt_run_results` |
 | **ui-2 — Lineage** | Lineage endpoints and selector subset, the graph, node panel, run-status overlay, "Failing only" | ui-1 | Table-path and domain e2e flows; the selector subset matches `dbt ls` and rejects an unsupported form; a failing test in the prod build shows its node red and appears under "Failing only" |
 | **ui-3 — Home** | `home_queries.yaml`, `HomeService`, the data-status strip, Home screen | ui-2 (the failing-tests link) | Every tile equals a direct SQL check in the e2e test; after `make generate DAYS=1 && make build-prod`, a refresh changes `as_of_date` and the tiles (criterion 2) |
 | **ui-4 — Ask** | Ask endpoints with SSE, chart rules, draft/corrections/answer screens, history with re-runs, trace links, model-health tracking and the offline compose override | ui-1, agent-design-3 | The Ask backend tests pass with agent fakes; the `live` e2e flow (question → draft → one correction → re-plan → Show results) passes once against Bedrock; the offline compose check shows "model unavailable" within seconds while the other screens work |
@@ -351,7 +350,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 - **Data platform spec:**
   - the `marts` schema, `extensions` and `pg_trgm`
   - `meta.{domain, grain, primary_key, pii, synonyms}`, `metric_<name>` doc blocks, `accepted_values` tests, `as_of_date` and `fct_orders.is_first_order` (§6.5, §11)
-  - the prod artifacts in `target-prod/`, with the last full build's `run_results.json` and `sources.json` copied to `target-prod/last-build/` by `make build-prod`
+  - the prod artifacts in `target-prod/` (`manifest.json`, `catalog.json`, `sources.json`) and the `ops.dbt_run_results` audit table
   - the `sherpa_ui` role, created by its idempotent roles script and granted like `sherpa_agent`
 - **Agent spec:**
   - `sherpa_mcp.sql_guard` and masking as a library (§4.2)
@@ -373,7 +372,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 - Per-user state lives in `localStorage`; drafts live in backend memory for an hour; nothing is persisted on the server.
 - The trace link is a configurable URL template, because where traces live depends on the tracing setup.
 - The client generates `query_id`, so it can cancel while a query is still running; disconnects cancel queries and Ask calls.
-- Build status comes from a copy of the last full build's results (`last-build/`), because dbt rewrites `run_results.json` on every compiling command.
+- Build status comes from the `ops.dbt_run_results` audit table, because dbt rewrites `run_results.json` on every compiling command.
 - Model availability is learned from real calls (no probe), with fast failure on connection errors; tool-server and model outages are separate states.
 - Lineage shows and accepts real dbt selector syntax, a tested subset of it.
 - Refund rate on Home counts refunds by refund date, so the latest period isn't biased by refunds that haven't happened yet.
@@ -385,7 +384,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 
 - Login and roles, and with them staging and raw access for analysts.
 - Pinning Ask answers and Explorer queries to Home.
-- Home tiles from dbt saved queries (data-platform-5).
+- Home tiles from dbt saved queries, once data-platform-5 exists (the data platform spec adds saved queries together with this).
 - Column-level lineage (would need SQL parsing of compiled models).
 - Explaining SQL in plain language (a new agent capability with its own evals).
 - CSV export (a row-cap policy question), column profiling, and 👍/👎 feedback on answers as eval-case candidates.
