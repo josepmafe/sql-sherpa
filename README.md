@@ -28,6 +28,7 @@ The target stack. Each tool is introduced in the milestone where it first does a
 | Data | PostgreSQL 16 (Docker), Python 3.12 + Faker (data-platform-1) |
 | Transformation | dbt Core + dbt-postgres and dbt_utils (data-platform-1), dbt_expectations (data-platform-2), MetricFlow (data-platform-5) |
 | Agent | PydanticAI, FastMCP, Claude on Amazon Bedrock (agent milestones) |
+| UI | React + TypeScript + Vite, Mantine, React Flow, CodeMirror; FastAPI backend (ui milestones) |
 | Observability & evals | Pydantic Logfire (OpenTelemetry) and a small execution-accuracy eval runner (agent milestones) |
 | Tooling | uv, ruff, sqlfluff, pre-commit (data-platform-1), GitHub Actions (data-platform-4) |
 
@@ -38,9 +39,10 @@ The target stack. Each tool is introduced in the milestone where it first does a
 | **data-platform-1 · Foundation** | Docker Postgres, the generator, dbt sources + freshness, seeds, documented and tested staging models |
 | **data-platform-2 · Core marts** | Order, promotion, customer and product marts; macros; custom, singular and dbt_expectations tests; contracts; grants and hooks |
 | **data-platform-3 · Time** | Snapshots (price history), incremental models (microbatch, merge, delete+insert), sessionization, unit tests |
-| **data-platform-4 · Governance & CI** | Marketing marts, groups and access, model versions, exposures, selectors, slim builds, GitHub Actions CI |
-| **data-platform-5 · Semantic layer** | MetricFlow semantic models, metrics and saved queries |
-| **agent-design-1 … 10 · Agent** | MCP server, eval harness, a baseline agent, then grounding, schema linking and self-correction, one at a time, measured |
+| **data-platform-4 · Governance & CI** | Marketing marts, groups and access, exposures for the UI and the agent, slim builds and `dbt clone`, GitHub Actions CI |
+| **data-platform-5 · Semantic layer** | MetricFlow semantic models and metrics, used by the agent's MetricFlow path |
+| **agent-design-1 … 9 · Agent** | MCP server, eval harness, a baseline agent that plans before it runs, then grounding, schema linking and self-correction, one at a time, measured |
+| **ui-1 … 4 · Web app** | Explorer (browse marts, run read-only SQL), Lineage (dbt flowchart), Home (headline numbers and data health), Ask (review the agent's plan, then see the answer) |
 
 ## Quickstart
 
@@ -83,6 +85,7 @@ tests/       tests outside the generator package (dbt seeds, agent access to the
 
 - [Data platform spec (generator + dbt)](docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)
 - [Agent spec (text-to-SQL agent)](docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md)
+- [UI spec (web app)](docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)
 - [Plan — data-platform-1 Foundation](docs/superpowers/plans/2026-10-22-data-platform-1-foundation.md)
 - [Plan — data-platform-2 Core marts](docs/superpowers/plans/2026-10-23-data-platform-2-core-marts.md)
 
