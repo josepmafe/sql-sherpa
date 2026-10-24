@@ -56,7 +56,8 @@ MAX_HEAVY_FETCHES = 2
 HEAVY_FETCH_WAIT_SECONDS = 10.0
 BUSY_MESSAGE = "[timeout] the server is busy with other queries; retry in a few seconds"
 NESTED_MESSAGE = "[sql] a value is nested too deeply to return; select scalar columns"
-SIMILARITY_THRESHOLD = "0.2"
+SIMILARITY_THRESHOLD = "0.2"  # pg_trgm `%`: similar to the whole value
+WORD_SIMILARITY_THRESHOLD = "0.6"  # pg_trgm `<%`: close to a word of the value (Postgres's default, set explicitly)
 POOL_MIN_SIZE = 1
 DEFAULT_MAX_ROWS = 100
 EXPLAIN_PREFIX = "explain (analyze false) "
@@ -75,6 +76,7 @@ class QueryResult:
     returned_rows: int
     truncated: bool
     elapsed_ms: int
+    column_types: tuple[str, ...] = ()
 
 
 def json_safe(value: object) -> object:
@@ -230,6 +232,7 @@ class AgentDatabase:
                 with conn.cursor(name=cursor_name) as cursor:
                     cursor.execute(query, params or None)
                     columns = tuple(column.name for column in cursor.description or ())
+                    column_types = tuple(column.type_display for column in cursor.description or ())
                     while not truncated:
                         if time.monotonic() > deadline:
                             raise WarehouseToolError(TIMEOUT_MESSAGE)
@@ -267,6 +270,7 @@ class AgentDatabase:
             returned_rows=len(rows),
             truncated=truncated,
             elapsed_ms=round((time.monotonic() - started) * 1000),
+            column_types=column_types,
         )
 
     @staticmethod
@@ -275,6 +279,11 @@ class AgentDatabase:
         if set_similarity_threshold:
             conn.execute(
                 sql.SQL("set local pg_trgm.similarity_threshold = {}").format(sql.Literal(SIMILARITY_THRESHOLD))
+            )
+            conn.execute(
+                sql.SQL("set local pg_trgm.word_similarity_threshold = {}").format(
+                    sql.Literal(WORD_SIMILARITY_THRESHOLD)
+                )
             )
 
 

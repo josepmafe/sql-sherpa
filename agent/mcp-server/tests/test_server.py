@@ -76,6 +76,19 @@ class TestBuildServer:
         assert "hunter2" not in _text(result)
         assert "10.0.0.1" not in _text(result)
 
+    async def test_each_tool_call_is_a_span_without_arguments_or_error_text(self, capfire: CaptureLogfire) -> None:
+        tools = create_autospec(WarehouseTools, instance=True)
+        tools.run_sql.side_effect = WarehouseToolError("[guard:write] must be a SELECT query: 'leak@x.com'")
+
+        async with Client(build_server(tools)) as client:
+            await client.call_tool("run_sql", {"sql": "delete from marts.dim_customers where email = 'leak@x.com'"})
+
+        spans = capfire.exporter.exported_spans_as_dict()
+        (call,) = [span for span in spans if span["name"] == "tools/call run_sql"]
+        assert call["attributes"]["gen_ai.tool.name"] == "run_sql"
+        assert call["attributes"]["error.type"] == "tool_error"
+        assert "leak@x.com" not in json.dumps(spans, default=str)
+
     async def test_unexpected_error_is_recorded_server_side(
         self, caplog: pytest.LogCaptureFixture, capfire: CaptureLogfire
     ) -> None:

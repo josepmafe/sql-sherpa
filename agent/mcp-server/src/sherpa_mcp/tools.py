@@ -38,15 +38,41 @@ CLOCK_WARNING: Final = (
     "{calls} reads the real clock, but the warehouse is as of {as_of}; "
     "derive periods from (select max(order_date) from marts.fct_orders)"
 )
-# Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The last three leave this
-# tuple when data-platform-3 and -4 land.
+# What each domain's marts are about, as the subject of a question; a domain missing here is named as it is.
+DOMAIN_SUBJECTS: Final = {
+    "customers": "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history",
+    "products": "products and their variants: brand, three-level category, current list and cost prices",
+    "sales": "orders, order lines, discounts and promotions, returns and refunds: revenue, cost, margin, delivery",
+    "shared": "a calendar of days with weeks, months, quarters, weekends and Black Friday week",
+}
+# Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The sessions entry changes when
+# data-platform-3 adds fct_sessions, the campaign and lead entries when data-platform-4 adds their marts.
 DOES_NOT_COVER: Final = (
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "web sessions (not yet loaded)",
-    "marketing campaigns and ad spend (not yet loaded)",
-    "leads (not yet loaded)",
+    "web sessions and on-site behaviour (orders carry only session_id and marketing_channel)",
+    "campaign names, budgets and ad spend (customers and promotions carry only a campaign id)",
+    "leads that never became customers (customers carry lead_id and lead_source)",
+)
+TWO_YEARS_DAYS: Final = 730
+SHORT_HISTORY: Final = "comparisons across years, such as year over year: the history is shorter than two years"
+# Facts about the data that change what a correct answer is (data platform spec §6.5, §6.6).
+NOTES: Final = (
+    "as_of_date is the latest order date: resolve relative periods (last month, last 30 days, this year) against "
+    "it, never against today",
+    "the history runs from first_order_date to as_of_date, so the first and the last month are partial",
+    "refunds arrive 6 to 47 days after the order and count on the order's date, so for orders of the last 7 weeks "
+    "refunded revenue is understated and net revenue overstated",
+    "amounts are EUR; gross and net revenue exclude the 20% tax and the shipping",
+    "dates and timestamps are UTC",
+    "cancelled orders are kept and flagged: metrics filter on not is_cancelled",
+    "test accounts and their orders are left out of every mart",
+)
+MAX_DISTINCT_VALUES: Final = 30  # a text column with at most this many stored values lists them in describe_table
+NO_MATCH_HINT: Final = (
+    "no stored value has a similarity of 0.2 or more and none contains the term as a word; try a sibling column, "
+    "an English or code form of the term, or the distinct_values describe_table lists"
 )
 
 
@@ -58,6 +84,7 @@ class WarehouseContext(BaseModel):
     domains: tuple[str, ...]
     covers: tuple[str, ...]
     does_not_cover: tuple[str, ...]
+    notes: tuple[str, ...]
 
 
 class TableSummary(BaseModel):
@@ -84,7 +111,10 @@ class ColumnDescription(BaseModel):
     description: str
     is_pii: bool
     accepted_values: tuple[str, ...] | None
+    # Every stored value of a text column with at most MAX_DISTINCT_VALUES of them; None otherwise and for PII.
+    distinct_values: tuple[str, ...] | None
     synonyms: tuple[str, ...]
+    metric_refs: tuple[str, ...]  # the metrics (get_metric_definitions) the column's description uses
 
 
 class SampleRows(BaseModel):
@@ -117,6 +147,7 @@ class ValueMatches(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     matches: tuple[ValueMatch, ...]
+    hint: str | None  # what to try next, when nothing matched
 
 
 class MetricList(BaseModel):
@@ -145,6 +176,7 @@ class SqlResult(BaseModel):
 
     execution_id: str
     columns: tuple[str, ...]
+    column_types: tuple[str, ...]  # Postgres's names, e.g. int8, numeric(12,2), text
     rows: tuple[tuple[object, ...], ...]
     returned_rows: int
     truncated: bool
@@ -156,6 +188,8 @@ class WarehouseTools:
         self._loader = loader
         self._database = database
         self._examples = examples
+        # (manifest generated_at, mart) -> {text column: its stored values, or None when there are too many}
+        self._stored: dict[tuple[dt.datetime, str], dict[str, tuple[str, ...] | None]] = {}
 
     def get_context(self) -> WarehouseContext:
         catalog = self._catalog()
@@ -164,15 +198,18 @@ class WarehouseTools:
         if not isinstance(latest, dt.date) or not isinstance(earliest, dt.date):  # null: max/min over no rows
             raise WarehouseToolError("fct_orders has no rows; run make build-prod")
         covers = tuple(
-            f"{domain}: {', '.join(mart.name for mart in catalog.marts if mart.domain == domain)}"
+            f"{DOMAIN_SUBJECTS.get(domain, domain)} "
+            f"({', '.join(mart.name for mart in catalog.marts if mart.domain == domain)})"
             for domain in catalog.domains()
         )
+        short_history = (SHORT_HISTORY,) if (latest - earliest).days < TWO_YEARS_DAYS else ()
         return WarehouseContext(
             as_of_date=latest,
             first_order_date=earliest,
             domains=catalog.domains(),
             covers=covers,
-            does_not_cover=DOES_NOT_COVER,
+            does_not_cover=DOES_NOT_COVER + short_history,
+            notes=NOTES,
         )
 
     def list_tables(self) -> TableList:
@@ -199,6 +236,7 @@ class WarehouseTools:
         result = self._database.fetch_for_model(query, max_rows=SAMPLE_ROWS)
         masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
         sample = SampleRows(columns=result.columns, rows=tuple(tuple(row) for row in masked))
+        stored = self._stored_values(catalog, mart)
         return TableDescription(
             name=mart.name,
             description=mart.description,
@@ -211,7 +249,9 @@ class WarehouseTools:
                     description=column.description,
                     is_pii=column.is_pii,
                     accepted_values=column.accepted_values,
+                    distinct_values=stored.get(column.name),
                     synonyms=column.synonyms,
+                    metric_refs=column.metric_refs,
                 )
                 for column in mart.columns
             ),
@@ -230,19 +270,21 @@ class WarehouseTools:
                 f"{mart.name}.{found.name} is {found.data_type}, not text; only text columns can be searched"
             )
         name = sql.Identifier(found.name)
-        # `%%` is the pg_trgm operator; the term only ever travels as a bound parameter.
+        # pg_trgm's `%%` (similar) and `<%%` (the term is close to a word of the value), both index-backed; the term
+        # only ever travels as a bound parameter.
         query = sql.SQL(
-            "select {col} as value, similarity({col}, %s) as similarity, count(*) as row_count "
-            "from {schema}.{mart} where {col} %% %s group by 1 order by 2 desc, 1 limit %s"
+            "select {col} as value, greatest(similarity({col}, %s), word_similarity(%s, {col})) as similarity, "
+            "count(*) as row_count from {schema}.{mart} where {col} %% %s or %s <%% {col} "
+            "group by 1 order by 2 desc, 1 limit %s"
         ).format(col=name, schema=sql.Identifier(MARTS_SCHEMA), mart=sql.Identifier(mart.name))
-        result = self._database.fetch(query, (term, term, limit), max_rows=limit, set_similarity_threshold=True)
-        return ValueMatches(
-            matches=tuple(
-                # psycopg's own types (text, real, bigint); the model checks them.
-                ValueMatch.model_validate(dict(zip(result.columns, row, strict=True)))
-                for row in result.rows
-            )
+        params = (term, term, term, term, limit)
+        result = self._database.fetch(query, params, max_rows=limit, set_similarity_threshold=True)
+        matches = tuple(
+            # psycopg's own types (text, real, bigint); the model checks them.
+            ValueMatch.model_validate(dict(zip(result.columns, row, strict=True)))
+            for row in result.rows
         )
+        return ValueMatches(matches=matches, hint=None if matches else NO_MATCH_HINT)
 
     def get_metric_definitions(self) -> MetricList:
         return MetricList(metrics=self._catalog().metrics)
@@ -276,6 +318,7 @@ class WarehouseTools:
         return SqlResult(
             execution_id=execution_id,
             columns=result.columns,
+            column_types=result.column_types,
             rows=tuple(tuple(row) for row in masked),
             returned_rows=result.returned_rows,
             truncated=result.truncated,
@@ -287,6 +330,24 @@ class WarehouseTools:
             return self._loader.load()
         except CatalogUnavailable as error:
             raise WarehouseToolError(f"{UNAVAILABLE_CODE} {error}") from error
+
+    def _stored_values(self, catalog: MartCatalog, mart: Mart) -> dict[str, tuple[str, ...] | None]:
+        """The stored values of each non-PII text column of `mart`, read once per dbt build of the catalog."""
+        key = (catalog.generated_at, mart.name)
+        if key not in self._stored:
+            self._stored[key] = {
+                column.name: self._column_values(mart, column)
+                for column in mart.columns
+                if column.data_type == TEXT_TYPE and not column.is_pii
+            }
+        return self._stored[key]
+
+    def _column_values(self, mart: Mart, column: MartColumn) -> tuple[str, ...] | None:
+        query = sql.SQL("select {col} from {schema}.{mart} where {col} is not null group by 1 order by 1").format(
+            col=sql.Identifier(column.name), schema=sql.Identifier(MARTS_SCHEMA), mart=sql.Identifier(mart.name)
+        )
+        result = self._database.fetch(query, max_rows=MAX_DISTINCT_VALUES)
+        return None if result.truncated else tuple(str(row[0]) for row in result.rows)
 
     def _clock_warnings(self, guard: GuardResult) -> tuple[str, ...]:
         """A query that reads today's date answers for the wrong period: the data stops at the as-of date."""

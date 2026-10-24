@@ -420,12 +420,22 @@ class TestAgentDatabase:
         with pytest.raises(WarehouseToolError, match="does_not_exist"):
             agent_database.explain("select * from marts.does_not_exist")
 
-    def test_similarity_threshold_is_set_on_request(self, agent_database: AgentDatabase) -> None:
+    def test_similarity_thresholds_are_set_on_request(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch(
-            "select current_setting('pg_trgm.similarity_threshold')", set_similarity_threshold=True
+            "select current_setting('pg_trgm.similarity_threshold'), "
+            "current_setting('pg_trgm.word_similarity_threshold')",
+            set_similarity_threshold=True,
         )
 
-        assert result.rows == (("0.2",),)
+        assert result.rows == (("0.2", "0.6"),)
+
+    def test_result_carries_postgres_column_types(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch_for_model(
+            "select order_id, net_revenue, net_revenue / 2 as half, order_date, sales_channel, array[1] as ids "
+            "from marts.fct_orders order by order_id limit 1"
+        )
+
+        assert result.column_types == ("int8", "numeric(12,2)", "numeric", "date", "text", "int4[]")
 
     def test_arrays_intervals_and_nan_are_json_safe(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch_for_model(

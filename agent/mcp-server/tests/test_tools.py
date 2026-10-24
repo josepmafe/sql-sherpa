@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from sherpa_mcp.catalog import MartCatalogLoader
-from sherpa_mcp.database import WarehouseToolError
+from sherpa_mcp.database import QueryResult, WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
-from sherpa_mcp.tools import WarehouseTools
+from sherpa_mcp.tools import DOES_NOT_COVER, NO_MATCH_HINT, NOTES, SHORT_HISTORY, WarehouseTools
 
 if TYPE_CHECKING:
     import psycopg
@@ -50,9 +50,17 @@ class TestWarehouseTools:
 
         assert str(context.as_of_date) == str(row[0])
         assert str(context.first_order_date) == str(row[1])
-        assert any("inventory" in item for item in context.does_not_cover)
+        # The built warehouse holds a year of history (make backfill), shorter than two years.
+        assert context.does_not_cover == (*DOES_NOT_COVER, SHORT_HISTORY)
+        assert context.notes == NOTES
         assert set(context.domains) == {"customers", "products", "sales", "shared"}
-        assert any("dim_customers" in item for item in context.covers)
+        assert context.covers[0] == (
+            "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history "
+            "(dim_customers)"
+        )
+        assert context.covers[2].endswith(
+            "(dim_promotions, fct_order_discounts, fct_order_items, fct_orders, fct_refunds, fct_returns)"
+        )
 
     def test_list_tables_are_the_nine_marts(self, tools: WarehouseTools) -> None:
         names = [table.name for table in tools.list_tables().tables]
@@ -68,6 +76,21 @@ class TestWarehouseTools:
         assert len(ids) == 3
         assert {row[columns.index("email")] for row in description.sample_rows.rows} == {"***"}
         assert any(column.name == "email" and column.is_pii for column in description.columns)
+
+    def test_describe_table_lists_the_stored_values_of_small_text_columns(self, tools: WarehouseTools) -> None:
+        columns = {column.name: column for column in tools.describe_table("fct_orders").columns}
+        customers = {column.name: column for column in tools.describe_table("dim_customers").columns}
+
+        assert columns["sales_channel"].distinct_values == ("app", "web")
+        assert set(columns["current_status"].distinct_values or ()) <= set(
+            columns["current_status"].accepted_values or ()
+        )
+        assert columns["order_number"].distinct_values is None  # one per order: more than 30
+        assert columns["net_revenue"].distinct_values is None  # not text
+        assert "United Kingdom" in (customers["country_name"].distinct_values or ())
+        assert customers["email"].distinct_values is None  # PII
+        assert columns["net_revenue"].metric_refs == ("net_revenue",)
+        assert columns["order_number"].metric_refs == ()
 
     def test_describe_table_is_case_insensitive(self, tools: WarehouseTools) -> None:
         assert tools.describe_table("DIM_Customers").name == "dim_customers"
@@ -85,6 +108,24 @@ class TestWarehouseTools:
         assert matches[0].value == brand
         assert 0 < matches[0].similarity <= 1
         assert matches[0].row_count > 0
+
+    def test_search_values_finds_a_value_containing_the_term_as_a_word(
+        self, tools: WarehouseTools, agent_database: AgentDatabase
+    ) -> None:
+        brand = str(agent_database.scalar("select brand from marts.dim_products group by 1 order by count(*) desc, 1"))
+
+        found = tools.search_values("dim_products", "product_name", brand, limit=50)
+
+        # Product names start with their brand: as a whole they are not similar to it, but it is a word of each.
+        assert found.matches
+        assert all(match.value.startswith(brand) and match.similarity == 1.0 for match in found.matches)
+        assert found.hint is None
+
+    def test_search_values_without_a_match_says_what_to_try(self, tools: WarehouseTools) -> None:
+        found = tools.search_values("dim_customers", "country_name", "qqqzzz")
+
+        assert found.matches == ()
+        assert found.hint == NO_MATCH_HINT
 
     @pytest.mark.parametrize("term", ["%", "_"])
     def test_search_values_wildcards_do_not_widen_the_match(
@@ -186,6 +227,9 @@ class TestWarehouseTools:
         plain = tools.run_sql("select order_id from marts.fct_orders limit 2")
         spaced = tools.run_sql("select order_id from marts.fct_orders limit 2 ;  \n")
 
+        assert big.column_types[:2] == ("int8", "int8")  # order_item_id, order_id
+        assert len(big.column_types) == len(big.columns)
+        assert plain.column_types == ("int8",)
         assert big.returned_rows == 100
         assert big.truncated
         assert len(big.rows) == 100
@@ -301,6 +345,35 @@ class TestToolsWithoutArtifacts:
         )
 
         assert len(tools.get_examples("net revenue by month", k=2).examples) == 2
+
+
+@pytest.mark.warehouse  # needs the built catalog, not the database
+class TestStoredValuesCache:
+    def test_stored_values_are_read_once_per_catalog(self) -> None:
+        class CountingDatabase:
+            def __init__(self) -> None:
+                self.value_queries = 0
+
+            def fetch(self, query: object, params: object = (), max_rows: int = 100) -> QueryResult:
+                self.value_queries += 1
+                return QueryResult(columns=("v",), rows=(("a",),), returned_rows=1, truncated=False, elapsed_ms=0)
+
+            def fetch_for_model(self, query: object, max_rows: int = 100) -> QueryResult:
+                return QueryResult(columns=(), rows=(), returned_rows=0, truncated=False, elapsed_ms=0)
+
+        database = CountingDatabase()
+        loader = MartCatalogLoader(REPO_ROOT / "data-platform" / "dbt" / "target-prod")
+        tools = WarehouseTools(loader, database, ExampleIndex([]))  # type: ignore[arg-type]
+        text_columns = sum(
+            1
+            for column in loader.load().mart("fct_orders").columns
+            if column.data_type == "text"  # type: ignore[union-attr]
+        )
+
+        tools.describe_table("fct_orders")
+        tools.describe_table("FCT_ORDERS")
+
+        assert database.value_queries == text_columns
 
 
 @pytest.mark.warehouse  # needs the built catalog, not the database

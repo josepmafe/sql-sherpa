@@ -77,7 +77,9 @@ models:
     config:
       meta:
         domain: sales
-        grain: one row per order
+        grain: >-
+          one row per order; aggregate line, discount, return or refund facts to order_id before
+          joining them, or the order's measures are counted once per joined row
         primary_key: order_id
     data_tests:
       - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:
@@ -194,9 +196,9 @@ models:
         data_type: text
       - name: ship_country_code
         description: >
-          ISO alpha-2 code of the shipping address's country. For the country name and region join
-          dim_customers and use country_name and region; in this data the shipping country always
-          equals the customer's country.
+          ISO alpha-2 code of the shipping address's country; GB is the United Kingdom, which questions
+          may call the UK, Britain or England. For the country name and region join dim_customers and use
+          country_name and region; in this data the shipping country always equals the customer's country.
         data_type: text
       - name: item_count
         description: Number of units ordered, the sum of the line quantities.
@@ -217,7 +219,7 @@ models:
         data_type: numeric(12,2)
         config:
           meta:
-            synonyms: [gross revenue, turnover]
+            synonyms: [gross revenue, sales, gross sales, turnover]
         data_tests: [not_null]
       - name: discount_amount
         description: >
@@ -313,7 +315,9 @@ models:
     config:
       meta:
         domain: sales
-        grain: one row per order line
+        grain: >-
+          one row per order line; join fct_orders only for its attributes, or aggregate the lines to
+          order_id first, or the order's measures are counted once per line
         primary_key: order_item_id
     data_tests:
       - dbt_expectations.expect_column_pair_values_A_to_be_greater_than_B:

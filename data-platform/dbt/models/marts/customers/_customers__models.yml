@@ -40,7 +40,9 @@ models:
           meta:
             pii: true
       - name: country_code
-        description: Canonical ISO alpha-2 code of the customer's country.
+        description: >
+          Canonical ISO alpha-2 code of the customer's country; GB is the United Kingdom, which
+          questions may call the UK, Britain or England.
         data_type: text
         data_tests:
           - relationships:
@@ -48,7 +50,9 @@ models:
                 to: ref('countries')
                 field: code
       - name: country_name
-        description: English name of the customer's country.
+        description: >
+          English name of the customer's country, e.g. United Kingdom, which questions may call the UK,
+          Britain or England.
         data_type: text
         config:
           meta:
@@ -153,6 +157,9 @@ models:
           lifetime_net_revenue divided by order_count; null when the customer has no non-cancelled
           order. {{ doc('metric_aov') }}
         data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [AOV, average order value]
       - name: days_since_last_order
         description: >
           Days from the UTC date of last_order_at to as_of_date (the latest order_date in fct_orders);
