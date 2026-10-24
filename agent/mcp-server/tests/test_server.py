@@ -26,6 +26,18 @@ TOOL_NAMES = {
     *("get_metric_definitions", "get_examples", "validate_sql", "run_sql"),
 }
 COUNT_ORDERS = "select count(*) from marts.fct_orders"
+# One call per tool, arguments in the order of the WarehouseTools method; compared with the in-process answer.
+PARITY_CALLS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("get_context", {}),
+    ("list_tables", {}),
+    ("describe_table", {"table": "dim_customers"}),
+    ("search_values", {"table": "dim_products", "column": "brand", "term": "haldin", "limit": 3}),
+    ("get_metric_definitions", {}),
+    ("get_examples", {"question": "net revenue by month", "k": 2}),
+    ("validate_sql", {"sql": "select nope from marts.fct_orders"}),
+    ("run_sql", {"sql": COUNT_ORDERS}),
+)
+VOLATILE_FIELDS = frozenset({"elapsed_ms"})
 STDIO_TIMEOUT_SECONDS = 120
 LEGACY_PROTOCOL_VERSION = "2025-06-18"  # the initialize handshake a pre-2026 client sends
 HTTP_TIMEOUT_SECONDS = 30
@@ -114,17 +126,16 @@ class TestServer:
         assert {tool.name for tool in listed.tools} == TOOL_NAMES
         assert all(tool.description for tool in listed.tools)
 
-    async def test_same_answers_over_both_transports(self, mcp_client: Client, tools: WarehouseTools) -> None:
-        expected_run = tools.run_sql(COUNT_ORDERS).model_dump(mode="json", exclude={"elapsed_ms"})
+    async def test_every_tool_answers_as_in_process(self, mcp_client: Client, tools: WarehouseTools) -> None:
+        assert {name for name, _ in PARITY_CALLS} == TOOL_NAMES
 
-        tables = await mcp_client.call_tool("list_tables", {})
-        context = await mcp_client.call_tool("get_context", {})
-        run = await mcp_client.call_tool("run_sql", {"sql": COUNT_ORDERS})
+        for name, arguments in PARITY_CALLS:
+            expected = getattr(tools, name)(*arguments.values()).model_dump(mode="json")
 
-        assert tables.structured_content == tools.list_tables().model_dump(mode="json")
-        assert context.structured_content == tools.get_context().model_dump(mode="json")
-        assert run.structured_content is not None
-        assert {key: value for key, value in run.structured_content.items() if key != "elapsed_ms"} == expected_run
+            result = await mcp_client.call_tool(name, arguments)
+
+            assert not result.is_error, (name, _text(result))
+            assert _without_volatile(result.structured_content) == _without_volatile(expected), name
 
     async def test_tool_error_is_an_mcp_error(self, mcp_client: Client) -> None:
         result = await mcp_client.call_tool("run_sql", {"sql": "delete from marts.fct_orders"})
@@ -186,6 +197,17 @@ def test_http_on_all_interfaces_checks_the_host_header(mcp_all_interfaces_port: 
         answered = error.code
 
     assert answered == status
+
+
+def _without_volatile(value: object) -> object:
+    """`value` with every timing field dropped, at any depth (`describe_table` nests its sample rows)."""
+    match value:
+        case dict():
+            return {key: _without_volatile(item) for key, item in value.items() if key not in VOLATILE_FIELDS}
+        case list():
+            return [_without_volatile(item) for item in value]
+        case _:
+            return value
 
 
 def _text(result: CallToolResult) -> str:
