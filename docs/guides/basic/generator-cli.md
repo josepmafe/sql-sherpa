@@ -10,18 +10,16 @@ You need Docker, [uv](https://docs.astral.sh/uv/) and GNU Make (on Windows, inst
 
 ```bash
 cp .env.example .env     # then replace every change-me password
-make up                  # start Postgres and wait until it is healthy
+docker compose up -d --wait postgres   # start Postgres and wait until it is healthy
 ```
 
 ```
-docker compose up -d --wait
- Container <folder>-postgres-1 Starting
- Container <folder>-postgres-1 Started
- Container <folder>-postgres-1 Waiting
- Container <folder>-postgres-1 Healthy
+$ docker compose ps postgres
+NAME                    IMAGE                COMMAND                  SERVICE    CREATED       STATUS                 PORTS
+sql-sherpa-postgres-1   postgres:16-alpine   "docker-entrypoint.s…"   postgres   3 hours ago   Up 3 hours (healthy)   127.0.0.1:5432->5432/tcp
 ```
 
-Docker Compose names the container after the folder you cloned into. There is no separate install step: the first `uv run` creates the Python 3.12 environment with every dependency group.
+`make up` starts every service (Postgres and the MCP server, see [Using the MCP server](using-the-mcp-server.md)); this guide needs only the database. The compose project is pinned to `sql-sherpa`, so the container has the same name from every checkout. There is no separate install step: the first `uv run` creates the Python 3.12 environment with every dependency group.
 
 Postgres listens on `127.0.0.1:5432` (the port is published on the loopback address only, and `.env` sets `SHERPA_DB_HOST=127.0.0.1` because `localhost` can resolve to IPv6 first on Windows and hang). If that port is taken, set `SHERPA_DB_PORT` in `.env`; Docker Compose, the generator and dbt all read it. On the first start the container runs `data-platform/postgres/init/00_roles.sh`, which creates the `sherpa_admin` and `sherpa_agent` roles with the passwords from `.env`.
 
@@ -215,7 +213,7 @@ $ uv run sherpa-generate generate --days 1 --scale 0.1
 nothing to simulate: already caught up to yesterday
 ```
 
-**Postgres not running.** Start it with `make up` (and check `SHERPA_DB_PORT` in `.env`). The connection attempt gives up after 10 seconds:
+**Postgres not running.** Start it with `docker compose up -d --wait postgres` (and check `SHERPA_DB_PORT` in `.env`). The connection attempt gives up after 10 seconds:
 
 ```
 $ uv run sherpa-generate status

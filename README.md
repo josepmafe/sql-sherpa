@@ -4,7 +4,7 @@
 
 It is a learning project, built to production standards: a realistic synthetic e-commerce business, a dbt project that uses dbt Core's features the way practitioners do, and a text-to-SQL agent where observability and evaluation come first.
 
-> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation) and data-platform-2 (Core marts) are done; data-platform-3 (Time) is next.
+> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation), data-platform-2 (Core marts) and agent-design-1 (MCP server) are done; agent-design-2 (gold set and evals) and data-platform-3 (Time) are next.
 
 ---
 
@@ -21,15 +21,15 @@ It is a learning project, built to production standards: a realistic synthetic e
 
 ## Stack
 
-The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the tools of the finished milestones (data-platform-1 and data-platform-2) are installed today.
+The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the tools of the finished milestones (data-platform-1, data-platform-2 and agent-design-1) are installed today.
 
 | Layer | Tools |
 |---|---|
 | Data | PostgreSQL 16 (Docker), Python 3.12 + Faker (data-platform-1) |
 | Transformation | dbt Core + dbt-postgres and dbt_utils (data-platform-1), dbt_expectations (data-platform-2), MetricFlow (data-platform-5) |
-| Agent | PydanticAI, FastMCP, Claude on Amazon Bedrock (agent milestones) |
+| Agent | PydanticAI, the MCP Python SDK (`MCPServer`, agent-design-1), Claude on Amazon Bedrock (agent milestones) |
 | UI | React + TypeScript + Vite, Mantine, React Flow, CodeMirror; FastAPI backend (ui milestones) |
-| Observability & evals | Pydantic Logfire (OpenTelemetry) and a small execution-accuracy eval runner (agent milestones) |
+| Observability & evals | Pydantic Logfire (OpenTelemetry; in the MCP server since agent-design-1) and a small execution-accuracy eval runner (agent milestones) |
 | Tooling | uv, ruff, sqlfluff, pre-commit (data-platform-1), GitHub Actions (data-platform-4) |
 
 ## Roadmap
@@ -51,7 +51,7 @@ Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
 ```bash
 uv run pre-commit install  # hooks enforce lint and format locally; there is no CI yet
 cp .env.example .env     # then replace the change-me passwords with real values
-make up                  # start Postgres
+make up                  # start Postgres and the MCP server (both wait until healthy)
 make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
 make deps                # install the dbt packages
 make build               # dbt: seeds, staging, intermediate and mart models, and tests
@@ -60,9 +60,9 @@ make eval-db             # optional: the frozen evaluation database sherpa_eval 
 make docs                # generate and serve the dbt docs until you press Ctrl+C
 ```
 
-`make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy and sqlfluff.
+`make mcp-dev` runs the MCP server on the host instead of the container ([Using the MCP server](docs/guides/basic/using-the-mcp-server.md)). `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy and sqlfluff.
 
-The database lives in one Docker volume, `sherpa_pgdata`, shared by every checkout and git worktree of the repository (the compose project is pinned to `sql-sherpa`). `make up` in a new worktree reuses the existing warehouse instead of starting an empty one. The flip side is that `make down` or `make reset` from any of them affects that one database.
+The database lives in one Docker volume, `sherpa_pgdata`, shared by every checkout and git worktree of the repository (the compose project is pinned to `sql-sherpa`). `make up` in a new worktree reuses the existing warehouse instead of starting an empty one (it also builds and starts the `mcp` service). The flip side is that `make down` (which stops Postgres and `mcp`) or `make reset` from any of them affects that one database.
 
 To add days later, run `make generate DAYS=<n>`. Days added after the first run have no paid campaigns, promotions or ad spend, because the catalog is built once, on the first run.
 
@@ -75,7 +75,7 @@ To add days later, run `make generate DAYS=<n>`. Days added after the first run 
 
 ## Repository layout
 
-Code is grouped by spec. `agent/` and `ui/` appear with their first milestones.
+Code is grouped by spec. The rest of `agent/` and `ui/` appear with their first milestones.
 
 ```
 data-platform/
@@ -84,6 +84,8 @@ data-platform/
   dbt/             the dbt project: sources, seeds, staging, intermediate and mart models, macros and tests
   scripts/         helper scripts, such as the dbt docs-coverage check
   tests/           tests spanning the generator and dbt (seeds, agent access to the marts, scripts)
+agent/
+  mcp-server/      the read-only MCP server (Python package `sherpa_mcp`, its tests and Dockerfile)
 docs/              design specs, implementation plans and how-to guides
 ```
 
@@ -94,13 +96,16 @@ docs/              design specs, implementation plans and how-to guides
 - [UI spec (web app)](docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)
 - [Plan — data-platform-1 Foundation](docs/superpowers/plans/2026-10-22-data-platform-1-foundation.md)
 - [Plan — data-platform-2 Core marts](docs/superpowers/plans/2026-10-23-data-platform-2-core-marts.md)
+- [Plan — agent-design-1 MCP server](docs/superpowers/plans/2026-10-24-agent-design-1-mcp-server.md)
 
 ## Guides
 
 - [Using the generator](docs/guides/basic/generator-cli.md): commands, recipes, errors, and the raw data in `psql`
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev, prod and eval, the layers, hooks, selecting, previewing, docs and failing tests
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers, revenue definitions, copy-paste queries, traps, fuzzy search and the agent role
+- [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, MCP Inspector, the eight tools with real calls, guard rejections, timeouts, masking and its limits
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, end to end
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns, marts, metrics, trigram indexes, custom tests and intermediate models
+- [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, few-shot examples, and what to update when marts are added
 
 All data is synthetic.

@@ -40,12 +40,12 @@ The output must be production-like: not necessarily complex, but well-built, wit
 |---|---|
 | Language / packaging | Python 3.12, uv, same root `pyproject.toml` as the data platform spec; new dependency groups `mcp`, `agent`, `evals` |
 | Agent framework | **PydanticAI** (latest stable), MCP client toolsets |
-| MCP server | **FastMCP**: the standalone `fastmcp` package (latest stable major at agent-design-1) *or* the `mcp` SDK's bundled `FastMCP`. Pick one deliberately in agent-design-1 and pin it; they have diverged, so don't mix them |
+| MCP server | **`MCPServer`** of the official `mcp` SDK (2.x, pinned in the `mcp` dependency group). Not the standalone `fastmcp` package |
 | LLM provider | Claude on **Amazon Bedrock** via PydanticAI's Bedrock model. Configured entirely from `.env`: `AWS_PROFILE` (local default `ClaudeCode`), `AWS_REGION` (`eu-central-1`), model IDs per step. Anthropic API supported by switching the model string, with no code change. |
 | Default models | SQL generation and the single-agent baseline: `eu.anthropic.claude-sonnet-5-5`. Cheap steps (grounding, linking, critic): `eu.anthropic.claude-haiku-5-5`. Gold-set drafting (offline): `eu.anthropic.claude-opus-5-5`. All overridable per step. |
 | Model parameters | These models run adaptive thinking and **reject non-default sampling parameters** (`temperature`, `top_p`) and **forced tool choice**. The spec therefore never relies on either. Thinking **effort** is configurable per step (`SHERPA_EFFORT_DEFAULT`, `SHERPA_EFFORT_FAST`; default `medium`) and is one of the things evals measure, since it drives latency and cost. Structured output uses an output mode that doesn't force `tool_choice` (PydanticAI `NativeOutput` or `PromptedOutput`, or verified-safe `ToolOutput` with text output allowed). The mode is chosen and verified against Bedrock in agent-design-3. |
 | SQL parsing | `sqlglot` (Postgres dialect) |
-| Observability | **Logfire SDK** (OpenTelemetry). Logfire cloud by default; `LOGFIRE_SEND_TO_LOGFIRE=false` plus an OTLP endpoint sends to the optional Phoenix compose profile instead |
+| Observability | **Logfire SDK** (OpenTelemetry). Logfire cloud when `LOGFIRE_TOKEN` is set; without a token nothing is exported (`send_to_logfire="if-token-present"`). `LOGFIRE_SEND_TO_LOGFIRE=false` plus an OTLP endpoint sends to the optional Phoenix compose profile instead |
 | CLI / rendering | Typer + Rich |
 | Tests | pytest; PydanticAI `TestModel` / `FunctionModel` for every agent test. No live Bedrock calls in the unit suite |
 
@@ -58,11 +58,14 @@ agent/
 ├── mcp-server/
 │   ├── Dockerfile         # the compose `mcp` service
 │   ├── src/sherpa_mcp/
-│   │   ├── server.py      # FastMCP app, tool registration, transport selection
-│   │   ├── manifest.py    # loads target-prod manifest/catalog → Catalog model
+│   │   ├── server.py      # MCPServer app, tool registration, transport selection
+│   │   ├── settings.py    # McpSettings (SHERPA_* and MCP_TRANSPORT)
+│   │   ├── catalog.py     # loads target-prod manifest/catalog → MartCatalog model
+│   │   ├── tools.py       # WarehouseTools: the eight tools and their output models
 │   │   ├── sql_guard.py   # sqlglot static checks (also used by the UI)
 │   │   ├── masking.py     # PII masking (also used by the UI)
-│   │   ├── db.py          # psycopg pool as sherpa_agent
+│   │   ├── database.py    # psycopg pool as sherpa_agent
+│   │   ├── examples.py    # few-shot index (token Jaccard)
 │   │   └── examples.yaml  # few-shot examples (disjoint from the eval gold set)
 │   └── tests/
 ├── core/
@@ -100,8 +103,8 @@ sherpa ask "…" ──► Variant pipeline (PydanticAI agents) ──MCP──�
                          └── Logfire spans ───────────────────────────────────────────────► Logfire / Phoenix
 ```
 
-- **Transport:** the server supports `MCP_TRANSPORT=stdio|http`. **stdio is the default**: the CLI and the eval runner each start one server subprocess, shared by every agent in that process, with concurrent requests allowed. **HTTP** (Streamable HTTP) runs as the `mcp` service in docker-compose, bound to `127.0.0.1:8765`, with `data-platform/dbt/target-prod` mounted read-only. It serves multiple simultaneous client processes, notably the UI backend, which runs `AgentService` in-process and reaches `mcp` over HTTP (UI spec §3); stdio stays the fast development loop.
-- **Metadata freshness:** the server loads the manifest/catalog at startup and reloads when `manifest.json`'s mtime changes (checked on each `list_tables` / `describe_table` call).
+- **Transport:** the server supports `MCP_TRANSPORT=stdio|http`. **stdio is the default**: the CLI and the eval runner each start one server subprocess, shared by every agent in that process, with concurrent requests allowed. **HTTP** (Streamable HTTP) runs as the `mcp` service in docker-compose, bound to `127.0.0.1:8765`, with `data-platform/dbt/target-prod` mounted read-only. The container gets an explicit environment (database host, name and the `sherpa_agent` login, the transport and port, `SHERPA_DBT_TARGET_PATH`, an optional `LOGFIRE_TOKEN`), never the admin login or the rest of `.env`. Inside it the server binds `0.0.0.0` and allows only the Host names `127.0.0.1:*`, `localhost:*`, `[::1]:*` and `mcp:*` (DNS-rebinding protection); on the host it binds `127.0.0.1`. It serves multiple simultaneous client processes, notably the UI backend, which runs `AgentService` in-process and reaches `mcp` over HTTP (UI spec §3); stdio stays the fast development loop.
+- **Metadata freshness:** the server reads `manifest.json` and `catalog.json` on first use and reloads when either file's mtime changes (checked on each tool call that needs them). `manifest.json` comes from `make build-prod`; `catalog.json` currently comes from `make docs-prod` (a later milestone makes `make build-prod` write it too). When either file is missing, the tool error names both `make build-prod` and `make docs-prod`.
 - **stdio specifics:**
   - The MCP SDK's stdio client passes only a minimal environment to the subprocess, so the client passes the server's variables **explicitly** (`env=` with `SHERPA_*`, `LOGFIRE_*`, `AWS_*`). The server also loads `.env` itself as a fallback.
   - The server must **never write to stdout**, which carries the JSON-RPC stream. Use `logfire.configure(console=False)` and send all logging to stderr.
@@ -138,7 +141,8 @@ The role's settings are defaults that a session could override. **`sql_guard` is
 3. **Timeout:** the server runs `SET LOCAL statement_timeout = '5s'` in every transaction itself, rather than relying on the role default. A timeout returns a tool error suggesting aggregation or a narrower filter.
 4. **Row cap:** 100 rows to the model (above).
 5. **Connection settings:** the server's connection string sets `options=-c default_transaction_read_only=on -c statement_timeout=5s`, so every session starts read-only with the timeout whatever the role defaults say. `sql_guard` rejects `ALTER ROLE`, `SET` and `RESET`, so a query cannot change them for the session or for later ones, and a test asserts the agent's `pg_db_role_setting` rows are unchanged after the MCP server's tests run.
-6. **PII masking:** any output column whose name matches a column flagged `meta.pii` in any mart (`email`, `first_name`, `last_name`) is replaced by `'***'`. Name-based by design; documented as a known limitation (aliases evade it — acceptable for synthetic data, called out in docs).
+6. **PII masking:** any output column whose name matches a column flagged `meta.pii` in any mart (`email`, `first_name`, `last_name`) is replaced by `'***'`. It is name-based by design, an accepted limitation because the data is synthetic and local. It does not catch an alias (`email as e`), an expression (`lower(email)`, `email || ''`), an aggregate (`string_agg(email, ',')`), a set operation that names the column differently, or a LIKE or count oracle. A whole-row reference (`select c from marts.dim_customers c`) would return every PII field inside one value, so `sql_guard` rejects it. Postgres data-exception (class 22) errors quote the offending value, so the server returns them without it.
+7. **Extended protocol:** every query runs over Postgres' extended protocol on a named server-side cursor, which accepts one statement per message. Postgres itself therefore refuses multi-statement text and `DECLARE CURSOR`, even if the guard and Postgres ever split a query differently.
 
 ### 4.3 Few-shot examples
 `examples.yaml` holds ~15 question/SQL pairs covering common patterns (aggregation by period, top-N, ratio metrics, funnel flags). They are **disjoint from the eval gold set**: no example question may be a paraphrase of a gold question. agent-design-2 checks this by reviewing the closest example per gold case (Jaccard, listed in the agent-design-2 report).
@@ -383,7 +387,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent
 | `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
 | `MCP_HTTP_URL` | `http://127.0.0.1:8765/mcp` | Client URL when `http` |
 | `SHERPA_DBT_TARGET_PATH` | `data-platform/dbt/target-prod` | Manifest/catalog location |
-| `LOGFIRE_TOKEN`, `LOGFIRE_SEND_TO_LOGFIRE` | — / `true` | Tracing backend |
+| `LOGFIRE_TOKEN`, `LOGFIRE_SEND_TO_LOGFIRE` | — / `true` | Tracing backend; without a token nothing is exported |
 
 `.env.example` documents all of them. Nothing account-specific is committed.
 

@@ -8,7 +8,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
 - **UI spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`. The web app (Home, Ask, Explorer, Lineage). Relies on the data platform spec §11 and the agent spec's `plan`/`answer` contract (§5.1).
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-4` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`) and data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`) are done. Current plan: data-platform-3, to be planned.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-4` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`) and agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`) are done. Current plan: agent-design-2 (gold set and evals), to be planned; data-platform-3 runs alongside.
 - **Sequencing:**
   1. data-platform-1 → data-platform-2 (defines the agent-facing interface).
   2. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-3 once agent-design-1 exists; ui-4 after agent-design-3.
@@ -31,7 +31,8 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ## Commands
 
-- `make up` / `make down`: start / stop the Postgres container.
+- `make up` / `make down`: start / stop every compose service, Postgres and the `mcp` server (`make up` builds the `mcp` image and waits until both are healthy). To work on the database alone, `docker compose up -d --wait postgres`.
+- `make mcp-dev`: run the MCP server on the host over HTTP (`http://127.0.0.1:8765/mcp`, port from `SHERPA_MCP_PORT`).
 - `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
 - `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
 - `make status`: print the simulated date range and the row count of every raw table.
@@ -45,13 +46,13 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `data-platform/dbt/models` has no description.
 - `make lint`: ruff check, ruff format check, mypy and sqlfluff.
-- `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`make up`).
+- `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`docker compose up -d --wait postgres`).
 
 ## Conventions
 
 - **Repository layout, grouped by spec:**
   - `data-platform/`: `postgres/init/` (roles), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
-  - `agent/` (`mcp-server/`, `core/`, `evals/`) and `ui/` (`backend/`, `frontend/`) appear with their first milestones.
+  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `agent/core/`, `agent/evals/` and `ui/` (`backend/`, `frontend/`) appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
   - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
@@ -126,7 +127,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - Markers:
   - `integration`: needs Postgres
-  - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`)
+  - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`). The MCP server tests over the compose container also need `SHERPA_TEST_MCP_CONTAINER=1` and the `mcp` service up; without it they are skipped
   - `slow`: full-year runs
   - `live`: real Bedrock calls; costs money, never in CI
 
@@ -136,7 +137,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ### Tooling
 - Every Python command runs through uv: `uv run pytest`, `uv run python`, `uv add <pkg> --group <group>`.
-- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `data-platform/generator/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
+- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `data-platform/generator/src` and `agent/mcp-server/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
 
 ## Environment notes
 
