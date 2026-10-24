@@ -270,6 +270,17 @@ class TestWarehouseTools:
         with pytest.raises(WarehouseToolError, match=r"whole-row reference|is not allowed|is not a column of"):
             tools.run_sql(query)
 
+    def test_run_sql_reads_an_aggregate_column_by_the_name_postgres_gives_it(self, tools: WarehouseTools) -> None:
+        result = tools.run_sql(
+            "select t.count, t.sum is not null, t.avg is not null, t.min <= t.max from ("
+            "select count(*), sum(net_revenue), avg(net_revenue), min(order_date), max(order_date) "
+            "from marts.fct_orders) t"
+        )
+
+        assert result.columns == ("count", "?column?", "?column?", "?column?")
+        assert result.rows[0][0] > 0
+        assert result.rows[0][1:] == (True, True, True)
+
     def test_run_sql_rejects_hostile_sql_with_guard_errors(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError, match="staging"):
             tools.run_sql("select * from staging.stg_shop__orders")

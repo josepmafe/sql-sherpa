@@ -68,6 +68,18 @@ JSON_HINT: Final = "aggregate with string_agg, or select the columns"
 DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
 DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
 _MARTS_HINT: Final = "query only the marts that list_tables returns"
+_ALIAS_LIST_HINT: Final = (
+    "the source's alias list (`s(a, b)`) renames its columns by position, so name only those, "
+    "or drop the list and alias the columns in the select list (`email as e`)"
+)
+# Postgres names an unaliased `count(*)`, `sum(x)`, ... column after the function (`?column?` for most expressions).
+_AGGREGATE_NAMES: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
+    (exp.Count, "count"),
+    (exp.Sum, "sum"),
+    (exp.Avg, "avg"),
+    (exp.Min, "min"),
+    (exp.Max, "max"),
+)
 _OPERATOR_HINTS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
     (exp.Array, "use IN (...) instead of = ANY(ARRAY[...])"),
     (exp.RegexpLike, "use LIKE or ILIKE instead of a regular expression"),
@@ -343,7 +355,7 @@ class SqlGuard:
                     item = _find_source(scope, projection)
                     expanded = [None if item is None else self._outputs(item, scopes, seen)]
                 case _:
-                    expanded = [frozenset({projection.output_name})]
+                    expanded = [frozenset({_output_name(projection)})]
             for outputs in expanded:
                 if outputs is None:
                     return None
@@ -395,11 +407,20 @@ def _not_a_column(column: exp.Column, source: exp.Expr | Scope | None) -> str:
             target = "a table in scope"
         case _:
             target = column.table
+    renamed = None if source is None else _alias_columns(source.expression if isinstance(source, Scope) else source)
     return _error(
         "column",
         f"column {column.sql(dialect=DIALECT)} is not a column of {target}",
-        "use a column listed by describe_table",
+        "use a column listed by describe_table" if renamed is None else _ALIAS_LIST_HINT,
     )
+
+
+def _output_name(projection: exp.Expr) -> str:
+    """The column name Postgres gives a select-list item: its alias or column name, or for a bare call of one of
+    `_AGGREGATE_NAMES` the function's name. Anything else gets no name here, so a reference to it fails closed."""
+    if projection.output_name:
+        return projection.output_name
+    return next((name for kind, name in _AGGREGATE_NAMES if type(projection) is kind), "")
 
 
 def _error(rule: str, message: str, hint: str) -> str:

@@ -707,6 +707,8 @@ class TestQualifiedColumns:
             "with x as (select email from marts.dim_customers) select x.{f} from x",
             "with x as (select * from marts.dim_customers), y as (select * from x) select y.{f} from y",
             "select s.{f} from (select * from marts.dim_customers) s",
+            "select s.{f} from (select count(*), max(email) from marts.dim_customers) s",
+            "select s.{f} from (select count(*) filter (where email is not null) from marts.dim_customers) s",
             "select s.{f} from (select email, first_name from marts.dim_customers) s",
             "select s.{f} from (select email from marts.dim_customers union select email from marts.dim_customers) s",
             "select l.{f} from marts.fct_orders o, lateral (select c.email from marts.dim_customers c) l",
@@ -784,6 +786,11 @@ class TestQualifiedColumns:
             "select s.total from (select sum(net_revenue) as total from marts.fct_orders) s",
             "select s.email from (select email from marts.dim_customers union select email from marts.dim_customers) s",
             "select v.a from (values (1), (2)) v(a)",
+            # Postgres names an unaliased count/sum/avg/min/max column after the function
+            "select t.count from (select count(*) from marts.fct_orders) t",
+            "select t.sum, t.avg, t.min, t.max from ("
+            "select sum(net_revenue), avg(net_revenue), min(order_date), MAX(order_date) from marts.fct_orders) t",
+            "with x as (select count(distinct customer_id) from marts.fct_orders) select x.count from x",
             "select o.order_id, l.email from marts.fct_orders o, lateral ("
             "select c.email from marts.dim_customers c where c.customer_id = o.customer_id) l",
             "select o.order_id from marts.fct_orders o "
@@ -802,6 +809,22 @@ class TestQualifiedColumns:
         result = guard.check(sql)
 
         assert result.ok, result.errors
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select ab.email from marts.dim_customers as ab(a)",
+            "select s.first_name from (select email, first_name from marts.dim_customers) s(e)",
+        ],
+    )
+    def test_a_column_left_out_of_an_alias_list_gets_an_aliasing_hint(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert len(result.errors) == 1
+        assert result.errors[0].endswith(
+            "; the source's alias list (`s(a, b)`) renames its columns by position, so name only those, "
+            "or drop the list and alias the columns in the select list (`email as e`)"
+        ), result.errors
 
     def test_error_names_the_column_and_its_source(self, guard: SqlGuard) -> None:
         result = guard.check("select c.row_to_json from marts.dim_customers c")
