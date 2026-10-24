@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalog, MartColumn, MetricDefinition
 from sherpa_mcp.database import WarehouseToolError
-from sherpa_mcp.examples import MAX_K, MIN_K, Example
+from sherpa_mcp.examples import MAX_K, MIN_K, RankedExample
 from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import SqlGuard
 
@@ -128,7 +128,7 @@ class MetricList(BaseModel):
 class ExampleList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    examples: tuple[Example, ...]
+    examples: tuple[RankedExample, ...]
 
 
 class Validation(BaseModel):

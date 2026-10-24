@@ -138,9 +138,10 @@ def build_server(tools: WarehouseTools) -> MCPServer:
 
     @server.tool(
         description=(
-            "The k worked examples (question, SQL, notes) most similar to a question, showing the warehouse's "
-            "query patterns: aggregation by period, top-N, ratio metrics, funnel flags. Adapt them; do not copy "
-            "them blindly."
+            "Up to k worked examples (question, SQL, notes, score) most similar to a question by shared words, "
+            "best first, showing the warehouse's query patterns: periods anchored to the as-of date, top-N, ratio "
+            "metrics, joins across grains without double counting, funnel flags. Examples sharing no word with "
+            "the question are left out, so the list can be empty. Adapt them; do not copy them blindly."
         )
     )
     def get_examples(

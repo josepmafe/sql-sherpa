@@ -32,12 +32,12 @@ def _mart_columns() -> dict[str, frozenset[str]]:
     return {model["name"]: frozenset(column["name"] for column in model.get("columns", [])) for model in models}
 
 
-def _example(question: str) -> Example:
-    return Example(question=question, sql="select 1", notes="")
+def _example(question: str, notes: str = "", sql: str = "select 1") -> Example:
+    return Example(question=question, sql=sql, notes=notes)
 
 
 class TestExampleIndex:
-    def test_top_ranks_by_jaccard(self) -> None:
+    def test_top_ranks_by_weighted_jaccard_with_scores(self) -> None:
         index = ExampleIndex(
             [
                 _example("monthly revenue by country"),
@@ -46,9 +46,13 @@ class TestExampleIndex:
             ]
         )
 
-        top = index.top("revenue by month", 2)
+        top = index.top("revenue by month", 3)
 
-        assert [e.question for e in top] == ["revenue by month", "monthly revenue by country"]
+        # {revenue, month} against {month, revenue, country}: 2/3 on the question and on everything.
+        assert [(e.question, e.score) for e in top] == [
+            ("revenue by month", 1.0),
+            ("monthly revenue by country", 0.667),
+        ]
 
     def test_ties_keep_file_order(self) -> None:
         index = ExampleIndex([_example("alpha one"), _example("alpha two"), _example("alpha three")])
@@ -64,17 +68,78 @@ class TestExampleIndex:
         with pytest.raises(ValueError, match="k must be between 1 and 10"):
             index.top("alpha", k)
 
-    def test_question_with_only_stop_words_returns_first_k(self) -> None:
+    @pytest.mark.parametrize("question", ["what is the", "", "weather forecast"])
+    def test_question_sharing_no_word_returns_nothing(self, question: str) -> None:
         index = ExampleIndex([_example("alpha"), _example("beta"), _example("gamma")])
 
-        top = index.top("what is the", 2)
+        assert index.top(question, 2) == []
 
-        assert [e.question for e in top] == ["alpha", "beta"]
+    def test_examples_sharing_no_word_are_left_out(self) -> None:
+        index = ExampleIndex([_example("alpha"), _example("beta"), _example("alpha beta")])
+
+        assert [e.question for e in index.top("alpha", 3)] == ["alpha", "alpha beta"]
 
     def test_fewer_examples_than_k(self) -> None:
         index = ExampleIndex([_example("alpha")])
 
         assert len(index.top("alpha", 5)) == 1
+
+    @pytest.mark.parametrize(
+        ("question", "example"),
+        [
+            ("monthly orders", "orders per month"),
+            ("cancelled orders", "cancel an order"),
+            ("refunded categories", "refund per category"),
+            ("boxes shipped", "box shipping"),
+        ],
+    )
+    def test_word_forms_meet_on_their_stem(self, question: str, example: str) -> None:
+        index = ExampleIndex([_example(example)])
+
+        assert index.top(question, 1)[0].score == 1.0
+
+    @pytest.mark.parametrize(("question", "example"), [("sales", "sal"), ("status", "statu")])
+    def test_stemming_keeps_words_apart_that_differ(self, question: str, example: str) -> None:
+        # "sales" stems to "sale", never to "sal"; "status" keeps its s. Neither shares a stem with the example.
+        index = ExampleIndex([_example(example)])
+
+        assert index.top(question, 1) == []
+
+    @pytest.mark.parametrize(
+        ("question", "expected"),
+        [
+            ("AOV", "average order value"),
+            ("coupon use", "discount by promotion"),
+            ("yoy", "revenue per year"),
+            ("units sold", "item quantity"),
+        ],
+    )
+    def test_synonyms_reach_the_examples_wording(self, question: str, expected: str) -> None:
+        index = ExampleIndex([_example("weather"), _example(expected)])
+
+        assert [e.question for e in index.top(question, 2)] == [expected]
+
+    def test_notes_and_sql_names_count_at_a_lower_weight(self) -> None:
+        by_question = _example("refund reasons")
+        by_notes = _example("why items come back", notes="grouped by refund reason")
+        by_sql = _example("why items come back", sql="select reason from marts.fct_refunds")
+        index = ExampleIndex([by_sql, by_notes, by_question])
+
+        top = index.top("refund reason", 3)
+
+        # A matching question: 0.75 x 1 + 0.25 x 1. Matching notes or SQL names only: 0.25 x 2/7, the two words
+        # among why, item, come, back plus group, refund, reason (notes) or fct, refund, reason (SQL).
+        assert [(e.notes, e.sql, e.score) for e in top] == [
+            ("", "select 1", 1.0),
+            ("", "select reason from marts.fct_refunds", 0.071),
+            ("grouped by refund reason", "select 1", 0.071),
+        ]
+
+    def test_examples_yaml_ranks_each_question_first(self) -> None:
+        index = ExampleIndex.from_yaml(EXAMPLES_YAML)
+
+        for example in index.examples:
+            assert index.top(example.question, 1)[0].question == example.question
 
 
 def test_examples_yaml_passes_the_guard() -> None:
@@ -83,7 +148,7 @@ def test_examples_yaml_passes_the_guard() -> None:
     index = ExampleIndex.from_yaml(EXAMPLES_YAML)
     guard = SqlGuard(mart_columns)
 
-    assert len(index.examples) == 15
+    assert len(index.examples) == 19
     for example in index.examples:
         result = guard.check(example.sql)
         assert result.ok, f"{example.question}: {result.errors}"
