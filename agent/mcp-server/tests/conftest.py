@@ -35,6 +35,7 @@ SERVER_START_TIMEOUT_SECONDS = 60
 # environment (agent spec §3).
 SERVER_ENV_PREFIXES = ("SHERPA_DB_", "SHERPA_AGENT_", "SHERPA_MCP_", "MCP_")
 SERVER_ENV_NAMES = ("SHERPA_DBT_TARGET_PATH", "PATH", "SYSTEMROOT")
+ROLE_SETTINGS = "select setdatabase, setrole::regrole::text, setconfig from pg_db_role_setting order by 1, 2"
 
 
 class AdminSettings(BaseSettings):
@@ -66,6 +67,28 @@ def warehouse_settings() -> McpSettings:
 @pytest.fixture(scope="session")
 def admin_conninfo() -> str:
     return AdminSettings().conninfo()  # type: ignore[call-arg]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def role_settings_unchanged(request: pytest.FixtureRequest) -> Iterator[None]:
+    """The agent's `pg_db_role_setting` rows are the same after the whole warehouse run (agent spec §4.2 item 5).
+
+    Active whenever any warehouse test is selected, whatever `-k` picks; a change fails the run at teardown.
+    """
+    if not any(item.get_closest_marker("warehouse") for item in request.session.items):
+        yield
+        return
+
+    admin_conninfo: str = request.getfixturevalue("admin_conninfo")
+    agent_user = request.getfixturevalue("warehouse_settings").agent_user
+    before = _role_settings(admin_conninfo)
+    agent_rows = [config for _, role, config in before if role == agent_user]
+    assert agent_rows, f"{agent_user} has no role settings to protect; was the init script run?"
+    assert "default_transaction_read_only=on" in agent_rows[0]
+
+    yield
+
+    assert _role_settings(admin_conninfo) == before, "the agent's role settings changed during the test run"
 
 
 @pytest.fixture(scope="module")
@@ -131,6 +154,11 @@ def mcp_all_interfaces_port(tmp_path_factory: pytest.TempPathFactory) -> Iterato
     """`sherpa-mcp` over Streamable HTTP bound to 0.0.0.0, as in the container; yields its port."""
     with _http_server(ALL_INTERFACES, tmp_path_factory) as port:
         yield port
+
+
+def _role_settings(admin_conninfo: str) -> list[tuple[object, ...]]:
+    with psycopg.connect(admin_conninfo, autocommit=True) as conn:
+        return conn.execute(ROLE_SETTINGS).fetchall()
 
 
 def _server_env(transport: str) -> dict[str, str]:

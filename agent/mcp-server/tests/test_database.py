@@ -19,8 +19,6 @@ from sherpa_mcp.database import (
     to_tool_error,
 )
 
-ROLE_SETTINGS = "select setdatabase, setrole::regrole::text, setconfig from pg_db_role_setting order by 1, 2"
-
 
 class TestJsonSafe:
     def test_decimal_becomes_string(self) -> None:
@@ -118,15 +116,7 @@ class TestErrorMapping:
             result.truncated = True  # type: ignore[misc]
 
 
-@pytest.fixture(scope="module")
-def role_settings_before(admin_conninfo: str) -> list[tuple[object, ...]]:
-    # Captured through the admin login before any test in this module touches the database.
-    with psycopg.connect(admin_conninfo, autocommit=True) as conn:
-        return conn.execute(ROLE_SETTINGS).fetchall()
-
-
 @pytest.mark.warehouse
-@pytest.mark.usefixtures("role_settings_before")
 class TestAgentDatabase:
     def test_session_is_read_only(self, agent_database: AgentDatabase) -> None:
         assert agent_database.scalar("select current_setting('transaction_read_only')") == "on"
@@ -200,13 +190,6 @@ class TestAgentDatabase:
     def test_role_cannot_alter_itself(self, agent_database: AgentDatabase) -> None:
         with pytest.raises(WarehouseToolError):
             agent_database.fetch("alter role sherpa_agent set statement_timeout = 0")
-
-    def test_role_settings_unchanged(
-        self, agent_database: AgentDatabase, admin: psycopg.Connection, role_settings_before: list[tuple[object, ...]]
-    ) -> None:
-        agent_database.scalar("select 1")
-
-        assert admin.execute(ROLE_SETTINGS).fetchall() == role_settings_before
 
     def test_values_are_json_safe(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch(
