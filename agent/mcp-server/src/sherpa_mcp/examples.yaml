@@ -1,0 +1,200 @@
+# Few-shot examples for the agent (agent spec §4.2). Metric definitions: non-cancelled orders, refunds by order date.
+- question: What is our net revenue each month?
+  sql: |
+    select
+        date_trunc('month', order_date)::date as month,
+        sum(net_revenue) as net_revenue
+    from marts.fct_orders
+    where not is_cancelled
+    group by 1
+    order by 1
+  notes: Net revenue is summed over non-cancelled orders; refunds are already attributed to the order date.
+
+- question: Which 10 products bring in the most net revenue?
+  sql: |
+    select
+        p.product_id,
+        p.product_name,
+        sum(i.net_amount - i.refunded_revenue) as net_revenue
+    from marts.fct_order_items as i
+    inner join marts.dim_products as p on p.variant_id = i.variant_id
+    where not i.is_cancelled
+    group by p.product_id, p.product_name
+    order by net_revenue desc
+    limit 10
+  notes: dim_products has one row per variant, so group by product_id; line net revenue is net_amount minus refunded_revenue.
+
+- question: Compare the average order value of web and app orders
+  sql: |
+    select
+        sales_channel,
+        count(*) as orders,
+        sum(net_revenue) / count(*) as aov
+    from marts.fct_orders
+    where not is_cancelled
+    group by sales_channel
+    order by sales_channel
+  notes: AOV is net revenue divided by the count of non-cancelled orders; sales_channel is web or app.
+
+- question: Which product categories get the largest share of their sales refunded?
+  sql: |
+    select
+        p.category_l1,
+        sum(i.refunded_revenue) as refunded_revenue,
+        sum(i.gross_amount) as gross_revenue,
+        sum(i.refunded_revenue) / nullif(sum(i.gross_amount), 0) as refund_rate
+    from marts.fct_order_items as i
+    inner join marts.dim_products as p on p.variant_id = i.variant_id
+    where not i.is_cancelled
+    group by p.category_l1
+    order by refund_rate desc
+  notes: Refund rate is refunded revenue over gross revenue on non-cancelled orders; line refunds cover returns only.
+
+- question: How many customers sit in each lifecycle stage?
+  sql: |
+    select
+        customer_segment,
+        count(*) as customers
+    from marts.dim_customers
+    where not is_deleted
+    group by customer_segment
+    order by customers desc
+  notes: customer_segment is one of prospect, new, active, at_risk, churned; soft-deleted customers are left out.
+
+- question: What fraction of net revenue comes from VIP buyers?
+  sql: |
+    select
+        sum(lifetime_net_revenue) filter (where is_vip) / nullif(sum(lifetime_net_revenue), 0) as vip_revenue_share
+    from marts.dim_customers
+  notes: is_vip marks the top 10 percent of buyers by lifetime net revenue; lifetime figures use non-cancelled orders.
+
+- question: How much discount was granted by each promotion?
+  sql: |
+    select
+        p.promotion_name,
+        p.promotion_type,
+        count(*) as orders,
+        sum(d.amount) as discount_amount
+    from marts.fct_order_discounts as d
+    inner join marts.dim_promotions as p on p.promotion_id = d.promotion_id
+    where not d.is_cancelled
+    group by p.promotion_name, p.promotion_type
+    order by discount_amount desc
+  notes: free_shipping promotions have amount 0, so count rows only as redemptions, not as discount value.
+
+- question: Why do customers send items back, and how much is refunded for each reason?
+  sql: |
+    select
+        reason,
+        count(*) as returns,
+        sum(returned_item_quantity) as items,
+        sum(refunded_amount) as refunded_amount
+    from marts.fct_returns
+    group by reason
+    order by returns desc
+  notes: reason is one of size, damaged, not_as_described, changed_mind; refunded_amount includes tax.
+
+- question: How long does delivery take in each destination country?
+  sql: |
+    select
+        ship_country_code,
+        count(*) as delivered_orders,
+        round(avg(days_to_deliver), 1) as avg_days_to_deliver
+    from marts.fct_orders
+    where not is_cancelled
+        and days_to_deliver is not null
+    group by ship_country_code
+    order by avg_days_to_deliver desc
+  notes: days_to_deliver is null until the order is delivered, so those orders are left out of the average.
+
+- question: How many new customers placed their first order in each month?
+  sql: |
+    select
+        date_trunc('month', order_date)::date as month,
+        count(*) as first_time_buyers
+    from marts.fct_orders
+    where is_first_order
+    group by 1
+    order by 1
+  notes: is_first_order is false for cancelled orders, so no extra cancelled filter is needed.
+
+- question: How far is gross revenue from net revenue each month, and what explains the gap?
+  sql: |
+    select
+        date_trunc('month', order_date)::date as month,
+        sum(gross_revenue) as gross_revenue,
+        sum(discount_amount) as discount_amount,
+        sum(refunded_revenue) as refunded_revenue,
+        sum(net_revenue) as net_revenue
+    from marts.fct_orders
+    where not is_cancelled
+    group by 1
+    order by 1
+  notes: net = gross - discounts - refunded revenue; recent months understate refunds because they arrive weeks later.
+
+- question: How did Black Friday week sales compare with the week just before it?
+  sql: |
+    with weekly as (
+        select
+            d.week_start,
+            d.is_black_friday_week,
+            sum(o.net_revenue) as net_revenue
+        from marts.fct_orders as o
+        inner join marts.dim_date as d on d.date_day = o.order_date
+        where not o.is_cancelled
+        group by d.week_start, d.is_black_friday_week
+    ),
+
+    compared as (
+        select
+            week_start,
+            is_black_friday_week,
+            net_revenue,
+            lag(net_revenue) over (order by week_start) as previous_week_net_revenue
+        from weekly
+    )
+
+    select
+        week_start,
+        net_revenue,
+        previous_week_net_revenue,
+        net_revenue / nullif(previous_week_net_revenue, 0) - 1 as change_vs_previous_week
+    from compared
+    where is_black_friday_week
+    order by week_start
+  notes: dim_date.is_black_friday_week flags the Monday to Sunday week; lag over all weeks gives the week before.
+
+- question: Which brands earn the best gross margin?
+  sql: |
+    select
+        p.brand,
+        sum(i.gross_margin) as gross_margin,
+        sum(i.net_amount - i.refunded_revenue) as net_revenue,
+        sum(i.gross_margin) / nullif(sum(i.net_amount - i.refunded_revenue), 0) as margin_rate
+    from marts.fct_order_items as i
+    inner join marts.dim_products as p on p.variant_id = i.variant_id
+    where not i.is_cancelled
+    group by p.brand
+    order by gross_margin desc
+  notes: Line gross_margin already nets refunds and recovered returned cost; costs use the current cost price.
+
+- question: How are orders split across payment methods?
+  sql: |
+    select
+        coalesce(primary_payment_method, 'none') as payment_method,
+        count(*) as orders,
+        sum(net_revenue) as net_revenue
+    from marts.fct_orders
+    where not is_cancelled
+    group by 1
+    order by orders desc
+  notes: primary_payment_method is the largest captured payment (card, paypal, gift_card) and null if nothing was captured.
+
+- question: What percentage of placed orders end up cancelled?
+  sql: |
+    select
+        count(*) filter (where is_cancelled) as cancelled_orders,
+        count(*) as orders,
+        count(*) filter (where is_cancelled)::numeric / nullif(count(*), 0) as cancelled_share
+    from marts.fct_orders
+  notes: Cancelled orders are kept and flagged, so this is the one place the cancelled filter is not applied.
