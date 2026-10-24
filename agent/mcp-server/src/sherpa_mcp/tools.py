@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalog, MartColumn, MetricDefinition
 from sherpa_mcp.database import WarehouseToolError
-from sherpa_mcp.examples import MAX_K, MIN_K, RankedExample
+from sherpa_mcp.examples import RankedExample
 from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import SqlGuard
 
@@ -290,8 +290,6 @@ class WarehouseTools:
         return MetricList(metrics=self._catalog().metrics)
 
     def get_examples(self, question: str, k: int = 3) -> ExampleList:
-        if not MIN_K <= k <= MAX_K:
-            raise WarehouseToolError(f"k must be between {MIN_K} and {MAX_K}, got {k}")
         return ExampleList(examples=tuple(self._examples.top(question, k)))
 
     def validate_sql(self, sql_text: str) -> Validation:

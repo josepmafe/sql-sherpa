@@ -164,8 +164,8 @@ def build_server(tools: WarehouseTools) -> MCPServer:
             "Check a query without running it: the safety rules (one read-only SELECT, every table written as "
             "marts.<mart>, allowed functions only), then a Postgres EXPLAIN. Returns ok, the errors to fix, the "
             "tables the query reads and warnings (e.g. the query reads the real clock). EXPLAIN does not evaluate "
-            "values, so errors that only happen while running (division by zero, a bad cast) still reach run_sql; "
-            "with ok true, run_sql is the next step."
+            "values beyond constant expressions, so errors that only happen while running (division by zero, a bad "
+            "cast) usually still reach run_sql; with ok true, run_sql is the next step."
         )
     )
     def validate_sql(sql: SqlText) -> Validation:
