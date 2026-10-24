@@ -5,6 +5,7 @@ import shutil
 import socket
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,10 +28,12 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "examples.yaml"
 LOCALHOST = "127.0.0.1"
+ALL_INTERFACES = "0.0.0.0"  # what the server binds in the container
 SERVER_START_TIMEOUT_SECONDS = 60
-# The variables the server needs; the SDK's stdio client passes only a minimal environment (agent spec §3).
-SERVER_ENV_PREFIXES = ("SHERPA_", "MCP_")
-SERVER_ENV_NAMES = ("PATH", "SYSTEMROOT")
+# The variables the server needs, and only those (no admin login); the SDK's stdio client passes only a minimal
+# environment (agent spec §3).
+SERVER_ENV_PREFIXES = ("SHERPA_DB_", "SHERPA_AGENT_", "SHERPA_MCP_", "MCP_")
+SERVER_ENV_NAMES = ("SHERPA_DBT_TARGET_PATH", "PATH", "SYSTEMROOT")
 
 
 class AdminSettings(BaseSettings):
@@ -113,31 +116,44 @@ async def mcp_client(request: pytest.FixtureRequest) -> AsyncIterator[Client]:
 
 @pytest.fixture(scope="module")
 def mcp_http_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """`sherpa-mcp` over Streamable HTTP on a free local port, killed on teardown."""
-    port = _free_port()
-    command = shutil.which("sherpa-mcp")
-    assert command is not None, "the sherpa-mcp console script is not installed; run uv sync"
-    env = get_default_environment() | _server_env("http") | {"SHERPA_MCP_HOST": LOCALHOST, "SHERPA_MCP_PORT": str(port)}
-    log_path = tmp_path_factory.mktemp("mcp-http") / "stderr.log"
-    with log_path.open("w", encoding="utf-8") as log:
-        # The console script itself, not `uv run`, so the killed process is the server and leaves no child behind.
-        server = subprocess.Popen([command], cwd=REPO_ROOT, env=env, stdout=subprocess.DEVNULL, stderr=log)
-        try:
-            _wait_for_port(port, server, log_path)
-            yield f"http://{LOCALHOST}:{port}/mcp"
-        finally:
-            server.kill()
-            server.wait(timeout=SERVER_START_TIMEOUT_SECONDS)
+    """`sherpa-mcp` over Streamable HTTP on a free loopback port, killed on teardown."""
+    with _http_server(LOCALHOST, tmp_path_factory) as port:
+        yield f"http://{LOCALHOST}:{port}/mcp"
+
+
+@pytest.fixture(scope="module")
+def mcp_all_interfaces_port(tmp_path_factory: pytest.TempPathFactory) -> Iterator[int]:
+    """`sherpa-mcp` over Streamable HTTP bound to 0.0.0.0, as in the container; yields its port."""
+    with _http_server(ALL_INTERFACES, tmp_path_factory) as port:
+        yield port
 
 
 def _server_env(transport: str) -> dict[str, str]:
-    """The test environment's server variables, with `MCP_TRANSPORT` set to `transport`."""
+    """The test environment's server variables, with `MCP_TRANSPORT` set to `transport`; never the admin login."""
     env = {
         name: value
         for name, value in os.environ.items()
         if name.upper().startswith(SERVER_ENV_PREFIXES) or name.upper() in SERVER_ENV_NAMES
     }
     return env | {"MCP_TRANSPORT": transport}
+
+
+@contextmanager
+def _http_server(host: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[int]:
+    port = _free_port()
+    command = shutil.which("sherpa-mcp")
+    assert command is not None, "the sherpa-mcp console script is not installed; run uv sync"
+    env = get_default_environment() | _server_env("http") | {"SHERPA_MCP_HOST": host, "SHERPA_MCP_PORT": str(port)}
+    log_path = tmp_path_factory.mktemp("mcp-http") / "stderr.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        # The console script itself, not `uv run`, so the killed process is the server and leaves no child behind.
+        server = subprocess.Popen([command], cwd=REPO_ROOT, env=env, stdout=subprocess.DEVNULL, stderr=log)
+        try:
+            _wait_for_port(port, server, log_path)
+            yield port
+        finally:
+            server.kill()
+            server.wait(timeout=SERVER_START_TIMEOUT_SECONDS)
 
 
 def _free_port() -> int:

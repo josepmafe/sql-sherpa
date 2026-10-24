@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
+import urllib.error
+import urllib.request
 from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
 
@@ -14,6 +17,7 @@ from sherpa_mcp.server import build_server
 from sherpa_mcp.tools import WarehouseTools
 
 if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
     from mcp import StdioServerParameters
     from mcp.types import CallToolResult
 
@@ -24,6 +28,17 @@ TOOL_NAMES = {
 COUNT_ORDERS = "select count(*) from marts.fct_orders"
 STDIO_TIMEOUT_SECONDS = 120
 LEGACY_PROTOCOL_VERSION = "2025-06-18"  # the initialize handshake a pre-2026 client sends
+HTTP_TIMEOUT_SECONDS = 30
+INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": LEGACY_PROTOCOL_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "sherpa-tests", "version": "0"},
+    },
+}
 
 
 @pytest.mark.anyio
@@ -48,6 +63,33 @@ class TestBuildServer:
         assert result.is_error
         assert "hunter2" not in _text(result)
         assert "10.0.0.1" not in _text(result)
+
+    async def test_unexpected_error_is_recorded_server_side(
+        self, caplog: pytest.LogCaptureFixture, capfire: CaptureLogfire
+    ) -> None:
+        tools = create_autospec(WarehouseTools, instance=True)
+        tools.run_sql.side_effect = RuntimeError("boom secret")
+
+        with caplog.at_level(logging.ERROR):
+            async with Client(build_server(tools)) as client:
+                result = await client.call_tool("run_sql", {"sql": COUNT_ORDERS})
+
+        assert result.is_error
+        assert _text(result) == "Error executing tool run_sql"
+        # The SDK logs the crash once, with the traceback, whose cause is the tool's own exception.
+        (logged,) = [record for record in caplog.records if record.exc_info]
+        assert logged.exc_info is not None
+        assert isinstance(logged.exc_info[1], Exception)
+        assert str(logged.exc_info[1].__cause__) == "boom secret"
+        assert "Traceback" in caplog.text
+        assert "RuntimeError: boom secret" in caplog.text
+        events = [
+            event
+            for span in capfire.exporter.exported_spans_as_dict()
+            for event in span.get("events", [])
+            if event["name"] == "exception"
+        ]
+        assert [event["attributes"]["exception.message"] for event in events] == ["boom secret"]
 
     async def test_arguments_reach_the_tools_by_spec_name(self) -> None:
         tools = create_autospec(WarehouseTools, instance=True)
@@ -94,16 +136,7 @@ class TestServer:
 @pytest.mark.warehouse
 def test_stdio_stdout_carries_only_protocol(stdio_server: StdioServerParameters) -> None:
     requests = (
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": LEGACY_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "stdout-test", "version": "0"},
-            },
-        },
+        INITIALIZE,
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     )
@@ -127,6 +160,32 @@ def test_stdio_stdout_carries_only_protocol(stdio_server: StdioServerParameters)
     assert all(message["jsonrpc"] == "2.0" for message in messages)
     responses = {message["id"]: message for message in messages if "id" in message}
     assert {tool["name"] for tool in responses[2]["result"]["tools"]} == TOOL_NAMES
+
+
+@pytest.mark.warehouse
+@pytest.mark.parametrize(
+    ("host", "status"),
+    [("127.0.0.1", 200), ("localhost", 200), ("mcp", 200), ("evil.example", 421)],
+)
+def test_http_on_all_interfaces_checks_the_host_header(mcp_all_interfaces_port: int, host: str, status: int) -> None:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{mcp_all_interfaces_port}/mcp",
+        data=json.dumps(INITIALIZE).encode(),
+        headers={
+            "Host": f"{host}:{mcp_all_interfaces_port}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            answered = response.status
+    except urllib.error.HTTPError as error:
+        answered = error.code
+
+    assert answered == status
 
 
 def _text(result: CallToolResult) -> str:

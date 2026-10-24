@@ -14,6 +14,7 @@ from typing import Annotated, Final
 import logfire
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 
 from sherpa_mcp.catalog import MartCatalogLoader
@@ -36,6 +37,9 @@ SERVICE_NAME: Final = "sherpa-mcp"
 MCP_PATH: Final = "/mcp"  # agent spec §10: MCP_HTTP_URL = http://127.0.0.1:8765/mcp
 EXAMPLES_PATH: Final = Path(__file__).with_name("examples.yaml")
 LOG_FORMAT: Final = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})  # where the SDK enables DNS-rebinding protection
+# Host names a client may use when the server binds a non-loopback host: loopback, and the compose service `mcp`.
+ALLOWED_HOST_NAMES: Final = ("127.0.0.1", "localhost", "[::1]", "mcp")
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +62,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def get_context() -> WarehouseContext:
-        with _tool_errors():
+        with _tool_errors("get_context"):
             return tools.get_context()
 
     @server.tool(
@@ -68,7 +72,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def list_tables() -> TableList:
-        with _tool_errors():
+        with _tool_errors("list_tables"):
             return tools.list_tables()
 
     @server.tool(
@@ -79,7 +83,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def describe_table(table: TableName) -> TableDescription:
-        with _tool_errors():
+        with _tool_errors("describe_table"):
             return tools.describe_table(table)
 
     @server.tool(
@@ -96,7 +100,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         term: Annotated[str, Field(description="The value to look for, as the user wrote it.")],
         limit: Annotated[int, Field(description="How many values to return, 1 to 50.")] = 10,  # agent spec §4.1
     ) -> ValueMatches:
-        with _tool_errors():
+        with _tool_errors("search_values"):
             return tools.search_values(table, column, term, limit)
 
     @server.tool(
@@ -106,7 +110,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def get_metric_definitions() -> MetricList:
-        with _tool_errors():
+        with _tool_errors("get_metric_definitions"):
             return tools.get_metric_definitions()
 
     @server.tool(
@@ -120,7 +124,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         question: Annotated[str, Field(description="The user's question in natural language.")],
         k: Annotated[int, Field(description="How many examples to return, 1 to 10.")] = 3,  # agent spec §4.1
     ) -> ExampleList:
-        with _tool_errors():
+        with _tool_errors("get_examples"):
             return tools.get_examples(question, k)
 
     @server.tool(
@@ -131,7 +135,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def validate_sql(sql: SqlText) -> Validation:
-        with _tool_errors():
+        with _tool_errors("validate_sql"):
             return tools.validate_sql(sql)
 
     @server.tool(
@@ -143,7 +147,7 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def run_sql(sql: SqlText) -> SqlResult:
-        with _tool_errors():
+        with _tool_errors("run_sql"):
             return tools.run_sql(sql)
 
     return server
@@ -166,19 +170,42 @@ def main() -> None:
                 server.run("stdio")
             case "http":
                 server.run(
-                    "streamable-http", host=settings.mcp_host, port=settings.mcp_port, streamable_http_path=MCP_PATH
+                    "streamable-http",
+                    host=settings.mcp_host,
+                    port=settings.mcp_port,
+                    streamable_http_path=MCP_PATH,
+                    transport_security=_transport_security(settings.mcp_host),
                 )
     finally:
         database.close()
 
 
+def _transport_security(host: str) -> TransportSecuritySettings | None:
+    """DNS-rebinding protection for the HTTP transport.
+
+    On a loopback host the SDK turns it on by itself (`None` keeps that). On any other host, such as 0.0.0.0 in the
+    container, the SDK would turn it off, so the loopback names and the compose service name are allowed explicitly.
+    """
+    if host in LOOPBACK_HOSTS:
+        return None
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[f"{name}:*" for name in ALLOWED_HOST_NAMES],
+        allowed_origins=[f"http://{name}:*" for name in ALLOWED_HOST_NAMES],
+    )
+
+
 @contextmanager
-def _tool_errors() -> Iterator[None]:
-    """A `WarehouseToolError` is meant for the model; anything else stays a crash the SDK reports without detail."""
+def _tool_errors(tool: str) -> Iterator[None]:
+    """A `WarehouseToolError` is meant for the model. Anything else is a crash: the model only gets the SDK's
+    "Error executing tool <name>", the SDK logs the traceback to stderr, and the exception is recorded on the trace."""
     try:
         yield
     except WarehouseToolError as error:
         raise ToolError(str(error)) from error
+    except Exception:
+        logfire.exception("tool {tool} raised an unexpected exception", tool=tool)
+        raise
 
 
 if __name__ == "__main__":

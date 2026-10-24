@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sherpa_mcp.catalog import MartCatalogLoader
@@ -13,6 +14,7 @@ from sherpa_mcp.tools import WarehouseTools
 
 if TYPE_CHECKING:
     import psycopg
+    from logfire.testing import CaptureLogfire
     from sherpa_mcp.database import AgentDatabase
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -23,6 +25,8 @@ METRICS = (
     *("cogs", "gross_margin", "aov", "refund_rate"),
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
+PII_LITERAL = "leak@example.com"
+HOSTILE_SQL = f"select email from marts.dim_customers where email = '{PII_LITERAL}'; drop table marts.fct_orders"
 
 
 def _expected_marts() -> tuple[str, ...]:
@@ -206,6 +210,38 @@ class TestWarehouseTools:
             tools.run_sql("drop table marts.fct_orders")
 
 
+@pytest.mark.warehouse
+class TestGuardTracing:
+    def test_rejection_is_traced_without_the_sql(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+        with pytest.raises(WarehouseToolError):
+            tools.run_sql(HOSTILE_SQL)
+
+        spans = capfire.exporter.exported_spans_as_dict()
+        guard = _only_span(spans, "sherpa.guard")
+        assert guard["attributes"]["tool"] == "run_sql"
+        assert guard["attributes"]["ok"] is False
+        assert guard["attributes"]["error_count"] == 1
+        assert guard["attributes"]["execution_id"] == hashlib.sha256(HOSTILE_SQL.encode()).hexdigest()[:16]
+        rejected = _only_span(spans, "guard rejected")
+        assert rejected["attributes"]["rule"] == "statement_count"
+        assert rejected["attributes"]["error_count"] == 1
+        assert PII_LITERAL not in str(spans)
+        assert "drop table" not in str(spans)
+
+    def test_accepted_query_is_traced_with_its_marts(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+        tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")
+
+        spans = capfire.exporter.exported_spans_as_dict()
+        guard = _only_span(spans, "sherpa.guard")
+        assert guard["attributes"]["tool"] == "validate_sql"
+        assert guard["attributes"]["ok"] is True
+        assert guard["attributes"]["error_count"] == 0
+        assert json.loads(guard["attributes"]["tables"]) == ["marts.fct_orders"]  # Logfire sends tuples as JSON
+        assert "execution_id" not in guard["attributes"]
+        assert not [span for span in spans if span["name"] == "guard rejected"]
+        assert "41" not in str([span["attributes"] for span in spans if span["name"] == "sherpa.guard"])
+
+
 class TestToolsWithoutArtifacts:
     def test_tools_report_missing_artifacts(self, tmp_path: Path) -> None:
         class NoDatabase:
@@ -250,3 +286,9 @@ class TestGetContextOnEmptyTable:
 
         with pytest.raises(WarehouseToolError, match=r"fct_orders has no rows; run make build-prod"):
             tools.get_context()
+
+
+def _only_span(spans: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    matching = [span for span in spans if span["name"] == name]
+    assert len(matching) == 1, [span["name"] for span in spans]
+    return matching[0]

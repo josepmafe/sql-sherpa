@@ -7,6 +7,7 @@ import datetime as dt
 import hashlib
 from typing import TYPE_CHECKING, Final
 
+import logfire
 from psycopg import sql
 from pydantic import BaseModel, ConfigDict
 
@@ -20,12 +21,27 @@ if TYPE_CHECKING:
     from sherpa_mcp.catalog import Mart, MartCatalogLoader
     from sherpa_mcp.database import AgentDatabase
     from sherpa_mcp.examples import ExampleIndex
+    from sherpa_mcp.sql_guard import GuardResult
 
 SAMPLE_ROWS: Final = 3
 MIN_LIMIT: Final = 1
 MAX_LIMIT: Final = 50
 EXECUTION_ID_LENGTH: Final = 16
 TEXT_TYPE: Final = "text"
+GUARD_SPAN: Final = "sherpa.guard"
+# The fixed start of each sql_guard error message and the rule it names; what follows the prefix may quote the query.
+GUARD_RULE_PREFIXES: Final = (
+    ("could not parse", "parse"),
+    ("expected exactly one statement", "statement_count"),
+    ("the statement must be a SELECT", "not_select"),
+    ("SELECT ... INTO", "select_into"),
+    ("locking clause", "locking"),
+    ("cast to type", "cast"),
+    ("function ", "function"),
+    ("whole-row reference", "whole_row"),
+    ("table ", "table"),
+)
+OTHER_RULE: Final = "write"  # the one unprefixed message: "<DML/DDL kind> is not allowed"
 # Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The last three leave this
 # tuple when data-platform-3 and -4 land.
 DOES_NOT_COVER: Final = (
@@ -231,7 +247,7 @@ class WarehouseTools:
 
     def validate_sql(self, sql_text: str) -> Validation:
         executed = _as_executed(sql_text)
-        guard = SqlGuard(self._catalog().visible_names()).check(executed)
+        guard = self._guard("validate_sql", executed, self._catalog())
         if not guard.ok:
             return Validation(ok=False, errors=guard.errors, tables=guard.tables)
         try:
@@ -243,13 +259,13 @@ class WarehouseTools:
     def run_sql(self, sql_text: str) -> SqlResult:
         catalog = self._catalog()
         executed = _as_executed(sql_text)
-        guard = SqlGuard(catalog.visible_names()).check(executed)
+        guard = self._guard("run_sql", executed, catalog, execution_id=_execution_id(executed))
         if not guard.ok:
             raise WarehouseToolError("; ".join(guard.errors))
         result = self._database.fetch(executed)
         masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
         return SqlResult(
-            execution_id=hashlib.sha256(executed.encode()).hexdigest()[:EXECUTION_ID_LENGTH],
+            execution_id=_execution_id(executed),
             columns=result.columns,
             rows=tuple(tuple(row) for row in masked),
             returned_rows=result.returned_rows,
@@ -262,6 +278,31 @@ class WarehouseTools:
             return self._loader.load()
         except CatalogUnavailable as error:
             raise WarehouseToolError(str(error)) from error
+
+    @staticmethod
+    def _guard(tool: str, executed: str, catalog: MartCatalog, execution_id: str | None = None) -> GuardResult:
+        """Run the guard inside a `sherpa.guard` span (agent spec §6). Never the SQL or the error texts on the trace:
+        both can carry literals, and literals can be PII."""
+        with logfire.span(GUARD_SPAN, tool=tool) as span:
+            guard = SqlGuard(catalog.visible_names()).check(executed)
+            span.set_attributes({"ok": guard.ok, "error_count": len(guard.errors), "tables": guard.tables})
+            if execution_id is not None:
+                span.set_attribute("execution_id", execution_id)
+            if not guard.ok:
+                logfire.info(
+                    "guard rejected", tool=tool, error_count=len(guard.errors), rule=_rule_class(guard.errors[0])
+                )
+
+        return guard
+
+
+def _execution_id(executed: str) -> str:
+    return hashlib.sha256(executed.encode()).hexdigest()[:EXECUTION_ID_LENGTH]
+
+
+def _rule_class(error: str) -> str:
+    """The guard rule an error message comes from, by its fixed prefix; the rest may quote the query."""
+    return next((rule for prefix, rule in GUARD_RULE_PREFIXES if error.startswith(prefix)), OTHER_RULE)
 
 
 def _as_executed(sql_text: str) -> str:

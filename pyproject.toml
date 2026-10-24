@@ -78,6 +78,10 @@ runtime-evaluated-base-classes = [
     "sherpa_generator.records.base.RawRecord",
 ]
 
+[tool.logfire]
+# sherpa_mcp.tools opens spans whether or not the process configured Logfire; unconfigured they record nothing.
+ignore_no_config = true
+
 [tool.mypy]
 files = ["data-platform/generator/src", "agent/mcp-server/src"]
 python_version = "3.12"
