@@ -28,14 +28,21 @@ services:
     build:
       context: .
       dockerfile: agent/mcp-server/Dockerfile
-    env_file: .env
+    # No env_file: the agent-facing container gets only the variables it needs (least privilege), never the admin
+    # login, POSTGRES_PASSWORD or host-only settings from .env. Compose reads the ${...} values from .env.
     environment:
       SHERPA_DB_HOST: postgres
       SHERPA_DB_PORT: "5432"
+      SHERPA_DB_NAME: ${SHERPA_DB_NAME:-sherpa}
+      SHERPA_AGENT_USER: ${SHERPA_AGENT_USER:-sherpa_agent}
+      SHERPA_AGENT_PASSWORD: ${SHERPA_AGENT_PASSWORD:?set it in .env}
       MCP_TRANSPORT: http
       # All interfaces inside the container; the published port below is localhost only.
       SHERPA_MCP_HOST: 0.0.0.0
+      SHERPA_MCP_PORT: "8765"
       SHERPA_DBT_TARGET_PATH: /app/dbt/target-prod
+      # Optional: empty means no export.
+      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
     volumes:
       - ./data-platform/dbt/target-prod:/app/dbt/target-prod:ro
     ports:
@@ -48,6 +55,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
 volumes:
   pgdata:
