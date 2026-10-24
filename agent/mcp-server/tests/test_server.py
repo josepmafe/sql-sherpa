@@ -103,6 +103,40 @@ class TestBuildServer:
         ]
         assert [event["attributes"]["exception.message"] for event in events] == ["boom secret"]
 
+    async def test_tool_schemas_bound_every_argument(self) -> None:
+        async with Client(build_server(create_autospec(WarehouseTools, instance=True))) as client:
+            listed = await client.list_tools()
+
+        schemas = {tool.name: tool.input_schema["properties"] for tool in listed.tools}
+        assert (schemas["search_values"]["limit"]["minimum"], schemas["search_values"]["limit"]["maximum"]) == (1, 50)
+        assert (schemas["get_examples"]["k"]["minimum"], schemas["get_examples"]["k"]["maximum"]) == (1, 10)
+        assert schemas["run_sql"]["sql"]["maxLength"] == 20_000
+        assert schemas["validate_sql"]["sql"]["maxLength"] == 20_000
+        assert schemas["search_values"]["term"]["maxLength"] == 200
+        assert schemas["search_values"]["table"]["maxLength"] == 128
+        assert schemas["search_values"]["column"]["maxLength"] == 128
+        assert schemas["describe_table"]["table"]["maxLength"] == 128
+        assert schemas["get_examples"]["question"]["maxLength"] == 2_000
+
+    @pytest.mark.parametrize(
+        ("tool", "arguments"),
+        [
+            ("run_sql", {"sql": "select 1 " + " " * 20_000}),
+            ("search_values", {"table": "dim_products", "column": "brand", "term": "x" * 201}),
+            ("search_values", {"table": "dim_products", "column": "brand", "term": "x", "limit": 51}),
+            ("get_examples", {"question": "q", "k": 0}),
+            ("get_examples", {"question": "q" * 2_001}),
+        ],
+    )
+    async def test_out_of_bounds_arguments_never_reach_the_tools(self, tool: str, arguments: dict[str, object]) -> None:
+        tools = create_autospec(WarehouseTools, instance=True)
+
+        async with Client(build_server(tools)) as client:
+            result = await client.call_tool(tool, arguments)
+
+        assert result.is_error
+        getattr(tools, tool).assert_not_called()
+
     async def test_arguments_reach_the_tools_by_spec_name(self) -> None:
         tools = create_autospec(WarehouseTools, instance=True)
         tools.validate_sql.side_effect = WarehouseToolError("seen")
@@ -200,7 +234,7 @@ def test_http_on_all_interfaces_checks_the_host_header(mcp_all_interfaces_port: 
 
 
 def _without_volatile(value: object) -> object:
-    """`value` with every timing field dropped, at any depth (`describe_table` nests its sample rows)."""
+    """`value` with every timing field dropped, at any depth."""
     match value:
         case dict():
             return {key: _without_volatile(item) for key, item in value.items() if key not in VOLATILE_FIELDS}

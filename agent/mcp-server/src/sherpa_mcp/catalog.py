@@ -149,7 +149,9 @@ def _build_catalog(manifest: dict[str, Any], catalog: dict[str, Any]) -> MartCat
 
 def _build_mart(uid: str, node: dict[str, Any], tests: list[dict[str, Any]], db_columns: dict[str, Any]) -> Mart:
     meta = node.get("meta", {})
-    primary_key = _as_tuple(meta.get("primary_key"))
+    primary_key = tuple(name for name in _as_tuple(meta.get("primary_key")) if name)
+    if not primary_key:  # describe_table orders its sample rows by it
+        raise CatalogUnavailable(f"mart {node['name']} has no meta.primary_key; add it in its dbt YAML and rebuild")
     model_tests = [test for test in tests if uid in test["depends_on"]["nodes"]]
     accepted = {
         test["column_name"]: tuple(str(value) for value in test["test_metadata"]["kwargs"]["values"])

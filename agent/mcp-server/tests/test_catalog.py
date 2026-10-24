@@ -184,6 +184,16 @@ class TestCatalogShape:
         with pytest.raises(CatalogUnavailable, match="make build-prod"):
             MartCatalogLoader(target).load()
 
+    @pytest.mark.parametrize("primary_key", [None, [], ""])
+    def test_mart_without_primary_key_is_unavailable(self, target: Path, primary_key: object) -> None:
+        def drop_primary_key(manifest: dict[str, Any]) -> None:
+            manifest["nodes"]["model.sherpa.dim_customers"]["meta"]["primary_key"] = primary_key
+
+        _edit_manifest(target, drop_primary_key)
+
+        with pytest.raises(CatalogUnavailable, match=r"mart dim_customers has no meta.primary_key"):
+            MartCatalogLoader(target).load()
+
     def test_message_does_not_expose_the_path(self, target: Path) -> None:
         (target / "catalog.json").unlink()
 

@@ -11,6 +11,7 @@ import datetime as dt
 import ipaddress
 import json
 import math
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -30,8 +31,17 @@ STATEMENT_TIMEOUT = "5s"
 # Postgres times each FETCH on its own, so fetching the rows has its own 5 s budget as well.
 FETCH_DEADLINE_SECONDS = 5.0
 TIMEOUT_MESSAGE = "the query took longer than 5 s; aggregate or filter more narrowly"
+FETCH_BATCH_ROWS = 20  # rows per FETCH: one round trip per row was ~11x slower for 100 rows
+# After a row this long (before cutting), the rest is fetched one row at a time, so at most one such row is in memory.
+LARGE_ROW_CHARS = 1_000_000
 MAX_CELL_CHARS = 10_000  # one text, bytes (hex), array or JSON cell; keeps a result small enough for the model
+MAX_RESULT_CHARS = 50_000  # all cells of one model-facing result together; rows past it are dropped as truncated
 CUT_MARKER = f" …[cut at {MAX_CELL_CHARS} chars]"
+# Model-written queries fetched at the same time; each can hold a few large rows, so the rest wait for a slot.
+MAX_HEAVY_FETCHES = 2
+HEAVY_FETCH_WAIT_SECONDS = 10.0
+BUSY_MESSAGE = "the server is busy with other queries; retry in a few seconds"
+NESTED_MESSAGE = "a value is nested too deeply to return; select scalar columns"
 SIMILARITY_THRESHOLD = "0.2"
 POOL_MIN_SIZE = 1
 POOL_MAX_SIZE = 4
@@ -82,10 +92,21 @@ def cap_cell(value: object) -> object:
         case str() if len(value) > MAX_CELL_CHARS:
             return value[:MAX_CELL_CHARS] + CUT_MARKER
         case list() | dict():
-            text = json.dumps(value)
+            text = json.dumps(value, ensure_ascii=False)
             return text[:MAX_CELL_CHARS] + CUT_MARKER if len(text) > MAX_CELL_CHARS else value
         case _:
             return value
+
+
+def cell_chars(value: object) -> int:
+    """How many characters a converted cell takes in the result the model reads."""
+    match value:
+        case str():
+            return len(value)
+        case list() | dict():
+            return len(json.dumps(value, ensure_ascii=False))
+        case _:
+            return len(str(value))
 
 
 def to_tool_error(error: psycopg.Error) -> WarehouseToolError:
@@ -105,6 +126,7 @@ class AgentDatabase:
         self._pool = ConnectionPool(
             settings.agent_conninfo(), min_size=POOL_MIN_SIZE, max_size=POOL_MAX_SIZE, open=True, timeout=10
         )
+        self._heavy_fetches = threading.BoundedSemaphore(MAX_HEAVY_FETCHES)
 
     def fetch(
         self,
@@ -114,42 +136,26 @@ class AgentDatabase:
         *,
         set_similarity_threshold: bool = False,
     ) -> QueryResult:
-        started = time.monotonic()
-        rows: list[tuple[object, ...]] = []
-        truncated = False
-        try:
-            with self._pool.connection() as conn, conn.transaction():
-                self._begin(conn, set_similarity_threshold=set_similarity_threshold)
-                deadline = time.monotonic() + FETCH_DEADLINE_SECONDS
-                # A named cursor declares the query with the extended protocol (`force_extended`), even without params.
-                with conn.cursor(name=f"sherpa_{uuid.uuid4().hex}") as cursor:
-                    cursor.execute(query, params or None)
-                    columns = tuple(column.name for column in cursor.description or ())
-                    # One row per FETCH, capped on arrival: only one oversized row is ever held in memory.
-                    while (row := cursor.fetchone()) is not None:
-                        if len(rows) == max_rows:
-                            truncated = True
-                            break
-                        if time.monotonic() > deadline:
-                            raise WarehouseToolError(TIMEOUT_MESSAGE)
+        """The server's own queries, whose size it controls: values come back as psycopg loads them."""
+        return self._fetch(query, params, max_rows, set_similarity_threshold=set_similarity_threshold, for_model=False)
 
-                        rows.append(tuple(cap_cell(json_safe(value)) for value in row))
-        except psycopg.Error as error:
-            raise to_tool_error(error) from error
-        return QueryResult(
-            columns=columns,
-            rows=tuple(rows),
-            returned_rows=len(rows),
-            truncated=truncated,
-            elapsed_ms=round((time.monotonic() - started) * 1000),
-        )
+    def fetch_for_model(self, query: Query, max_rows: int = DEFAULT_MAX_ROWS) -> QueryResult:
+        """A query whose rows go to the model: JSON-safe values, each cell cut to `MAX_CELL_CHARS`, and rows past
+        `MAX_RESULT_CHARS` dropped (`truncated`). At most `MAX_HEAVY_FETCHES` run at once."""
+        if not self._heavy_fetches.acquire(timeout=HEAVY_FETCH_WAIT_SECONDS):
+            raise WarehouseToolError(BUSY_MESSAGE)
+        try:
+            return self._fetch(query, (), max_rows, set_similarity_threshold=False, for_model=True)
+        finally:
+            self._heavy_fetches.release()
 
     def explain(self, sql_text: str) -> None:
         """Plan `sql_text` without running it; raises `WarehouseToolError` with Postgres's message if it cannot."""
         try:
             with self._pool.connection() as conn, conn.transaction():
                 self._begin(conn)
-                # prepare=True forces the extended protocol, as for `fetch`.
+                # prepare=True forces the extended protocol, as for `fetch`. The ignore: psycopg types sql.SQL as
+                # taking a LiteralString, and the model's query is a runtime string (already checked by the guard).
                 conn.execute(sql.SQL("explain (analyze false) {}").format(sql.SQL(sql_text)), prepare=True)  # type: ignore[arg-type]
         except psycopg.Error as error:
             raise to_tool_error(error) from error
@@ -163,6 +169,66 @@ class AgentDatabase:
     def close(self) -> None:
         self._pool.close()
 
+    def _fetch(
+        self,
+        query: Query,
+        params: Sequence[object],
+        max_rows: int,
+        *,
+        set_similarity_threshold: bool,
+        for_model: bool,
+    ) -> QueryResult:
+        started = time.monotonic()
+        rows: list[tuple[object, ...]] = []
+        truncated = False
+        result_chars = 0
+        batch_rows = FETCH_BATCH_ROWS
+        try:
+            with self._pool.connection() as conn, conn.transaction():
+                self._begin(conn, set_similarity_threshold=set_similarity_threshold)
+                deadline = time.monotonic() + FETCH_DEADLINE_SECONDS
+                # A named cursor declares the query with the extended protocol (`force_extended`), even without params.
+                with conn.cursor(name=f"sherpa_{uuid.uuid4().hex}") as cursor:
+                    cursor.execute(query, params or None)
+                    columns = tuple(column.name for column in cursor.description or ())
+                    while not truncated:
+                        if time.monotonic() > deadline:
+                            raise WarehouseToolError(TIMEOUT_MESSAGE)
+
+                        # Never more than one row past the cap: that row only tells whether there were more.
+                        batch = cursor.fetchmany(min(batch_rows, max_rows + 1 - len(rows)))
+                        if not batch:
+                            break
+
+                        for raw in batch:
+                            if len(rows) == max_rows:
+                                truncated = True
+                                break
+                            if not for_model:
+                                rows.append(tuple(raw))
+                                continue
+
+                            row, row_chars, full_chars = _model_row(raw)
+                            if full_chars > LARGE_ROW_CHARS:
+                                batch_rows = 1
+                            if result_chars + row_chars > MAX_RESULT_CHARS:
+                                truncated = True
+                                break
+
+                            result_chars += row_chars
+                            rows.append(row)
+        except psycopg.Error as error:
+            raise to_tool_error(error) from error
+        except RecursionError as error:  # a deeply nested array or jsonb value, in psycopg's loader or in ours
+            raise WarehouseToolError(NESTED_MESSAGE) from error
+        return QueryResult(
+            columns=columns,
+            rows=tuple(rows),
+            returned_rows=len(rows),
+            truncated=truncated,
+            elapsed_ms=round((time.monotonic() - started) * 1000),
+        )
+
     @staticmethod
     def _begin(conn: psycopg.Connection, *, set_similarity_threshold: bool = False) -> None:
         conn.execute(sql.SQL("set local statement_timeout = {}").format(sql.Literal(STATEMENT_TIMEOUT)))
@@ -170,3 +236,10 @@ class AgentDatabase:
             conn.execute(
                 sql.SQL("set local pg_trgm.similarity_threshold = {}").format(sql.Literal(SIMILARITY_THRESHOLD))
             )
+
+
+def _model_row(raw: Sequence[object]) -> tuple[tuple[object, ...], int, int]:
+    """The row as the model gets it, its length in characters, and its length before the cells were cut."""
+    converted = [json_safe(value) for value in raw]
+    capped = tuple(cap_cell(value) for value in converted)
+    return capped, sum(cell_chars(value) for value in capped), sum(cell_chars(value) for value in converted)

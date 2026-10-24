@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import hashlib
 import re
@@ -13,7 +12,7 @@ from psycopg import sql
 from pydantic import BaseModel, ConfigDict
 
 from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalog, MartColumn, MetricDefinition
-from sherpa_mcp.database import QueryResult, WarehouseToolError
+from sherpa_mcp.database import WarehouseToolError
 from sherpa_mcp.examples import MAX_K, MIN_K, Example
 from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import SqlGuard
@@ -87,6 +86,13 @@ class ColumnDescription(BaseModel):
     synonyms: tuple[str, ...]
 
 
+class SampleRows(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    columns: tuple[str, ...]
+    rows: tuple[tuple[object, ...], ...]
+
+
 class TableDescription(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -95,7 +101,7 @@ class TableDescription(BaseModel):
     grain: str
     primary_key: tuple[str, ...]
     columns: tuple[ColumnDescription, ...]
-    sample_rows: QueryResult
+    sample_rows: SampleRows
 
 
 class ValueMatch(BaseModel):
@@ -154,15 +160,15 @@ class WarehouseTools:
         catalog = self._catalog()
         latest = self._database.scalar(AS_OF_QUERY)
         earliest = self._database.scalar("select min(order_date) from marts.fct_orders")
-        if latest is None or earliest is None:
+        if not isinstance(latest, dt.date) or not isinstance(earliest, dt.date):  # null: max/min over no rows
             raise WarehouseToolError("fct_orders has no rows; run make build-prod")
         covers = tuple(
             f"{domain}: {', '.join(mart.name for mart in catalog.marts if mart.domain == domain)}"
             for domain in catalog.domains()
         )
         return WarehouseContext(
-            as_of_date=dt.date.fromisoformat(str(latest)),
-            first_order_date=dt.date.fromisoformat(str(earliest)),
+            as_of_date=latest,
+            first_order_date=earliest,
             domains=catalog.domains(),
             covers=covers,
             does_not_cover=DOES_NOT_COVER,
@@ -189,7 +195,9 @@ class WarehouseTools:
         query = sql.SQL("select * from {}.{} order by {} limit {}").format(
             sql.Identifier(MARTS_SCHEMA), sql.Identifier(mart.name), order_by, sql.Literal(SAMPLE_ROWS)
         )
-        sample = _masked(PiiMasker(catalog.pii_columns()), self._database.fetch(query, max_rows=SAMPLE_ROWS))
+        result = self._database.fetch_for_model(query, max_rows=SAMPLE_ROWS)
+        masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
+        sample = SampleRows(columns=result.columns, rows=tuple(tuple(row) for row in masked))
         return TableDescription(
             name=mart.name,
             description=mart.description,
@@ -229,8 +237,9 @@ class WarehouseTools:
         result = self._database.fetch(query, (term, term, limit), max_rows=limit, set_similarity_threshold=True)
         return ValueMatches(
             matches=tuple(
-                ValueMatch(value=str(value), similarity=float(str(similarity)), row_count=int(str(count)))
-                for value, similarity, count in result.rows
+                # psycopg's own types (text, real, bigint); the model checks them.
+                ValueMatch.model_validate(dict(zip(result.columns, row, strict=True)))
+                for row in result.rows
             )
         )
 
@@ -257,13 +266,14 @@ class WarehouseTools:
     def run_sql(self, sql_text: str) -> SqlResult:
         catalog = self._catalog()
         executed = _as_executed(sql_text)
-        guard = self._guard("run_sql", executed, catalog, execution_id=_execution_id(executed))
+        execution_id = _execution_id(executed)
+        guard = self._guard("run_sql", executed, catalog, execution_id=execution_id)
         if not guard.ok:
             raise WarehouseToolError("; ".join(guard.errors))
-        result = self._database.fetch(executed)
+        result = self._database.fetch_for_model(executed)
         masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
         return SqlResult(
-            execution_id=_execution_id(executed),
+            execution_id=execution_id,
             columns=result.columns,
             rows=tuple(tuple(row) for row in masked),
             returned_rows=result.returned_rows,
@@ -317,11 +327,6 @@ def _as_executed(sql_text: str) -> str:
     while stripped.endswith(";"):
         stripped = stripped[:-1].rstrip()
     return stripped
-
-
-def _masked(masker: PiiMasker, result: QueryResult) -> QueryResult:
-    rows = masker.mask(result.columns, result.rows)
-    return dataclasses.replace(result, rows=tuple(tuple(row) for row in rows))
 
 
 def _resolve_mart(catalog: MartCatalog, table: str) -> Mart:

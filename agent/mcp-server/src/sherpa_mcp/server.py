@@ -19,9 +19,11 @@ from pydantic import Field
 
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import AgentDatabase, WarehouseToolError
-from sherpa_mcp.examples import ExampleIndex
+from sherpa_mcp.examples import MAX_K, MIN_K, ExampleIndex
 from sherpa_mcp.settings import McpSettings
 from sherpa_mcp.tools import (
+    MAX_LIMIT,
+    MIN_LIMIT,
     ExampleList,
     MetricList,
     SqlResult,
@@ -40,12 +42,25 @@ LOG_FORMAT: Final = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})  # where the SDK enables DNS-rebinding protection
 # Host names a client may use when the server binds a non-loopback host: loopback, and the compose service `mcp`.
 ALLOWED_HOST_NAMES: Final = ("127.0.0.1", "localhost", "[::1]", "mcp")
+# Input sizes, checked by the SDK against the tool schema before a tool runs: a query or text past them is no
+# legitimate question, only work for the parser and the database.
+MAX_SQL_CHARS: Final = 20_000
+MAX_TERM_CHARS: Final = 200
+MAX_QUESTION_CHARS: Final = 2_000
+MAX_NAME_CHARS: Final = 128
 
 logger = logging.getLogger(__name__)
 
-TableName = Annotated[str, Field(description="A mart name from list_tables, e.g. fct_orders (case-insensitive).")]
+TableName = Annotated[
+    str,
+    Field(description="A mart name from list_tables, e.g. fct_orders (case-insensitive).", max_length=MAX_NAME_CHARS),
+]
 SqlText = Annotated[
-    str, Field(description="One Postgres SELECT (or WITH ... SELECT); every table written as marts.<mart>.")
+    str,
+    Field(
+        description="One Postgres SELECT (or WITH ... SELECT); every table written as marts.<mart>.",
+        max_length=MAX_SQL_CHARS,
+    ),
 ]
 
 
@@ -96,9 +111,15 @@ def build_server(tools: WarehouseTools) -> MCPServer:
     )
     def search_values(
         table: TableName,
-        column: Annotated[str, Field(description="A text column of that mart, from describe_table.")],
-        term: Annotated[str, Field(description="The value to look for, as the user wrote it.")],
-        limit: Annotated[int, Field(description="How many values to return, 1 to 50.")] = 10,  # agent spec §4.1
+        column: Annotated[
+            str, Field(description="A text column of that mart, from describe_table.", max_length=MAX_NAME_CHARS)
+        ],
+        term: Annotated[
+            str, Field(description="The value to look for, as the user wrote it.", max_length=MAX_TERM_CHARS)
+        ],
+        limit: Annotated[
+            int, Field(description="How many values to return, 1 to 50.", ge=MIN_LIMIT, le=MAX_LIMIT)
+        ] = 10,  # agent spec §4.1
     ) -> ValueMatches:
         with _tool_errors("search_values"):
             return tools.search_values(table, column, term, limit)
@@ -121,8 +142,10 @@ def build_server(tools: WarehouseTools) -> MCPServer:
         )
     )
     def get_examples(
-        question: Annotated[str, Field(description="The user's question in natural language.")],
-        k: Annotated[int, Field(description="How many examples to return, 1 to 10.")] = 3,  # agent spec §4.1
+        question: Annotated[
+            str, Field(description="The user's question in natural language.", max_length=MAX_QUESTION_CHARS)
+        ],
+        k: Annotated[int, Field(description="How many examples to return, 1 to 10.", ge=MIN_K, le=MAX_K)] = 3,  # §4.1
     ) -> ExampleList:
         with _tool_errors("get_examples"):
             return tools.get_examples(question, k)
@@ -160,6 +183,8 @@ def main() -> None:
     # Before the pool opens its first connection.
     logfire.instrument_psycopg("psycopg")
     settings = McpSettings()  # type: ignore[call-arg]  # fields come from the environment / .env
+    # On stderr only: the model's error messages never carry a host path.
+    logger.info("reading the dbt artifacts from %s", settings.dbt_target_path.resolve())
     database = AgentDatabase(settings)
     tools = WarehouseTools(MartCatalogLoader(settings.dbt_target_path), database, ExampleIndex.from_yaml(EXAMPLES_PATH))
     server = build_server(tools)
