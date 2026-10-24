@@ -10,7 +10,14 @@ from decimal import Decimal
 import psycopg
 import pytest
 from psycopg import errors
-from sherpa_mcp.database import AgentDatabase, QueryResult, WarehouseToolError, json_safe, to_tool_error
+from sherpa_mcp.database import (
+    AgentDatabase,
+    QueryResult,
+    WarehouseToolError,
+    cap_cell,
+    json_safe,
+    to_tool_error,
+)
 
 ROLE_SETTINGS = "select setdatabase, setrole::regrole::text, setconfig from pg_db_role_setting order by 1, 2"
 
@@ -49,6 +56,38 @@ class TestJsonSafe:
         assert json_safe(7) == 7
         assert json_safe(None) is None
         assert json_safe("x") == "x"
+
+
+class TestCapCell:
+    def test_text_at_the_cap_is_kept(self) -> None:
+        assert cap_cell("a" * 10_000) == "a" * 10_000
+
+    def test_longer_text_is_cut_with_a_visible_marker(self) -> None:
+        capped = cap_cell("a" * 10_001)
+
+        assert capped == "a" * 10_000 + " …[cut at 10000 chars]"
+
+    def test_bytes_are_capped_after_hex_conversion(self) -> None:
+        capped = cap_cell(json_safe(b"\xff" * 5_001))  # 10,002 hex characters
+
+        assert capped == "f" * 10_000 + " …[cut at 10000 chars]"
+
+    def test_large_array_or_document_becomes_its_cut_json_text(self) -> None:
+        array = cap_cell(["x" * 6_000, "y" * 6_000])
+        document = cap_cell({"k": "z" * 20_000})
+
+        assert isinstance(array, str)
+        assert array == ('["' + "x" * 6_000 + '", "' + "y" * 6_000)[:10_000] + " …[cut at 10000 chars]"
+        assert isinstance(document, str)
+        assert document.startswith('{"k": "zzz')
+        assert document.endswith(" …[cut at 10000 chars]")
+
+    def test_small_values_pass_through(self) -> None:
+        assert cap_cell(["a", "b"]) == ["a", "b"]
+        assert cap_cell({"k": 1}) == {"k": 1}
+        assert cap_cell(12) == 12
+        assert cap_cell(None) is None
+        assert cap_cell("") == ""
 
 
 class TestErrorMapping:
@@ -104,6 +143,28 @@ class TestAgentDatabase:
 
         assert result.returned_rows == 100
         assert not result.truncated
+
+    def test_long_cells_are_cut_and_rows_keep_their_cap(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch("select lpad('a', 1000000, 'b') as n from marts.fct_order_items")
+
+        assert result.returned_rows == 100
+        assert result.truncated
+        assert set(result.rows) == {("b" * 10_000 + " …[cut at 10000 chars]",)}
+        assert len(json.dumps(result.rows)) < 1_100_000
+
+    def test_hundred_megabyte_cell_is_cut(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch("select lpad('a', 100000000, 'b') as n from marts.fct_order_items limit 1")
+
+        assert result.rows == (("b" * 10_000 + " …[cut at 10000 chars]",),)
+
+    def test_fetching_huge_rows_stops_at_the_timeout(self, agent_database: AgentDatabase) -> None:
+        started = time.monotonic()
+
+        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
+            agent_database.fetch("select lpad('a', 100000000, 'b') as n from marts.fct_order_items")
+
+        assert time.monotonic() - started < 15
+        assert agent_database.scalar("select 1") == 1
 
     def test_timeout_is_reported_and_connection_reusable(self, agent_database: AgentDatabase) -> None:
         started = time.monotonic()

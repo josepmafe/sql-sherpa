@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import ipaddress
+import json
 import math
 import time
 import uuid
@@ -26,7 +27,11 @@ if TYPE_CHECKING:
     from sherpa_mcp.settings import McpSettings
 
 STATEMENT_TIMEOUT = "5s"
+# Postgres times each FETCH on its own, so fetching the rows has its own 5 s budget as well.
+FETCH_DEADLINE_SECONDS = 5.0
 TIMEOUT_MESSAGE = "the query took longer than 5 s; aggregate or filter more narrowly"
+MAX_CELL_CHARS = 10_000  # one text, bytes (hex), array or JSON cell; keeps a result small enough for the model
+CUT_MARKER = f" …[cut at {MAX_CELL_CHARS} chars]"
 SIMILARITY_THRESHOLD = "0.2"
 POOL_MIN_SIZE = 1
 POOL_MAX_SIZE = 4
@@ -71,6 +76,18 @@ def json_safe(value: object) -> object:
             return str(value)
 
 
+def cap_cell(value: object) -> object:
+    """Cut a converted cell longer than `MAX_CELL_CHARS`; an array or document is measured and cut as JSON text."""
+    match value:
+        case str() if len(value) > MAX_CELL_CHARS:
+            return value[:MAX_CELL_CHARS] + CUT_MARKER
+        case list() | dict():
+            text = json.dumps(value)
+            return text[:MAX_CELL_CHARS] + CUT_MARKER if len(text) > MAX_CELL_CHARS else value
+        case _:
+            return value
+
+
 def to_tool_error(error: psycopg.Error) -> WarehouseToolError:
     if isinstance(error, errors.QueryCanceled):
         return WarehouseToolError(TIMEOUT_MESSAGE)
@@ -98,22 +115,32 @@ class AgentDatabase:
         set_similarity_threshold: bool = False,
     ) -> QueryResult:
         started = time.monotonic()
+        rows: list[tuple[object, ...]] = []
+        truncated = False
         try:
             with self._pool.connection() as conn, conn.transaction():
                 self._begin(conn, set_similarity_threshold=set_similarity_threshold)
+                deadline = time.monotonic() + FETCH_DEADLINE_SECONDS
                 # A named cursor declares the query with the extended protocol (`force_extended`), even without params.
                 with conn.cursor(name=f"sherpa_{uuid.uuid4().hex}") as cursor:
                     cursor.execute(query, params or None)
-                    fetched = cursor.fetchmany(max_rows + 1)
                     columns = tuple(column.name for column in cursor.description or ())
+                    # One row per FETCH, capped on arrival: only one oversized row is ever held in memory.
+                    while (row := cursor.fetchone()) is not None:
+                        if len(rows) == max_rows:
+                            truncated = True
+                            break
+                        if time.monotonic() > deadline:
+                            raise WarehouseToolError(TIMEOUT_MESSAGE)
+
+                        rows.append(tuple(cap_cell(json_safe(value)) for value in row))
         except psycopg.Error as error:
             raise to_tool_error(error) from error
-        rows = tuple(tuple(json_safe(value) for value in row) for row in fetched[:max_rows])
         return QueryResult(
             columns=columns,
-            rows=rows,
+            rows=tuple(rows),
             returned_rows=len(rows),
-            truncated=len(fetched) > max_rows,
+            truncated=truncated,
             elapsed_ms=round((time.monotonic() - started) * 1000),
         )
 

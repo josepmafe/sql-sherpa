@@ -13,7 +13,7 @@ A query can only read the marts, and nothing can be written. Four things enforce
 3. **The connection options**: every session starts with `default_transaction_read_only=on` and `statement_timeout=5s`.
 4. **`SET LOCAL statement_timeout`**: every transaction sets the 5 s timeout itself, whatever the role defaults say.
 
-On top of those, every query runs over Postgres' extended protocol on a server-side cursor, so Postgres itself refuses multi-statement text and `DECLARE CURSOR` even if the guard and Postgres ever split a query differently. At most 100 rows come back, flagged `truncated` when there were more.
+On top of those, every query runs over Postgres' extended protocol on a server-side cursor, so Postgres itself refuses multi-statement text and `DECLARE CURSOR` even if the guard and Postgres ever split a query differently. At most 100 rows come back, flagged `truncated` when there were more, and no cell is longer than 10,000 characters.
 
 ## Starting it
 
@@ -237,6 +237,16 @@ run_sql {"sql": "select order_id, customer_id from marts.fct_orders"}
 {"execution_id": "e26de08fd4f1a14f", "columns": ["order_id", "customer_id"], "rows": [[4, 1], [6, 1], ...],
  "returned_rows": 100, "truncated": true, "elapsed_ms": 6}
 ```
+
+A text, bytes (shown as hex), array or JSON cell longer than 10,000 characters is cut, and the cut is visible at its end:
+
+```
+run_sql {"sql": "select lpad('a', 100000000, 'b') as n from marts.fct_order_items limit 1"}
+{"execution_id": "...", "columns": ["n"], "rows": [["bbbbbbbbbb...bbbb …[cut at 10000 chars]"]],
+ "returned_rows": 1, "truncated": false, ...}
+```
+
+Rows are fetched one at a time, and fetching them also stops after 5 s, so a query whose rows are huge ends with the timeout error below rather than a slow, oversized answer.
 
 ## When something goes wrong
 

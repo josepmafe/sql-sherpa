@@ -45,6 +45,8 @@ services:
       LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
     volumes:
       - ./data-platform/dbt/target-prod:/app/dbt/target-prod:ro
+    # A ceiling for a query whose rows are huge before the server cuts each cell to 10,000 characters.
+    mem_limit: 512m
     ports:
       - "127.0.0.1:${SHERPA_MCP_PORT:-8765}:8765"
     depends_on:
