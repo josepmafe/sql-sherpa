@@ -26,4 +26,4 @@ repos:
         name: sqlfluff lint
         entry: uv run --env-file .env sqlfluff lint
         language: system
-        files: ^dbt/.*\.sql$
+        files: ^data-platform/dbt/.*\.sql$
