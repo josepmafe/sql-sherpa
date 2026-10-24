@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check eval-db lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check eval-db mcp-dev lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -86,6 +86,10 @@ eval-db:
 	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run sherpa-generate generate --seed 42 --start-date 2025-01-01 --days 365
 	$(DBT) build $(EVAL)
 	$(DBT) docs generate $(EVAL)
+
+# The MCP server on the host over Streamable HTTP (http://127.0.0.1:8765/mcp), e.g. for MCP Inspector.
+mcp-dev:
+	MCP_TRANSPORT=http uv run --env-file .env sherpa-mcp
 
 lint:
 	uv run ruff check .

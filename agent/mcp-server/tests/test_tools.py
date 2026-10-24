@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sherpa_mcp.catalog import MartCatalogLoader
-from sherpa_mcp.database import AgentDatabase, WarehouseToolError
+from sherpa_mcp.database import WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
 from sherpa_mcp.tools import WarehouseTools
 
 if TYPE_CHECKING:
     import psycopg
-    from sherpa_mcp.settings import McpSettings
+    from sherpa_mcp.database import AgentDatabase
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "examples.yaml"
@@ -34,16 +34,6 @@ def _expected_marts() -> tuple[str, ...]:
     spec.loader.exec_module(module)
     marts: tuple[str, ...] = module.MARTS
     return marts
-
-
-@pytest.fixture(scope="module")
-def prod_loader(warehouse_settings: McpSettings) -> MartCatalogLoader:
-    return MartCatalogLoader(REPO_ROOT / warehouse_settings.dbt_target_path)
-
-
-@pytest.fixture(scope="module")
-def tools(prod_loader: MartCatalogLoader, agent_database: AgentDatabase) -> WarehouseTools:
-    return WarehouseTools(prod_loader, agent_database, ExampleIndex.from_yaml(EXAMPLES_PATH))
 
 
 @pytest.mark.warehouse
