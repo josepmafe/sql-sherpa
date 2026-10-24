@@ -1,0 +1,27 @@
+{
+  "metadata": {"generated_at": "2026-10-24T12:36:51.283693Z"},
+  "nodes": {
+    "model.sherpa.fct_orders": {
+      "metadata": {"type": "BASE TABLE", "schema": "marts", "name": "fct_orders", "database": "sherpa"},
+      "columns": {
+        "order_id": {"type": "bigint", "index": 1, "name": "order_id"},
+        "customer_id": {"type": "bigint", "index": 2, "name": "customer_id"},
+        "order_date": {"type": "date", "index": 3, "name": "order_date"},
+        "net_revenue": {"type": "numeric(12,2)", "index": 4, "name": "net_revenue"},
+        "current_status": {"type": "text", "index": 5, "name": "current_status"}
+      }
+    },
+    "model.sherpa.dim_customers": {
+      "metadata": {"type": "BASE TABLE", "schema": "marts", "name": "dim_customers", "database": "sherpa"},
+      "columns": {
+        "customer_id": {"type": "bigint", "index": 1, "name": "customer_id"},
+        "email": {"type": "text", "index": 2, "name": "email"},
+        "customer_segment": {"type": "text", "index": 3, "name": "customer_segment"}
+      }
+    },
+    "model.sherpa.stg_shop__customers": {
+      "metadata": {"type": "VIEW", "schema": "staging", "name": "stg_shop__customers", "database": "sherpa"},
+      "columns": {"customer_id": {"type": "bigint", "index": 1, "name": "customer_id"}}
+    }
+  }
+}

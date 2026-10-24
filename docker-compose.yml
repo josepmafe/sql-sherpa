@@ -24,6 +24,46 @@ services:
       timeout: 3s
       retries: 10
 
+  mcp:
+    build:
+      context: .
+      dockerfile: agent/mcp-server/Dockerfile
+    # No env_file: the agent-facing container gets only the variables it needs (least privilege), never the admin
+    # login, POSTGRES_PASSWORD or host-only settings from .env. Compose reads the ${...} values from .env.
+    environment:
+      SHERPA_DB_HOST: postgres
+      SHERPA_DB_PORT: "5432"
+      SHERPA_DB_NAME: ${SHERPA_DB_NAME:-sherpa}
+      SHERPA_AGENT_USER: ${SHERPA_AGENT_USER:-sherpa_agent}
+      SHERPA_AGENT_PASSWORD: ${SHERPA_AGENT_PASSWORD:?set it in .env}
+      MCP_TRANSPORT: http
+      # All interfaces inside the container; the published port below is localhost only.
+      SHERPA_MCP_HOST: 0.0.0.0
+      SHERPA_MCP_PORT: "8765"
+      SHERPA_DBT_TARGET_PATH: /app/dbt/target-prod
+      SHERPA_MCP_POOL_SIZE: ${SHERPA_MCP_POOL_SIZE:-4}
+      # Optional: empty means no export.
+      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+    volumes:
+      # The dbt folder, not target-prod itself: Docker would create a missing target-prod as an empty root-owned
+      # directory, and a target-prod deleted and rebuilt on the host would leave the container on a stale mount.
+      - ./data-platform/dbt:/app/dbt:ro
+    # A ceiling for a query whose rows are huge before the server cuts each cell to 10,000 characters; if a query
+    # still runs the server out of memory, Docker restarts it.
+    mem_limit: 1g
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SHERPA_MCP_PORT:-8765}:8765"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8765), timeout=3).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
 volumes:
   pgdata:
     name: sherpa_pgdata

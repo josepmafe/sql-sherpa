@@ -1,0 +1,114 @@
+{
+  "metadata": {"generated_at": "2026-10-24T12:36:42.863017Z", "project_name": "sherpa", "adapter_type": "postgres"},
+  "nodes": {
+    "model.sherpa.stg_shop__customers": {
+      "resource_type": "model",
+      "name": "stg_shop__customers",
+      "schema": "staging",
+      "relation_name": "\"sherpa\".\"staging\".\"stg_shop__customers\"",
+      "description": "Staged customers.",
+      "access": "protected",
+      "meta": {},
+      "depends_on": {"macros": [], "nodes": []},
+      "columns": {
+        "customer_id": {"name": "customer_id", "description": "The customer.", "meta": {}, "data_type": null, "doc_blocks": []}
+      }
+    },
+    "model.sherpa.fct_orders": {
+      "resource_type": "model",
+      "name": "fct_orders",
+      "schema": "marts",
+      "relation_name": "\"sherpa\".\"marts\".\"fct_orders\"",
+      "description": "Order fact, one row per order.",
+      "access": "protected",
+      "meta": {"domain": "sales", "grain": "one row per order", "primary_key": "order_id", "synonyms": ["sales", "purchases"]},
+      "depends_on": {"macros": [], "nodes": ["model.sherpa.stg_shop__customers"]},
+      "columns": {
+        "order_id": {"name": "order_id", "description": "The order. Primary key.", "meta": {}, "data_type": "bigint", "doc_blocks": []},
+        "customer_id": {"name": "customer_id", "description": "The buyer.", "meta": {}, "data_type": "bigint", "doc_blocks": []},
+        "order_date": {"name": "order_date", "description": "Day the order was placed (UTC).", "meta": {}, "data_type": "date", "doc_blocks": []},
+        "net_revenue": {
+          "name": "net_revenue",
+          "description": "The order's net revenue.",
+          "meta": {"synonyms": ["revenue", "net sales"]},
+          "data_type": "numeric(12,2)",
+          "doc_blocks": ["doc.sherpa.metric_net_revenue"]
+        },
+        "current_status": {"name": "current_status", "description": "Latest order status.", "meta": {}, "data_type": "text", "doc_blocks": []}
+      }
+    },
+    "model.sherpa.dim_customers": {
+      "resource_type": "model",
+      "name": "dim_customers",
+      "schema": "marts",
+      "relation_name": "\"sherpa\".\"marts\".\"dim_customers\"",
+      "description": "Customer dimension, one row per customer.",
+      "access": "protected",
+      "meta": {"domain": "customers", "grain": "one row per customer", "primary_key": ["customer_id"]},
+      "depends_on": {"macros": [], "nodes": ["model.sherpa.stg_shop__customers"]},
+      "columns": {
+        "customer_id": {"name": "customer_id", "description": "The customer. Primary key.", "meta": {}, "data_type": "bigint", "doc_blocks": []},
+        "email": {"name": "email", "description": "Contact email.", "meta": {"pii": true}, "data_type": "text", "doc_blocks": []},
+        "customer_segment": {
+          "name": "customer_segment",
+          "description": "Value segment of the customer.",
+          "meta": {"synonyms": ["tier", "segment"]},
+          "data_type": "text",
+          "doc_blocks": []
+        }
+      }
+    },
+    "test.sherpa.accepted_values_fct_orders_current_status__placed__shipped__cancelled": {
+      "resource_type": "test",
+      "name": "accepted_values_fct_orders_current_status__placed__shipped__cancelled",
+      "column_name": "current_status",
+      "attached_node": "model.sherpa.fct_orders",
+      "depends_on": {"macros": ["macro.dbt.test_accepted_values"], "nodes": ["model.sherpa.fct_orders"]},
+      "test_metadata": {
+        "name": "accepted_values",
+        "kwargs": {"column_name": "current_status", "values": ["placed", "shipped", "cancelled"], "model": "{{ get_where_subquery(ref('fct_orders')) }}"},
+        "namespace": null
+      }
+    },
+    "test.sherpa.not_null_fct_orders_order_id": {
+      "resource_type": "test",
+      "name": "not_null_fct_orders_order_id",
+      "column_name": "order_id",
+      "attached_node": "model.sherpa.fct_orders",
+      "depends_on": {"macros": ["macro.dbt.test_not_null"], "nodes": ["model.sherpa.fct_orders"]},
+      "test_metadata": {"name": "not_null", "kwargs": {"column_name": "order_id", "model": "{{ get_where_subquery(ref('fct_orders')) }}"}, "namespace": null}
+    },
+    "test.sherpa.relationships_fct_orders_customer_id__customer_id__ref_dim_customers_": {
+      "resource_type": "test",
+      "name": "relationships_fct_orders_customer_id__customer_id__ref_dim_customers_",
+      "column_name": "customer_id",
+      "attached_node": "model.sherpa.fct_orders",
+      "depends_on": {"macros": ["macro.dbt.test_relationships"], "nodes": ["model.sherpa.dim_customers", "model.sherpa.fct_orders"]},
+      "test_metadata": {"name": "relationships", "kwargs": {"column_name": "customer_id", "to": "ref('dim_customers')", "field": "customer_id"}, "namespace": null}
+    },
+    "test.sherpa.unique_dim_customers_customer_id": {
+      "resource_type": "test",
+      "name": "unique_dim_customers_customer_id",
+      "column_name": "customer_id",
+      "attached_node": "model.sherpa.dim_customers",
+      "depends_on": {"macros": ["macro.dbt.test_unique"], "nodes": ["model.sherpa.dim_customers"]},
+      "test_metadata": {"name": "unique", "kwargs": {"column_name": "customer_id", "model": "{{ get_where_subquery(ref('dim_customers')) }}"}, "namespace": null}
+    }
+  },
+  "docs": {
+    "doc.sherpa.metric_net_revenue": {
+      "name": "metric_net_revenue",
+      "resource_type": "doc",
+      "package_name": "sherpa",
+      "unique_id": "doc.sherpa.metric_net_revenue",
+      "block_contents": "Net revenue: gross_revenue - discount_amount - refunded_revenue, in EUR, over non-cancelled orders."
+    },
+    "doc.sherpa.cancelled_orders": {
+      "name": "cancelled_orders",
+      "resource_type": "doc",
+      "package_name": "sherpa",
+      "unique_id": "doc.sherpa.cancelled_orders",
+      "block_contents": "Cancelled orders are kept and flagged."
+    }
+  }
+}

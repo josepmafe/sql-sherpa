@@ -1,0 +1,306 @@
+# Few-shot examples for the agent (agent spec §4.3). Metric definitions: non-cancelled orders, refunds by order date.
+# Relative periods are anchored to as_of_date, max(order_date) in fct_orders, never to the real clock.
+- question: What is our net revenue each month?
+  sql: |
+    select
+        date_trunc('month', order_date)::date as month,
+        sum(net_revenue) as net_revenue
+    from marts.fct_orders
+    where not is_cancelled
+    group by 1
+    order by 1
+  notes: >-
+    Net revenue is summed over non-cancelled orders; refunds are attributed to the order date. The first and the
+    last month are partial (the data runs from the first order date to as_of_date), and orders of the last 7 weeks
+    still miss refunds (they arrive 6 to 47 days after the order), so recent net revenue is overstated.
+
+- question: What was net revenue last month?
+  sql: |
+    with period as (
+        select
+            (date_trunc('month', max(order_date)) - interval '1 month')::date as month_start,
+            date_trunc('month', max(order_date))::date as next_month_start
+        from marts.fct_orders
+    )
+
+    select
+        p.month_start as month,
+        count(*) as orders,
+        sum(o.net_revenue) as net_revenue
+    from marts.fct_orders as o
+    inner join period as p
+        on
+            o.order_date >= p.month_start
+            and o.order_date < p.next_month_start
+    where not o.is_cancelled
+    group by p.month_start
+  notes: >-
+    Last month is the calendar month before the month of as_of_date (max(order_date)), not before today. The
+    half-open range (>= first day, < first day of the next month) covers the whole month. Some of its refunds may
+    not have arrived yet.
+
+- question: How many orders did we get in the last 30 days?
+  sql: |
+    with period as (
+        select max(order_date) as as_of_date
+        from marts.fct_orders
+    )
+
+    select
+        count(*) as orders,
+        sum(o.net_revenue) as net_revenue
+    from marts.fct_orders as o
+    inner join period as p
+        on
+            o.order_date > p.as_of_date - 30
+            and o.order_date <= p.as_of_date
+    where not o.is_cancelled
+  notes: >-
+    The last 30 days end at as_of_date (max(order_date)) and include it. Cancelled orders are left out, as in every
+    metric; drop that filter to count all placed orders.
+
+- question: Which 10 products bring in the most net revenue?
+  sql: |
+    select
+        p.product_id,
+        p.product_name,
+        sum(i.net_amount - i.refunded_revenue) as net_revenue
+    from marts.fct_order_items as i
+    inner join marts.dim_products as p on p.variant_id = i.variant_id
+    where not i.is_cancelled
+    group by p.product_id, p.product_name
+    order by net_revenue desc
+    limit 10
+  notes: >-
+    dim_products has one row per variant, so group by product_id; line net revenue is net_amount minus
+    refunded_revenue. Line refunded_revenue covers return refunds only, not goodwill refunds, so product net revenue
+    does not add up to fct_orders.net_revenue.
+
+- question: What is the average order value of orders that contain footwear?
+  sql: |
+    with footwear_orders as (
+        select distinct i.order_id
+        from marts.fct_order_items as i
+        inner join marts.dim_products as p on p.variant_id = i.variant_id
+        where p.category_l1 = 'Footwear'
+    )
+
+    select
+        count(*) as orders,
+        sum(o.net_revenue) / count(*) as aov
+    from marts.fct_orders as o
+    inner join footwear_orders as f on f.order_id = o.order_id
+    where not o.is_cancelled
+  notes: >-
+    Joining fct_orders straight to fct_order_items repeats an order once per line, so order measures summed after
+    that join count it several times. Reduce the lines to one row per order first (distinct order_id, or group by
+    order_id), then join; the same holds for fct_order_discounts, fct_returns and fct_refunds.
+
+- question: Compare the average order value of web and app orders
+  sql: |
+    select
+        sales_channel,
+        count(*) as orders,
+        sum(net_revenue) / count(*) as aov
+    from marts.fct_orders
+    where not is_cancelled
+    group by sales_channel
+    order by sales_channel
+  notes: >-
+    AOV is net revenue divided by the count of non-cancelled orders, fully refunded orders (net revenue 0)
+    included; sales_channel is web or app.
+
+- question: Which product categories get the largest share of their sales refunded?
+  sql: |
+    select
+        p.category_l1,
+        sum(i.refunded_revenue) as refunded_revenue,
+        sum(i.gross_amount) as gross_revenue,
+        sum(i.refunded_revenue) / nullif(sum(i.gross_amount), 0) as refund_rate
+    from marts.fct_order_items as i
+    inner join marts.dim_products as p on p.variant_id = i.variant_id
+    where not i.is_cancelled
+    group by p.category_l1
+    order by refund_rate desc
+  notes: >-
+    Refund rate per category is line refunded revenue over line gross revenue on non-cancelled orders. Line refunds
+    cover returns only, so goodwill refunds are left out: over all categories the rate is slightly below the
+    refund_rate metric, which fct_orders computes with them.
+
+- question: How many customers do we have?
+  sql: |
+    select count(*) as customers
+    from marts.dim_customers
+    where
+        not is_deleted
+        and order_count >= 1
+  notes: >-
+    By default a customer is a customer who is not deleted and has at least one non-cancelled order (order_count
+    counts only those). dim_customers also holds prospects without an order and soft-deleted customers.
+
+- question: How many customers sit in each lifecycle stage?
+  sql: |
+    select
+        customer_segment,
+        count(*) as customers
+    from marts.dim_customers
+    group by customer_segment
+    order by customers desc
+  notes: >-
+    customer_segment is one of prospect, new, active, at_risk, churned. These counts include prospects (no order
+    yet) and soft-deleted customers, so they add up to more than the default customer count.
+
+- question: What fraction of net revenue comes from VIP buyers?
+  sql: |
+    select
+        sum(lifetime_net_revenue) filter (where is_vip) / nullif(sum(lifetime_net_revenue), 0) as vip_revenue_share
+    from marts.dim_customers
+  notes: is_vip marks the top 10 percent of buyers by lifetime net revenue; lifetime figures use non-cancelled orders.
+
+- question: How much discount was granted by each promotion?
+  sql: |
+    select
+        p.promotion_name,
+        p.promotion_type,
+        count(*) as redemptions,
+        sum(d.amount) as discount_amount
+    from marts.fct_order_discounts as d
+    inner join marts.dim_promotions as p on p.promotion_id = d.promotion_id
+    where not d.is_cancelled
+    group by p.promotion_name, p.promotion_type
+    order by discount_amount desc
+  notes: >-
+    One row per discount applied, and an order uses a promotion at most once, so count(*) per promotion counts
+    redemptions and orders alike; an order can combine several promotions, so count orders across promotions with
+    count(distinct order_id). free_shipping promotions have amount 0 because they waive the shipping instead.
+
+- question: Why do customers send items back, and how much is refunded for each reason?
+  sql: |
+    select
+        reason,
+        count(*) as returns,
+        sum(returned_item_quantity) as items,
+        sum(refunded_amount) as refunded_amount
+    from marts.fct_returns
+    where status = 'received'
+    group by reason
+    order by returns desc
+  notes: >-
+    Only received returns are refunded; requested, approved and rejected ones have no refund, so they are left out
+    (group by status to see them). requested_at is the only date on a return. reason is one of size, damaged,
+    not_as_described, changed_mind; refunded_amount includes tax.
+
+- question: How long does delivery take in each destination country?
+  sql: |
+    select
+        ship_country_code,
+        count(*) as delivered_orders,
+        round(avg(days_to_deliver), 1) as avg_days_to_deliver
+    from marts.fct_orders
+    where
+        not is_cancelled
+        and days_to_deliver is not null
+    group by ship_country_code
+    order by avg_days_to_deliver desc
+  notes: >-
+    days_to_deliver is null until the order is delivered, so undelivered orders are left out; of the orders placed
+    just before as_of_date only the quick deliveries count yet.
+
+- question: How many new customers placed their first order in each month?
+  sql: |
+    select
+        date_trunc('month', order_date)::date as month,
+        count(*) as first_time_buyers
+    from marts.fct_orders
+    where is_first_order
+    group by 1
+    order by 1
+  notes: >-
+    is_first_order is false for cancelled orders, so no extra cancelled filter is needed. Every buyer of the first
+    month is new because the history starts there, and the first and last months are partial.
+
+- question: How far is gross revenue from net revenue each month, and what explains the gap?
+  sql: |
+    select
+        date_trunc('month', order_date)::date as month,
+        sum(gross_revenue) as gross_revenue,
+        sum(discount_amount) as discount_amount,
+        sum(refunded_revenue) as refunded_revenue,
+        sum(net_revenue) as net_revenue
+    from marts.fct_orders
+    where not is_cancelled
+    group by 1
+    order by 1
+  notes: net = gross - discounts - refunded revenue; recent months understate refunds because they arrive weeks later.
+
+- question: How did Black Friday week sales compare with the week just before it?
+  sql: |
+    with weekly as (
+        select
+            d.week_start,
+            d.is_black_friday_week,
+            sum(o.net_revenue) as net_revenue
+        from marts.fct_orders as o
+        inner join marts.dim_date as d on d.date_day = o.order_date
+        where not o.is_cancelled
+        group by d.week_start, d.is_black_friday_week
+    ),
+
+    compared as (
+        select
+            week_start,
+            is_black_friday_week,
+            net_revenue,
+            lag(net_revenue) over (order by week_start) as previous_week_net_revenue
+        from weekly
+    )
+
+    select
+        week_start,
+        net_revenue,
+        previous_week_net_revenue,
+        net_revenue / nullif(previous_week_net_revenue, 0) - 1 as change_vs_previous_week
+    from compared
+    where is_black_friday_week
+    order by week_start
+  notes: dim_date.is_black_friday_week flags the Monday to Sunday week; lag over all weeks gives the week before.
+
+- question: Which brands earn the best gross margin?
+  sql: |
+    select
+        p.brand,
+        sum(i.gross_margin) as gross_margin,
+        sum(i.net_amount - i.refunded_revenue) as net_revenue,
+        sum(i.gross_margin) / nullif(sum(i.net_amount - i.refunded_revenue), 0) as margin_rate
+    from marts.fct_order_items as i
+    inner join marts.dim_products as p on p.variant_id = i.variant_id
+    where not i.is_cancelled
+    group by p.brand
+    order by gross_margin desc
+  notes: >-
+    Line gross_margin already nets refunds and recovered returned cost; costs use the current cost price. Line
+    refunded_revenue covers return refunds only, not goodwill refunds, so brand net revenue does not add up to
+    fct_orders.net_revenue.
+
+- question: How are orders split across payment methods?
+  sql: |
+    select
+        primary_payment_method,
+        count(*) as orders,
+        sum(net_revenue) as net_revenue
+    from marts.fct_orders
+    where not is_cancelled
+    group by primary_payment_method
+    order by orders desc
+  notes: >-
+    primary_payment_method is the largest captured payment (card, paypal or gift_card); it is null only when
+    nothing was captured, which no non-cancelled order is.
+
+- question: What percentage of placed orders end up cancelled?
+  sql: |
+    select
+        count(*) filter (where is_cancelled) as cancelled_orders,
+        count(*) as orders,
+        count(*) filter (where is_cancelled)::numeric / nullif(count(*), 0) as cancelled_share
+    from marts.fct_orders
+  notes: Cancelled orders are kept and flagged, so this is the one place the cancelled filter is not applied.
