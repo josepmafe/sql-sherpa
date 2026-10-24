@@ -56,7 +56,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
   - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
-- Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `dev`). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
+- Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `mcp`, `dev`). `sqlglot` is pinned exactly: its parser is the SQL guard's view of a query, so a bump is a guard change (rerun the guard's hostile-input tests). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
 - dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
@@ -78,7 +78,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 ### Structure
 - Keep **pure logic separate from I/O**, so most code is testable without a database or a model:
   - generator: `records/`, `RealismRules`, `SimulationCalendar`, `DeterministicRandom` and `OrderPricing` are pure; `database/`, `StoreSnapshotLoader` and `Simulator` do the I/O. `OrderPricing` lives in `behaviour/order_lifecycle.py` and `GeneratorError` in `simulation/simulator.py`
-  - MCP server: `sql_guard`, `masking` and `manifest` parsing are pure; tools and `db` do the I/O
+  - MCP server: `sql_guard`, `masking`, `examples` and the `catalog` parsing are pure; `tools`, `database` and the `catalog` loader's file reads do the I/O
   - agent: `guards` and `outcomes` are pure; variants orchestrate
 - One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.
 - Module-level `UPPER_CASE` constants for every tunable value (rates, limits, thresholds), with the spec section in a comment where it comes from the spec. No magic numbers inside logic.

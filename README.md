@@ -56,9 +56,12 @@ make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3
 make deps                # install the dbt packages
 make build               # dbt: seeds, staging, intermediate and mart models, and tests
 make build-prod          # the same into the prod schemas, which the agent reads
+make docs-prod           # write catalog.json, which the MCP server needs, then serve the prod docs: Ctrl+C once it serves
 make eval-db             # optional: the frozen evaluation database sherpa_eval (about 5 minutes or more)
-make docs                # generate and serve the dbt docs until you press Ctrl+C
+make docs                # generate and serve the dev dbt docs until you press Ctrl+C
 ```
+
+`make docs` and `make docs-prod` serve on the same port (8080), so stop one before starting the other.
 
 `make mcp-dev` runs the MCP server on the host instead of the container ([Using the MCP server](docs/guides/basic/using-the-mcp-server.md)). `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy and sqlfluff.
 
@@ -103,9 +106,9 @@ docs/              design specs, implementation plans and how-to guides
 - [Using the generator](docs/guides/basic/generator-cli.md): commands, recipes, errors, and the raw data in `psql`
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev, prod and eval, the layers, hooks, selecting, previewing, docs and failing tests
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers, revenue definitions, copy-paste queries, traps, fuzzy search and the agent role
-- [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, MCP Inspector, the eight tools with real calls, guard rejections, timeouts, masking and its limits
+- [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools with real calls, error codes and hints, result limits, masking, known limitations and tracing
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, end to end
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns, marts, metrics, trigram indexes, custom tests and intermediate models
-- [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, few-shot examples, and what to update when marts are added
+- [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and what to update when marts are added
 
 All data is synthetic.
