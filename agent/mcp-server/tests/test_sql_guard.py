@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from sherpa_mcp.sql_guard import SqlGuard
 
 VISIBLE_MARTS = frozenset({"fct_orders", "dim_customers", "fct_order_items"})
+# sqlglot node names that are not the Postgres spelling of a function
+SQLGLOT_NODE_NAME = re.compile(
+    r"\b(j_s_o_n\w*|unix_to_time|rand|exploding_generate_series|json_extract_scalar|array_contains_all|array_size"
+    r"|current_version|regexp_like)\b"
+)
 
 
 @pytest.fixture
@@ -260,6 +267,10 @@ class TestSqlGuard:
             ("select * from pg_roles", "qualify it as marts.pg_roles"),
             ('select * from "marts.fct_orders"', "is not schema-qualified"),
             ("select * from staging.stg_shop__orders", "table staging.stg_shop__orders is outside marts"),
+            # the dev target's schemas hold the same marts under another name
+            ("select * from dev_marts.dim_customers", "table dev_marts.dim_customers is outside marts"),
+            ("select * from marts_dev.dim_customers", "table marts_dev.dim_customers is outside marts"),
+            ('select * from "dev_marts"."fct_orders"', "table dev_marts.fct_orders is outside marts"),
             ("select * from marts.dim_customers_v2", "table marts.dim_customers_v2 is not a visible mart"),
             ('select * from marts."fct_orders "', "is not a visible mart"),
             ("select * from sherpa.marts.fct_orders", "table sherpa.marts.fct_orders is not allowed"),
@@ -332,6 +343,36 @@ class TestSqlGuard:
             "function pg_sleep is not allowed",
             "table pg_catalog.pg_roles is outside marts",
         )
+
+    @pytest.mark.parametrize(
+        ("sql", "error"),
+        [
+            ("select json_agg(order_id) from marts.fct_orders", "function json_agg is not allowed"),
+            ("select to_timestamp(0) from marts.fct_orders", "function to_timestamp is not allowed"),
+            ("select random() from marts.fct_orders", "function random is not allowed"),
+            ("select * from generate_series(1, 3)", "function generate_series is not allowed"),
+            ("select * from public.generate_series(1, 3)", "function generate_series is not allowed"),
+            ("select json_table(a) from marts.fct_orders", "function json_table is not allowed"),
+            ("select array_length(a, 1) from marts.fct_orders", "function array_length is not allowed"),
+            ("select current_user from marts.fct_orders", "function current_user is not allowed"),
+            ("select version()", "function version is not allowed"),
+            ("select localtimestamp from marts.fct_orders", "function localtimestamp is not allowed"),
+            ("select grouping(a) from marts.fct_orders group by a", "function grouping is not allowed"),
+            ("select a ->> 'k' from marts.fct_orders", "function or operator `a ->> 'k'` is not allowed"),
+            ("select a @> b from marts.fct_orders", "function or operator `a @> b` is not allowed"),
+            ("select 1 from marts.fct_orders where a ~ 'x'", "function or operator `a ~ 'x'` is not allowed"),
+            ("select 1 from marts.fct_orders where a = any(array[1, 2])", "function or operator `ARRAY[1, 2]`"),
+            (
+                "select a ->> '" + "k" * 80 + "' from marts.fct_orders",
+                "function or operator `" + ("a ->> '" + "k" * 80)[:60] + "...` is not allowed",
+            ),
+        ],
+    )
+    def test_rejected_function_is_named_as_written_in_postgres(self, guard: SqlGuard, sql: str, error: str) -> None:
+        result = guard.check(sql)
+
+        assert any(error in item for item in result.errors), result.errors
+        assert SQLGLOT_NODE_NAME.search(" ".join(result.errors)) is None
 
     def test_parse_error_is_a_rejection(self, guard: SqlGuard) -> None:
         result = guard.check("select from where (")

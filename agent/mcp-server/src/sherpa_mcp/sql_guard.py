@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 import sqlglot
@@ -44,6 +45,9 @@ ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
         "similarity",
     }
 )
+ERROR_SNIPPET_LENGTH: Final = 60  # longest expression an error quotes for an operator the guard rejects
+_CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
+_WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
 _OPERATOR_NODES: Final = (exp.Connector, exp.Exists)
 _QUERY_NODES: Final = (exp.Select, exp.Union, exp.Intersect, exp.Except)
@@ -111,10 +115,16 @@ class SqlGuard:
             case exp.DataType() if not _is_built_in_type(node):
                 return [f"cast to type {node.sql(dialect=DIALECT)} is not allowed"]
             case exp.Dot(expression=exp.Func() as func):
-                return [f"function {node.this.sql(dialect=DIALECT)}.{_function_name(func)} is not allowed"]
+                return [f"function {node.this.sql(dialect=DIALECT)}.{_written_name(func)} is not allowed"]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):
-                name = _function_name(node)
-                return [] if name in ALLOWED_FUNCTIONS else [f"function {name} is not allowed"]
+                if _function_name(node) in ALLOWED_FUNCTIONS:
+                    return []
+
+                name = _written_name(node)
+                if _WRITTEN_NAME.fullmatch(name) is None:
+                    return [f"function or operator `{name}` is not allowed"]
+
+                return [f"function {name} is not allowed"]
             case exp.Table():
                 return self._table_errors(node, tables)
             case exp.Column(this=exp.Star()) if not _is_projection_item(node):
@@ -168,6 +178,28 @@ def _statement_kind(statement: exp.Expr) -> str:
 
 def _function_name(func: exp.Func) -> str:
     return func.name.lower() if isinstance(func, exp.Anonymous) else func.sql_name().lower()
+
+
+def _written_name(func: exp.Func) -> str:
+    """The name as the model wrote it in Postgres, not sqlglot's node name (`json_agg`, not `j_s_o_n_array_agg`).
+
+    An operator form (`a ->> 'k'`, `a ~ 'x'`, `ARRAY[...]`) has no name, so the expression itself is returned, cut.
+    """
+    if isinstance(func, exp.Anonymous):
+        return func.name.lower()
+
+    rendered = func.sql(dialect=DIALECT)
+    head = _CALL_HEAD.match(rendered)
+    if head is not None:
+        return head.group(1).lower()
+
+    if _WRITTEN_NAME.fullmatch(rendered):
+        return rendered.lower()  # a keyword function such as CURRENT_USER or LOCALTIMESTAMP
+
+    if len(rendered) > ERROR_SNIPPET_LENGTH:
+        return f"{rendered[:ERROR_SNIPPET_LENGTH]}..."
+
+    return rendered
 
 
 def _is_built_in_type(data_type: exp.DataType) -> bool:

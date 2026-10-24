@@ -262,14 +262,14 @@ The guard is strict and fails closed: it would rather reject a harmless query th
 
 | Rejected | Message (excerpt) | Write instead |
 |---|---|---|
-| `col = any(array['FR','DE'])` | `function array is not allowed` | `col in ('FR', 'DE')` |
-| `col ~ 'regex'` | `function regexp_like is not allowed` | `ilike`, or `similarity()` |
-| `col ->> 'key'`, `@>` (JSON operators) | `function json_extract_scalar is not allowed` | no JSON columns in the marts; select the column |
+| `col = any(array['FR','DE'])` | `function or operator `ARRAY['FR', 'DE']` is not allowed` | `col in ('FR', 'DE')` |
+| `col ~ 'regex'` | `function or operator `col ~ 'regex'` is not allowed` | `ilike`, or `similarity()` |
+| `col ->> 'key'`, `@>` (JSON operators) | `function or operator `col ->> 'key'` is not allowed` | no JSON columns in the marts; select the column |
 | `grouping(...)` | `function grouping is not allowed` | plain `group by` |
 | `localtimestamp` | `function localtimestamp is not allowed` | `now()` or `current_timestamp` (but prefer the as-of date from `get_context`) |
-| `col collate "C"` | `function collate is not allowed` | drop it |
+| `col collate "C"` | `function or operator `col COLLATE "C"` is not allowed` | drop it |
 | `(select ...)` as the whole query | `the statement must be a SELECT query, not SUBQUERY` | remove the outer parentheses |
-| `from generate_series(...)`, also `public.generate_series(...)` | `function exploding_generate_series is not allowed` | join `marts.dim_date` for a series of days |
+| `from generate_series(...)`, also `public.generate_series(...)` | `function generate_series is not allowed` | join `marts.dim_date` for a series of days |
 | `from fct_orders` | `table fct_orders is not schema-qualified; qualify it as marts.fct_orders` | `from marts.fct_orders` |
 | `select o from marts.fct_orders o` | `whole-row reference `o` is not allowed` | name the columns |
 | `select o.*::text from marts.fct_orders o`, `concat(o.*)` | `whole-row reference `o.*` inside an expression is not allowed` | name the columns, or `select o.*` on its own |

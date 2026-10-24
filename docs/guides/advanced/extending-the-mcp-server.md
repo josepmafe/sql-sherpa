@@ -83,21 +83,23 @@ The guard rejects every function that is not on the list, so the common case is 
 
 **What to check first.** The function must be harmless in a read-only role: no side effects, no file or network access, no catalog or session introspection (`pg_*`, `current_setting`, `dblink*`, `lo_*`, `query_to_xml` stay out), no unbounded output (`generate_series`), and no way to run a nested query from a string.
 
-**1. The list** (`sql_guard.py`, `ALLOWED_FUNCTIONS`). The names are the ones **sqlglot** reports, not always the Postgres spelling. sqlglot parses some Postgres functions into nodes with another name (`string_agg` becomes `group_concat`, `date_trunc` becomes `timestamp_trunc`, `~` becomes `regexp_like`), and the comment above the list records the mapping. Find the name by asking the guard:
+**1. The list** (`sql_guard.py`, `ALLOWED_FUNCTIONS`). The names are the ones **sqlglot** reports, not always the Postgres spelling. sqlglot parses some Postgres functions into nodes with another name (`string_agg` becomes `group_concat`, `date_trunc` becomes `timestamp_trunc`, `~` becomes `regexp_like`), and the comment above the list records the mapping. The guard's error message names the function as the model wrote it (`function string_agg ...`), so find the name the list compares against by asking sqlglot:
 
 ```bash
 uv run python - <<'EOF'
-from sherpa_mcp.sql_guard import SqlGuard
+import sqlglot
+from sqlglot import exp
 
-print(SqlGuard(frozenset({"fct_orders"})).check("select translate(sales_channel, 'a', 'b') from marts.fct_orders").errors)
+func = sqlglot.parse_one("select string_agg(sales_channel, ',') from marts.fct_orders", read="postgres").find(exp.Func)
+print(func.name.lower() if isinstance(func, exp.Anonymous) else func.sql_name().lower())
 EOF
 ```
 
 ```
-('function translate is not allowed',)
+group_concat
 ```
 
-The error names what the guard compares against. When the Postgres spelling and that name differ, list the sqlglot name (and the Postgres one too when either can appear) and add the mapping to the comment. It also works the other way: `btrim(...)` already passes because sqlglot reads it as `trim`, so check before you add anything.
+When the Postgres spelling and that name differ, list the sqlglot name (and the Postgres one too when either can appear) and add the mapping to the comment. It also works the other way: `btrim(...)` already passes because sqlglot reads it as `trim`, so check before you add anything.
 
 **2. The tests** (`tests/test_sql_guard.py`). Every addition needs a test, because the list is the guard's safety boundary and nothing else checks it:
 
