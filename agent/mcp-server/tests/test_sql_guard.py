@@ -229,6 +229,58 @@ class TestSqlGuard:
 
         assert result.ok, result.errors
 
+    @pytest.mark.parametrize(
+        ("sql", "literal"),
+        [
+            # Postgres 16 reads these as one number; sqlglot cuts them short or reads something else
+            ("select ''::char(10_485_760) from marts.fct_orders", "10_485_760"),
+            ("select 1::bit(83_886_080) from marts.fct_orders", "83_886_080"),
+            ("select cast('' as char(10_485_760)) from marts.fct_orders", "10_485_760"),
+            ("select char(10_485_760) 'a' from marts.fct_orders", "10_485_760"),
+            ("select char(0o47040) 'a' from marts.fct_orders", "0o47040"),
+            ("select ''::char(0O47040) from marts.fct_orders", "0O47040"),
+            ("select ''::char(0x989680) from marts.fct_orders", "0x989680"),
+            ("select ''::char(0X989680) from marts.fct_orders", "0X989680"),
+            ("select ''::char(0b100110001001011010000000) from marts.fct_orders", "0b100110001001011010000000"),
+            ("select ''::char(0x_98_96_80) from marts.fct_orders", "0x_98_96_80"),
+            ("select ''::char(1_0e4) from marts.fct_orders", "1_0e4"),
+            ("select ''::char(1__0) from marts.fct_orders", "1__0"),
+            ("select net_revenue::numeric(1_000, 2) from marts.fct_orders", "1_000"),
+            ("select lpad('a', 1_000_000) from marts.fct_orders", "1_000_000"),
+            ("select rpad('a', 5_000, 'b') from marts.fct_orders", "5_000"),
+            ("select lpad('a', 0x100000) from marts.fct_orders", "0x100000"),
+            ("select rpad('a', 0o4000000) from marts.fct_orders", "0o4000000"),
+            ("select 1_000 from marts.fct_orders", "1_000"),
+            ("select order_id from marts.fct_orders where order_id = 1_000.5", "1_000"),
+            ("select 0x10 from marts.fct_orders", "0x10"),
+            ("select 0b from marts.fct_orders", "0b"),
+        ],
+    )
+    def test_numbers_postgres_reads_differently_are_rejected(self, guard: SqlGuard, sql: str, literal: str) -> None:
+        result = guard.check(sql)
+
+        assert result.errors == (
+            f"[guard:number] numeric literal `{literal}` is not allowed; "
+            "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix",
+        )
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "select net_revenue, customer_id from marts.fct_orders where channel in ('1_000', '0x10', '0o7 0b1')",
+            'select order_id as x1_2, order_id as col_1_2, order_id as "a1_2", order_id as "1_000" '
+            "from marts.fct_orders",
+            "select 10::int, 1e4, 1.5e3, .5, 5., 1.e3, 2e-3, x'1f', b'101' from marts.fct_orders",
+            "select order_id from marts.fct_orders -- 1_000 0x10\nwhere order_id > 0 /* 2_000 0b1 */ limit 10",
+            "select $$1_000$$, $q$0x10$q$, E'0o7\\'1_0' from marts.fct_orders",
+            "select order_id+1, order_id-1, order_id*2, lpad(channel, 10, '0') from marts.fct_orders",
+        ],
+    )
+    def test_names_strings_and_comments_with_digits_and_underscores_pass(self, guard: SqlGuard, sql: str) -> None:
+        result = guard.check(sql)
+
+        assert result.ok, result.errors
+
     def test_pad_limit_is_the_cell_cap(self) -> None:
         assert MAX_PAD_LENGTH == MAX_CELL_CHARS
 

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import re
+from itertools import zip_longest
 from typing import TYPE_CHECKING, Final
 
 import sqlglot
 from pydantic import BaseModel, ConfigDict
 from sqlglot import exp
+from sqlglot.dialects.dialect import Dialect
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.tokens import TokenType
 
 from sherpa_mcp.catalog import MARTS_SCHEMA
 
@@ -67,6 +70,7 @@ JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_jso
 JSON_HINT: Final = "aggregate with string_agg, or select the columns"
 DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
 DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
+NUMBER_HINT: Final = "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix"
 _MARTS_HINT: Final = "query only the marts that list_tables returns"
 _ALIAS_LIST_HINT: Final = (
     "the source's alias list (`s(a, b)`) renames its columns by position, so name only those, "
@@ -91,6 +95,7 @@ _CLOCK_CALLS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
     (exp.CurrentTimestamp, "now()/current_timestamp"),
     (exp.CurrentDate, "current_date"),
 )
+_POSTGRES: Final = Dialect.get_or_raise(DIALECT)
 _CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
@@ -135,6 +140,11 @@ class SqlGuard:
         self._allowed_functions = allowed_functions
 
     def check(self, sql: str) -> GuardResult:
+        number_errors = _number_errors(sql)
+        if number_errors:
+            # sqlglot misreads these numbers, so its view of the rest of the query cannot be trusted either.
+            return GuardResult(ok=False, errors=number_errors, tables=())
+
         try:
             parsed = sqlglot.parse(sql, read=DIALECT)
         except (SqlglotError, RecursionError) as exc:
@@ -364,6 +374,39 @@ class SqlGuard:
                     return None
                 names.update(outputs)
         return frozenset(names)
+
+
+def _number_errors(sql: str) -> tuple[str, ...]:
+    """Numbers Postgres 16 reads differently from sqlglot: `1_000`, `0x10`, `0o17`, `0b1` are one number to Postgres,
+    while sqlglot splits them (`1_000` is `1 AS _000`, `char(10_485_760)` is CHAR(10)) or reads a bit string.
+
+    Checked on sqlglot's tokens, so digits inside strings, quoted names and comments (which are not tokens) pass: a
+    number directly followed by a letter, digit or `_`, or any other token that starts with a digit, is rejected.
+    """
+    try:
+        tokens = _POSTGRES.tokenize(sql)
+    except SqlglotError:
+        return ()  # the parser reports it
+
+    literals: list[str] = []
+    for token, following in zip_longest(tokens, tokens[1:]):
+        if token.token_type == TokenType.COMMAND:
+            break  # the rest is one string token that does not map onto the text; the statement is rejected anyway
+
+        text = sql[token.start : token.end + 1]
+        if token.token_type != TokenType.NUMBER:
+            if text[:1].isdigit():
+                literals.append(text)
+        elif following is not None and following.start == token.end + 1 and _is_word_char(sql[following.start]):
+            literals.append(sql[token.start : following.end + 1])
+    return tuple(
+        _error("number", f"numeric literal `{_cut(literal)}` is not allowed", NUMBER_HINT)
+        for literal in dict.fromkeys(literals)
+    )
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
 
 
 def _enclosing_scope(column: exp.Column, scopes: dict[int, Scope]) -> Scope | None:
