@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "examples.yaml"
 LOCALHOST = "127.0.0.1"
 ALL_INTERFACES = "0.0.0.0"  # what the server binds in the container
+CONTAINER_URL = "http://127.0.0.1:8765/mcp"  # the compose `mcp` service
 SERVER_START_TIMEOUT_SECONDS = 60
 # The variables the server needs, and only those (no admin login); the SDK's stdio client passes only a minimal
 # environment (agent spec §3).
@@ -101,13 +102,17 @@ def stdio_server() -> StdioServerParameters:
     return StdioServerParameters(command="uv", args=["run", "sherpa-mcp"], env=_server_env("stdio"), cwd=REPO_ROOT)
 
 
-@pytest.fixture(params=["stdio", "http"])
+@pytest.fixture(params=["stdio", "http", "container"])
 async def mcp_client(request: pytest.FixtureRequest) -> AsyncIterator[Client]:
-    """A connected client to a `sherpa-mcp` subprocess, over each transport."""
+    """A connected client to `sherpa-mcp`: a subprocess over each transport, and the compose `mcp` container."""
     server: StdioServerParameters | str
     match request.param:
         case "stdio":
             server = request.getfixturevalue("stdio_server")
+        case "container":
+            if os.environ.get("SHERPA_TEST_MCP_CONTAINER") != "1":
+                pytest.skip("set SHERPA_TEST_MCP_CONTAINER=1 with the compose mcp service up")
+            server = os.environ.get("MCP_HTTP_URL", CONTAINER_URL)
         case _:
             server = request.getfixturevalue("mcp_http_url")
     async with Client(server) as client:
