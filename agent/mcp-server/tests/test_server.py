@@ -208,6 +208,31 @@ def test_stdio_stdout_carries_only_protocol(stdio_server: StdioServerParameters)
 
 
 @pytest.mark.warehouse
+def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
+    stdio_server: StdioServerParameters, closed_port: int
+) -> None:
+    env = get_default_environment() | (stdio_server.env or {}) | {"SHERPA_DB_PORT": str(closed_port)}
+
+    completed = subprocess.run(
+        [stdio_server.command, *stdio_server.args],
+        input="",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=stdio_server.cwd,
+        env=env,
+        timeout=STDIO_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert f":{closed_port} as " in completed.stderr
+    assert "cannot connect to the warehouse at" in completed.stderr
+    assert completed.stdout == ""
+    assert env["SHERPA_AGENT_PASSWORD"] not in completed.stderr
+
+
+@pytest.mark.warehouse
 @pytest.mark.parametrize(
     ("host", "status"),
     [("127.0.0.1", 200), ("localhost", 200), ("mcp", 200), ("evil.example", 421)],

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import psycopg
 from psycopg import errors, sql
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,7 +30,21 @@ if TYPE_CHECKING:
 STATEMENT_TIMEOUT = "5s"
 # Postgres times each FETCH on its own, so fetching the rows has its own 5 s budget as well.
 FETCH_DEADLINE_SECONDS = 5.0
-TIMEOUT_MESSAGE = "the query took longer than 5 s; aggregate or filter more narrowly"
+# Every message for the model starts with a stable code: [timeout], [sql] (Postgres refused the query) or
+# [unreachable] (no connection to the warehouse).
+TIMEOUT_MESSAGE = "[timeout] the query took longer than 5 s; aggregate or filter more narrowly"
+UNREACHABLE_MESSAGE = "[unreachable] the warehouse is unreachable; is `make up` running?"
+CONNECTION_EXCEPTION_CLASS = "08"  # SQLSTATE class: connection exception
+# Data exceptions (SQLSTATE class 22) quote the offending value (`invalid input syntax for type integer: "a@b.com"`),
+# which can be PII, so the model gets the exception's name and a remedy instead of Postgres's message.
+DATA_ERROR_HINTS = {
+    "22012": "wrap the denominator in nullif(x, 0)",  # division_by_zero
+    "22P02": "check the literal format",  # invalid_text_representation
+    "22007": "check the literal format",  # invalid_datetime_format
+    "22008": "check the literal format",  # datetime_field_overflow
+}
+DATA_ERROR_HINT = "check the column types and use explicit, safe casts"
+POOL_TIMEOUT_SECONDS = 10.0  # how long a call waits for a free connection
 FETCH_BATCH_ROWS = 20  # rows per FETCH: one round trip per row was ~11x slower for 100 rows
 # After a row this long (before cutting), the rest is fetched one row at a time, so at most one such row is in memory.
 LARGE_ROW_CHARS = 1_000_000
@@ -40,12 +54,12 @@ CUT_MARKER = f" …[cut at {MAX_CELL_CHARS} chars]"
 # Model-written queries fetched at the same time; each can hold a few large rows, so the rest wait for a slot.
 MAX_HEAVY_FETCHES = 2
 HEAVY_FETCH_WAIT_SECONDS = 10.0
-BUSY_MESSAGE = "the server is busy with other queries; retry in a few seconds"
-NESTED_MESSAGE = "a value is nested too deeply to return; select scalar columns"
+BUSY_MESSAGE = "[timeout] the server is busy with other queries; retry in a few seconds"
+NESTED_MESSAGE = "[sql] a value is nested too deeply to return; select scalar columns"
 SIMILARITY_THRESHOLD = "0.2"
 POOL_MIN_SIZE = 1
-POOL_MAX_SIZE = 4
 DEFAULT_MAX_ROWS = 100
+EXPLAIN_PREFIX = "explain (analyze false) "
 
 Query = str | sql.SQL | sql.Composed  # the forms psycopg accepts for a statement
 
@@ -109,24 +123,48 @@ def cell_chars(value: object) -> int:
             return len(str(value))
 
 
-def to_tool_error(error: psycopg.Error) -> WarehouseToolError:
+def to_tool_error(error: psycopg.Error, prefix_chars: int = 0) -> WarehouseToolError:
+    """The model's view of a database error. `prefix_chars`: how much text the server put before the model's query
+    (the cursor's DECLARE, EXPLAIN), so the error position points into the query the model wrote."""
+    sqlstate = error.sqlstate or ""
     if isinstance(error, errors.QueryCanceled):
         return WarehouseToolError(TIMEOUT_MESSAGE)
+    if isinstance(error, PoolTimeout) or sqlstate.startswith(CONNECTION_EXCEPTION_CLASS):
+        return WarehouseToolError(UNREACHABLE_MESSAGE)
+    if isinstance(error, psycopg.OperationalError) and not sqlstate:  # the connection failed or broke: no SQLSTATE
+        return WarehouseToolError(UNREACHABLE_MESSAGE)
     if isinstance(error, errors.DataError):
-        # Data exceptions quote the offending value (`invalid input syntax for type integer: "a@b.com"`): PII.
-        return WarehouseToolError(
-            f"a value could not be converted or computed ({type(error).__name__}); "
-            "check the column types and use explicit, safe casts"
-        )
-    return WarehouseToolError(error.diag.message_primary or str(error))
+        hint = DATA_ERROR_HINTS.get(sqlstate, DATA_ERROR_HINT)
+        return WarehouseToolError(f"[sql] a value could not be converted or computed ({type(error).__name__}); {hint}")
+
+    message = f"[sql] {error.diag.message_primary or str(error)}"
+    position = int(error.diag.statement_position or 0) - prefix_chars
+    if position > 0:
+        message += f" (at character {position})"
+    if error.diag.message_hint:
+        message += f"; {error.diag.message_hint}"
+    return WarehouseToolError(message)
 
 
 class AgentDatabase:
     def __init__(self, settings: McpSettings) -> None:
         self._pool = ConnectionPool(
-            settings.agent_conninfo(), min_size=POOL_MIN_SIZE, max_size=POOL_MAX_SIZE, open=True, timeout=10
+            settings.agent_conninfo(),
+            min_size=POOL_MIN_SIZE,
+            max_size=settings.mcp_pool_size,
+            open=True,
+            timeout=POOL_TIMEOUT_SECONDS,
+            # A connection Postgres dropped (restart, idle timeout) is replaced before a call gets it.
+            check=ConnectionPool.check_connection,
         )
         self._heavy_fetches = threading.BoundedSemaphore(MAX_HEAVY_FETCHES)
+
+    def wait_until_connected(self, timeout: float) -> None:
+        """Block until the pool holds a connection; `[unreachable]` if none opens in `timeout` seconds."""
+        try:
+            self._pool.wait(timeout=timeout)
+        except PoolTimeout as error:
+            raise WarehouseToolError(UNREACHABLE_MESSAGE) from error
 
     def fetch(
         self,
@@ -156,9 +194,9 @@ class AgentDatabase:
                 self._begin(conn)
                 # prepare=True forces the extended protocol, as for `fetch`. The ignore: psycopg types sql.SQL as
                 # taking a LiteralString, and the model's query is a runtime string (already checked by the guard).
-                conn.execute(sql.SQL("explain (analyze false) {}").format(sql.SQL(sql_text)), prepare=True)  # type: ignore[arg-type]
+                conn.execute(sql.SQL(EXPLAIN_PREFIX + "{}").format(sql.SQL(sql_text)), prepare=True)  # type: ignore[arg-type]
         except psycopg.Error as error:
-            raise to_tool_error(error) from error
+            raise to_tool_error(error, prefix_chars=len(EXPLAIN_PREFIX)) from error
 
     def scalar(self, query: Query, params: Sequence[object] = ()) -> object:
         result = self.fetch(query, params, max_rows=1)
@@ -183,12 +221,13 @@ class AgentDatabase:
         truncated = False
         result_chars = 0
         batch_rows = FETCH_BATCH_ROWS
+        cursor_name = f"sherpa_{uuid.uuid4().hex}"
         try:
             with self._pool.connection() as conn, conn.transaction():
                 self._begin(conn, set_similarity_threshold=set_similarity_threshold)
                 deadline = time.monotonic() + FETCH_DEADLINE_SECONDS
                 # A named cursor declares the query with the extended protocol (`force_extended`), even without params.
-                with conn.cursor(name=f"sherpa_{uuid.uuid4().hex}") as cursor:
+                with conn.cursor(name=cursor_name) as cursor:
                     cursor.execute(query, params or None)
                     columns = tuple(column.name for column in cursor.description or ())
                     while not truncated:
@@ -218,7 +257,8 @@ class AgentDatabase:
                             result_chars += row_chars
                             rows.append(row)
         except psycopg.Error as error:
-            raise to_tool_error(error) from error
+            # psycopg sends the query as `DECLARE "<name>" CURSOR FOR <query>`.
+            raise to_tool_error(error, prefix_chars=len(f'DECLARE "{cursor_name}" CURSOR FOR ')) from error
         except RecursionError as error:  # a deeply nested array or jsonb value, in psycopg's loader or in ours
             raise WarehouseToolError(NESTED_MESSAGE) from error
         return QueryResult(

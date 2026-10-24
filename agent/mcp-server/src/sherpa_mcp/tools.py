@@ -32,6 +32,7 @@ GUARD_SPAN: Final = "sherpa.guard"
 # The `[guard:<rule>]` code every sql_guard error starts with; what follows it may quote the query.
 GUARD_RULE: Final = re.compile(r"\[guard:(\w+)\]")
 UNKNOWN_RULE: Final = "unknown"
+UNAVAILABLE_CODE: Final = "[unavailable]"  # the dbt artifacts behind the catalog are missing or unreadable
 AS_OF_QUERY: Final = "select max(order_date) from marts.fct_orders"
 CLOCK_WARNING: Final = (
     "{calls} reads the real clock, but the warehouse is as of {as_of}; "
@@ -285,7 +286,7 @@ class WarehouseTools:
         try:
             return self._loader.load()
         except CatalogUnavailable as error:
-            raise WarehouseToolError(str(error)) from error
+            raise WarehouseToolError(f"{UNAVAILABLE_CODE} {error}") from error
 
     def _clock_warnings(self, guard: GuardResult) -> tuple[str, ...]:
         """A query that reads today's date answers for the wrong period: the data stops at the as-of date."""

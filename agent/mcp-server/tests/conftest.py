@@ -120,6 +120,12 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
+def closed_port() -> int:
+    """A loopback port nothing listens on: free a moment ago, and nothing here binds it."""
+    return _free_port()
+
+
+@pytest.fixture
 def stdio_server() -> StdioServerParameters:
     """How a client starts `sherpa-mcp` over stdio, passing the server's variables explicitly (agent spec §3)."""
     return StdioServerParameters(command="uv", args=["run", "sherpa-mcp"], env=_server_env("stdio"), cwd=REPO_ROOT)

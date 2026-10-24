@@ -203,7 +203,7 @@ class TestWarehouseTools:
         validation = tools.validate_sql("select cast(email as integer) from marts.dim_customers limit 1")
 
         assert email not in str(error.value)
-        assert "explicit, safe casts" in str(error.value)
+        assert "check the literal format" in str(error.value)
         assert email not in " ".join(validation.errors)
 
     @pytest.mark.parametrize(
@@ -289,7 +289,7 @@ class TestToolsWithoutArtifacts:
         )
 
         for call in calls:
-            with pytest.raises(WarehouseToolError, match="make build-prod"):
+            with pytest.raises(WarehouseToolError, match=r"^\[unavailable\] .*make build-prod"):
                 call()
 
     def test_get_examples_is_static_and_needs_no_artifacts(self, tmp_path: Path) -> None:

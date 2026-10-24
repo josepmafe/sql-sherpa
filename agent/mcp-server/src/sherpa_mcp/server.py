@@ -48,6 +48,7 @@ MAX_SQL_CHARS: Final = 20_000
 MAX_TERM_CHARS: Final = 200
 MAX_QUESTION_CHARS: Final = 2_000
 MAX_NAME_CHARS: Final = 128
+STARTUP_WAIT_SECONDS: Final = 15  # for the first warehouse connection
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,22 @@ def main() -> None:
     # On stderr only: the model's error messages never carry a host path.
     logger.info("reading the dbt artifacts from %s", settings.dbt_target_path.resolve())
     database = AgentDatabase(settings)
+    try:
+        # Fail at startup, not on the first tool call: a container that cannot reach Postgres never listens, so its
+        # healthcheck fails instead of passing.
+        database.wait_until_connected(STARTUP_WAIT_SECONDS)
+    except WarehouseToolError:
+        database.close()
+        # No traceback: psycopg_pool has already logged why each connection attempt failed.
+        logger.error(
+            "cannot connect to the warehouse at %s:%s as %s within %d s; check Postgres is up and the SHERPA_DB_* and "
+            "SHERPA_AGENT_* variables",
+            settings.db_host,
+            settings.db_port,
+            settings.agent_user,
+            STARTUP_WAIT_SECONDS,
+        )
+        raise SystemExit(1) from None
     tools = WarehouseTools(MartCatalogLoader(settings.dbt_target_path), database, ExampleIndex.from_yaml(EXAMPLES_PATH))
     server = build_server(tools)
     logger.info("serving the warehouse tools over %s", settings.transport)

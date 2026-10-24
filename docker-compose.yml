@@ -41,6 +41,7 @@ services:
       SHERPA_MCP_HOST: 0.0.0.0
       SHERPA_MCP_PORT: "8765"
       SHERPA_DBT_TARGET_PATH: /app/dbt/target-prod
+      SHERPA_MCP_POOL_SIZE: ${SHERPA_MCP_POOL_SIZE:-4}
       # Optional: empty means no export.
       LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
     volumes:

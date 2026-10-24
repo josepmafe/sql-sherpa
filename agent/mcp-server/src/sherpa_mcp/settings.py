@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 CONNECT_TIMEOUT_SECONDS = 10
 # Defence in depth next to the read-only role's grants (agent spec §4): every session is read-only and short.
 AGENT_SESSION_OPTIONS = "-c default_transaction_read_only=on -c statement_timeout=5s"
+DEFAULT_POOL_SIZE = 4  # connections to the warehouse at most; one per tool call running at the same time
 
 
 class McpSettings(BaseSettings):
@@ -24,6 +25,7 @@ class McpSettings(BaseSettings):
     dbt_target_path: Path = Path("data-platform/dbt/target-prod")
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765
+    mcp_pool_size: int = Field(default=DEFAULT_POOL_SIZE, ge=1)
     # Unprefixed on purpose: MCP_TRANSPORT is the variable the server's launch configuration sets (spec §10).
     transport: Literal["stdio", "http"] = Field(default="stdio", validation_alias="MCP_TRANSPORT")
 

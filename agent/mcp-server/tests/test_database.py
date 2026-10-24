@@ -10,6 +10,8 @@ from decimal import Decimal
 import psycopg
 import pytest
 from psycopg import errors
+from psycopg_pool import PoolTimeout
+from pydantic import SecretStr
 from sherpa_mcp.database import (
     AgentDatabase,
     QueryResult,
@@ -19,6 +21,7 @@ from sherpa_mcp.database import (
     json_safe,
     to_tool_error,
 )
+from sherpa_mcp.settings import McpSettings
 
 CUT = " …[cut at 10000 chars]"
 
@@ -116,28 +119,86 @@ class TestErrorMapping:
     def test_timeout_message_suggests_narrowing(self) -> None:
         error = to_tool_error(errors.QueryCanceled("canceling statement due to statement timeout"))
 
-        assert str(error) == "the query took longer than 5 s; aggregate or filter more narrowly"
+        assert str(error) == "[timeout] the query took longer than 5 s; aggregate or filter more narrowly"
 
-    def test_data_exceptions_never_carry_the_value(self) -> None:
-        error = to_tool_error(errors.InvalidTextRepresentation('invalid input syntax for type integer: "alice@x.com"'))
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (
+                errors.InvalidTextRepresentation('invalid input syntax for type integer: "alice@x.com"'),
+                "[sql] a value could not be converted or computed (InvalidTextRepresentation); "
+                "check the literal format",
+            ),
+            (
+                errors.DivisionByZero("division by zero"),
+                "[sql] a value could not be converted or computed (DivisionByZero); "
+                "wrap the denominator in nullif(x, 0)",
+            ),
+            (
+                errors.InvalidDatetimeFormat('invalid input syntax for type date: "alice@x.com"'),
+                "[sql] a value could not be converted or computed (InvalidDatetimeFormat); check the literal format",
+            ),
+            (
+                errors.NumericValueOutOfRange('value "alice@x.com" is out of range'),
+                "[sql] a value could not be converted or computed (NumericValueOutOfRange); "
+                "check the column types and use explicit, safe casts",
+            ),
+        ],
+    )
+    def test_data_exceptions_never_carry_the_value(self, error: psycopg.Error, expected: str) -> None:
+        assert str(to_tool_error(error)) == expected
 
-        assert "alice" not in str(error)
-        assert "InvalidTextRepresentation" in str(error)
-        assert "explicit, safe casts" in str(error)
+    @pytest.mark.parametrize(
+        "error",
+        [
+            errors.ConnectionFailure("connection to server failed"),
+            errors.SqlclientUnableToEstablishSqlconnection("could not connect"),
+            psycopg.OperationalError("connection failed: server closed the connection unexpectedly"),
+            PoolTimeout("couldn't get a connection after 10.00 sec"),
+        ],
+    )
+    def test_lost_connections_are_unreachable(self, error: psycopg.Error) -> None:
+        assert str(to_tool_error(error)) == "[unreachable] the warehouse is unreachable; is `make up` running?"
 
     def test_syntax_and_column_errors_keep_postgres_message(self) -> None:
-        assert "no_such" in str(to_tool_error(errors.UndefinedColumn('column "no_such" does not exist')))
+        error = to_tool_error(errors.UndefinedColumn('column "no_such" does not exist'))
+
+        assert str(error) == '[sql] column "no_such" does not exist'
 
     def test_other_errors_keep_postgres_message(self) -> None:
         error = to_tool_error(errors.InsufficientPrivilege("permission denied for table x"))
 
-        assert "permission denied for table x" in str(error)
+        assert str(error) == "[sql] permission denied for table x"
 
     def test_query_result_is_frozen(self) -> None:
         result = QueryResult(columns=("a",), rows=((1,),), returned_rows=1, truncated=False, elapsed_ms=1)
 
         with pytest.raises(AttributeError):
             result.truncated = True  # type: ignore[misc]
+
+
+class TestStartup:
+    def test_unreachable_database_fails_the_wait(self, closed_port: int) -> None:
+        settings = McpSettings(
+            _env_file=None,  # type: ignore[call-arg]
+            db_host="127.0.0.1",
+            db_port=closed_port,
+            db_name="sherpa",
+            agent_user="sherpa_agent",
+            agent_password=SecretStr("x"),
+        )
+        database = AgentDatabase(settings)
+        try:
+            started = time.monotonic()
+            with pytest.raises(WarehouseToolError, match=r"^\[unreachable\] the warehouse is unreachable"):
+                database.wait_until_connected(0.5)
+            waited = time.monotonic() - started
+        finally:
+            database.close()
+
+        # psycopg_pool closes the pool on a failed wait, which waits for the attempt in flight (a refused connection
+        # takes ~2 s on Windows).
+        assert waited < 10
 
 
 @pytest.fixture
@@ -304,6 +365,51 @@ class TestAgentDatabase:
 
         assert result.columns == ("d", "day", "ts")
         assert result.rows == (("1.5", "2025-03-01", "2025-03-01T04:05:00+00:00"),)
+
+    def test_errors_point_into_the_query_as_written(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as fetched:
+            agent_database.fetch_for_model("select nope from marts.fct_orders")
+        with pytest.raises(WarehouseToolError) as explained:
+            agent_database.explain("select nope from marts.fct_orders")
+
+        assert str(fetched.value) == '[sql] column "nope" does not exist (at character 8)'
+        assert str(explained.value) == '[sql] column "nope" does not exist (at character 8)'
+
+    def test_postgres_hint_is_appended(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as error:
+            agent_database.fetch_for_model("select c.emial from marts.dim_customers c")
+
+        assert str(error.value) == (
+            '[sql] column c.emial does not exist (at character 8); Perhaps you meant to reference the column "c.email".'
+        )
+
+    def test_division_by_zero_gets_its_remedy(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as error:
+            agent_database.fetch_for_model("select count(*) / 0 from marts.fct_orders")
+
+        assert str(error.value) == (
+            "[sql] a value could not be converted or computed (DivisionByZero); wrap the denominator in nullif(x, 0)"
+        )
+
+    def test_pool_size_comes_from_the_settings(self, warehouse_settings: McpSettings) -> None:
+        database = AgentDatabase(warehouse_settings.model_copy(update={"mcp_pool_size": 2}))
+        try:
+            assert database._pool.max_size == 2
+        finally:
+            database.close()
+
+    def test_a_connection_postgres_dropped_is_replaced(self, warehouse_settings: McpSettings) -> None:
+        database = AgentDatabase(warehouse_settings.model_copy(update={"mcp_pool_size": 1}))
+        try:
+            pid = database.scalar("select pg_backend_pid()")
+            # The agent role may end its own sessions; this one is the pool's only connection.
+            with psycopg.connect(warehouse_settings.agent_conninfo(), autocommit=True) as other:
+                assert other.execute("select pg_terminate_backend(%s)", (pid,)).fetchone() == (True,)
+
+            assert database.scalar("select 1") == 1
+            assert database.scalar("select pg_backend_pid()") != pid
+        finally:
+            database.close()
 
     def test_parameters_are_bound(self, agent_database: AgentDatabase) -> None:
         assert agent_database.scalar("select %s::int + 1", (41,)) == 42
