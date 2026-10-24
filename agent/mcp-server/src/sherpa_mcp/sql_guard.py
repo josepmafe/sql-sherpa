@@ -278,9 +278,12 @@ class SqlGuard:
         tree = normalize_identifiers(statement.copy(), dialect=DIALECT)
         try:
             scopes = {id(scope.expression): scope for scope in traverse_scope(tree)}
+            return self._unresolved_columns(tree, scopes)
         except (SqlglotError, RecursionError):
+            # A chain of hundreds of CTEs nests deeper than `_outputs` can follow.
             return [_error("column", "could not resolve the column references of the query", "simplify it")]
 
+    def _unresolved_columns(self, tree: exp.Expr, scopes: dict[int, Scope]) -> list[str]:
         errors: list[str] = []
         for column in tree.find_all(exp.Column):
             if not column.table or isinstance(column.this, exp.Star):

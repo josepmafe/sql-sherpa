@@ -811,6 +811,17 @@ class TestQualifiedColumns:
             "use a column listed by describe_table",
         )
 
+    @pytest.mark.parametrize("depth", [500, 2000])
+    def test_a_chain_too_deep_to_resolve_is_rejected_not_raised(self, guard: SqlGuard, depth: int) -> None:
+        ctes = ["c0 as (select * from marts.dim_customers)"] + [
+            f"c{i} as (select * from c{i - 1})" for i in range(1, depth)
+        ]
+        sql = f"with {', '.join(ctes)} select c{depth - 1}.email from c{depth - 1}"
+
+        result = guard.check(sql)
+
+        assert result.errors == ("[guard:column] could not resolve the column references of the query; simplify it",)
+
     def test_a_mart_with_no_known_columns_resolves_nothing(self) -> None:
         guard = SqlGuard({"dim_customers": frozenset()})
 
