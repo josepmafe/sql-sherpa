@@ -282,7 +282,7 @@ validate_sql {"sql": "select count(*) from marts.fct_orders where order_date >= 
  "warnings": ["current_date reads the real clock, but the warehouse is as of 2026-10-23; derive periods from (select max(order_date) from marts.fct_orders)"]}
 ```
 
-`EXPLAIN` plans the query without evaluating any value, so errors that only happen while running pass it: `select sum(net_revenue) / 0 from marts.fct_orders` validates with `ok: true` and fails in `run_sql` with a division-by-zero error (below).
+`EXPLAIN` plans the query without running it, so errors that only happen while running usually pass it: `select sum(net_revenue) / 0 from marts.fct_orders` validates with `ok: true` and fails in `run_sql` with a division-by-zero error (below). Planning does fold constant expressions, so `select 1/0 from marts.dim_date` already fails in `validate_sql`, with the same `[sql] ... (DivisionByZero)` error.
 
 ### `run_sql`
 
