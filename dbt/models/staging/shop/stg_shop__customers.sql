@@ -25,7 +25,7 @@ renamed as (
         source.created_at as signup_at,
         source.updated_at,
         source.deleted_at,
-        lower(trim(source.email)) as email,
+        {{ normalize_email('source.email') }} as email,
         -- Left join so a customer is never dropped. A raw country missing
         -- from the seed keeps its raw value (not null, which the
         -- relationships test would skip), so the test fails loudly and the
@@ -33,7 +33,7 @@ renamed as (
         coalesce(country_variants.code, source.country_code) as country_code,
         (
             source.is_test_account
-            or lower(trim(source.email)) like '%@sqlsherpa-test.com'
+            or {{ normalize_email('source.email') }} like '%@sqlsherpa-test.com'
         ) as is_test_account,
         (source.deleted_at is not null) as is_deleted
     from source

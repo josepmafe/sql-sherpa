@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: int_events__sessionized
+    description: >
+      One row per event of a non-test session, carrying its session's columns. A gap greater than
+      session_timeout_minutes since the previous event of the same anonymous_id starts a new session.
+      Sessions with an event of a test account are excluded. The session's first event decides the
+      session_utm_* columns, session_referrer and marketing_channel.
+    columns:
+      - name: event_id
+        description: Primary key; the tracker's event id.
+        data_tests: [unique, not_null]
+      - name: anonymous_id
+        description: Browser or app identifier the event was recorded under.
+      - name: customer_id
+        description: Customer the event is attributed to by the tracker; null while anonymous.
+      - name: event_type
+        description: Type of the event, e.g. page_view or purchase.
+      - name: occurred_at
+        description: When the event happened (UTC).
+      - name: received_at
+        description: When the warehouse received the event (UTC).
+      - name: order_id
+        description: >
+          Order the event refers to; null for events that are not about an order. An order has at
+          most one purchase event, so fct_orders can join purchase events by order_id without fanning
+          out; the unique test on purchase events enforces it.
+        data_tests:
+          - unique:
+              config:
+                where: "event_type = 'purchase' and order_id is not null"
+      - name: session_id
+        description: md5 of anonymous_id and the epoch microseconds of session_start_at.
+        data_tests: [not_null]
+      - name: session_start_at
+        description: occurred_at of the session's first event (UTC).
+        data_tests: [not_null]
+      - name: session_date
+        description: UTC date of session_start_at.
+      - name: session_utm_source
+        description: utm_source of the session's first event.
+      - name: session_utm_medium
+        description: utm_medium of the session's first event.
+      - name: session_utm_campaign
+        description: utm_campaign of the session's first event.
+      - name: session_referrer
+        description: Referrer of the session's first event.
+      - name: marketing_channel
+        description: >
+          Channel of the session, from its first event: the channel_mapping seed for a UTM source and
+          medium pair, unknown for a UTM source missing from the seed, organic for a search-engine
+          referrer, referral for any other referrer, otherwise direct.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [direct, organic, paid_search, paid_social, email, affiliate, referral, unknown]
+      - name: max_received_at
+        description: Latest received_at among the session's events (UTC).

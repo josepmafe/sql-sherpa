@@ -18,7 +18,11 @@ models:
         data_tests: [unique, not_null]
       - name: email
         description: Email address in lower case without surrounding whitespace. PII.
-        data_tests: [not_null]
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^[^@\s]+@[^@\s]+\.[a-z]+$'
       - name: first_name
         description: Given name. PII.
       - name: last_name
@@ -486,8 +490,14 @@ models:
                 to: ref('stg_shop__orders')
                 field: order_id
       - name: return_id
-        description: Return that triggered the refund; null for goodwill and cancellation refunds.
+        description: >
+          Return that triggered the refund; null for goodwill and cancellation refunds. A return has
+          at most one refund, so fct_returns can join refunds by return_id without fanning out; the
+          unique test enforces it.
         data_tests:
+          - unique:
+              config:
+                where: "return_id is not null"
           - relationships:
               arguments:
                 to: ref('stg_shop__returns')
