@@ -15,14 +15,14 @@ The output must be production-like: not necessarily complex, but well-built, wit
 - **Data analyst** — prototypes queries for dashboards and speeds up writing complex SQL. The SQL is the primary deliverable; the result is a sanity check.
 
 ### Goals
-- A CLI that answers standalone questions over the marts with a typed outcome: answer, interpretation, SQL, result, caveats.
+- A library and a CLI that answer standalone questions over the marts in **two steps**: `plan` (interpretation and SQL, nothing executed) and `answer` (run it and explain the result), with typed outcomes. The CLI and the web UI (UI spec) both use the library.
 - An MCP server exposing the marts read-only, plus dbt metadata, with layered SQL safety.
 - An execution-accuracy eval harness and a gold set of 50 questions, in place before any pipeline complexity.
 - An incremental, measured build: a single-agent baseline, then one text-to-SQL technique at a time, each kept as the default only if the evals justify it.
 
 ### Non-goals (v1)
-- Multi-turn conversations / follow-up questions (each question is standalone).
-- A web UI.
+- Multi-turn conversations / follow-up questions (each question is standalone; corrections re-plan the same question).
+- The web UI itself, which the UI spec covers.
 - Exposing SQL Sherpa itself as an MCP tool for Claude Desktop/Code (later idea, §13).
 - Writing to the database, or querying anything outside `marts`.
 - Fine-tuning or training models.
@@ -62,11 +62,12 @@ mcp_server/src/sherpa_mcp/
 mcp_server/tests/
 agent/src/sherpa_agent/
   config.py        # settings: models per step, limits, provider
-  outcomes.py      # Outcome union, Interpretation, RunStats
+  outcomes.py      # PlanOutcome, AnswerOutcome, Draft, Interpretation, Correction, Step, RunStats
   recording.py     # records every MCP tool call/result for a run
   guards.py        # output validators (execution reference, numbers check)
   variants/        # one module per variant + registry
-  render.py        # persona-aware Rich rendering
+  service.py       # AgentService: plan / answer, the API the CLI and the UI call
+  render.py        # Rich rendering of drafts and outcomes
   cli.py           # `sherpa ask`
 agent/tests/
 evals/
@@ -90,12 +91,12 @@ sherpa ask "…" ──► Variant pipeline (PydanticAI agents) ──MCP──�
                          └── Logfire spans ───────────────────────────────────────────────► Logfire / Phoenix
 ```
 
-- **Transport:** the server supports `MCP_TRANSPORT=stdio|http`. **stdio is the default**: the CLI and the eval runner each start one server subprocess, shared by every agent in that process, with concurrent requests allowed. **HTTP** (Streamable HTTP) runs as an optional `mcp` service in docker-compose, bound to `127.0.0.1:8765`, with `dbt/target-prod` mounted read-only. It exists for multiple simultaneous client processes and to be production-like; stdio stays the fast development loop.
+- **Transport:** the server supports `MCP_TRANSPORT=stdio|http`. **stdio is the default**: the CLI and the eval runner each start one server subprocess, shared by every agent in that process, with concurrent requests allowed. **HTTP** (Streamable HTTP) runs as the `mcp` service in docker-compose, bound to `127.0.0.1:8765`, with `dbt/target-prod` mounted read-only. It serves multiple simultaneous client processes, notably the UI backend, which runs `AgentService` in-process and reaches `mcp` over HTTP (UI spec §3); stdio stays the fast development loop.
 - **Metadata freshness:** the server loads the manifest/catalog at startup and reloads when `manifest.json`'s mtime changes (checked on each `list_tables` / `describe_table` call).
 - **stdio specifics:**
   - The MCP SDK's stdio client passes only a minimal environment to the subprocess, so the client passes the server's variables **explicitly** (`env=` with `SHERPA_*`, `LOGFIRE_*`, `AWS_*`). The server also loads `.env` itself as a fallback.
   - The server must **never write to stdout**, which carries the JSON-RPC stream. Use `logfire.configure(console=False)` and send all logging to stderr.
-- **Which marts are visible.** "Mart" means a dbt model node whose relation schema is `marts` (prod target). From data-platform-4 onwards, the node must also have `access: public`. Of versioned models, only the latest version is included, under its unversioned name.
+- **Which marts are visible.** "Mart" means a dbt model node whose relation schema is `marts` (prod target). From data-platform-4 onwards, the node must also have `access: public`.
 
 ---
 
@@ -117,13 +118,13 @@ All table/column arguments are validated against the manifest's mart models (cas
 | `run_sql(sql)` | SQL | `{execution_id, columns[], rows[], returned_rows, truncated, elapsed_ms}`: `sql_guard` → executes the SQL **exactly as written** (trailing `;` and whitespace stripped) on a **server-side cursor** and fetches at most 101 rows. No wrapping, so `ORDER BY` and trailing comments are unaffected. Returns ≤ 100 rows; `truncated = fetched 101`; `returned_rows` = rows returned (never a true total). PII columns are masked. `execution_id = sha256(executed_sql)[:16]`, where `executed_sql` is the stripped text. |
 
 ### 4.2 SQL safety (layers, all required)
-The role's settings are defaults that a session could override. **`sql_guard` is the enforcement layer**, and the others are defence in depth.
+The role's settings are defaults that a session could override. **`sql_guard` is the enforcement layer**, and the others are defence in depth. `sql_guard` and the masking are pure library modules, also imported by the UI's read-only query runner (UI spec §5), which applies its own timeout and row cap.
 
 1. **`sql_guard` (static, sqlglot, Postgres dialect).** A query is rejected unless all of these hold:
    - It parses to exactly **one statement**. Anything sqlglot falls back to `exp.Command` for is rejected.
    - The top level is `SELECT` or `WITH … SELECT`, with no `SELECT … INTO`, no data-modifying CTEs, and no `SET`/`COPY`/DDL/DML anywhere.
    - Every function call is on an **allow-list**: standard aggregates, window functions, math, string, date/time functions (`date_trunc`, `extract`, `to_char`, `age`, `now`/`current_date`, …), `coalesce`/`nullif`/`greatest`/`least`, casts, and `similarity`. Anything else is rejected, including `query_to_xml`, `current_setting`, `pg_*`, `dblink*`, `lo_*`.
-   - **Every table reference is schema-qualified as `marts.<visible mart>`** (§3). Unqualified names are rejected with an error asking the model to qualify them, and the SQL is never rewritten. That also rejects `pg_catalog`, `information_schema`, other schemas, and non-latest model versions such as `dim_customers_v2`.
+   - **Every table reference is schema-qualified as `marts.<visible mart>`** (§3). Unqualified names are rejected with an error asking the model to qualify them, and the SQL is never rewritten. That also rejects `pg_catalog`, `information_schema` and every other schema.
 2. **Role:** the server connects as `sherpa_agent` (read-only, `SELECT` on `marts`). System catalogs are readable by every Postgres role, which is why the guard has to block them.
 3. **Timeout:** the server runs `SET LOCAL statement_timeout = '5s'` in every transaction itself, rather than relying on the role default. A timeout returns a tool error suggesting aggregation or a narrower filter.
 4. **Row cap:** 100 rows to the model (above).
@@ -137,22 +138,33 @@ The role's settings are defaults that a session could override. **`sql_guard` is
 
 ## 5. Agent
 
-### 5.1 Outcomes (the typed contract)
+### 5.1 The two-step contract
 
-Every run returns exactly one `Outcome`:
+A question is handled in two calls on `AgentService`, so that a person (or the CLI's `--confirm`) can review and correct the plan before any query runs. The evals chain the two calls without pausing.
 
 ```
-Outcome = Answered | NeedsClarification | Unanswerable | Failed     (each carries RunStats)
+plan(question, corrections: list[Correction] = [], on_progress=None)  -> PlanOutcome
+answer(draft: Draft, on_progress=None)                                  -> AnswerOutcome
 
-Interpretation:
-  metrics:      list[{name, definition_ref}]           # e.g. net_revenue → doc block
-  filters:      list[{term, table, column, operator, value, grounded_by}]   # grounded_by: search_values | accepted_values | literal
-  time_range:   {start, end, description} | None       # resolved against as_of_date
-  grain:        str | None                              # e.g. "month × sales_channel"
-  tables:       list[str]
-  assumptions:  list[str]                               # human-readable, e.g. "'last quarter' = 2026-Q3 (calendar)"
+PlanOutcome   = Draft | NeedsClarification | Unanswerable | Failed     (each carries RunStats)
+AnswerOutcome = Answered | Failed                                       (each carries RunStats)
 
-Answered:            answer_text, interpretation, execution_id, sql, columns, rows, returned_rows, truncated, caveats: list[str]
+Draft:               draft_id, question, corrections, interpretation, sql, steps: list[Step]
+Step:                step_id, name, tool_calls: list[{tool, arguments, summary}]     # what the step did, in order
+Interpretation:      items: list[InterpretationItem]
+InterpretationItem:  kind (metric | filter | time_range | grain | table | assumption),
+                     value, step_id,                          # the step that produced it
+                     grounded_by: search_values | accepted_values | literal | default | correction,
+                     alternatives: list[Alternative]          # e.g. the other search_values matches, the other metrics
+Alternative:         value, label, score: float | None        # score = similarity for search_values matches
+Correction:          action (replace | remove | free_text),
+                     original: {kind, value} | None,          # the item it overrides; None for free_text
+                     value: str | None                        # the replacement; None for remove
+                     # self-contained: plan() never sees the previous draft, so a correction names what it overrides
+                     # plan() receives the full current list each time (the caller keeps earlier corrections it wants)
+
+Answered:            answer_text, interpretation, execution_id, sql, columns, rows, returned_rows, truncated, caveats: list[str],
+                     sql_revision: {previous_sql, reason} | None    # set when the answer step changed the draft's SQL
 NeedsClarification:  question_to_user, candidate_interpretations: list[str], partial: Interpretation | None
 Unanswerable:        reason, closest_supported: str | None      # e.g. "inventory is not in the warehouse"
 Failed:              reason, last_sql: str | None, last_error: str | None
@@ -160,10 +172,20 @@ Failed:              reason, last_sql: str | None, last_error: str | None
 RunStats: variant, models, latency_ms, input_tokens, output_tokens, cost_eur, tool_calls, sql_attempts, trace_id
 ```
 
+- **`plan` executes no data query.** It may call `get_context`, `list_tables`, `describe_table` (whose 3 sample rows it may read), `search_values`, `get_metric_definitions`, `get_examples` and `validate_sql` (`EXPLAIN` only), but **not `run_sql`**. The draft's SQL is valid but has not been run.
+- **`answer` runs the draft's SQL** with `run_sql`, writes `answer_text` and `caveats`, and applies the guards (§5.2). A variant that refines SQL after seeing results (§5.4) records what it changed in `sql_revision`, which every consumer must show.
+- **Progress events:** `on_progress(Step)` is called each time a step completes, with the tool calls it made. The UI streams these (UI spec §6.3), and the CLI prints them.
+- **Corrections** never make a conversation. `plan` with corrections is a fresh run of the same question in which each correction is a fact the agent must use:
+  - **replace:** the new value is used and recorded with `grounded_by = correction`
+  - **remove:** the original assumption must not be applied
+  - **free_text:** an instruction added to the run
+
+  The system prompt lists them explicitly, ahead of the question.
+
 ### 5.2 Never fabricate (enforced in code, not in the prompt)
 - The model's final output for `Answered` contains `answer_text`, `interpretation`, `caveats` and an **`execution_id`** — never rows or SQL. The pipeline attaches `sql`, `columns`, `rows`, `returned_rows`, `truncated` from the **RecordingToolset**'s record of that execution.
 - Output validators (`guards.py`), raising `ModelRetry` on failure:
-  - `execution_id` must refer to a **successful** `run_sql` call recorded in this run. For single-generator variants it must be the **last** successful one, since the answer describes the final query. For `v4_voting` it must be the execution of the **selected** candidate, a choice the pipeline makes in code rather than the model.
+  - `execution_id` must refer to a **successful** `run_sql` call recorded in this `answer` call. For single-generator variants it must be the **last** successful one, since the answer describes the final query. For `v4_voting` it must be the execution of the **selected** candidate, a choice the pipeline makes in code rather than the model.
   - **Numbers check.** Derived figures (shares, differences, growth) must be computed **in SQL**, and the system prompt says so. Every number in `answer_text` must then be one of the following, or the check fails:
     - a value in the result rows, within rounding (±0.5 in the last shown digit; percentages also tried ×100)
     - a magnitude-rounded form of a result value ("1.2M", "about 3,400"), within a relative 5%
@@ -191,31 +213,30 @@ Default interpretations (documented in the system prompt and the metric doc bloc
 
 ### 5.4 Variants
 
-Each variant is a module in `agent/variants/` exposing `async def run(question: str, ctx: RunContext) -> Outcome` and registered by name. All variants stay runnable, so ablations can be rerun at any time. `sherpa ask --variant <name>` and `evals/run.py --variant <name>` select one; the configured default is used otherwise.
+Each variant is a module in `agent/variants/` exposing `async def plan(question, corrections, ctx) -> PlanOutcome` and `async def answer(draft, ctx) -> AnswerOutcome`, registered by name. `AgentService` dispatches to the configured variant. All variants stay runnable, so ablations can be rerun at any time. `sherpa ask --variant <name>` and `evals/run.py --variant <name>` select one; the configured default is used otherwise.
 
 | Variant | Milestone | Technique |
 |---|---|---|
-| `v0_baseline` | agent-design-3 | One agent (Sonnet) with all MCP tools and the system prompt. Produces `Interpretation` as part of its final output. |
+| `v0_baseline` | agent-design-3 | One agent (Sonnet) with all MCP tools and the system prompt. `plan` produces the interpretation and SQL; `answer` runs it and writes the answer. Its steps are its tool calls, grouped by purpose (scope, schema, values, SQL). |
 | `v1_grounding` | agent-design-5 | + a **grounding step** (Haiku) before generation: extracts entity/value mentions and resolves each via `accepted_values` or `search_values`; resolved filters are passed to the generator as facts. |
 | `v2_linking` | agent-design-6 | + a **schema-linking step** (Haiku): selects tables and columns; the generator receives a pruned schema (descriptions included) instead of calling `describe_table` freely. |
-| `v3_critic` | agent-design-7 | + a **critic step** (Haiku) after execution: checks for empty or all-null results, fan-out (row count vs. distinct grain keys), totals that contradict known mart totals, and interpretation/SQL mismatch; up to 2 refinement loops back to the generator. |
-| `v4_voting` | agent-design-8 | Generates **3 candidates** in parallel, executes all, groups them by result equality (§7.2 rules), and picks the majority; ties go to the critic. Sampling parameters aren't available (§2), so the candidates differ in their prompts instead: (a) the default prompt, (b) a different set of few-shot examples, (c) a "decompose into CTEs first" instruction, with the schema listed in a shuffled order. |
-| `v5_checkpoint` | agent-design-9 | Adds the **interpretation checkpoint**: interpretation first, then SQL. With `--confirm`, the CLI shows the interpretation and waits for approve / edit (a free-text correction appended to the context) / abort. In evals it runs without pausing. |
-| `v6_metricflow` | agent-design-10 (after data-platform-5) | For metric-shaped questions, picks MetricFlow metrics, dimensions and filters instead of writing SQL; falls back to SQL otherwise. The `compile_metrics(metrics, group_by, where, order_by, limit)` MCP tool runs `mf query --explain` to get **compiled SQL** without executing it, using a dbt profile target `agent` with `sherpa_agent` credentials. The variant then runs that SQL through `run_sql`, so the guard, role, masking, `execution_id` and eval re-execution all work unchanged. |
+| `v3_critic` | agent-design-7 | + a **critic step** (Haiku) in `answer`, after execution: checks for empty or all-null results, fan-out (row count vs. distinct grain keys), totals that contradict known mart totals, and interpretation/SQL mismatch; up to 2 refinement loops back to the generator. A refinement changes the approved SQL, so it is recorded in `sql_revision`. |
+| `v4_voting` | agent-design-8 | `plan` generates **3 candidates** and drafts the first; `answer` executes all three, groups them by result equality (§7.2 rules) and picks the majority; ties go to the critic. If the majority is not the drafted candidate, `sql_revision` says so. Sampling parameters aren't available (§2), so the candidates differ in their prompts instead: (a) the default prompt, (b) a different set of few-shot examples, (c) a "decompose into CTEs first" instruction, with the schema listed in a shuffled order. |
+| `v5_metricflow` | agent-design-9 (after data-platform-5) | For metric-shaped questions, picks MetricFlow metrics, dimensions and filters instead of writing SQL; falls back to SQL otherwise. The `compile_metrics(metrics, group_by, where, order_by, limit)` MCP tool runs `mf query --explain` to get **compiled SQL** without executing it, using a dbt profile target `agent` with `sherpa_agent` credentials. The variant then runs that SQL through `run_sql`, so the guard, role, masking, `execution_id` and eval re-execution all work unchanged. |
 
 Each variant builds on the **current default**, not necessarily on the previous row. If a technique doesn't earn its place (§8), later variants are built without it.
 
 ### 5.5 CLI
 
 ```
-sherpa ask "net revenue by month in 2026 for Germany" [--variant v0_baseline] [--persona stakeholder|analyst] [--confirm] [--json]
+sherpa ask "net revenue by month in 2026 for Germany" [--variant v0_baseline] [--confirm] [--json]
 ```
 
-- `--persona stakeholder` (default): answer, interpretation (assumptions + grounded values), result table, caveats; SQL collapsed at the end.
-- `--persona analyst`: SQL first (syntax-highlighted), then result table, interpretation, caveats.
-- `--json`: prints the `Outcome` as JSON (for scripting and evals).
-- Exit codes: 0 `Answered`, 3 `NeedsClarification`, 4 `Unanswerable`, 1 `Failed`.
-- Footer: latency, tokens, cost, trace link (Logfire URL, or trace id).
+- **Default:** `plan`, then `answer` straight away. It prints the progress steps, then the answer, the result table, the caveats, the interpretation and the SQL.
+- **`--confirm`:** after `plan`, it prints the draft (SQL, interpretation by step) and asks: **run**, **correct** (a free-text correction, which re-plans with it) or **abort**.
+- **`--json`:** prints the final outcome as JSON (for scripting and evals).
+- **Exit codes:** 0 `Answered`, 3 `NeedsClarification`, 4 `Unanswerable`, 1 `Failed`, 5 aborted at `--confirm`.
+- **Footer:** latency, tokens, cost, trace link (Logfire URL, or trace id).
 
 ---
 
@@ -223,7 +244,7 @@ sherpa ask "net revenue by month in 2026 for Germany" [--variant v0_baseline] [-
 
 - **From agent-design-1:** `logfire.configure(service_name="sherpa-mcp")` in the server; tool calls, guard decisions and psycopg queries instrumented (`logfire.instrument_psycopg()`).
 - **From agent-design-3:** `logfire.configure(service_name="sherpa-agent")`, `logfire.instrument_pydantic_ai()`, and MCP client instrumentation. **Cross-process trace propagation** (agent → MCP server): use Logfire's MCP instrumentation if it propagates context in the pinned version (verify in agent-design-3). Otherwise pass a `trace_id` in each tool call's `_meta` and attach it to server spans as an attribute, so the two traces can be joined.
-- **Span conventions:** one root span per question (`sherpa.ask`, attributes: variant, persona, outcome type); child spans per pipeline step (`ground`, `link`, `generate`, `critic`, `vote`); `RunStats` attached to the root span.
+- **Span conventions:** one root span per call (`sherpa.plan` or `sherpa.answer`, attributes: variant, outcome type, `draft_id`); child spans per pipeline step (`ground`, `link`, `generate`, `critic`, `vote`), the same steps the progress events report; `RunStats` attached to the root span.
 - **Eval runs** tag every root span with `eval_run_id` and `case_id`, so a failing case can be opened as a trace directly from the report.
 
 ---
@@ -291,7 +312,7 @@ Gold dates are absolute (e.g. "March 2025"), except in the `time` category, wher
 uv run python -m evals.run --variant v0_baseline [--category metrics] [--case metrics-003] [--repeat 1] [--concurrency 4] [--check-gold]
 ```
 
-- Runs each accepted case through the variant (in-process, one shared MCP stdio server), with `--concurrency` questions in flight.
+- Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` questions are in flight at once.
 - **Execution for comparison** uses the runner's own connection to `sherpa_eval` as `sherpa_agent`, with `SET statement_timeout = '30s'` and **no row cap**. It re-executes the agent's final SQL (the recorded `executed_sql`) and the gold SQL directly.
 - **Comparison rules (`compare.py`):**
   - **Value normalization:** numbers rounded to 2 decimals; `NULL = NULL`; text compared exactly; dates and timestamps compared as ISO strings.
@@ -316,15 +337,14 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent
 
 | Milestone | Builds | Acceptance |
 |---|---|---|
-| **agent-design-1 — MCP server** (needs data-platform-2) | `sherpa_mcp` with all §4.1 tools, `sql_guard`, masking, manifest loader with reload, both transports, compose `mcp` service, Logfire in the server (stderr only) | Tool tests run over **both stdio and HTTP** with identical results. `sql_guard` rejects a fixed list of ≥ 20 hostile inputs, including: multi-statement; `DELETE`; `SET`; `SELECT … INTO`; a data-modifying CTE; `pg_sleep`; `query_to_xml`; `current_setting`; `pg_catalog`/`information_schema` references; unqualified tables; `dim_customers_v2`; comment tricks; a trailing `--` comment. `run_sql` on `select * from marts.fct_order_items` returns 100 rows and `truncated = true`. PII is masked in `describe_table` samples and `run_sql` output. Nothing is ever written to stdout. Works in MCP Inspector |
+| **agent-design-1 — MCP server** (needs data-platform-2) | `sherpa_mcp` with all §4.1 tools, `sql_guard`, masking, manifest loader with reload, both transports, compose `mcp` service, Logfire in the server (stderr only) | Tool tests run over **both stdio and HTTP** with identical results. `sql_guard` rejects a fixed list of ≥ 20 hostile inputs, including: multi-statement; `DELETE`; `SET`; `SELECT … INTO`; a data-modifying CTE; `pg_sleep`; `query_to_xml`; `current_setting`; `pg_catalog`/`information_schema` references; unqualified tables; comment tricks; a trailing `--` comment. `run_sql` on `select * from marts.fct_order_items` returns 100 rows and `truncated = true`. PII is masked in `describe_table` samples and `run_sql` output. Nothing is ever written to stdout. Works in MCP Inspector |
 | **agent-design-2 — Gold set + evals** | `make eval-db`; tranche 1 of `cases.yaml` (40, accepted); `REVIEW_PROMPT.md`; `run.py`, `compare.py`, `report.py`, `--check-gold`, `prices.yaml`; an **oracle variant** (`oracle`, test-only: returns the gold SQL) | `--check-gold` green. The oracle scores 100% on answered cases, which proves the comparison rules. `compare.py` unit tests cover column permutation, extra columns, ordered vs unordered, rounding and NULLs, and **a wrong key/value pairing that per-column matching would accept** |
-| **agent-design-3 — Baseline** | `v0_baseline`, outcomes, RecordingToolset, guards, CLI with personas, agent Logfire, trace propagation, output mode verified on Bedrock, optional `phoenix` compose profile (`arizephoenix/phoenix`, pinned, OTLP on `127.0.0.1:4317`, UI on `:6006`) | First baseline report committed to `evals/runs/`. Guard tests (FunctionModel) prove that fabricated numbers and stale `execution_id`s trigger retries and then `Failed`, and that allowed number forms (rounded magnitudes, dates, counts) pass. Failure-handling tests cover throttling, the 4th SQL attempt and budget limits. The budget is re-set from the baseline p99 |
+| **agent-design-3 — Baseline** | `AgentService` with the two-step contract (§5.1): `plan`/`answer`, `Draft`, step-attributed `Interpretation`, `Correction`s, progress events. Plus `v0_baseline`, RecordingToolset, guards, the CLI with `--confirm`, agent Logfire, trace propagation, output mode verified on Bedrock, and the optional `phoenix` compose profile (`arizephoenix/phoenix`, pinned, OTLP on `127.0.0.1:4317`, UI on `:6006`) | First baseline report committed to `evals/runs/`. Guard tests (FunctionModel) prove that fabricated numbers and stale `execution_id`s trigger retries and then `Failed`, and that allowed number forms (rounded magnitudes, dates, counts) pass. A test proves `plan` never calls `run_sql`. A correction test shows a corrected value appearing in the re-planned SQL with `grounded_by = correction`. Failure-handling tests cover throttling, the 4th SQL attempt and budget limits. The budget is re-set from the baseline p99 |
 | **agent-design-4 — Gold set batch 2** (needs data-platform-4) | Tranche 2 of `cases.yaml`: 10 more cases (marketing and web), `gold_version: 2` | Same checks as agent-design-2; `v0_baseline` is re-run on the full 50 cases as the baseline every technique is compared against |
-| **agent-design-5–agent-design-8 — Techniques** | `v1_grounding`, `v2_linking`, `v3_critic`, `v4_voting`, one per milestone | Each: a report against the current default, plus a `FINDINGS.md` entry (what changed, per-category effect, cost/latency effect, the decision) |
-| **agent-design-9 — Checkpoint** | `v5_checkpoint`, `--confirm` flow | Manual check: approve, edit and abort paths work in the CLI; the eval report runs non-interactively |
-| **agent-design-10 — MetricFlow** (needs data-platform-5) | the `agent` dbt target (data platform spec §3), `compile_metrics` tool, `v6_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
+| **agent-design-5–agent-design-8 — Techniques** | `v1_grounding`, `v2_linking`, `v3_critic`, `v4_voting`, one per milestone | Each: a report against the current default, plus a `FINDINGS.md` entry (what changed, per-category effect, cost/latency effect, the decision). `v3_critic` and `v4_voting` also report how often `sql_revision` is set, since every revision changes SQL a person already approved |
+| **agent-design-9 — MetricFlow** (needs data-platform-5) | the `agent` dbt target (data platform spec §3), `compile_metrics` tool, `v5_metricflow` | Report comparing the metric path vs the SQL path on the `metrics` and `time` categories |
 
-**Promotion rule (agent-design-5–agent-design-10):** a technique becomes the default variant if, with `--repeat 2` against a same-session run of the current default (same `gold_version` and `dataset_version`), it improves accepted-case EX by **≥ 2 cases in both repeats**, without more than doubling p50 latency or mean cost. Otherwise it stays a non-default variant, and the finding is recorded. With 40–50 cases this rule is coarse on purpose: it only detects large effects, and `FINDINGS.md` says so.
+**Promotion rule (agent-design-5–agent-design-9):** a technique becomes the default variant if, with `--repeat 2` against a same-session run of the current default (same `gold_version` and `dataset_version`), it improves accepted-case EX by **≥ 2 cases in both repeats**, without more than doubling p50 latency or mean cost. Otherwise it stays a non-default variant, and the finding is recorded. With 40–50 cases this rule is coarse on purpose: it only detects large effects, and `FINDINGS.md` says so.
 
 ---
 
@@ -366,7 +386,7 @@ The agent relies only on the data platform spec's §11 (Interface to the Agent).
 - the `marts` schema and the `sherpa_agent` role
 - the `target-prod` and `target-eval` artifacts, including `meta.{domain, grain, primary_key, pii, synonyms}`, `metric_<name>` doc blocks and `accepted_values` tests
 - `pg_trgm` and `as_of_date`
-- the `eval` dbt target, and the `agent` target that agent-design-10 adds
+- the `eval` dbt target, and the `agent` target that agent-design-9 adds
 
 Everything the agent needs from the warehouse is defined there, not here.
 
@@ -389,6 +409,9 @@ Everything the agent needs from the warehouse is defined there, not here.
 - Voting diversity comes from prompt variants, because sampling parameters are not available on these models.
 - MetricFlow answers are compiled to SQL (`mf query --explain`) and executed through `run_sql`, so every answer path shares the same guard and verification.
 - Budget limits are per question, shared across agents and deliberately generous, then recalibrated from the agent-design-3 baseline.
+- Two steps from the baseline on: `plan` (no data query) then `answer`, so a person can correct the plan before anything runs; corrections re-plan the same question rather than starting a conversation.
+- One rendering for everyone: no persona option. The users (§1) are who the product serves, not output modes.
+- SQL changed after approval (critic, voting) is always surfaced in `sql_revision`.
 
 ---
 
@@ -396,5 +419,5 @@ Everything the agent needs from the warehouse is defined there, not here.
 
 - Expose SQL Sherpa itself as an MCP tool for Claude Desktop/Code (would reuse the HTTP transport).
 - Multi-turn follow-ups ("now only Germany"), reusing the previous `Interpretation`.
-- A web UI with the interpretation checkpoint as an editable form.
 - Saving accepted analyst queries as new few-shot examples (with review).
+- Explaining an existing SQL query in plain language (SQL → words), for the UI's Explorer.
