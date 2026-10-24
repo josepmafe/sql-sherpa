@@ -29,7 +29,7 @@ The target stack. Each tool is introduced in the milestone where it first does a
 | Transformation | dbt Core + dbt-postgres and dbt_utils (data-platform-1), dbt_expectations (data-platform-2), MetricFlow (data-platform-5) |
 | Agent | PydanticAI, the MCP Python SDK (`MCPServer`, agent-design-1), Claude on Amazon Bedrock (agent milestones) |
 | UI | React + TypeScript + Vite, Mantine, React Flow, CodeMirror; FastAPI backend (ui milestones) |
-| Observability & evals | Pydantic Logfire (OpenTelemetry; in the MCP server since agent-design-1) and a small execution-accuracy eval runner (agent milestones) |
+| Observability & evals | Pydantic Logfire (OpenTelemetry; the MCP server, agent-design-1) and a small execution-accuracy eval runner (agent milestones) |
 | Tooling | uv, ruff, sqlfluff, pre-commit (data-platform-1), GitHub Actions (data-platform-4) |
 
 ## Roadmap

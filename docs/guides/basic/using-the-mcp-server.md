@@ -17,7 +17,7 @@ On top of those, every query runs over Postgres' extended protocol on a server-s
 
 ## Starting it
 
-The server reads its settings from `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`, `SHERPA_DBT_TARGET_PATH`, `MCP_TRANSPORT`, `SHERPA_MCP_PORT`) and needs two dbt artifacts in `data-platform/dbt/target-prod/`: `manifest.json` from `make build-prod` and `catalog.json` from `make docs-prod` (it is written when the docs are generated; stop the docs server with Ctrl+C once it is up).
+The server reads its settings from `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`, `SHERPA_DBT_TARGET_PATH`, `MCP_TRANSPORT`, `SHERPA_MCP_HOST`, `SHERPA_MCP_PORT`) and needs two dbt artifacts in `data-platform/dbt/target-prod/`: `manifest.json` from `make build-prod` and `catalog.json` from `make docs-prod` (it is written when the docs are generated; stop the docs server with Ctrl+C once it is up).
 
 **In the container, with everything else.** `make up` builds and starts every compose service, Postgres and `mcp`, and waits until both are healthy. The `mcp` service publishes `127.0.0.1:8765` (localhost only) mounts `data-platform/dbt` read-only at `/app/dbt` (it reads the artifacts from `/app/dbt/target-prod`, so a `target-prod` deleted and rebuilt on the host is picked up without a restart). It has a 512 MB memory limit. Its environment lists only what it needs, never the admin login: `SHERPA_DB_HOST`, `SHERPA_DB_PORT`, `SHERPA_DB_NAME`, `SHERPA_AGENT_USER`, `SHERPA_AGENT_PASSWORD`, `MCP_TRANSPORT`, `SHERPA_MCP_HOST`, `SHERPA_MCP_PORT`, `SHERPA_DBT_TARGET_PATH` and an optional `LOGFIRE_TOKEN`. Check it:
 
@@ -342,10 +342,11 @@ Two leaks are closed on purpose: a whole-row reference (`select c from marts.dim
 
 ## Tracing with Logfire
 
-The server instruments its tool calls, the guard decision (a `sherpa.guard` span) and every database query with Logfire. With no `LOGFIRE_TOKEN`, nothing is exported and nothing is printed. To send traces, put `LOGFIRE_TOKEN=<your write token>` in `.env` (the compose `mcp` service passes it through; it is optional). Two things to know before you do:
+The server instruments its tool calls, the guard decision (a `sherpa.guard` span) and the psycopg statements it runs on a plain connection with Logfire. With no `LOGFIRE_TOKEN`, nothing is exported and nothing is printed. To send traces, put `LOGFIRE_TOKEN=<your write token>` in `.env` (the compose `mcp` service passes it through; it is optional). Three things to know before you do:
 
 - The `sherpa.guard` span carries the tool, whether the query passed, the number of errors, the tables and the `execution_id`, but never SQL text or error texts, which can quote literals.
-- The psycopg instrumentation records each query's statement text, which includes the literals in model-written SQL. A literal a user typed (an email address, say) is therefore in the trace.
+- The psycopg instrumentation records the statement text of what it sees: the `set local` settings and `validate_sql`'s `explain (analyze false) <the SQL>`. A literal in a validated query (an email address a user typed, say) is therefore in the trace, and when that `explain` fails, the span also records Postgres's error message as an exception event, which can quote such a literal.
+- Queries on the server-side cursor (`run_sql`, the `describe_table` samples, `search_values`, `get_context`) get no database span, so their text is not in the trace, and neither is a class 22 error raised while fetching them (whose Postgres text can quote a stored value): the tool span sees only the cleaned message.
 
 ## Troubleshooting
 
@@ -353,5 +354,5 @@ The server instruments its tool calls, the guard decision (a `sherpa.guard` span
 |---|---|
 | `dbt artifacts not found` | Run `make build-prod` and `make docs-prod`, as the message says |
 | The container is unhealthy or exits | `docker compose logs mcp`; usually the `SHERPA_AGENT_PASSWORD` in `.env` does not match the role, or Postgres is not up |
-| `make mcp-dev` cannot start because the port is taken | The container already holds 8765; set `SHERPA_MCP_PORT=8766` |
+| `make mcp-dev` cannot start because the port is taken | The container already holds 8765; set another port on the command line: `SHERPA_MCP_PORT=8766 make mcp-dev` |
 | A client gets HTTP 421 | The Host header is not an allowed name (`127.0.0.1`, `localhost`, `[::1]`, `mcp`); connect through one of those |
