@@ -1,7 +1,7 @@
 .PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check eval-db lint test
 
-# dbt runs from dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
-DBT = cd dbt && DBT_PROFILES_DIR=. uv run --env-file ../.env dbt
+# dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
+DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
 # Prod artifacts (manifest.json, catalog.json, ...) go to their own folder so dev runs never overwrite them.
 PROD = --target prod --target-path target-prod
 # The database names are read by make from the environment or the command line (defaults sherpa_eval and sherpa);
@@ -70,7 +70,7 @@ docs-prod:
 # docs generate writes manifest.json (the YAML) and catalog.json (the real columns); the checker compares them.
 docs-check:
 	$(DBT) --quiet docs generate
-	uv run python scripts/check_docs_coverage.py --target-path dbt/target --path models
+	uv run python data-platform/scripts/check_docs_coverage.py --target-path data-platform/dbt/target --path models
 
 # Rebuilds the frozen eval database from scratch (fixed seed and dates); never touches the main database.
 # No source freshness: the frozen data is old on purpose. Inside the container, POSTGRES_DB is the main database,
@@ -91,7 +91,7 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy
-	uv run --env-file .env sqlfluff lint dbt
+	uv run --env-file .env sqlfluff lint data-platform/dbt
 
 test:
 	uv run --env-file .env pytest

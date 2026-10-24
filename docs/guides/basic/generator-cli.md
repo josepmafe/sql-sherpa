@@ -23,7 +23,7 @@ docker compose up -d --wait
 
 Docker Compose names the container after the folder you cloned into. There is no separate install step: the first `uv run` creates the Python 3.12 environment with every dependency group.
 
-Postgres listens on `127.0.0.1:5432` (the port is published on the loopback address only, and `.env` sets `SHERPA_DB_HOST=127.0.0.1` because `localhost` can resolve to IPv6 first on Windows and hang). If that port is taken, set `SHERPA_DB_PORT` in `.env`; Docker Compose, the generator and dbt all read it. On the first start the container runs `docker/postgres/init/00_roles.sh`, which creates the `sherpa_admin` and `sherpa_agent` roles with the passwords from `.env`.
+Postgres listens on `127.0.0.1:5432` (the port is published on the loopback address only, and `.env` sets `SHERPA_DB_HOST=127.0.0.1` because `localhost` can resolve to IPv6 first on Windows and hang). If that port is taken, set `SHERPA_DB_PORT` in `.env`; Docker Compose, the generator and dbt all read it. On the first start the container runs `data-platform/postgres/init/00_roles.sh`, which creates the `sherpa_admin` and `sherpa_agent` roles with the passwords from `.env`.
 
 ## First run: a year of data
 

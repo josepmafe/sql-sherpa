@@ -1,12 +1,12 @@
 # Adding or changing a mart
 
-How to change what the marts expose: add a column, add a whole mart, change a metric, add a trigram index, write a custom test, and choose how an intermediate model is materialized. Each section lists the files to touch, in order, and the tests that prove the change. The examples were applied on a scratch copy of the `dbt/` folder and the outputs are real. Take the dbt commands as run from `dbt/` with the usual prefix (`DBT_PROFILES_DIR=. uv run --env-file ../.env dbt`, shortened to `dbt`; see [Building the warehouse](../basic/building-the-warehouse.md#running-dbt-directly)).
+How to change what the marts expose: add a column, add a whole mart, change a metric, add a trigram index, write a custom test, and choose how an intermediate model is materialized. Each section lists the files to touch, in order, and the tests that prove the change. The examples were applied on a scratch copy of the `data-platform/dbt/` folder and the outputs are real. Take the dbt commands as run from `data-platform/dbt/` with the usual prefix (`DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt`, shortened to `dbt`; see [Building the warehouse](../basic/building-the-warehouse.md#running-dbt-directly)).
 
 ## Before you start
 
 **The spec comes first.** The marts' columns, grain and metric definitions are in the data platform spec (`docs/superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md`, §6.5 and §6.6). A change to them is a spec change: agree it with the owner and update the spec in the same branch. The text-to-SQL agent relies on the marts as the spec's §11 describes them, so a rename or a removal breaks it.
 
-**What makes a mart a mart.** Everything under `dbt/models/marts/` inherits these settings from `dbt/dbt_project.yml`:
+**What makes a mart a mart.** Everything under `data-platform/dbt/models/marts/` inherits these settings from `data-platform/dbt/dbt_project.yml`:
 
 - `materialized: table` in the `marts` schema (`dev_marts` on dev).
 - `contract: enforced`: dbt checks the model's columns and types against the YAML before it builds the table. A *contract* is a promise in the YAML about the shape of the table.
@@ -14,13 +14,13 @@ How to change what the marts expose: add a column, add a whole mart, change a me
 - `post-hook: analyze`: table statistics are refreshed after each build.
 - `grants`: `SELECT` for the `sherpa_agent` role on every mart table.
 
-The folder is `marts/<domain>/`, with one `_<domain>__models.yml` per folder and the `meta.domain` value matching the folder (`sales`, `customers`, `products`, `shared`). Metric definitions live in `dbt/models/marts/_metrics.md`.
+The folder is `marts/<domain>/`, with one `_<domain>__models.yml` per folder and the `meta.domain` value matching the folder (`sales`, `customers`, `products`, `shared`). Metric definitions live in `data-platform/dbt/models/marts/_metrics.md`.
 
 ## 1. Add a column to a mart
 
 Example: `dim_products.current_margin`, the current list price minus the current cost price. Three files, in this order.
 
-**1. The SQL** (`dbt/models/marts/products/dim_products.sql`). Add the column to the model's last CTE (the one named `final`), with an explicit cast to the type you will declare. Casting in the last step keeps every mart's types visible in one place:
+**1. The SQL** (`data-platform/dbt/models/marts/products/dim_products.sql`). Add the column to the model's last CTE (the one named `final`), with an explicit cast to the type you will declare. Casting in the last step keeps every mart's types visible in one place:
 
 ```sql
         variants.list_price::numeric(12, 2) as current_list_price,
@@ -28,7 +28,7 @@ Example: `dim_products.current_margin`, the current list price minus the current
         variants.cost_price::numeric(12, 2) as current_cost_price,
 ```
 
-**2. The YAML** (`dbt/models/marts/products/_products__models.yml`), in the same position:
+**2. The YAML** (`data-platform/dbt/models/marts/products/_products__models.yml`), in the same position:
 
 ```yaml
       - name: current_margin
@@ -103,7 +103,7 @@ Declare a type the SQL does not produce (here the SQL ends in `::text`, the YAML
 
 - A column that depends on a **new source column** needs the source model and the staging model first: [Extending the source data model](extending-the-source-data-model.md) ends here.
 - A column used by **another mart** (for example `fct_orders` columns that `dim_customers` aggregates) must exist in the upstream mart before the downstream one reads it. `dbt build --select fct_orders+` rebuilds the model and everything downstream.
-- A **new test** that pins the column's logic goes in `dbt/tests/` (see section 3) or in the YAML.
+- A **new test** that pins the column's logic goes in `data-platform/dbt/tests/` (see section 3) or in the YAML.
 
 Run `make build`, then `make docs-check` (see the next section) before you commit.
 
@@ -111,7 +111,7 @@ Run `make build`, then `make docs-check` (see the next section) before you commi
 
 Example: `dim_countries`, one row per country from the `countries` seed, in the `shared` domain. Four steps.
 
-**1. The SQL**, `dbt/models/marts/shared/dim_countries.sql`. The file name is the table name. Read other models through `ref()`, never by schema and table name:
+**1. The SQL**, `data-platform/dbt/models/marts/shared/dim_countries.sql`. The file name is the table name. Read other models through `ref()`, never by schema and table name:
 
 ```sql
 -- The countries the shop sells to, from the countries seed.
@@ -125,7 +125,7 @@ from {{ ref('countries') }}
 
 A model that needs lookups or joins starts with one CTE per input (`with customers as (select * from {{ ref('stg_shop__customers') }}), ...`), like the existing marts.
 
-**2. The YAML**, appended to `dbt/models/marts/shared/_shared__models.yml`:
+**2. The YAML**, appended to `data-platform/dbt/models/marts/shared/_shared__models.yml`:
 
 ```yaml
   - name: dim_countries
@@ -191,15 +191,15 @@ Missing descriptions:
 
 It also catches a column that exists in Postgres but not in the YAML. With the description added it prints nothing and exits 0.
 
-Finally add the mart to the list in `dbt/models/overview.md`, add its row to the spec's §6.5, and add a test for any rule you rely on. The agent access test (`tests/dbt/test_agent_access.py`) lists every mart in its `MARTS` tuple: add the new table there.
+Finally add the mart to the list in `data-platform/dbt/models/overview.md`, add its row to the spec's §6.5, and add a test for any rule you rely on. The agent access test (`data-platform/tests/dbt/test_agent_access.py`) lists every mart in its `MARTS` tuple: add the new table there.
 
 ## 3. Change a metric definition
 
 A metric is defined in four places that must agree. Change them in this order:
 
-1. **The doc block** in `dbt/models/marts/_metrics.md`, for example `metric_refunded_revenue`. A *doc block* is a named piece of Markdown (`{% docs metric_refunded_revenue %} ... {% enddocs %}`) that YAML descriptions reuse with `{{ doc('metric_refunded_revenue') }}`. One edit changes the description of every column that reuses it, in the docs, in the Postgres comments and in the manifest the agent reads. This is how every consumer sees the same definition.
-2. **The calculation.** Where the rule is in a macro, change the macro, and every model that calls it follows: `revenue_excluding_tax(amount)` in `dbt/macros/revenue_excluding_tax.sql` is used by `fct_refunds` and `int_orders__refunds_summarized`; `customer_segment(order_count, days_since_last_order)` in `dbt/macros/customer_segment.sql` is used by `dim_customers`. A rule in a model's SQL (such as net revenue in `fct_orders`) is changed there. Project variables such as `tax_rate` live in `dbt_project.yml`.
-3. **The tests that pin it.** Singular tests in `dbt/tests/` state the rule with fixed inputs and expected outputs, so a change in the rule fails them until you update them on purpose:
+1. **The doc block** in `data-platform/dbt/models/marts/_metrics.md`, for example `metric_refunded_revenue`. A *doc block* is a named piece of Markdown (`{% docs metric_refunded_revenue %} ... {% enddocs %}`) that YAML descriptions reuse with `{{ doc('metric_refunded_revenue') }}`. One edit changes the description of every column that reuses it, in the docs, in the Postgres comments and in the manifest the agent reads. This is how every consumer sees the same definition.
+2. **The calculation.** Where the rule is in a macro, change the macro, and every model that calls it follows: `revenue_excluding_tax(amount)` in `data-platform/dbt/macros/revenue_excluding_tax.sql` is used by `fct_refunds` and `int_orders__refunds_summarized`; `customer_segment(order_count, days_since_last_order)` in `data-platform/dbt/macros/customer_segment.sql` is used by `dim_customers`. A rule in a model's SQL (such as net revenue in `fct_orders`) is changed there. Project variables such as `tax_rate` live in `dbt_project.yml`.
+3. **The tests that pin it.** Singular tests in `data-platform/dbt/tests/` state the rule with fixed inputs and expected outputs, so a change in the rule fails them until you update them on purpose:
    - `assert_revenue_excluding_tax`: the macro on 120.00, 64.80, 1.00, 0.01 and 0.00 EUR.
    - `assert_customer_segment_boundaries`: the segment at 0 orders and at 90/91 and 180/181 days.
    - `assert_cancelled_orders_have_no_outcomes`: a cancelled order has 0 net revenue, cogs and margin.
@@ -221,7 +221,7 @@ Three of the five pinned cases do not match the new rate, so the change cannot g
 
 ## 4. Add a trigram index
 
-A trigram index speeds up fuzzy text search (`column % 'text'`, `'text' <% column`) on a text column. Add one when people look rows up by that column's value, such as product names. The macro `create_trigram_index(column)` in `dbt/macros/create_trigram_index.sql` creates a GIN index on the column; add a line to the model's `post_hook` list (a *hook* is SQL dbt runs after the model builds; the quotes make it a string, so `{{ this }}` is resolved for each run):
+A trigram index speeds up fuzzy text search (`column % 'text'`, `'text' <% column`) on a text column. Add one when people look rows up by that column's value, such as product names. The macro `create_trigram_index(column)` in `data-platform/dbt/macros/create_trigram_index.sql` creates a GIN index on the column; add a line to the model's `post_hook` list (a *hook* is SQL dbt runs after the model builds; the quotes make it a string, so `{{ this }}` is resolved for each run):
 
 ```sql
 {{
@@ -266,7 +266,7 @@ A table is rebuilt from scratch on every run, so the hook creates the index agai
 
 ## 5. Write a custom generic test
 
-dbt's built-in tests (`unique`, `not_null`, ...) check one column. `column_sums_match` checks that two models add up to the same total per group. It is a *generic test*: a Jinja `{% test %}` block in `dbt/tests/generic/column_sums_match.sql` that dbt makes available to every YAML file by its name:
+dbt's built-in tests (`unique`, `not_null`, ...) check one column. `column_sums_match` checks that two models add up to the same total per group. It is a *generic test*: a Jinja `{% test %}` block in `data-platform/dbt/tests/generic/column_sums_match.sql` that dbt makes available to every YAML file by its name:
 
 ```sql
 {% test column_sums_match(model, column_name, compare_model, compare_column, group_by) %}
@@ -333,11 +333,11 @@ dbt test --select "test_name:column_sums_match" --target prod --target-path targ
 
 (The 9 include the two `on-run` hooks.) `dbt ls --select "test_name:column_sums_match" --resource-type test` lists them. [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows what a failure looks like.
 
-Write a generic test when the same rule applies to several models or columns. A rule about one model with fixed values (the segment boundaries, the tax maths) is a singular test: a plain `SELECT` returning the failing rows in `dbt/tests/<name>.sql`, with the cases written out in the file. Add either kind with a comment that says what a returned row means.
+Write a generic test when the same rule applies to several models or columns. A rule about one model with fixed values (the segment boundaries, the tax maths) is a singular test: a plain `SELECT` returning the failing rows in `data-platform/dbt/tests/<name>.sql`, with the cases written out in the file. Add either kind with a comment that says what a returned row means.
 
 ## 6. Ephemeral, view or table for an intermediate model
 
-Intermediate models (`dbt/models/intermediate/`) default to `ephemeral` (`dbt_project.yml`). Override the default in the model's own file with `{{ config(materialized='view') }}` only when the reason below applies:
+Intermediate models (`data-platform/dbt/models/intermediate/`) default to `ephemeral` (`dbt_project.yml`). Override the default in the model's own file with `{{ config(materialized='view') }}` only when the reason below applies:
 
 | Materialization | What dbt builds | Use it when |
 |---|---|---|

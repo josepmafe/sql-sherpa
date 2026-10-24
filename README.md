@@ -66,19 +66,23 @@ To add days later, run `make generate DAYS=<n>`. Days added after the first run 
 
 ### Windows and corporate networks
 
+- Run `make` from **Git Bash**. In PowerShell or `cmd`, GNU make runs the recipes with `cmd.exe`, and they need a POSIX shell.
 - OneDrive folders can break uv's hardlinks (`Failed to hardlink files` or "access denied" errors). Set `UV_LINK_MODE=copy`.
 - Behind a TLS-intercepting proxy, `uv` downloads and `make deps` fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and set `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) to its path in `.env`; `.env.example` shows the lines.
 - `localhost` can resolve to IPv6 on Windows while Docker publishes the port on IPv4, which is why `.env.example` uses `127.0.0.1`.
 
 ## Repository layout
 
+Code is grouped by spec. `agent/` and `ui/` appear with their first milestones.
+
 ```
-generator/   the synthetic-data generator (Python package, CLI and tests)
-dbt/         the dbt project: sources, seeds, staging, intermediate and mart models, macros and tests
-docker/      Postgres init script (database roles)
-scripts/     helper scripts, such as the dbt docs-coverage check
-docs/        design specs, implementation plans and how-to guides
-tests/       tests outside the generator package (dbt seeds, agent access to the marts, scripts)
+data-platform/
+  postgres/init/   Postgres init script (database roles)
+  generator/       the synthetic-data generator (Python package, CLI and tests)
+  dbt/             the dbt project: sources, seeds, staging, intermediate and mart models, macros and tests
+  scripts/         helper scripts, such as the dbt docs-coverage check
+  tests/           tests spanning the generator and dbt (seeds, agent access to the marts, scripts)
+docs/              design specs, implementation plans and how-to guides
 ```
 
 ## Design docs

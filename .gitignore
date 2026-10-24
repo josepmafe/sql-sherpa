@@ -10,11 +10,11 @@ __pycache__/
 .mypy_cache/
 
 # dbt
-dbt/target/
-dbt/target-prod/
-dbt/target-eval/
-dbt/target-sqlfluff/
-dbt/target-scratch/
-dbt/dbt_packages/
-dbt/logs/
-dbt/.user.yml
+data-platform/dbt/target/
+data-platform/dbt/target-prod/
+data-platform/dbt/target-eval/
+data-platform/dbt/target-sqlfluff/
+data-platform/dbt/target-scratch/
+data-platform/dbt/dbt_packages/
+data-platform/dbt/logs/
+data-platform/dbt/.user.yml
