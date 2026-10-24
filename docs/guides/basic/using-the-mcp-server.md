@@ -200,7 +200,7 @@ describe_table {"table": "dim_customers"}
     {"name": "email", "data_type": "text", "description": "Normalized (trimmed, lower-case) email address; null when the customer is deleted.",
      "is_pii": true, "accepted_values": null, "distinct_values": null, "synonyms": [], "metric_refs": []},
     ...
-    {"name": "country_name", "data_type": "text", "description": "English name of the customer's country.", "is_pii": false,
+    {"name": "country_name", "data_type": "text", "description": "...", "is_pii": false,
      "accepted_values": null,
      "distinct_values": ["Austria", "Belgium", "France", "Germany", "Italy", "Netherlands", "Spain", "United Kingdom"],
      "synonyms": ["country"], "metric_refs": []},
@@ -247,6 +247,8 @@ get_metric_definitions {}
 ### `get_examples`
 
 Up to `k` (1 to 10, default 3) worked examples, best first, each with its question, SQL, notes and `score`. The words are stemmed (`monthly` and `months` meet `month`), a few synonyms are expanded (`aov`, `sales`, `coupon`, `units`, `yoy`, ...), and the score is a Jaccard similarity weighted 0.75 on the example's question and 0.25 on everything it says (question, notes, and the table and column names of its SQL). Examples sharing no word with the question are left out, so a question unlike all of them gets an empty list. Adapt them; do not copy them blindly.
+
+The `score` is relative: it only orders the examples for one question and says nothing about whether the warehouse can answer it. `get_examples {"question": "Delete all cancelled orders"}` returns "What percentage of placed orders end up cancelled?" with a score of 0.25, higher than the good match in the example below. Whether a question is out of scope comes from `get_context`'s `does_not_cover` (a stock question falls under "inventory and stock levels") and from the server being read-only (the guard rejects any write), never from the score.
 
 ```
 get_examples {"question": "top products by revenue", "k": 2}
@@ -299,7 +301,7 @@ run_sql {"sql": "select current_status, count(*) as orders from marts.fct_orders
 }
 ```
 
-Money comes back as strings (`"6.99"`), dates as ISO text. Rows are fetched 20 at a time (one at a time after a row over 1 MB) and stop at three limits, each of which sets `truncated` or cuts a cell visibly:
+Money comes back as strings (`"6.99"`), dates as ISO text. Rows are fetched 20 at a time (one at a time after a row over 1,000,000 characters) and stop at three limits, each of which sets `truncated` or cuts a cell visibly:
 
 - **100 rows.** `select order_id, customer_id from marts.fct_orders` returns `"returned_rows": 100, "truncated": true`.
 - **10,000 characters per cell.** A longer text, bytes (shown as hex), array or JSON cell is cut, and the cut shows at its end: `select string_agg(order_number, ',') as numbers from marts.fct_orders` returns one cell of 10,022 characters ending in `SS-002905, …[cut at 10000 chars]`, with `"truncated": false` (no row was left out).
@@ -413,7 +415,7 @@ Three leaks are closed on purpose: a whole-row reference (`select c from marts.d
 
 What the server does not protect against, and what bounds each case:
 
-1. **Result size inside Postgres.** Postgres cannot cap the size of one value while it builds it: an adversarial `string_agg` or `array_agg` over a cross join can still build a very large value within the 5 s timeout. Bounded by: the guard (no `WITH RECURSIVE`, `lpad`/`rpad` only with a literal length of at most 10,000, no `repeat`); the 10,000-character cell cap and the 50,000-character result budget; fetching 20 rows at a time and one at a time after a row over 1 MB; at most two such fetches at once; the container's 1 GB memory limit with `restart: unless-stopped`; and the agent role's limits on a fresh volume (below). A server started over stdio runs on the host with no memory limit.
+1. **Result size inside Postgres.** Postgres cannot cap the size of one value while it builds it. An adversarial `string_agg` or `array_agg` over a cross join can still build a very large value within the 5 s timeout, and so can string functions with no cross join at all: `replace(lpad('a', 10000), ' ', lpad('a', 10000))` passes the guard and builds about 100 MB per row, nesting `replace` multiplies that again, and `||` adds up as many 10,000-character pieces as the query has room for. Bounded by: the guard (no `WITH RECURSIVE`, `lpad`/`rpad` only with a literal length of at most 10,000, type lengths such as `char(n)` and `bit(n)` at most 10,000, no `repeat`); the 20,000-character limit on the query text; Postgres's own 1 GB limit on one value; the 10,000-character cell cap and the 50,000-character result budget, which cut what reaches the model but not what the server holds while fetching; fetching 20 rows at a time and one at a time after a row over 1,000,000 characters (so the first batch can hold 20 such rows); at most two such fetches at once; the container's 1 GB memory limit with `restart: unless-stopped`, so a result that exceeds it kills and restarts the server, not the host; and the agent role's limits on a fresh volume (below). A server started over stdio runs on the host with no memory limit.
 2. **Queries are not wrapped in a truncating subquery.** Wrapping (`select left(col, 10000) ... from (<query>) q`) is the only exact fix for (1), and it is deliberately not done: the query would no longer run exactly as written, so `execution_id` would not identify what ran; `ORDER BY` is not guaranteed through a subquery; duplicate or unnamed result columns would need renaming; it costs an extra round trip to learn the columns; and Postgres would still build the value before cutting it.
 3. **Name-based masking** (above): an alias, an expression, an aggregate, a union or a LIKE or count oracle reveals PII. The `sherpa_agent` role can also read the PII columns' stored values in `pg_stats` outside the guard (the guard itself blocks `pg_catalog`). Column-level grants, which would make the masking real, are the ui-1 decision.
 4. **The guard fails closed** on constructs models commonly try (the table above); the hints say what to write instead.

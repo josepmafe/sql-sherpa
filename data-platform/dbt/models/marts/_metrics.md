@@ -13,7 +13,7 @@ lines pro-rata to their gross amount. Free-shipping promotions waive shipping an
 
 {% docs metric_refunded_revenue %}
 Refunded revenue: the revenue given back by refunds, in EUR. For refunds with reason `return` or
-`goodwill` it is the refunded amount without its 20% tax, amount / 1.20; these refunds never include
+`goodwill` it is the refunded amount without its 20% tax (the project's `tax_rate`), amount / 1.20; these refunds never include
 shipping. Refunds with reason `cancellation` count as 0: the cancelled
 order already contributes no revenue, and the refund only reverses the payment. In `fct_orders` it is
 attributed to the order's date, not to the date of the refund. Refunds arrive after the order (in
