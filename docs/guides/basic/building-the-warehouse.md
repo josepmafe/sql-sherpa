@@ -13,7 +13,7 @@ A few dbt terms first:
 - A **target** is one named connection in `data-platform/dbt/profiles.yml`: `dev` (the default), `prod` and `eval`. Credentials come from `.env` through `env_var()`.
 - `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-read` uses it).
 - **`persist_docs`** is a config that copies the YAML descriptions into Postgres comments on the tables and columns, so a database client can read them.
-- **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` on the marts).
+- **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` and `sherpa_ui` on the marts).
 
 The project has the seeds, one staging view per raw table, an intermediate layer and the nine marts. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
 
