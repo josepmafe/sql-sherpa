@@ -42,7 +42,7 @@ The target stack. Each tool is introduced in the milestone where it first does a
 | **data-platform-4 · Governance & CI** | Marketing marts, groups and access, exposures for the UI and the agent, slim builds and `dbt clone`, GitHub Actions CI |
 | **data-platform-5 · Semantic layer** | MetricFlow semantic models and metrics, used by the agent's MetricFlow path |
 | **agent-design-1 … 9 · Agent** | MCP server, eval harness, a baseline agent that plans before it runs, then grounding, schema linking and self-correction, one at a time, measured |
-| **ui-1 … 4 · Web app** | Explorer (browse marts, run read-only SQL), Lineage (dbt flowchart), Home (headline numbers and data health), Ask (review the agent's plan, then see the answer) |
+| **ui-1 … 5 · Web app** | Explorer (browse marts, run read-only SQL), Lineage (dbt flowchart), Home (headline numbers and data health), Ask (review the agent's plan, then see the answer), and a one-command demo for anyone with Docker |
 
 ## Quickstart
 
