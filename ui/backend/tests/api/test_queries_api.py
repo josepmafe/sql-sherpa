@@ -14,7 +14,7 @@ from sherpa_ui.api import queries
 from sherpa_ui.api.queries import MAX_SQL_CHARS, QueryRequest, QueryService
 from sherpa_ui.app import create_app
 from sherpa_ui.readonly.query_runner import QueryOutcome, QueryRunner, UiQueryError
-from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec
+from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec, UnknownColumnError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -132,12 +132,40 @@ class TestQueriesApi:
         assert runner.run.call_args_list[1].args == (QUERY_ID, "select 1 as n")  # client mode: no sort, no filters
 
     def test_unknown_sort_column_is_422(self, client: TestClient, runner: MagicMock) -> None:
-        runner.run.side_effect = ValueError("column 'zzz' is not a column of the result")
+        runner.run.side_effect = UnknownColumnError("column 'zzz' is not a column of the result")
 
         response = client.post("/api/queries", json=body(sort=[{"column": "zzz", "direction": "asc"}]))
 
         assert response.status_code == 422
         assert response.json() == {"code": "unknown_column", "message": "column 'zzz' is not a column of the result"}
+
+    @pytest.mark.parametrize("failure", [RecursionError("maximum recursion depth exceeded"), RuntimeError("boom")])
+    def test_unexpected_error_is_500_internal_error(
+        self, app: FastAPI, runner: MagicMock, caplog: pytest.LogCaptureFixture, failure: Exception
+    ) -> None:
+        runner.run.side_effect = failure
+
+        with TestClient(app, base_url="http://localhost", raise_server_exceptions=False) as client:
+            response = client.post("/api/queries", json=body())
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "code": "internal_error",
+            "message": "something went wrong on the server; see its log",
+        }
+        assert "boom" not in response.text
+        assert any(record.exc_info and record.exc_info[1] is failure for record in caplog.records)
+
+    def test_specific_handlers_still_win_over_the_catch_all(self, client: TestClient, runner: MagicMock) -> None:
+        runner.run.side_effect = UiQueryError("sql_error", "bad sql", position=3)
+
+        sql_error = client.post("/api/queries", json=body())
+        invalid = client.post("/api/queries", json={"query_id": QUERY_ID})
+        missing = client.get("/api/nope")
+
+        assert (sql_error.status_code, sql_error.json()["code"]) == (422, "sql_error")
+        assert (invalid.status_code, invalid.json()["code"]) == (422, "invalid_request")
+        assert (missing.status_code, missing.json()["code"]) == (404, "not_found")
 
     def test_sql_over_the_limit_is_rejected(self, client: TestClient, runner: MagicMock) -> None:
         response = client.post("/api/queries", json=body(sql="x" * (MAX_SQL_CHARS + 1)))

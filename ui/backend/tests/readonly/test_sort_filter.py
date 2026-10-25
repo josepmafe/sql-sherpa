@@ -8,6 +8,7 @@ from sherpa_ui.readonly.sort_filter import (
     DuplicateColumnsError,
     FilterSpec,
     SortSpec,
+    UnknownColumnError,
     build_wrapped_query,
     strip_terminators,
 )
@@ -31,21 +32,21 @@ def test_semicolon_before_a_trailing_comment_is_blanked() -> None:
 
 
 def test_unknown_column_rejected() -> None:
-    with pytest.raises(ValueError, match="column 'b' is not a column of the result"):
+    with pytest.raises(UnknownColumnError, match="column 'b' is not a column of the result"):
         build_wrapped_query("select 1 as a", ["a"], sort=[SortSpec(column="b", direction="asc")])
 
-    with pytest.raises(ValueError, match="column 'b' is not a column of the result"):
+    with pytest.raises(UnknownColumnError, match="column 'b' is not a column of the result"):
         build_wrapped_query("select 1 as a", ["a"], filters=[FilterSpec(column="b", operator="is_null")])
 
 
 def test_column_names_match_exactly() -> None:
     # Postgres keeps a quoted "A" apart from a; the result's names are what it reported.
-    with pytest.raises(ValueError, match="column 'a' is not a column of the result"):
+    with pytest.raises(UnknownColumnError, match="column 'a' is not a column of the result"):
         build_wrapped_query('select 1 as "A"', ["A"], sort=[SortSpec(column="a", direction="asc")])
 
 
 def test_zero_result_columns_accept_no_sort() -> None:
-    with pytest.raises(ValueError, match="column 'a' is not a column of the result"):
+    with pytest.raises(UnknownColumnError, match="column 'a' is not a column of the result"):
         build_wrapped_query("select from marts.fct_orders", [], sort=[SortSpec(column="a", direction="asc")])
 
 

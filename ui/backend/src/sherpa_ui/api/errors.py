@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Final
 
 from fastapi import Request
@@ -15,6 +16,8 @@ from sherpa_ui.readonly.query_runner import UiQueryError
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
 
 # UI spec §4. Clients branch on the body's `code`; several codes share a status.
 QUERY_ERROR_STATUS: Final[dict[str, int]] = {
@@ -30,6 +33,8 @@ HTTP_STATUS_CODES: Final[dict[int, str]] = {404: "not_found", 405: "method_not_a
 UNKNOWN_COLUMN_CODE: Final = "unknown_column"  # a sort or filter column that is not in the result
 INVALID_REQUEST_CODE: Final = "invalid_request"
 DEFAULT_HTTP_CODE: Final = "http_error"
+INTERNAL_ERROR_CODE: Final = "internal_error"
+INTERNAL_ERROR_MESSAGE: Final = "something went wrong on the server; see its log"
 
 
 class ErrorDetail(BaseModel):
@@ -61,6 +66,7 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(CatalogUnavailable, _catalog_unavailable)  # type: ignore[arg-type]
     app.add_exception_handler(RequestValidationError, _invalid_request)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, _http_error)  # type: ignore[arg-type]
+    app.add_exception_handler(Exception, _internal_error)
 
 
 def _respond(status_code: int, error: ApiError) -> JSONResponse:
@@ -88,3 +94,9 @@ async def _invalid_request(_: Request, exc: RequestValidationError) -> JSONRespo
 async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
     code = HTTP_STATUS_CODES.get(exc.status_code, DEFAULT_HTTP_CODE)
     return _respond(exc.status_code, ApiError(code=code, message=str(exc.detail)))
+
+
+async def _internal_error(_: Request, exc: Exception) -> JSONResponse:
+    """The last resort: whatever no other handler took, so the client still gets the one error shape."""
+    logger.error("unhandled error", exc_info=exc)
+    return _respond(500, ApiError(code=INTERNAL_ERROR_CODE, message=INTERNAL_ERROR_MESSAGE))

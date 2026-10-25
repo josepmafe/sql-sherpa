@@ -14,7 +14,7 @@ from psycopg.postgres import types as postgres_types
 from pydantic import SecretStr
 from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.readonly.query_runner import QueryRunner, UiQueryError, user_position
-from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec
+from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec, UnknownColumnError
 from sherpa_ui.settings import UiSettings
 
 if TYPE_CHECKING:
@@ -164,7 +164,7 @@ class TestQueryRunnerOffline:
         [
             (("a",), (), True, "database_unavailable"),
             (("a", "a"), (SortSpec(column="a", direction="asc"),), False, "DuplicateColumnsError"),
-            (("a",), (SortSpec(column="b", direction="asc"),), False, "ValueError"),
+            (("a",), (SortSpec(column="b", direction="asc"),), False, "UnknownColumnError"),
         ],
     )
     def test_a_cancelled_run_is_cancelled_whatever_else_failed(
@@ -579,7 +579,7 @@ class TestQueryRunner:
             ("select 1 as a", (), None),
             ("select nope from marts.fct_orders", (), UiQueryError),
             ("select 1 as a, 2 as a", (SortSpec(column="a", direction="asc"),), DuplicateColumnsError),
-            ("select 1 as a", (SortSpec(column="b", direction="asc"),), ValueError),
+            ("select 1 as a", (SortSpec(column="b", direction="asc"),), UnknownColumnError),
         ],
         ids=["ok", "sql_error", "duplicate_columns", "unknown_column"],
     )

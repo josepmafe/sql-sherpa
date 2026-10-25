@@ -21,7 +21,12 @@ from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import DIALECT, SqlGuard
 from sqlglot.errors import SqlglotError
 
-from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, build_wrapped_query, strip_terminators
+from sherpa_ui.readonly.sort_filter import (
+    DuplicateColumnsError,
+    UnknownColumnError,
+    build_wrapped_query,
+    strip_terminators,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -126,7 +131,7 @@ class QueryRunner:
         `sort` or `filters` is given (server mode).
 
         Raises `UiQueryError`; in server mode also `DuplicateColumnsError` (the caller falls back to client mode) and
-        `ValueError` for a sort or filter column that is not in the result. Whatever else went wrong, a run that
+        `UnknownColumnError` for a sort or filter column that is not in the result. Whatever else went wrong, a run that
         `cancel` reached raises `UiQueryError` with code `cancelled`.
         """
         started = time.monotonic()
@@ -140,7 +145,7 @@ class QueryRunner:
             conn = self._connect()
             self._attach(query_id, conn)
             fetched = self._execute(conn, strip_terminators(sql_text), sort, filters)
-        except (UiQueryError, DuplicateColumnsError, ValueError) as error:
+        except (UiQueryError, DuplicateColumnsError, UnknownColumnError) as error:
             if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
                 raise
 

@@ -33,6 +33,10 @@ _TRAILING_TERMINATORS: Final = re.compile(r"[\s;]+\Z")
 _POSTGRES: Final = Dialect.get_or_raise(DIALECT)
 
 
+class UnknownColumnError(ValueError):
+    """A sort or filter column that is not a column of the result."""
+
+
 class DuplicateColumnsError(Exception):
     """Two result columns share a name, so `q.<name>` would be ambiguous: sorting and filtering stay in the browser."""
 
@@ -80,7 +84,7 @@ def build_wrapped_query(
 ) -> WrappedQuery:
     """`select * from (\\n<sql>\\n) as q where … order by …` over the user's SQL.
 
-    Columns are only ever the result's own names (`ValueError` otherwise), quoted as identifiers; values are bound
+    Columns are only ever the result's own names (`UnknownColumnError` otherwise), quoted as identifiers; values are bound
     parameters. Run it with its parameters even when there are none: psycopg then reads `%%` (which every `%` of the
     user's SQL is doubled to) as `%`, so Postgres gets the user's SQL unchanged and its error positions still hold.
     """
@@ -92,7 +96,7 @@ def build_wrapped_query(
     named = [*(spec.column for spec in sort), *(spec.column for spec in filters)]
     unknown = [column for column in named if column not in known]
     if unknown:
-        raise ValueError(f"column {unknown[0]!r} is not a column of the result")
+        raise UnknownColumnError(f"column {unknown[0]!r} is not a column of the result")
 
     params: list[object] = []
     parts: list[sql.Composable] = [

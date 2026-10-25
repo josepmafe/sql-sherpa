@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Final
 
@@ -11,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sherpa_ui.api.errors import UNKNOWN_COLUMN_CODE, ApiException
 from sherpa_ui.readonly.query_runner import QueryOutcome
-from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec
+from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec, UnknownColumnError
 
 if TYPE_CHECKING:
     from sherpa_ui.readonly.query_runner import QueryRunner
@@ -78,7 +77,7 @@ class QueryService:
                 # The browser sorts and filters what it got; say so instead of failing.
                 outcome = self._runner.run(body.query_id, body.sql)
                 return QueryResponse(**outcome.model_dump(), warning=DUPLICATE_COLUMNS_WARNING)
-        except ValueError as error:  # a sort or filter column that is not in the result
+        except UnknownColumnError as error:  # a sort or filter column that is not in the result
             raise ApiException(422, UNKNOWN_COLUMN_CODE, str(error)) from error
 
         return QueryResponse(**outcome.model_dump())
@@ -89,9 +88,7 @@ class QueryService:
             await asyncio.sleep(DISCONNECT_POLL_SECONDS)
             if await request.is_disconnected():
                 logger.info("client of query %s disconnected; cancelling it", query_id)
-                with contextlib.suppress(Exception):  # nobody is left to tell; the run ends on its own anyway
-                    await self.cancel(query_id)
-
+                await self.cancel(query_id)  # the runner already logs a cancel it could not deliver
                 return
 
 
