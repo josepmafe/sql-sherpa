@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev e2e lint test
+.PHONY: lockfile-check up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev e2e lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -63,8 +63,15 @@ grant-read:
 # Brings the roles of an existing volume up to date (creates sherpa_ui, resets passwords and settings) with the
 # same SQL the init script runs on a new one.
 roles:
-	docker compose exec -T postgres sh -c 		'psql -U "$${POSTGRES_USER:-postgres}" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -v admin_user="$$SHERPA_ADMIN_USER" -v admin_password="$$SHERPA_ADMIN_PASSWORD" -v agent_user="$$SHERPA_AGENT_USER" -v agent_password="$$SHERPA_AGENT_PASSWORD" -v ui_user="$$SHERPA_UI_USER" -v ui_password="$$SHERPA_UI_PASSWORD" -v db_name="$$POSTGRES_DB" -f /sherpa/roles.sql'
-	docker compose exec -T postgres sh -c 		'for d in "$$POSTGRES_DB" template1; do psql -U "$${POSTGRES_USER:-postgres}" -d "$$d" -v ON_ERROR_STOP=1 -f /sherpa/large_objects.sql; done'
+	docker compose exec -T postgres sh -c \
+		'psql -U "$${POSTGRES_USER:-postgres}" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+		-v admin_user="$$SHERPA_ADMIN_USER" -v admin_password="$$SHERPA_ADMIN_PASSWORD" \
+		-v agent_user="$$SHERPA_AGENT_USER" -v agent_password="$$SHERPA_AGENT_PASSWORD" \
+		-v ui_user="$$SHERPA_UI_USER" -v ui_password="$$SHERPA_UI_PASSWORD" \
+		-v db_name="$$POSTGRES_DB" -f /sherpa/roles.sql'
+	docker compose exec -T postgres sh -c \
+		'for d in "$$POSTGRES_DB" template1; do \
+		psql -U "$${POSTGRES_USER:-postgres}" -d "$$d" -v ON_ERROR_STOP=1 -f /sherpa/large_objects.sql; done'
 
 docs:
 	$(DBT) docs generate
@@ -122,12 +129,18 @@ ui-web-dev:
 e2e:
 	cd ui/frontend && npx playwright test
 
+# The lockfile must resolve packages from the public registry only (entries without a `resolved` field are fine).
+lockfile-check:
+	@if grep '"resolved"' ui/frontend/package-lock.json | grep -qv '"resolved": "https://registry.npmjs.org/'; then \
+		echo "ui/frontend/package-lock.json has a package resolved outside https://registry.npmjs.org/" >&2; exit 1; fi
+
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy
 	uv run --env-file .env sqlfluff lint data-platform/dbt
 	cd ui/frontend && npm run lint && npm run typecheck
+	$(MAKE) lockfile-check
 	uv run python -m sherpa_ui.openapi_export $(UI_OPENAPI)
 	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o ../../$(UI_TMP)/schema.d.ts
 	diff $(UI_SCHEMA) $(UI_TMP)/schema.d.ts
