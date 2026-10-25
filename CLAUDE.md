@@ -20,6 +20,12 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
     - `advanced/`: how to *extend or modify* it, i.e. which files to touch, in which order, and which tests prove the change.
 
     Every milestone that adds something a person runs or extends gets at least one guide of each kind, or updates existing guides. Guides follow the current-state rule like every other doc.
+- **Every plan task names its models.** Each task has a `**Model:**` line naming its implementer and its reviewer:
+  - `haiku` for mechanical work (docs-only edits, renames, config).
+  - `sonnet` by default.
+  - `opus` only for genuinely hard design or concurrency work.
+
+  Fix rounds 4–5 go one tier up. Plan writing and the final whole-branch review run on `opus`. Implementation sessions run on Sonnet (`/model sonnet`). `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, so a dispatch that names no model gets Sonnet rather than the session's model; an explicit `model` on the dispatch still wins.
 - **Docs describe the current state only.** `CLAUDE.md`, the README, the specs and the plans say what *is*, not what used to be. When something changes, rewrite the affected text in place. Don't add "previously…", "no longer…", "was replaced by…" or notes about discarded approaches; git history is the archive. Anything removed was removed on purpose, so don't carry it over.
 
 ## Principles
