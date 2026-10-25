@@ -16,7 +16,7 @@ MARTS_SCHEMA = "marts"
 PUBLIC_ACCESS = "public"
 METRIC_PREFIX = "metric_"
 ACCEPTED_VALUES_TEST = "accepted_values"
-_MISSING_HINT = "run `make build-prod` and `make docs-prod` (catalog.json is written by `make docs-prod`)"
+_MISSING_HINT = "run `make build-prod` (it writes both files)"
 
 
 class CatalogUnavailable(Exception):

@@ -217,7 +217,7 @@ dbt test --select assert_revenue_excluding_tax --vars '{tax_rate: 0.25}'
 21:11:35    Got 3 results, configured to fail if != 0
 ```
 
-Three of the five pinned cases do not match the new rate, so the change cannot go unnoticed. After changing a definition, run `make build` (all tests), then `make build-prod` and `make docs-prod` so the prod artifacts carry the new text. The marts the agent reads change with the next prod build, not before.
+Three of the five pinned cases do not match the new rate, so the change cannot go unnoticed. After changing a definition, run `make build` (all tests), then `make build-prod` so the prod artifacts carry the new text. The marts the agent reads change with the next prod build, not before.
 
 ## 4. Add a trigram index
 

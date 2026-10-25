@@ -470,7 +470,7 @@ The agent may rely on exactly these:
 
 - **Schema** `marts` (prod target) with the models in §6.5. Intermediate, staging and snapshot models are not part of the interface.
 - **Role** `sherpa_agent`: read-only, `SELECT` on `marts` only, `USAGE` on `extensions` (for `pg_trgm`), `statement_timeout = 5s`.
-- **Artifacts** `data-platform/dbt/target-prod/manifest.json` and `catalog.json` (`manifest.json` is produced by `make build-prod`; `catalog.json` by `make docs-prod` until ui-1 adds it to `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, and (from data-platform-4) exposures.
+- **Artifacts** `data-platform/dbt/target-prod/manifest.json` and `catalog.json` (both produced by `make build-prod`; dev runs never touch this directory), containing: model and column descriptions, `metric_<name>` doc blocks, `meta.domain`, `meta.grain`, `meta.primary_key`, `meta.pii`, `meta.synonyms`, `accepted_values` tests, contracts with column types, and (from data-platform-4) exposures.
 - **Eval dataset:** database `sherpa_eval` with artifacts in `data-platform/dbt/target-eval/` (§3), built by `make eval-db`.
 - **dbt target `agent`** (from agent-design-9) for read-only compilation with `sherpa_agent` credentials.
 - **Postgres comments** on mart tables and columns (`persist_docs`), so the descriptions are available without the manifest.

@@ -134,7 +134,7 @@ class TestMartCatalogLoader:
         with pytest.raises(CatalogUnavailable, match="make build-prod") as no_catalog:
             MartCatalogLoader(target).load()
 
-        assert "make docs-prod" in str(no_folder.value)
+        assert "make docs-prod" not in str(no_folder.value)
         assert "catalog.json" in str(no_catalog.value)
 
     def test_unparsable_artifact_raises_catalog_unavailable(self, target: Path) -> None:

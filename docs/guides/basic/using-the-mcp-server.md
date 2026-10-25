@@ -17,7 +17,7 @@ On top of those, every query runs over Postgres's extended protocol on a server-
 
 ## Starting it
 
-The server reads its settings from `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`, `SHERPA_DBT_TARGET_PATH`, `MCP_TRANSPORT`, `SHERPA_MCP_HOST`, `SHERPA_MCP_PORT`, `SHERPA_MCP_POOL_SIZE`) and needs two dbt artifacts in `data-platform/dbt/target-prod/`: `manifest.json` from `make build-prod` and `catalog.json` from `make docs-prod`. `make docs-prod` writes `catalog.json` and then serves the prod docs on port 8080; stop it with Ctrl+C once it says it is serving (a `make docs` already running holds the same port).
+The server reads its settings from `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`, `SHERPA_DBT_TARGET_PATH`, `MCP_TRANSPORT`, `SHERPA_MCP_HOST`, `SHERPA_MCP_PORT`, `SHERPA_MCP_POOL_SIZE`) and needs two dbt artifacts in `data-platform/dbt/target-prod/`: both written by `make build-prod`.
 
 At startup the server waits up to 15 s for its first warehouse connection. If none opens (Postgres down, wrong password), it logs why on stderr and exits with status 1 instead of serving tools that would all fail:
 
@@ -319,7 +319,7 @@ A failed tool call returns `is_error` with a message written for the model to ac
 | `[sql]` | Postgres refused or failed the query | Read the message, the position (`at character N`, counted in the query as written) and Postgres's hint, if any |
 | `[timeout]` | The query ran over 5 s, or the server was busy with two other queries for 10 s | Aggregate or filter more narrowly, or retry |
 | `[unreachable]` | No connection to the warehouse | Start Postgres (`make up`) |
-| `[unavailable]` | The dbt artifacts are missing or unreadable | Run `make build-prod` and `make docs-prod` |
+| `[unavailable]` | The dbt artifacts are missing or unreadable | Run `make build-prod` |
 
 Argument errors have no code: an unknown table or column comes with the list of valid names, and `search_values` names the reason it refuses a PII or non-text column.
 
@@ -383,7 +383,7 @@ run_sql {"sql": "select count(*) from marts.fct_order_items a cross join marts.f
 Error executing tool run_sql: [timeout] the query took longer than 5 s; aggregate or filter more narrowly
 ```
 
-**Missing artifacts.** Without `manifest.json` and `catalog.json` in `SHERPA_DBT_TARGET_PATH`, every tool that needs the catalog fails with ``[unavailable] dbt artifacts not found (manifest.json, catalog.json): run `make build-prod` and `make docs-prod` (catalog.json is written by `make docs-prod`)``. Run both and call again: the server notices the new files by their modification time, so it needs no restart. The same happens after any rebuild of the marts.
+**Missing artifacts.** Without `manifest.json` and `catalog.json` in `SHERPA_DBT_TARGET_PATH`, every tool that needs the catalog fails with ``[unavailable] dbt artifacts not found (manifest.json, catalog.json): run `make build-prod` (it writes both files)``. Run it and call again: the server notices the new files by their modification time, so it needs no restart. The same happens after any rebuild of the marts.
 
 **An unexpected error.** Anything else (a bug) reaches the model only as `Error executing tool <name>`; the traceback goes to the server's stderr and, with Logfire on, to the trace.
 
@@ -445,7 +445,7 @@ What the trace holds:
 
 | Symptom | Cause and fix |
 |---|---|
-| `[unavailable] dbt artifacts not found` | Run `make build-prod` and `make docs-prod`, as the message says |
+| `[unavailable] dbt artifacts not found` | Run `make build-prod`, as the message says |
 | `[unreachable] the warehouse is unreachable` | Postgres is not up: `make up`, or `docker compose up -d --wait postgres` |
 | The server exits at startup with `cannot connect to the warehouse` | Postgres is down, or `SHERPA_AGENT_PASSWORD` in `.env` does not match the role |
 | The container is unhealthy or keeps restarting | `docker compose logs mcp`; the server exits when it cannot connect (as above) and `restart: unless-stopped` starts it again, so it stays unhealthy until the cause is fixed |
