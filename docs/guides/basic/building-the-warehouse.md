@@ -11,7 +11,7 @@ A few dbt terms first:
 - A **contract** is a promise in the YAML that a model has exactly the listed columns with the listed types. dbt checks it before it builds the table. The marts enforce one.
 - A **hook** is SQL dbt runs around a build: `on-run-start` and `on-run-end` once per invocation, `post-hook` after one model.
 - A **target** is one named connection in `data-platform/dbt/profiles.yml`: `dev` (the default), `prod` and `eval`. Credentials come from `.env` through `env_var()`.
-- `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-agent` uses it).
+- `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-read` uses it).
 - **`persist_docs`** is a config that copies the YAML descriptions into Postgres comments on the tables and columns, so a database client can read them.
 - **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` on the marts).
 
@@ -64,18 +64,18 @@ Data flows through three layers, each in its own schema:
 - **Intermediate** (`models/intermediate/`, `int_<entity>__<verb>`): joins and calculations that several marts need, such as allocating an order's discount over its lines (`int_order_items__discount_allocated`) or numbering web sessions (`int_events__sessionized`). Consumers never read them. Most are *ephemeral*: dbt pastes the SQL into the models that use them as a CTE (a `WITH` block) and creates nothing in Postgres. The exceptions are `int_events__sessionized` (a table) and `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` (views).
 - **Marts** (`models/marts/`): the nine tables consumers query, with enforced contracts ([Querying the marts](querying-the-marts.md)).
 
-### Hooks and `make grant-agent`
+### Hooks and `make grant-read`
 
 Three hooks in `data-platform/dbt/dbt_project.yml` do work outside the models:
 
-- `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name and `SHERPA_AGENT_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
+- `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name, `SHERPA_AGENT_USER` and `SHERPA_UI_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with, for example, `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
 - A `post-hook: analyze {{ this }}` on every mart, and on the `int_events__sessionized` table, refreshes its table statistics after it is built, so Postgres plans queries well.
-- `on-run-end` runs the `grant_agent_access` macro. On `prod` and `eval` it gives the `sherpa_agent` role `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables; on `dev` it does nothing (`grant_agent_access: skipped on dev`).
+- `on-run-end` runs two macros, in this order. `record_run_results` appends one row per executed node to `ops.dbt_run_results` (it creates the `ops` schema and the table if missing), on every target; `is_full_run` is false when the invocation used `--select`, `--exclude` or `--selector`. `grant_read_access` then gives the `sherpa_agent` and `sherpa_ui` roles `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables, and the UI role `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`; it does this on `prod` and `eval` only (on `dev`: `grant_read_access: skipped on dev`).
 
-`make grant-agent` runs the same macro on prod without a build, which re-applies the grants if they were lost:
+`make grant-read` runs `grant_read_access` on prod without a build, which re-applies the grants if they were lost (`run-operation` runs no hooks, so it records no run results):
 
 ```
-grant_agent_access: granted usage on marts, extensions and select on marts tables to "sherpa_agent" on prod
+grant_read_access: granted usage on marts, extensions and select on marts tables to "sherpa_agent" on prod
 ```
 
 `dbt build` and `dbt source freshness` also run the hooks, so on a fresh database the grants step prints `skipped ... schema marts not built yet` until the marts exist.

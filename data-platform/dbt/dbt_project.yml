@@ -22,8 +22,11 @@ vars:
 
 # Runs once at the start of every dbt invocation.
 on-run-start: "{{ ensure_extensions() }}"
-# Runs once at the end of every dbt invocation: read access to the marts for the agent, on prod and eval only.
-on-run-end: "{{ grant_agent_access() }}"
+# Runs once at the end of every dbt invocation: the run-results audit table, then read access to the marts (and
+# the audit table for the UI) on prod and eval only. The order matters: the audit table must exist when it is granted.
+on-run-end:
+  - "{{ record_run_results(results) }}"
+  - "{{ grant_read_access() }}"
 
 # Folder-level defaults. "+schema" is a *custom* schema; the generate_schema_name macro
 # turns it into the real schema name (dev_<name> on dev, <name> on prod).
@@ -46,11 +49,13 @@ models:
         relation: true
         columns: true
       +post-hook: "analyze {{ this }}"
-      # SELECT for the agent on every target; it only takes effect where the agent also has schema USAGE (prod, eval).
+      # SELECT for the agent and UI roles on every target; it only takes effect where the role also has schema USAGE (prod, eval).
       # The default (the role name from .env.example) lets commands that only parse, like deps, run without .env.
       # dbt does not quote grantees; the on-run-start hook (ensure_extensions) rejects a malformed role name.
       +grants:
-        select: ["{{ env_var('SHERPA_AGENT_USER', 'sherpa_agent') }}"]
+        select:
+          - "{{ env_var('SHERPA_AGENT_USER', 'sherpa_agent') }}"
+          - "{{ env_var('SHERPA_UI_USER', 'sherpa_ui') }}"
 
 seeds:
   sherpa:

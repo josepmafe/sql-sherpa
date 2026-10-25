@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent roles docs-check eval-db mcp-dev lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -15,7 +15,7 @@ SHERPA_DB_NAME ?= sherpa
 DB_NAME_CHARS = a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 _
 # $(call strip-chars,text,chars): text with every character in the word list chars removed.
 strip-chars = $(if $(2),$(call strip-chars,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,$(words $(2)),$(2))),$(1))
-DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit
+DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit, ops
 
 up:
 	docker compose up -d --build --wait
@@ -54,10 +54,11 @@ build:
 build-prod:
 	$(DBT) source freshness $(PROD)
 	$(DBT) build $(PROD)
+	$(DBT) docs generate $(PROD)
 
-# Re-applies the agent's prod grants without a build (same macro as the on-run-end hook).
-grant-agent:
-	$(DBT) run-operation grant_agent_access $(PROD)
+# Re-applies the agent and UI read grants on prod without a build (same macro as the on-run-end hook).
+grant-read:
+	$(DBT) run-operation grant_read_access $(PROD)
 
 # Brings the roles of an existing volume up to date (creates sherpa_ui, resets passwords and settings) with the
 # same SQL the init script runs on a new one.

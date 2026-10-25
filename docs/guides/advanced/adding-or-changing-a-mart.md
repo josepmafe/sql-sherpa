@@ -165,7 +165,7 @@ A model that needs lookups or joins starts with one CTE per input (`with custome
   `fct_orders` indexes `order_date` and `customer_id`; `fct_order_items` indexes `order_id` and `variant_id`; `fct_order_discounts` indexes `order_id` and `promotion_id`.
 - Text columns people search by name get a trigram index (section 4).
 
-**3. Grants.** Nothing to do. The `+grants` setting in `dbt_project.yml` gives `sherpa_agent` `SELECT` on every mart table, and the `on-run-end` hook `grant_agent_access` grants `USAGE` on the `marts` schema and `SELECT` on all of its tables on prod and eval. The agent can read the new table after the next `make build-prod`.
+**3. Grants.** Nothing to do. The `+grants` setting in `dbt_project.yml` gives `sherpa_agent` and `sherpa_ui` `SELECT` on every mart table, and the `on-run-end` hook `grant_read_access` grants `USAGE` on the `marts` schema and `SELECT` on all of its tables to both roles on prod and eval. The agent can read the new table after the next `make build-prod`.
 
 **4. Build, then check the docs.**
 

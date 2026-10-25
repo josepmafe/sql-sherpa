@@ -46,8 +46,8 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make deps`: install the dbt packages.
 - `make seed`: load the dbt seeds.
 - `make build`: check source freshness, then `dbt build` on the dev target.
-- `make build-prod`: the same on the prod target, with artifacts in `target-prod`.
-- `make grant-agent`: re-apply the `sherpa_agent` read grants on `marts` (prod) without a build; the build runs the same macro as its `on-run-end` hook.
+- `make build-prod`: the same on the prod target, then `dbt docs generate`, with artifacts in `target-prod`.
+- `make grant-read`: re-apply the `sherpa_agent` and `sherpa_ui` read grants on `marts` (and the UI's on `ops.dbt_run_results`) on prod without a build; the build runs the same macro as its `on-run-end` hook, after `record_run_results` has written the run's rows to `ops.dbt_run_results`.
 - `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `data-platform/dbt/models` has no description.
