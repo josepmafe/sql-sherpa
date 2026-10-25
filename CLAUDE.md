@@ -8,7 +8,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
 - **UI spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`. The web app (Home, Ask, Explorer, Lineage). Relies on the data platform spec §11 and the agent spec's `plan`/`answer` contract (§5.1).
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-5` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`) and agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`) are done. Current plan: agent-design-2 (gold set and evals), to be planned; data-platform-3 runs alongside.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-5` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`), agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`) and ui-1 (`2026-10-24-ui-1-shell-and-explorer.md`) are done. Current plan: agent-design-2 (gold set and evals), to be planned; data-platform-3 runs alongside.
 - **Sequencing:**
   1. data-platform-1 → data-platform-2 (defines the agent-facing interface).
   2. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-3 once agent-design-1 exists; ui-4 after agent-design-3; ui-5 (one-command demo) after ui-4.
@@ -37,7 +37,8 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ## Commands
 
-- `make up` / `make down`: start / stop every compose service, Postgres and the `mcp` server (`make up` builds the `mcp` image and waits until both are healthy). To work on the database alone, `docker compose up -d --wait postgres`.
+- `make up` / `make down`: start / stop every compose service: Postgres, the `mcp` server and the `ui` web app (`make up` builds their images and waits until all are healthy; the app is at `http://127.0.0.1:8090`, port from `SHERPA_UI_PORT`). To work on the database alone, `docker compose up -d --wait postgres`.
+- `make roles`: bring the database roles of an existing volume up to date (creates `sherpa_ui`, resets passwords and role settings) with the SQL the init script runs on a new one (`data-platform/postgres/roles.sql`); idempotent.
 - `make mcp-dev`: run the MCP server on the host over HTTP (`http://127.0.0.1:8765/mcp`, port from `SHERPA_MCP_PORT`).
 - `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
 - `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
@@ -51,18 +52,21 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `data-platform/dbt/models` has no description.
-- `make lint`: ruff check, ruff format check, mypy and sqlfluff.
-- `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`docker compose up -d --wait postgres`).
+- `make ui-dev`: the UI for development: the API with reload on `127.0.0.1:8090` (`ui-api-dev`) and the Vite dev server (`ui-web-dev`), which proxies `/api` to it. Stop the compose `ui` service first, as both use port 8090.
+- `make ui-client`: regenerate `ui/frontend/src/api/schema.d.ts` (the typed API client) from the backend's OpenAPI schema; commit the result after any API change.
+- `make e2e`: Playwright against the compose stack (`make up`, `make build-prod`; base URL from `SHERPA_UI_PORT`). Needs `npx playwright install chromium` once in `ui/frontend`. Its freshness spec simulates one extra day and rebuilds prod, at most once per day (it skips itself otherwise); only `make reset` undoes that.
+- `make lint`: ruff check, ruff format check, mypy, sqlfluff, then in `ui/frontend` ESLint and `tsc`, and a check that the committed API client matches the backend's schema.
+- `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`docker compose up -d --wait postgres`). The frontend's tests are separate: `cd ui/frontend && npm test` (Vitest).
 
 ## Conventions
 
 - **Repository layout, grouped by spec:**
   - `data-platform/`: `postgres/init/` (roles), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
-  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `agent/core/`, `agent/evals/` and `ui/` (`backend/`, `frontend/`) appear with their first milestones.
+  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
   - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
-- Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `mcp`, `dev`). `sqlglot` is pinned exactly: its parser is the SQL guard's view of a query, so a bump is a guard change (rerun the guard's hostile-input tests). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
+- Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `mcp`, `ui`, `dev`); the frontend has its own `ui/frontend/package.json` (npm). `sqlglot` is pinned exactly: its parser is the SQL guard's view of a query, so a bump is a guard change (rerun the guard's hostile-input tests). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
 - dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
@@ -131,9 +135,10 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
+- UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:
   - `integration`: needs Postgres
-  - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`). The MCP server tests over the compose container also need `SHERPA_TEST_MCP_CONTAINER=1` and the `mcp` service up; without it they are skipped
+  - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`). The MCP server tests over the compose container also need `SHERPA_TEST_MCP_CONTAINER=1` and the `mcp` service up; without it they are skipped. The UI's `e2e` Playwright specs need the compose stack up and the prod warehouse built; they run with `make e2e`, not pytest
   - `slow`: full-year runs
   - `live`: real Bedrock calls; costs money, never in CI
 
@@ -143,7 +148,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ### Tooling
 - Every Python command runs through uv: `uv run pytest`, `uv run python`, `uv add <pkg> --group <group>`.
-- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `data-platform/generator/src` and `agent/mcp-server/src`. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
+- ruff rule set: `E, F, I, UP, B, SIM, ASYNC, T20, LOG, G, C4, TC, PT, RUF`. mypy runs on `data-platform/generator/src`, `agent/mcp-server/src` and `ui/backend/src`. The frontend is linted with ESLint (`npm run lint`) and type-checked with `tsc --noEmit` (`npm run typecheck`), both run by `make lint`; they are not pre-commit hooks. pre-commit runs ruff check/format, mypy, sqlfluff, `check-yaml`, `check-toml`, `end-of-file-fixer`, `trailing-whitespace` and `check-added-large-files`.
 
 ## Environment notes
 

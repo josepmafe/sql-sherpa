@@ -27,7 +27,7 @@ The same project builds into different schemas depending on the target (the `gen
 | Staging views | `dev_staging` | `staging` |
 | Intermediate | `dev_intermediate` | `intermediate` |
 | Marts | `dev_marts` | `marts` |
-| Agent access | none | `sherpa_agent` reads `marts` |
+| Reader access | none | `sherpa_agent` and `sherpa_ui` read `marts` |
 | Artifacts (`manifest.json`, `catalog.json`, ...) | `data-platform/dbt/target/` | `data-platform/dbt/target-prod/` |
 | Make targets | `make build`, `make docs` | `make build-prod`, `make docs-prod` |
 
@@ -80,12 +80,72 @@ grant_read_access: granted usage on marts, extensions and select on marts tables
 
 `dbt build` and `dbt source freshness` also run the hooks, so on a fresh database the grants step prints `skipped ... schema marts not built yet` until the marts exist.
 
+### The database roles and `make roles`
+
+Postgres has three logins, created from `.env` by `data-platform/postgres/roles.sql`:
+
+| Login | Used by | Can |
+|---|---|---|
+| `sherpa_admin` | the generator and dbt | everything in the `sherpa` database; owns the schemas |
+| `sherpa_agent` | the MCP server | read the marts; read-only transactions, `statement_timeout = 5s` |
+| `sherpa_ui` | the web app | read the marts and `ops.dbt_run_results`; read-only transactions, `statement_timeout = 30s` |
+
+On a new volume the init script runs `roles.sql` once. A volume created before a role existed (the `sherpa_ui` login arrived with ui-1) keeps its old roles, because init scripts only run on an empty data directory, and `sherpa_admin` cannot create roles. `make roles` runs the same SQL again as the `postgres` superuser inside the container, so no data is lost. It is idempotent: it creates what is missing and resets passwords and role settings to the `.env` values, so run it after changing a password too.
+
+```bash
+make roles
+```
+
+```
+ALTER ROLE
+ALTER DATABASE
+ALTER ROLE
+...
+REVOKE
+REVOKE
+```
+
+Until the role exists, a prod build fails at the grants with Postgres's `role "sherpa_ui" does not exist`; run `make roles` and build again.
+
+### The audit table `ops.dbt_run_results`
+
+The `record_run_results` hook appends to `ops.dbt_run_results` after every dbt command that runs the hooks, on every target (the table lives in the `ops` schema of the database dbt ran against). It has one row per node of the invocation:
+
+| Column | Holds |
+|---|---|
+| `invocation_id`, `run_started_at` | which dbt invocation, and when it started |
+| `target_name`, `command` | `dev`, `prod` or `eval`; `build`, `freshness`, ... |
+| `is_full_run` | true when the invocation had no `--select`, `--exclude` or `--selector` |
+| `unique_id`, `resource_type` | the node (`model.sherpa.fct_orders`, `test.sherpa...`, `source.sherpa...`) and its kind |
+| `status` | `success`, `pass`, `warn`, `error`, `fail`, `skipped`, ... |
+| `failures`, `execution_time_s`, `message` | test failure count, seconds, dbt's message (cut at 2,000 characters) |
+
+dbt rewrites `run_results.json` on every command that compiles, so the file cannot say what the last full build did; the table keeps every run. `make build-prod` runs `dbt source freshness` first, and that command records its own rows with `command = 'freshness'`, so to find the last full build filter on `command = 'build'`:
+
+```sql
+select run_started_at, count(*) as nodes,
+       count(*) filter (where status in ('error', 'fail')) as failed
+from ops.dbt_run_results
+where target_name = 'prod' and command = 'build' and is_full_run
+group by invocation_id, run_started_at
+order by run_started_at desc
+limit 1;
+```
+
+```
+        run_started_at         | nodes | failed
+-------------------------------+-------+--------
+ 2026-10-25 21:11:48.020087+00 |   318 |      0
+```
+
+Run it with `docker compose exec postgres psql -U sherpa_admin -d sherpa`; `sherpa_ui` can read the table too. `make grant-read` is a `run-operation`, which runs no hooks, so it adds no rows. `make reset` drops the `ops` schema with the other dbt schemas.
+
 ## Building
 
 ```bash
 make deps        # install the dbt packages (dbt_utils, dbt_expectations) into data-platform/dbt/dbt_packages/
 make build       # source freshness, then dbt build on dev
-make build-prod  # the same on prod
+make build-prod  # the same on prod, then dbt docs generate (target-prod/catalog.json, which the MCP server and the UI read)
 ```
 
 `make deps` downloads the versions pinned in `data-platform/dbt/package-lock.yml`: `dbt_utils`, `dbt_expectations` and `dbt_date`, which `dbt_expectations` needs:

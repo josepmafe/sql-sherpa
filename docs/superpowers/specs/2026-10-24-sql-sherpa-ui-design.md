@@ -175,12 +175,12 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
 - **Role `sherpa_ui`:** read-only, `SELECT` on `marts` and `USAGE` on `marts` and `extensions`, exactly like `sherpa_agent`, plus `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results` for the build status. The build-status query is fixed backend SQL, not user SQL; user queries still go through the guard, which only allows `marts`. It has its own role so its timeout and audit trail are separate from the agent's. Its role defaults are `default_transaction_read_only = on` and `statement_timeout = 30s`, and it gets the same `PUBLIC` revokes.
   - **On a fresh volume,** the data platform's Postgres init script creates it.
   - **On an existing volume** (the init script only runs on an empty one, and `sherpa_admin` can't create roles), ui-1 makes the role SQL idempotent. It moves into `data-platform/postgres/roles.sql`, which the init script runs, and **`make roles`** runs it again as the `postgres` superuser inside the container, so no volume has to be wiped.
-  - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with "role does not exist" until `make roles` has run, and the error says so.
-- **Connection options:** `default_transaction_read_only=on`, `statement_timeout=30s` (`SHERPA_UI_STATEMENT_TIMEOUT`), set on the connection like the MCP server's.
+  - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with Postgres's `role "sherpa_ui" does not exist` until `make roles` has run.
+- **Connection options:** `default_transaction_read_only=on`, `statement_timeout=30s` (`SHERPA_UI_STATEMENT_TIMEOUT_S`, integer seconds, default 30, at least 1), set on the connection like the MCP server's.
 - **Guard:** `sherpa_mcp.sql_guard` (agent spec §4.2), imported as a library: one statement, `SELECT`/`WITH` only, the function allow-list, every table `marts.<visible mart>`, every qualified column a real column, no `SET`/`RESET`/`ALTER`. The runner builds `SqlGuard(catalog.mart_columns(), allowed_functions=...)` with its own allow-list (the agent's is the default). A rejection returns `code = "guard_rejected"` with the guard's reason, which the UI shows verbatim.
 - **Executor:** the runner's own (this section's timeout, row cap, cancel and error positions); the MCP server's `AgentDatabase` is shaped for the model (5 s, 100 rows, a 50,000-character budget) and is not reused.
 - **Row cap:** 1,000 rows (`SHERPA_UI_ROW_CAP`), fetched from a server-side cursor (1,001 fetched means `truncated`).
-- **PII masking:** the same name-based masking as the agent (agent spec §4.2). ui-1 decides whether `sherpa_ui` and `sherpa_agent` get column-level `SELECT` grants without the PII columns, which would make the masking real (name-based masking misses aliases and expressions, and `pg_stats` shows the PII columns' stored values to a role that can read them).
+- **PII masking:** the same name-based masking as the agent (agent spec §4.2). Neither `sherpa_ui` nor `sherpa_agent` has column-level `SELECT` grants, so the masking is by result-column name only: a PII column under an alias or inside an expression is not masked, and `pg_stats` shows the PII columns' stored values to a role that can read them.
 - **Sort and filter:**
   - When the first run was **not** truncated, the frontend sorts and filters the rows it has (`mode = "client"`).
   - When it **was** truncated, the frontend re-sends the SQL with `sort`/`filters`, and the backend runs `select * from (<sql>\n) as q where … order by …` (`mode = "server"`). The newline before the closing parenthesis keeps a trailing `--` comment from swallowing it, and trailing `;` and whitespace are stripped first. The wrapper is built from validated column names (they must be result columns) and bound parameters; the user's SQL is still guard-checked as written.
@@ -342,7 +342,7 @@ Browser storage never holds result rows; results are always re-fetched (criteria
 |---|---|---|
 | `SHERPA_UI_PORT` | `8090` | Port on 127.0.0.1 |
 | `SHERPA_UI_USER`, `SHERPA_UI_PASSWORD` | `sherpa_ui`, — | The UI's read-only role |
-| `SHERPA_UI_STATEMENT_TIMEOUT` | `30s` | Per-query timeout |
+| `SHERPA_UI_STATEMENT_TIMEOUT_S` | `30` | Per-query timeout, in whole seconds (at least 1) |
 | `SHERPA_UI_ROW_CAP` | `1000` | Rows returned per query |
 | `SHERPA_UI_DRAFT_TTL_MINUTES` | `60` | How long Ask drafts are kept |
 | `SHERPA_UI_TRACE_URL_TEMPLATE` | — | e.g. a Logfire or Phoenix URL with `{trace_id}` |
