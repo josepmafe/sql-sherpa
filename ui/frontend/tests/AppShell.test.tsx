@@ -7,6 +7,8 @@ import { routes } from "../src/app/routes";
 
 vi.mock("../src/api/queries", () => ({
   useHealth: () => ({ data: { database: "ok", artifacts: { status: "ok", generated_at: null } } }),
+  useCatalog: () => ({ data: { database: "sherpa", schema_name: "marts", domains: [] } }),
+  useTableDetails: () => ({ data: undefined }),
 }));
 
 function renderAt(path: string) {
@@ -31,6 +33,6 @@ describe("AppShell", () => {
   it("redirects / to the Explorer", () => {
     renderAt("/");
 
-    expect(screen.getByRole("heading", { name: "Explorer" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Search tables and columns")).toBeInTheDocument();
   });
 });

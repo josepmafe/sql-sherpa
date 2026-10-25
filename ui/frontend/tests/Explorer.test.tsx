@@ -1,0 +1,158 @@
+import { MantineProvider } from "@mantine/core";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { CatalogTree } from "../src/screens/explorer/CatalogTree";
+import { Inspector } from "../src/screens/explorer/Inspector";
+
+const CATALOG = {
+  database: "sherpa",
+  schema_name: "marts",
+  domains: [
+    {
+      name: "sales",
+      tables: [
+        {
+          name: "fct_orders",
+          domain: "sales",
+          description: "One row per order.",
+          grain: "one row per order",
+          primary_key: ["order_id"],
+          columns: [
+            { name: "order_id", data_type: "bigint", description: "Order key.", is_primary_key: true, is_pii: false },
+            { name: "customer_email", data_type: "text", description: "Email.", is_primary_key: false, is_pii: true },
+          ],
+        },
+      ],
+    },
+    {
+      name: "product",
+      tables: [
+        {
+          name: "dim_products",
+          domain: "product",
+          description: "One row per product.",
+          grain: "one row per product",
+          primary_key: ["product_id"],
+          columns: [
+            { name: "sku", data_type: "text", description: "Stock keeping unit.", is_primary_key: false, is_pii: false },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const DETAILS = {
+  name: "fct_orders",
+  domain: "sales",
+  description: "One row per order.",
+  grain: "one row per order",
+  primary_key: ["order_id"],
+  synonyms: ["purchases"],
+  tests: ["unique_fct_orders_order_id"],
+  columns: [
+    {
+      name: "status",
+      data_type: "text",
+      description: "Order status.",
+      is_primary_key: false,
+      is_pii: false,
+      accepted_values: ["placed", "shipped"],
+      synonyms: ["state"],
+      metric_refs: [{ name: "net_revenue", definition: "Revenue after refunds." }],
+    },
+  ],
+};
+
+const useCatalog = vi.fn();
+const useTableDetails = vi.fn();
+vi.mock("../src/api/queries", () => ({
+  useCatalog: () => useCatalog(),
+  useTableDetails: (name: string | undefined) => useTableDetails(name),
+}));
+
+function renderWithMantine(ui: ReactNode) {
+  return render(<MantineProvider env="test">{ui}</MantineProvider>);
+}
+
+describe("CatalogTree", () => {
+  beforeEach(() => {
+    useCatalog.mockReset().mockReturnValue({ data: CATALOG });
+  });
+
+  it("groups by domain and shows badges", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+
+    expect(screen.getByText("sales")).toBeInTheDocument();
+    expect(screen.getByText("product")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+
+    expect(screen.getByText("PK")).toBeInTheDocument();
+    expect(screen.getByText("PII")).toBeInTheDocument();
+    expect(screen.getByText("bigint")).toBeInTheDocument();
+  });
+
+  it("search keeps parents of matching columns", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+
+    await user.type(screen.getByLabelText("Search tables and columns"), "EMAIL");
+
+    expect(screen.getByText("sales")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+    expect(screen.getByText("customer_email")).toBeInTheDocument();
+    expect(screen.queryByText("order_id")).not.toBeInTheDocument();
+    expect(screen.queryByText("product")).not.toBeInTheDocument();
+  });
+
+  it("hover shows the description", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+
+    await user.hover(screen.getByRole("button", { name: "fct_orders" }));
+
+    expect(await screen.findByText(/One row per order\. Grain: one row per order\. PK: order_id/)).toBeInTheDocument();
+  });
+
+  it("menu opens from right-click and runs the editor action", async () => {
+    const user = userEvent.setup();
+    const onPreview = vi.fn();
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={onPreview} />);
+
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "fct_orders" }) });
+    await user.click(await screen.findByRole("menuitem", { name: "Preview 100 rows" }));
+
+    expect(onPreview).toHaveBeenCalledWith("marts.fct_orders");
+  });
+
+  it("menu opens from the ⋯ button, with unwired actions disabled and explained", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "Insert SELECT" })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: "Open in Lineage" })).toBeDisabled();
+    expect(within(menu).getByRole("menuitem", { name: "Copy name" })).toBeEnabled();
+
+    await user.hover(within(menu).getByText("Open in Lineage"));
+    expect(await screen.findByText("Lineage arrives with ui-2")).toBeInTheDocument();
+  });
+});
+
+describe("Inspector", () => {
+  it("shows accepted values, synonyms, metric definitions and tests", () => {
+    useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
+    renderWithMantine(<Inspector table="fct_orders" />);
+
+    expect(screen.getByText(/Accepted values: placed, shipped/)).toBeInTheDocument();
+    expect(screen.getByText(/Synonyms: state/)).toBeInTheDocument();
+    expect(screen.getByText(/Revenue after refunds\./)).toBeInTheDocument();
+    expect(screen.getByText("unique_fct_orders_order_id")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open in Lineage" })).toBeDisabled();
+  });
+});
