@@ -63,6 +63,7 @@ class WarehouseSettings(BaseSettings):
     admin_password: SecretStr
     agent_user: str
     agent_password: SecretStr
+    ui_user: str = "sherpa_ui"
 
     def conninfo(self, database: Database, role: Role) -> str:
         user, password = (
@@ -163,6 +164,36 @@ class TestAgentAccess:
 
         assert row is not None
         assert row[0] is not None
+
+
+class TestRoleSettings:
+    # Role settings are cluster-wide, so the main database is enough.
+    @pytest.mark.parametrize("database", ["main"], indirect=True)
+    @pytest.mark.parametrize(
+        ("role", "statement_timeout", "conn_limit"),
+        [("agent_user", "5s", 20), ("ui_user", "30s", 10)],
+    )
+    def test_reader_role_settings(
+        self, admin: psycopg.Connection, role: str, statement_timeout: str, conn_limit: int
+    ) -> None:
+        role_name = getattr(WarehouseSettings(), role)
+        query = (
+            "select s.setconfig, r.rolconnlimit from pg_roles r"
+            " left join pg_db_role_setting s on s.setrole = r.oid and s.setdatabase = 0"
+            " where r.rolname = %s"
+        )
+
+        row = admin.execute(query, (role_name,)).fetchone()
+
+        assert row is not None
+        assert sorted(row[0]) == sorted(
+            [
+                "default_transaction_read_only=on",
+                f"statement_timeout={statement_timeout}",
+                "temp_file_limit=256MB",
+            ]
+        )
+        assert row[1] == conn_limit
 
 
 class TestTrigramIndexes:

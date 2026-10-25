@@ -215,7 +215,7 @@ What to do after the data platform builds a new or changed mart:
 
 1. Run `make build-prod` and `make docs-prod`, so `manifest.json` and `catalog.json` in `data-platform/dbt/target-prod/` are current. The server reloads when either file's modification time changes, so a running server (including the container, which mounts `data-platform/dbt` read-only) picks the change up on the next call, with no restart; `describe_table`'s stored values are read again for the new build. If the new mart has a PII column, mark it `meta.pii: true` in the dbt YAML first: the masking, `search_values` and `distinct_values` follow that flag. Changed descriptions and grains reach the tools through the rebuilt artifacts, and the Postgres comments (`persist_docs`) only through the rebuild.
 2. Update the `MARTS` lists in the tests:
-   - `data-platform/tests/dbt/test_agent_access.py` has the data platform's list of marts, which `tests/test_tools.py` reads to check that `list_tables` returns exactly those marts;
+   - `data-platform/tests/dbt/test_reader_access.py` has the data platform's list of marts, which `tests/test_tools.py` reads to check that `list_tables` returns exactly those marts;
    - `agent/mcp-server/tests/test_examples.py` has its own `MARTS` set, which the example test compares to the catalog (or to the marts' dbt YAML without a prod build).
 3. Update the scope texts in `tools.py`: add a `DOMAIN_SUBJECTS` phrase for a new domain (`marketing_web` from data-platform-4), and remove from `DOES_NOT_COVER` the entries the new marts now cover (the web sessions entry with data-platform-3's `fct_sessions`, the campaign and lead entries with data-platform-4). `test_get_context_as_of_and_scope` in `tests/test_tools.py` checks them.
 4. Run the whole suite:

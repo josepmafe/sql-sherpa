@@ -501,7 +501,7 @@ uv run --env-file .env pytest -m warehouse
 ```
 collected 325 items / 288 deselected / 37 selected
 
-tests\dbt\test_agent_access.py .....................................     [100%]
+tests\dbt\test_reader_access.py .....................................     [100%]
 
 ===================== 37 passed, 288 deselected in 3.36s ======================
 ```

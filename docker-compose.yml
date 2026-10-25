@@ -12,12 +12,17 @@ services:
       SHERPA_ADMIN_PASSWORD: ${SHERPA_ADMIN_PASSWORD:?set it in .env}
       SHERPA_AGENT_USER: ${SHERPA_AGENT_USER:-sherpa_agent}
       SHERPA_AGENT_PASSWORD: ${SHERPA_AGENT_PASSWORD:?set it in .env}
+      SHERPA_UI_USER: ${SHERPA_UI_USER:-sherpa_ui}
+      SHERPA_UI_PASSWORD: ${SHERPA_UI_PASSWORD:?set it in .env}
     ports:
       # Localhost only: the .env passwords are dev placeholders, so the database must not be reachable from the LAN.
       - "127.0.0.1:${SHERPA_DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./data-platform/postgres/init:/docker-entrypoint-initdb.d:ro
+      # The role SQL as a folder (Docker would create a missing single file as a directory). Not in initdb.d, where
+      # its files would run on their own without their variables.
+      - ./data-platform/postgres:/sherpa:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
       interval: 5s

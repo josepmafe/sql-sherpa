@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check eval-db mcp-dev lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent roles docs-check eval-db mcp-dev lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -58,6 +58,12 @@ build-prod:
 # Re-applies the agent's prod grants without a build (same macro as the on-run-end hook).
 grant-agent:
 	$(DBT) run-operation grant_agent_access $(PROD)
+
+# Brings the roles of an existing volume up to date (creates sherpa_ui, resets passwords and settings) with the
+# same SQL the init script runs on a new one.
+roles:
+	docker compose exec -T postgres sh -c 		'psql -U "$${POSTGRES_USER:-postgres}" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -v admin_user="$$SHERPA_ADMIN_USER" -v admin_password="$$SHERPA_ADMIN_PASSWORD" -v agent_user="$$SHERPA_AGENT_USER" -v agent_password="$$SHERPA_AGENT_PASSWORD" -v ui_user="$$SHERPA_UI_USER" -v ui_password="$$SHERPA_UI_PASSWORD" -v db_name="$$POSTGRES_DB" -f /sherpa/roles.sql'
+	docker compose exec -T postgres sh -c 		'for d in "$$POSTGRES_DB" template1; do psql -U "$${POSTGRES_USER:-postgres}" -d "$$d" -v ON_ERROR_STOP=1 -f /sherpa/large_objects.sql; done'
 
 docs:
 	$(DBT) docs generate
