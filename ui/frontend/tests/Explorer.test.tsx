@@ -85,7 +85,7 @@ describe("CatalogTree", () => {
 
   it("groups by domain and shows badges", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     expect(screen.getByText("sales")).toBeInTheDocument();
     expect(screen.getByText("product")).toBeInTheDocument();
@@ -98,7 +98,7 @@ describe("CatalogTree", () => {
 
   it("search keeps parents of matching columns", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.type(screen.getByLabelText("Search tables and columns"), "EMAIL");
 
@@ -111,7 +111,7 @@ describe("CatalogTree", () => {
 
   it("hover shows the description", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.hover(screen.getByRole("button", { name: "fct_orders" }));
 
@@ -121,7 +121,7 @@ describe("CatalogTree", () => {
   it("menu opens from right-click and runs the editor action", async () => {
     const user = userEvent.setup();
     const onPreview = vi.fn();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={onPreview} />);
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={onPreview} onInsertSelect={() => {}} />);
 
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "fct_orders" }) });
     await user.click(await screen.findByRole("menuitem", { name: "Preview 100 rows" }));
@@ -129,13 +129,23 @@ describe("CatalogTree", () => {
     expect(onPreview).toHaveBeenCalledWith("marts.fct_orders");
   });
 
-  it("menu opens from the ⋯ button, with unwired actions disabled and explained", async () => {
+  it("Insert SELECT in the ⋯ menu reports the qualified name", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} />);
+    const onInsertSelect = vi.fn();
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={onInsertSelect} />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Insert SELECT" }));
+
+    expect(onInsertSelect).toHaveBeenCalledWith("marts.dim_products");
+  });
+
+  it("menu opens from the ⋯ button, with Lineage disabled and explained", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: "Insert SELECT" })).toBeDisabled();
     expect(within(menu).getByRole("menuitem", { name: "Open in Lineage" })).toBeDisabled();
     expect(within(menu).getByRole("menuitem", { name: "Copy name" })).toBeEnabled();
 

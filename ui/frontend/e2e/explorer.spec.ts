@@ -59,6 +59,25 @@ test("a truncated result sorts on the server", async ({ page }) => {
   await expect(page.locator("tbody tr").first().getByRole("cell").first()).toHaveText(maxId);
 });
 
+test("a small result sorts in the browser without another request", async ({ page }) => {
+  const sql = "select order_id from marts.fct_orders order by order_id limit 20";
+  const maxId = adminScalar(`select max(order_id) from (${sql}) as t`);
+  const queryPosts: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/queries") queryPosts.push(request.url());
+  });
+
+  await runQuery(page, sql);
+  await expect(page.getByText(/^20 rows in /)).toBeVisible();
+  const header = page.getByRole("columnheader", { name: "order_id" });
+  await header.click();
+  await header.click();
+
+  await expect(header).toHaveAttribute("aria-sort", "descending");
+  await expect(page.locator("tbody tr").first().getByRole("cell").first()).toHaveText(maxId);
+  expect(queryPosts).toHaveLength(1);
+});
+
 test("a long aggregate is cancelled with the button", async ({ page }) => {
   await runQuery(
     page,

@@ -16,6 +16,6 @@ test("Explorer works with every request outside the app's origin blocked", async
   await page.goto("/explorer");
   await runQuery(page, "select count(*) from marts.fct_orders");
 
-  await expect(page.getByText(/^1 rows in /)).toBeVisible();
+  await expect(page.getByText(/^1 row in /)).toBeVisible();
   expect(blocked).toEqual([]);
 });

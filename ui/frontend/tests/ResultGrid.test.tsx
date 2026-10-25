@@ -52,6 +52,12 @@ describe("ResultGrid", () => {
     expect(firstColumn()).toEqual(["a", "b", "c"]);
   });
 
+  it("says 1 row, not 1 rows", () => {
+    render(<Harness data={response({ rows: [["a", "10"]], returned_rows: 1 })} />);
+
+    expect(screen.getByText("1 row in 12 ms")).toBeInTheDocument();
+  });
+
   it("renders empty and null cells", () => {
     const longText = "x".repeat(5000);
     const rows = [

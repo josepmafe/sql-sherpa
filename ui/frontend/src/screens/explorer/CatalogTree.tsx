@@ -5,15 +5,14 @@ import { useState } from "react";
 import { useCatalog } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { ColumnBadges } from "./ColumnBadges";
-import { DisabledHint, EDITOR_DISABLED_HINT, LINEAGE_DISABLED_HINT } from "./DisabledHint";
+import { DisabledHint, LINEAGE_DISABLED_HINT } from "./DisabledHint";
 
 type TableSummary = components["schemas"]["TableSummary"];
 type ColumnSummary = components["schemas"]["ColumnSummary"];
 
 type EditorActions = {
-  // Supplied once the editor exists; until then the menu items are disabled.
-  onPreview?: (qualifiedName: string) => void;
-  onInsertSelect?: (qualifiedName: string) => void;
+  onPreview: (qualifiedName: string) => void;
+  onInsertSelect: (qualifiedName: string) => void;
 };
 
 type TreeProps = EditorActions & {
@@ -130,16 +129,8 @@ function TableRow({ table, schema, selected, open, onClick, onPreview, onInsertS
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
-            <DisabledHint hint={EDITOR_DISABLED_HINT} show={!onPreview}>
-              <Menu.Item disabled={!onPreview} onClick={() => onPreview?.(qualified)}>
-                Preview 100 rows
-              </Menu.Item>
-            </DisabledHint>
-            <DisabledHint hint={EDITOR_DISABLED_HINT} show={!onInsertSelect}>
-              <Menu.Item disabled={!onInsertSelect} onClick={() => onInsertSelect?.(qualified)}>
-                Insert SELECT
-              </Menu.Item>
-            </DisabledHint>
+            <Menu.Item onClick={() => onPreview(qualified)}>Preview 100 rows</Menu.Item>
+            <Menu.Item onClick={() => onInsertSelect(qualified)}>Insert SELECT</Menu.Item>
             <Menu.Item onClick={() => void navigator.clipboard.writeText(qualified)}>Copy name</Menu.Item>
             <DisabledHint hint={LINEAGE_DISABLED_HINT} show>
               <Menu.Item disabled>Open in Lineage</Menu.Item>

@@ -175,7 +175,8 @@ export function ResultGrid({ response, view, onViewChange }: GridProps) {
 
 function StatusLine({ response, shown, filtered }: { response: QueryResponse; shown: number; filtered: boolean }) {
   const total = response.returned_rows.toLocaleString("en-US");
-  const count = filtered ? `${shown.toLocaleString("en-US")} of ${total} rows` : `${total} rows`;
+  const unit = response.returned_rows === 1 ? "row" : "rows";
+  const count = filtered ? `${shown.toLocaleString("en-US")} of ${total} ${unit}` : `${total} ${unit}`;
   return (
     <Group gap="xs">
       <Text size="sm" c="dimmed">
