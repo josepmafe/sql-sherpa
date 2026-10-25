@@ -86,6 +86,8 @@ describe("sqlExtension", () => {
     expect(await completions("select marts.fct_orders.")).toEqual(expect.arrayContaining(["order_id", "order_status"]));
     expect(await completions("select ", "fct_orders")).toEqual(expect.arrayContaining(["order_id", "order_status"]));
     expect(await completions("select ", "fct_orders")).not.toContain("sku");
+    // The guard rejects unqualified tables, so they are never offered bare.
+    expect(await completions("select * from ")).not.toContain("fct_orders");
   });
 });
 
@@ -161,8 +163,8 @@ describe("WorksheetPanel", () => {
       },
       response: { status: 422 },
     });
-    render(<Harness initial={"select 1;\nselec 2"} />);
-    act(() => editorView().dispatch({ selection: { anchor: 10, head: 17 } }));
+    render(<Harness initial={"selec 2;\nselec 2"} />);
+    act(() => editorView().dispatch({ selection: { anchor: 9, head: 16 } }));
 
     await user.click(await screen.findByRole("button", { name: "Run selection" }));
 
@@ -173,7 +175,10 @@ describe("WorksheetPanel", () => {
         body: expect.objectContaining({ sql: "selec 2" }),
       }),
     );
-    expect(document.querySelector(".cm-error-position")?.textContent).toBe("selec");
+    const mark = document.querySelector(".cm-error-position") as HTMLElement;
+    expect(mark.textContent).toBe("selec");
+    // The second statement, not the first: the selection's start offset (9) is added to the position (0).
+    expect(editorView().posAtDOM(mark)).toBe(9);
     expect(screen.getByText('syntax error at or near "selec"')).toBeInTheDocument();
   });
 

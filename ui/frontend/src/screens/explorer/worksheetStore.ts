@@ -19,14 +19,14 @@ export type ExplorerState = {
 const HISTORY_STATUSES: readonly string[] = ["done", "error", "cancelled"];
 
 export function loadExplorerState(storage: Storage = localStorage): ExplorerState {
-  const raw = storage.getItem(STORAGE_KEY);
-  if (raw === null) return freshState();
   try {
+    const raw = storage.getItem(STORAGE_KEY);
+    if (raw === null) return freshState();
     const parsed: unknown = JSON.parse(raw);
     if (isExplorerState(parsed)) return parsed;
     console.warn(`${STORAGE_KEY} has an unexpected shape; starting with an empty worksheet`);
   } catch (error) {
-    console.warn(`${STORAGE_KEY} is not valid JSON; starting with an empty worksheet`, error);
+    console.warn(`${STORAGE_KEY} could not be read; starting with an empty worksheet`, error);
   }
   return freshState();
 }

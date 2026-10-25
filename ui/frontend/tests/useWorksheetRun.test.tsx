@@ -114,6 +114,17 @@ describe("useWorksheetRun", () => {
     expect(order).toEqual(["/api/queries", "/api/queries/{query_id}/cancel", "/api/queries"]);
   });
 
+  it("a run after a finished run sends no cancel", async () => {
+    const { result } = renderHook(() => useWorksheetRun("w1"));
+
+    act(() => void result.current.run("select 1"));
+    await act(async () => pending[0]!.resolve(queryResponse(calls("/api/queries")[0]!.options.body!.query_id, 1)));
+    act(() => void result.current.run("select 2"));
+
+    expect(calls("/api/queries")).toHaveLength(2);
+    expect(calls("/api/queries/{query_id}/cancel")).toHaveLength(0);
+  });
+
   it("cancel reports how long the query ran and drops its late response", async () => {
     vi.useFakeTimers();
     const settled = vi.fn();

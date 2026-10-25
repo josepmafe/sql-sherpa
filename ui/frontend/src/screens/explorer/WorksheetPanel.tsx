@@ -15,7 +15,7 @@ type PanelProps = {
 // What was sent and where it started in the editor: an error position counts from the start of the sent text.
 type Origin = { sql: string; offset: number };
 
-// Rendered with `key={worksheet.id}`, so each worksheet has its own editor history and its own run.
+// One panel per worksheet, all kept mounted: each has its own editor history and its own run.
 export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled }: PanelProps) {
   const { status, response, error, elapsedSeconds, run, cancel } = useWorksheetRun(worksheet.id, onSettled);
   const [origin, setOrigin] = useState<Origin>({ sql: "", offset: 0 });
@@ -33,7 +33,7 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled 
       <SqlEditor
         value={worksheet.sql}
         onChange={onSqlChange}
-        status={status}
+        running={status === "running"}
         elapsedSeconds={elapsedSeconds}
         highlight={highlight}
         activeTable={activeTable}

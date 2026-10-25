@@ -1,14 +1,14 @@
-import { sql as sqlLanguage } from "@codemirror/lang-sql";
+import { completeFromList } from "@codemirror/autocomplete";
+import { PostgreSQL, sql as sqlLanguage } from "@codemirror/lang-sql";
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, type ViewUpdate } from "@codemirror/view";
-import { Box, Button, Group, Stack, Text } from "@mantine/core";
+import { Box, Button, Group, Stack, Text, useComputedColorScheme } from "@mantine/core";
 import CodeMirror from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { api } from "../api/client";
 import { useCatalog } from "../api/queries";
 import type { components } from "../api/schema";
-import type { RunStatus } from "../screens/explorer/useWorksheetRun";
 
 type CatalogTree = components["schemas"]["CatalogTree"];
 
@@ -17,7 +17,7 @@ export type Highlight = { from: number; to: number };
 type EditorProps = {
   value: string;
   onChange: (value: string) => void;
-  status: RunStatus;
+  running: boolean;
   elapsedSeconds: number;
   // Where the last error points, in editor offsets; it clears as soon as the text changes.
   highlight?: Highlight;
@@ -34,7 +34,7 @@ const FORMAT_FAILED = "Could not format the query.";
 export function SqlEditor({
   value,
   onChange,
-  status,
+  running,
   elapsedSeconds,
   highlight,
   activeTable,
@@ -45,7 +45,7 @@ export function SqlEditor({
   const view = useRef<EditorView | undefined>(undefined);
   const [hasSelection, setHasSelection] = useState(false);
   const [formatError, setFormatError] = useState<string>();
-  const running = status === "running";
+  const colorScheme = useComputedColorScheme("light");
   const empty = value.trim() === "";
 
   const extensions = useMemo(
@@ -127,6 +127,7 @@ export function SqlEditor({
           value={value}
           height={EDITOR_HEIGHT}
           extensions={extensions}
+          theme={colorScheme}
           onChange={onChange}
           onUpdate={onUpdate}
           onCreateEditor={(created) => {
@@ -153,18 +154,22 @@ export function errorHighlight(sentSql: string, position: number, baseOffset: nu
   return { from, to: baseOffset + characters.slice(0, end).join("").length };
 }
 
-// `marts.` completes tables, `marts.<table>.` its columns; the selected table's columns also complete bare.
+// `marts.` completes tables, `marts.<table>.` their columns. Tables are never offered bare (the guard rejects
+// unqualified names), but the selected table's columns are, so `select ` can complete them.
 export function sqlExtension(catalog: CatalogTree | undefined, activeTable: string | undefined): Extension {
-  if (!catalog) return sqlLanguage();
+  if (!catalog) return sqlLanguage({ dialect: PostgreSQL });
   const tables: Record<string, string[]> = {};
   for (const domain of catalog.domains) {
     for (const table of domain.tables) tables[table.name] = table.columns.map((column) => column.name);
   }
-  return sqlLanguage({
-    schema: { [catalog.schema_name]: tables },
-    defaultSchema: catalog.schema_name,
-    defaultTable: activeTable,
-  });
+  const support = sqlLanguage({ dialect: PostgreSQL, schema: { [catalog.schema_name]: tables } });
+  const columns = (activeTable ? tables[activeTable] : undefined) ?? [];
+  return [
+    support,
+    support.language.data.of({
+      autocomplete: completeFromList(columns.map((label) => ({ label, type: "property" }))),
+    }),
+  ];
 }
 
 const setErrorHighlight = StateEffect.define<Highlight | null>();

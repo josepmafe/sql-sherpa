@@ -55,13 +55,17 @@ export function ExplorerScreen() {
               onPick={(sql) => setState((previous) => updateWorksheet(previous, active.id, { sql }))}
             />
           </Group>
-          <WorksheetPanel
-            key={active.id}
-            worksheet={active}
-            activeTable={selected}
-            onSqlChange={(sql) => setState((previous) => updateWorksheet(previous, active.id, { sql }))}
-            onSettled={record}
-          />
+          {/* Every worksheet stays mounted, so switching tabs never cancels a running query. */}
+          {state.worksheets.map((worksheet) => (
+            <Box key={worksheet.id} display={worksheet.id === active.id ? "block" : "none"}>
+              <WorksheetPanel
+                worksheet={worksheet}
+                activeTable={selected}
+                onSqlChange={(sql) => setState((previous) => updateWorksheet(previous, worksheet.id, { sql }))}
+                onSettled={record}
+              />
+            </Box>
+          ))}
         </Stack>
       </Box>
       <ScrollArea style={SIDE_STYLE}>

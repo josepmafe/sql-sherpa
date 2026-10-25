@@ -76,6 +76,19 @@ describe("worksheetStore", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it("resets with a warning when storage cannot be read", () => {
+    const blocked = {
+      getItem: () => {
+        throw new DOMException("denied", "SecurityError");
+      },
+    } as unknown as Storage;
+
+    const state = loadExplorerState(blocked);
+
+    expect(state.worksheets).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
   it("starts fresh without warning when nothing is stored", () => {
     expect(loadExplorerState().worksheets).toHaveLength(1);
     expect(warn).not.toHaveBeenCalled();
