@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 ALLOWED_HOSTS: Final = ("localhost", "127.0.0.1")
 API_PREFIX: Final = "/api"
 INDEX_FILE: Final = "index.html"
+CONTAINER_STATIC_DIR: Final = "/app/static"
 
 
 def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
@@ -74,5 +75,13 @@ def __getattr__(name: str) -> FastAPI:
         from sherpa_ui.settings import UiSettings
 
         return create_app(UiSettings(), static_dir=None)
+
+    # `uvicorn sherpa_ui.app:container_app` (ui/Dockerfile): the API plus the frontend the image built into /app/static.
+    if name == "container_app":
+        from pathlib import Path
+
+        from sherpa_ui.settings import UiSettings
+
+        return create_app(UiSettings(), static_dir=Path(CONTAINER_STATIC_DIR))
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

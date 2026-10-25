@@ -124,3 +124,29 @@ class TestDevApp:
 
         with pytest.raises(AttributeError):
             app_module.nonexistent  # noqa: B018
+
+
+class TestContainerApp:
+    def test_serves_the_frontend_from_the_image_static_dir(
+        self, monkeypatch: pytest.MonkeyPatch, static_dir: Path
+    ) -> None:
+        for key, value in {
+            "SHERPA_DB_HOST": "unused",
+            "SHERPA_DB_PORT": "1",
+            "SHERPA_DB_NAME": "unused",
+            "SHERPA_UI_USER": "unused",
+            "SHERPA_UI_PASSWORD": "unused",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        import sherpa_ui.app as app_module
+
+        monkeypatch.setattr(app_module, "CONTAINER_STATIC_DIR", str(static_dir))
+        container_app = app_module.container_app  # type: ignore[attr-defined]
+
+        with TestClient(container_app, base_url="http://localhost") as client:
+            page = client.get("/explorer")
+            missing_api = client.get("/api/nope")
+
+        assert page.text == INDEX_HTML
+        assert missing_api.status_code == 404

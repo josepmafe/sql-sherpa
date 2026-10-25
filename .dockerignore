@@ -1,6 +1,13 @@
-# The build context is the repository root; the image needs only pyproject.toml, uv.lock and agent/mcp-server/src.
+# The build context is the repository root; the images need only pyproject.toml, uv.lock, the Python sources of
+# agent/mcp-server and ui/backend, and the frontend sources.
 *
 !pyproject.toml
 !uv.lock
 !agent/mcp-server/src/
+!ui/backend/src/
+!ui/frontend/
+ui/frontend/node_modules
+ui/frontend/dist
+ui/frontend/test-results
+ui/frontend/playwright-report
 **/__pycache__

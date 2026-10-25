@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev e2e lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -117,6 +117,10 @@ ui-api-dev:
 
 ui-web-dev:
 	cd ui/frontend && npm run dev
+
+# Playwright against the compose stack (`make up`, `make build-prod`); the base URL follows SHERPA_UI_PORT (default 8090).
+e2e:
+	cd ui/frontend && npx playwright test
 
 lint:
 	uv run ruff check .
