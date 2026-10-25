@@ -1,28 +1,69 @@
-import { Box, Group, ScrollArea } from "@mantine/core";
-import { useState, type ReactNode } from "react";
+import { Box, Group, ScrollArea, Stack } from "@mantine/core";
+import { useEffect, useState } from "react";
 
 import { CatalogTree } from "./CatalogTree";
 import { Inspector } from "./Inspector";
-
-type ExplorerProps = {
-  // The editor and results fill the centre and supply the menu handlers.
-  children?: ReactNode;
-  onPreview?: (qualifiedName: string) => void;
-  onInsertSelect?: (qualifiedName: string) => void;
-};
+import { QueryHistory } from "./QueryHistory";
+import { type RunOutcome } from "./useWorksheetRun";
+import { WorksheetPanel } from "./WorksheetPanel";
+import { WorksheetTabs } from "./WorksheetTabs";
+import {
+  addWorksheet,
+  appendHistory,
+  closeWorksheet,
+  insertSelect,
+  loadExplorerState,
+  saveExplorerState,
+  selectWorksheet,
+  updateWorksheet,
+} from "./worksheetStore";
 
 const SIDE_WIDTH = 300;
 const SIDE_STYLE = { flexShrink: 0, width: SIDE_WIDTH } as const;
 
-export function ExplorerScreen({ children, onPreview, onInsertSelect }: ExplorerProps) {
+export function ExplorerScreen() {
   const [selected, setSelected] = useState<string>();
+  const [state, setState] = useState(() => loadExplorerState());
+  useEffect(() => saveExplorerState(state), [state]);
+
+  const active = state.worksheets.find((w) => w.id === state.activeId) ?? state.worksheets[0]!;
+  const record = (outcome: RunOutcome) =>
+    setState((previous) => appendHistory(previous, { ...outcome, ranAt: new Date().toISOString() }));
 
   return (
     <Group align="stretch" wrap="nowrap" gap="md" h="calc(100vh - 100px)">
       <ScrollArea style={SIDE_STYLE}>
-        <CatalogTree selected={selected} onSelect={setSelected} onPreview={onPreview} onInsertSelect={onInsertSelect} />
+        <CatalogTree
+          selected={selected}
+          onSelect={setSelected}
+          onInsertSelect={(name) => setState((previous) => insertSelect(previous, name))}
+        />
       </ScrollArea>
-      <Box style={{ flex: 1, minWidth: 0 }}>{children}</Box>
+      <Box style={{ flex: 1, minWidth: 0 }}>
+        <Stack gap="sm">
+          <Group justify="space-between" wrap="nowrap">
+            <WorksheetTabs
+              worksheets={state.worksheets}
+              activeId={active.id}
+              onSelect={(id) => setState((previous) => selectWorksheet(previous, id))}
+              onAdd={() => setState(addWorksheet)}
+              onClose={(id) => setState((previous) => closeWorksheet(previous, id))}
+              onRename={(id, name) => setState((previous) => updateWorksheet(previous, id, { name }))}
+            />
+            <QueryHistory
+              history={state.history}
+              onPick={(sql) => setState((previous) => updateWorksheet(previous, active.id, { sql }))}
+            />
+          </Group>
+          <WorksheetPanel
+            key={active.id}
+            worksheet={active}
+            activeTable={selected}
+            onSqlChange={(sql) => setState((previous) => updateWorksheet(previous, active.id, { sql }))}
+            onSettled={record}
+          />
+        </Stack>
+      </Box>
       <ScrollArea style={SIDE_STYLE}>
         <Inspector table={selected} />
       </ScrollArea>
