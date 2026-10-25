@@ -37,6 +37,42 @@ describe("applyView sorting", () => {
   });
 });
 
+describe("applyView timestamps", () => {
+  it("sorts real backend timestamptz strings (offsets, microseconds) chronologically", () => {
+    const rows = [
+      ["late", "2025-01-15T12:00:00.123456+00:00"],
+      ["early", "2025-01-15T12:00:00.000001+00:00"],
+      ["offset", "2025-01-15T12:30:00+02:00"],
+    ];
+
+    const sorted = applyView(rows, ["text", "timestamp"], { sort: { index: 1, direction: "asc" }, filters: [] });
+
+    expect(ids(sorted)).toEqual(["offset", "early", "late"]);
+  });
+
+  it("reads a bare timestamp as UTC, consistently with a date filter", () => {
+    const rows = [
+      ["in", "2025-01-15T23:30:00"],
+      ["out", "2025-01-14T23:30:00"],
+    ];
+
+    const kept = applyView(rows, ["text", "timestamp"], { filters: [{ index: 1, operator: ">=", value: "2025-01-15" }] });
+
+    expect(ids(kept)).toEqual(["in"]);
+  });
+
+  it("sorts unparseable values after valid ones instead of leaving the order undefined", () => {
+    const rows = [
+      ["bad", "garbage"],
+      ["ok", "2025-01-15"],
+    ];
+
+    const sorted = applyView(rows, ["text", "date"], { sort: { index: 1, direction: "asc" }, filters: [] });
+
+    expect(ids(sorted)).toEqual(["ok", "bad"]);
+  });
+});
+
 describe("applyView filtering", () => {
   const rows = [
     ["a", "10", "Alpha"],

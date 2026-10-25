@@ -1,5 +1,6 @@
 import { MantineProvider } from "@mantine/core";
-import { render, screen, waitFor } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,8 +101,11 @@ describe("Explorer results", () => {
     });
     renderScreen("select * from marts.fct_orders");
     await user.click(screen.getByRole("button", { name: "Run" }));
+    const header = await screen.findByRole("columnheader", { name: "amount" });
+    const editor = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+    act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "select 99" } }));
 
-    await user.click(await screen.findByRole("columnheader", { name: "amount" }));
+    await user.click(header);
 
     await waitFor(() => expect(queryCalls()).toHaveLength(2));
     expect(queryCalls()[1]?.[1].body).toMatchObject({

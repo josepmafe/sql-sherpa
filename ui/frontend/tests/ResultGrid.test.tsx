@@ -93,13 +93,33 @@ describe("ResultGrid", () => {
           rows: [["1", "2"]],
           returned_rows: 1,
           truncated: true,
-          warning: "Duplicate column names: sorting and filtering only apply to the rows shown.",
         })}
       />,
     );
 
-    expect(screen.getByText(/Duplicate column names: sorting and filtering only apply/)).toBeInTheDocument();
+    expect(screen.getByText(/duplicate column names: sorting and filtering apply only to the rows shown/)).toBeInTheDocument();
     expect(screen.queryByText(/run on the server/)).not.toBeInTheDocument();
+  });
+
+  it("does not allow a filter with an empty value", async () => {
+    const user = userEvent.setup();
+    render(<Harness data={response()} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Filter column" }));
+    await user.click(await screen.findByRole("option", { name: "amount" }));
+
+    expect(screen.getByRole("button", { name: "Add filter" })).toBeDisabled();
+    expect(firstColumn()).toEqual(["a", "b", "c"]);
+  });
+
+  it("renders only a window of 1,000 rows", () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => [`row${i}`, String(i)]);
+    render(<Harness data={response({ rows, returned_rows: 1000, truncated: true })} />);
+
+    const rendered = screen.getAllByRole("row").length;
+
+    expect(rendered).toBeGreaterThan(1);
+    expect(rendered).toBeLessThan(100);
   });
 
   it("filters rows in the browser and reports the shown count", async () => {

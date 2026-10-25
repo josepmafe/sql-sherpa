@@ -48,7 +48,7 @@ export function applyView(rows: readonly Row[], types: readonly ColumnType[], vi
       const left = a.row[sort.index];
       const right = b.row[sort.index];
       if (left == null || right == null) return nullOrder(left, right, sign) || a.position - b.position;
-      return sign * compareValues(left, right, type) || a.position - b.position;
+      return sign * sortOrder(left, right, type) || a.position - b.position;
     })
     .map(({ row }) => row);
 }
@@ -96,12 +96,31 @@ function compareValues(left: Cell, right: Cell, type: ColumnType): number {
       return numeric(Number(left), Number(right));
     case "date":
     case "timestamp":
-      return numeric(Date.parse(String(left)), Date.parse(String(right)));
+      return numeric(parseTime(left), parseTime(right));
     case "boolean":
       return numeric(Number(left === true || left === "true"), Number(right === true || right === "true"));
     default:
       return String(cellText(left)).localeCompare(String(cellText(right)));
   }
+}
+
+// Unparseable values (not expected from the backend) sort after parseable ones, by text, so the order stays total.
+function sortOrder(left: Cell, right: Cell, type: ColumnType): number {
+  const order = compareValues(left, right, type);
+  if (!Number.isNaN(order)) return order;
+  const leftOk = !Number.isNaN(compareValues(left, left, type));
+  const rightOk = !Number.isNaN(compareValues(right, right, type));
+  if (leftOk !== rightOk) return leftOk ? -1 : 1;
+  return String(cellText(left)).localeCompare(String(cellText(right)));
+}
+
+// The backend sends isoformat(): "2025-01-15", "2025-01-15T10:30:00" (timestamp, no offset) or
+// "2025-01-15T10:30:00.123456+00:00" (timestamptz). A bare timestamp is read as UTC, not browser-local, so
+// it compares consistently with dates.
+const NO_OFFSET = /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+function parseTime(value: Cell): number {
+  const text = String(value);
+  return Date.parse(NO_OFFSET.test(text) ? `${text}Z` : text);
 }
 
 function numeric(left: number, right: number): number {

@@ -35,6 +35,7 @@ const VIEWPORT_HEIGHT = 420;
 const OVERSCAN = 10;
 const COLUMN_WIDTH = 160;
 const DISPLAY_MAX_CHARS = 200; // Long text is cut in the display only; the full value is the hover title.
+const DUPLICATE_WARNING = "duplicate column names: sorting and filtering apply only to the rows shown";
 const OPERATORS: { value: Operator; label: string }[] = [
   { value: "=", label: "=" },
   { value: "!=", label: "!=" },
@@ -100,9 +101,9 @@ export function ResultGrid({ response, view, onViewChange }: GridProps) {
   return (
     <Stack gap="xs">
       <StatusLine response={response} shown={tableRows.length} filtered={filtered} />
-      {hasDuplicateColumns(columns) && response.warning && (
+      {response.truncated && hasDuplicateColumns(columns) && (
         <Alert color="yellow" title="Duplicate column names">
-          {response.warning}
+          {response.warning ?? DUPLICATE_WARNING}
         </Alert>
       )}
       {serverSide && (
@@ -227,7 +228,7 @@ function FilterBar({ columns, view, onViewChange }: Omit<GridProps, "response"> 
   const [value, setValue] = useState("");
   const needsValue = !VALUELESS_OPERATORS.includes(operator);
   const add = () => {
-    if (column === null) return;
+    if (column === null || (needsValue && value === "")) return;
     onViewChange({ ...view, filters: [...view.filters, { index: Number(column), operator, value }] });
     setValue("");
   };
@@ -262,7 +263,7 @@ function FilterBar({ columns, view, onViewChange }: Omit<GridProps, "response"> 
             size="xs"
           />
         )}
-        <Button size="xs" variant="light" disabled={column === null} onClick={add}>
+        <Button size="xs" variant="light" disabled={column === null || (needsValue && value === "")} onClick={add}>
           Add filter
         </Button>
       </Group>
