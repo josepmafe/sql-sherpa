@@ -41,6 +41,7 @@ test("the guard shows its reason for a delete", async ({ page }) => {
   await runQuery(page, "delete from marts.fct_orders");
 
   await expect(page.getByText("Query not allowed")).toBeVisible();
+  await expect(page.getByText("the statement must be a SELECT query, not DELETE")).toBeVisible();
 });
 
 test("a truncated result sorts on the server", async ({ page }) => {
