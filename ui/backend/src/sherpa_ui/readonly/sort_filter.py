@@ -84,9 +84,9 @@ def build_wrapped_query(
 ) -> WrappedQuery:
     """`select * from (\\n<sql>\\n) as q where … order by …` over the user's SQL.
 
-    Columns are only ever the result's own names (`UnknownColumnError` otherwise), quoted as identifiers; values are bound
-    parameters. Run it with its parameters even when there are none: psycopg then reads `%%` (which every `%` of the
-    user's SQL is doubled to) as `%`, so Postgres gets the user's SQL unchanged and its error positions still hold.
+    Columns are only ever the result's own names (`UnknownColumnError` otherwise), quoted as identifiers; values are
+    bound parameters. Run it with its parameters even when there are none: psycopg then reads `%%` (which every `%`
+    of the user's SQL is doubled to) as `%`, so Postgres gets the user's SQL unchanged and its error positions hold.
     """
     duplicates = sorted(name for name, count in Counter(result_columns).items() if count > 1)
     if duplicates:
