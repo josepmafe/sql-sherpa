@@ -55,9 +55,21 @@ class FilterSpec(BaseModel):
     def check_value(self) -> Self:
         if self.operator in NULL_OPERATORS and self.value is not None:
             raise ValueError(f"operator {self.operator} takes no value")
+
         if self.operator not in NULL_OPERATORS and self.value is None:
             raise ValueError(f"operator {self.operator} needs a value")
+
         return self
+
+
+class WrappedQuery(BaseModel):
+    """The server-mode query, its bound parameters, and how many of its characters come before the user's SQL."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    query: sql.Composed
+    params: tuple[object, ...]
+    prefix_length: int
 
 
 def build_wrapped_query(
@@ -65,12 +77,11 @@ def build_wrapped_query(
     result_columns: Sequence[str],
     sort: Sequence[SortSpec] = (),
     filters: Sequence[FilterSpec] = (),
-) -> tuple[sql.Composed, list[object], int]:
-    """`select * from (\\n<sql>\\n) as q where … order by …`, its parameters, and how many characters come before the
-    user's SQL in it.
+) -> WrappedQuery:
+    """`select * from (\\n<sql>\\n) as q where … order by …` over the user's SQL.
 
     Columns are only ever the result's own names (`ValueError` otherwise), quoted as identifiers; values are bound
-    parameters. Run it with the parameter list even when it is empty: psycopg then reads `%%` (which every `%` of the
+    parameters. Run it with its parameters even when there are none: psycopg then reads `%%` (which every `%` of the
     user's SQL is doubled to) as `%`, so Postgres gets the user's SQL unchanged and its error positions still hold.
     """
     duplicates = sorted(name for name, count in Counter(result_columns).items() if count > 1)
@@ -92,9 +103,11 @@ def build_wrapped_query(
     if filters:
         conditions = [_condition(spec, params) for spec in filters]
         parts += [sql.SQL(" where "), sql.SQL(" and ").join(conditions)]
+
     if sort:
         parts += [sql.SQL(" order by "), sql.SQL(", ").join(_order(spec) for spec in sort)]
-    return sql.Composed(parts), params, len(WRAPPER_PREFIX)
+
+    return WrappedQuery(query=sql.Composed(parts), params=tuple(params), prefix_length=len(WRAPPER_PREFIX))
 
 
 def strip_terminators(sql_text: str) -> str:
@@ -107,7 +120,9 @@ def strip_terminators(sql_text: str) -> str:
     for token in reversed(_tokens(sql_text)):
         if token.token_type != TokenType.SEMICOLON:
             break
+
         chars[token.start] = " "
+
     return _TRAILING_TERMINATORS.sub("", "".join(chars))
 
 

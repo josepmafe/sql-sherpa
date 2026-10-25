@@ -29,7 +29,6 @@ LONG_AGGREGATE = (
 )
 REGISTER_WAIT_SECONDS = 10.0
 DECLARE_OFFSET = len('DECLARE "sherpa_ui" CURSOR FOR ')
-ORDER_ITEM_COLUMNS = 19
 INT4_OID = postgres_types["int4"].oid
 
 
@@ -141,6 +140,61 @@ class TestQueryRunnerOffline:
         connection.close.assert_called_once_with()
         assert offline_runner.running_query_ids() == frozenset()
 
+    def test_cancel_while_the_catalog_loads_never_connects(
+        self, offline_settings: UiSettings, empty_catalog_loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = QueryRunner(offline_settings, empty_catalog_loader)
+        catalog = empty_catalog_loader.load.return_value
+
+        def load() -> MartCatalog:
+            runner.cancel("q1")  # sent right after the request, before the run has done anything
+            return catalog
+
+        empty_catalog_loader.load.side_effect = load
+        monkeypatch.setattr(psycopg, "connect", _must_not_connect)
+
+        with pytest.raises(UiQueryError) as error:
+            runner.run("q1", "select 1 as a")
+
+        assert error.value.code == "cancelled"
+        assert runner.running_query_ids() == frozenset()
+
+    @pytest.mark.parametrize(
+        ("columns", "sort", "connect_fails", "cause"),
+        [
+            (("a",), (), True, "database_unavailable"),
+            (("a", "a"), (SortSpec(column="a", direction="asc"),), False, "DuplicateColumnsError"),
+            (("a",), (SortSpec(column="b", direction="asc"),), False, "ValueError"),
+        ],
+    )
+    def test_a_cancelled_run_is_cancelled_whatever_else_failed(
+        self,
+        offline_runner: QueryRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        columns: tuple[str, ...],
+        sort: tuple[SortSpec, ...],
+        connect_fails: bool,
+        cause: str,
+    ) -> None:
+        connection = _fake_connection(columns=columns)
+        connection.execute.side_effect = lambda *args, **kwargs: offline_runner.cancel("q1")
+
+        def connect(*args: object, **kwargs: object) -> MagicMock:
+            if connect_fails:
+                offline_runner.cancel("q1")
+                raise psycopg.OperationalError("connection failed: connection refused")
+
+            return connection
+
+        monkeypatch.setattr(psycopg, "connect", connect)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a", sort=sort)
+
+        assert error.value.code == "cancelled"
+        assert _describe(error.value.__cause__) == cause
+        assert offline_runner.running_query_ids() == frozenset()
+
     def test_duplicate_query_id_keeps_the_running_query(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -158,6 +212,7 @@ class TestQueryRunnerOffline:
 
             with pytest.raises(UiQueryError) as duplicate:
                 offline_runner.run("q1", "select 2 as a")
+
             still_running = offline_runner.running_query_ids()
             offline_runner.cancel("q1")  # proves the first run's entry survived the duplicate
             connected.set()
@@ -182,7 +237,9 @@ class TestQueryRunnerOffline:
 
         with pytest.raises(UiQueryError) as error:
             offline_runner.run("q1", "select 1 as a")
+
         connection.execute.side_effect = None
+
         again = offline_runner.run("q1", "select 1 as a")  # the cancel ended with the run it reached
 
         assert error.value.code == "cancelled"
@@ -248,13 +305,17 @@ class TestQueryRunnerOffline:
 
 @pytest.mark.warehouse
 class TestQueryRunner:
-    def test_runs_and_caps_at_1000(self, runner: QueryRunner) -> None:
+    def test_runs_and_caps_at_1000(self, runner: QueryRunner, admin: psycopg.Connection) -> None:
+        description = admin.execute("select * from marts.fct_order_items limit 0").description
+        assert description is not None
+
         outcome = runner.run("q1", "select * from marts.fct_order_items")
 
         assert outcome.query_id == "q1"
         assert outcome.mode == "client"
-        assert len(outcome.columns) == ORDER_ITEM_COLUMNS
-        assert len(outcome.column_types) == ORDER_ITEM_COLUMNS
+        assert outcome.columns == tuple(column.name for column in description)
+        assert len(outcome.column_types) == len(description)
+        assert all(len(row) == len(description) for row in outcome.rows)
         assert len(outcome.rows) == 1000
         assert outcome.returned_rows == 1000
         assert outcome.truncated
@@ -427,6 +488,7 @@ class TestQueryRunner:
 
         with pytest.raises(DuplicateColumnsError, match="duplicate column names: order_id"):
             runner.run("q1", sql_text, sort=[SortSpec(column="order_id", direction="desc")])
+
         client = runner.run("q2", sql_text)
 
         assert client.columns == ("order_id", "order_id")
@@ -445,13 +507,41 @@ class TestQueryRunner:
 
             with pytest.raises(UiQueryError) as error:
                 running.result(timeout=3)
+
             took = time.monotonic() - cancelled_at
+
         again = runner.run("long", "select 1 as n")
 
         assert error.value.code == "cancelled"
         assert error.value.message == "the query was cancelled"
         assert took < 3
         assert again.rows == ((1,),)
+        assert runner.running_query_ids() == frozenset()
+        assert leaked_ui_backends() == 0
+
+    def test_cancelling_one_query_leaves_another_running(
+        self, runner: QueryRunner, leaked_ui_backends: Callable[[], int]
+    ) -> None:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(runner.run, "first", LONG_AGGREGATE)
+            second = pool.submit(runner.run, "second", LONG_AGGREGATE)
+            _wait_until_running(runner, "first")
+            _wait_until_running(runner, "second")
+            time.sleep(1)
+
+            runner.cancel("first")
+            with pytest.raises(UiQueryError) as first_error:
+                first.result(timeout=3)
+
+            time.sleep(1)  # time for a stray cancel to reach the second query
+            second_still_running = not second.done() and runner.running_query_ids() == frozenset({"second"})
+            runner.cancel("second")
+            with pytest.raises(UiQueryError) as second_error:
+                second.result(timeout=3)
+
+        assert first_error.value.code == "cancelled"
+        assert second_still_running
+        assert second_error.value.code == "cancelled"
         assert runner.running_query_ids() == frozenset()
         assert leaked_ui_backends() == 0
 
@@ -580,13 +670,18 @@ class TestQueryRunner:
         assert outcome.rows == (("1.50", "2025-03-01", "2025-03-01T04:05:00+00:00", True, {"k": [1]}),)
 
 
-def _fake_connection(rows: list[tuple[object, ...]] | None = None) -> MagicMock:
-    """A connection whose server-side cursor returns `rows` of one int4 column `a`."""
+def _fake_connection(rows: list[tuple[object, ...]] | None = None, columns: tuple[str, ...] = ("a",)) -> MagicMock:
+    """A connection whose server-side cursor returns `rows` of int4 `columns`."""
     connection: MagicMock = create_autospec(psycopg.Connection, instance=True)
     cursor = connection.cursor.return_value.__enter__.return_value
-    cursor.description = [SimpleNamespace(name="a", type_code=INT4_OID)]
+    cursor.description = [SimpleNamespace(name=name, type_code=INT4_OID) for name in columns]
     cursor.fetchmany.return_value = rows or []
     return connection
+
+
+def _describe(cause: BaseException | None) -> str:
+    """A `UiQueryError` by its code, anything else by its type."""
+    return cause.code if isinstance(cause, UiQueryError) else type(cause).__name__
 
 
 def _must_not_connect(*args: object, **kwargs: object) -> None:

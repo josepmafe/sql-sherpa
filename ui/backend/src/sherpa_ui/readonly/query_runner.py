@@ -21,7 +21,7 @@ from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import DIALECT, SqlGuard
 from sqlglot.errors import SqlglotError
 
-from sherpa_ui.readonly.sort_filter import build_wrapped_query, strip_terminators
+from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, build_wrapped_query, strip_terminators
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -126,22 +126,25 @@ class QueryRunner:
         `sort` or `filters` is given (server mode).
 
         Raises `UiQueryError`; in server mode also `DuplicateColumnsError` (the caller falls back to client mode) and
-        `ValueError` for a sort or filter column that is not in the result.
+        `ValueError` for a sort or filter column that is not in the result. Whatever else went wrong, a run that
+        `cancel` reached raises `UiQueryError` with code `cancelled`.
         """
-        catalog = self._load_catalog()
-        guard = SqlGuard(catalog.mart_columns()).check(sql_text)
-        if not guard.ok:
-            raise UiQueryError("guard_rejected", "\n".join(guard.errors))
-
-        statement = strip_terminators(sql_text)
-        mode: QueryMode = "server" if sort or filters else "client"
         started = time.monotonic()
-        self._reserve(query_id)
+        mode: QueryMode = "server" if sort or filters else "client"
+        self._reserve(query_id)  # first, so a cancel sent right after the request is never lost
         conn: psycopg.Connection | None = None
         try:
+            catalog = self._load_catalog()
+            self._check_guard(catalog, sql_text)
+            self._raise_if_cancelled(query_id)  # before opening a connection the run would not use
             conn = self._connect()
             self._attach(query_id, conn)
-            fetched = self._execute(conn, query_id, statement, sort, filters)
+            fetched = self._execute(conn, strip_terminators(sql_text), sort, filters)
+        except (UiQueryError, DuplicateColumnsError, ValueError) as error:
+            if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
+                raise
+
+            raise UiQueryError("cancelled", CANCELLED_MESSAGE) from error
         finally:
             cancelled = self._release(query_id)
             if conn is not None:
@@ -181,9 +184,10 @@ class QueryRunner:
             self._cancelled.add(query_id)
             conn = self._running[query_id]
             if conn is None:
-                return  # still connecting: the run stops as soon as it has its connection
+                return  # still starting: the run stops before it executes anything
 
-            # Under the lock, so the run cannot close the connection while the cancel request is on its way.
+            # Under the lock, so the run cannot close the connection while the cancel request is on its way. That
+            # holds the lock during network I/O, for CANCEL_TIMEOUT_SECONDS at most.
             try:
                 conn.cancel_safe(timeout=CANCEL_TIMEOUT_SECONDS)
             except psycopg.OperationalError as error:
@@ -203,18 +207,23 @@ class QueryRunner:
 
         return FORMAT_SEPARATOR.join(statement for statement in statements if statement) or sql_text
 
-    def _load_catalog(self) -> MartCatalog:
-        try:
-            return self._loader.load()
-        except CatalogUnavailable as error:
-            raise UiQueryError("catalog_unavailable", str(error)) from error
-
     def _reserve(self, query_id: str) -> None:
         with self._lock:
             if query_id in self._running:
                 raise UiQueryError("duplicate_query_id", DUPLICATE_MESSAGE.format(query_id=query_id))
 
             self._running[query_id] = None
+
+    def _load_catalog(self) -> MartCatalog:
+        try:
+            return self._loader.load()
+        except CatalogUnavailable as error:
+            raise UiQueryError("catalog_unavailable", str(error)) from error
+
+    def _check_guard(self, catalog: MartCatalog, sql_text: str) -> None:
+        guard = SqlGuard(catalog.mart_columns()).check(sql_text)
+        if not guard.ok:
+            raise UiQueryError("guard_rejected", "\n".join(guard.errors))
 
     def _connect(self) -> psycopg.Connection:
         try:
@@ -225,10 +234,16 @@ class QueryRunner:
     def _attach(self, query_id: str, conn: psycopg.Connection) -> None:
         with self._lock:
             self._running[query_id] = conn
-            cancelled = query_id in self._cancelled
 
-        if cancelled:
+        self._raise_if_cancelled(query_id)  # a cancel sent while connecting had no connection to reach
+
+    def _raise_if_cancelled(self, query_id: str) -> None:
+        if self._is_cancelled(query_id):
             raise UiQueryError("cancelled", CANCELLED_MESSAGE)
+
+    def _is_cancelled(self, query_id: str) -> bool:
+        with self._lock:
+            return query_id in self._cancelled
 
     def _release(self, query_id: str) -> bool:
         """Forget the run (only the run that reserved `query_id` calls this); returns whether it was cancelled."""
@@ -236,15 +251,11 @@ class QueryRunner:
             del self._running[query_id]
             cancelled = query_id in self._cancelled
             self._cancelled.discard(query_id)
+
         return cancelled
 
     def _execute(
-        self,
-        conn: psycopg.Connection,
-        query_id: str,
-        statement: str,
-        sort: Sequence[SortSpec],
-        filters: Sequence[FilterSpec],
+        self, conn: psycopg.Connection, statement: str, sort: Sequence[SortSpec], filters: Sequence[FilterSpec]
     ) -> _Fetched:
         try:
             with conn.transaction():
@@ -252,30 +263,35 @@ class QueryRunner:
                 conn.execute(sql.SQL("set local statement_timeout = {}").format(sql.Literal(timeout)))
                 if not sort and not filters:
                     # No parameters, so psycopg leaves every `%` of the user's SQL alone.
-                    return self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement))
+                    return self._fetch(conn, statement, None, len(DECLARE_PREFIX), len(statement))
 
-                probe, params, prefix = build_wrapped_query(statement, ())
+                probe = build_wrapped_query(statement, ())
                 with self._declared(
-                    conn, query_id, probe + sql.SQL(PROBE_SUFFIX), params, len(DECLARE_PREFIX) + prefix, len(statement)
+                    conn,
+                    probe.query + sql.SQL(PROBE_SUFFIX),
+                    probe.params,
+                    len(DECLARE_PREFIX) + probe.prefix_length,
+                    len(statement),
                 ) as cursor:
                     columns = [column.name for column in cursor.description or ()]
 
-                wrapped, params, prefix = build_wrapped_query(statement, columns, sort, filters)
-                return self._fetch(conn, query_id, wrapped, params, len(DECLARE_PREFIX) + prefix, len(statement))
+                wrapped = build_wrapped_query(statement, columns, sort, filters)
+                return self._fetch(
+                    conn, wrapped.query, wrapped.params, len(DECLARE_PREFIX) + wrapped.prefix_length, len(statement)
+                )
         except psycopg.Error as error:  # outside a cursor (the timeout, the commit): no position in the user's SQL
-            raise self._query_error(query_id, error, position=None) from error
+            raise self._query_error(error, position=None) from error
 
     def _fetch(
         self,
         conn: psycopg.Connection,
-        query_id: str,
         query: str | sql.Composed,
-        params: list[object] | None,
+        params: Sequence[object] | None,
         offset: int,
         length: int,
     ) -> _Fetched:
         cap = self._settings.ui_row_cap
-        with self._declared(conn, query_id, query, params, offset, length) as cursor:
+        with self._declared(conn, query, params, offset, length) as cursor:
             description = cursor.description or ()
             rows = cursor.fetchmany(cap + 1)  # one row past the cap only tells whether there were more
 
@@ -290,9 +306,8 @@ class QueryRunner:
     def _declared(
         self,
         conn: psycopg.Connection,
-        query_id: str,
         query: str | sql.Composed,
-        params: list[object] | None,
+        params: Sequence[object] | None,
         offset: int,
         length: int,
     ) -> Iterator[psycopg.ServerCursor[Any]]:
@@ -304,22 +319,20 @@ class QueryRunner:
                 yield cursor
         except psycopg.Error as error:
             position = user_position(error.diag.statement_position, offset=offset, length=length)
-            raise self._query_error(query_id, error, position) from error
+            raise self._query_error(error, position) from error
 
-    def _query_error(self, query_id: str, error: psycopg.Error, position: int | None) -> UiQueryError:
-        with self._lock:
-            cancelled = query_id in self._cancelled
-
-        if cancelled:
-            return UiQueryError("cancelled", CANCELLED_MESSAGE)
+    def _query_error(self, error: psycopg.Error, position: int | None) -> UiQueryError:
+        """The error as the UI shows it; `run` reports it as `cancelled` instead when the run was cancelled."""
         if isinstance(error, errors.QueryCanceled):  # not cancelled by us, so the statement timeout stopped it
             return UiQueryError("timeout", TIMEOUT_MESSAGE.format(seconds=self._settings.ui_statement_timeout_s))
+
         if _is_connection_failure(error):
             return UiQueryError("database_unavailable", UNREACHABLE_MESSAGE.format(reason=_first_line(error)))
 
         message = error.diag.message_primary or str(error)
         if error.diag.message_hint:
             message = f"{message}; {error.diag.message_hint}"
+
         return UiQueryError("sql_error", message, position)
 
 

@@ -13,28 +13,27 @@ from sherpa_ui.readonly.sort_filter import (
 )
 
 if TYPE_CHECKING:
-    from psycopg import sql
+    from sherpa_ui.readonly.sort_filter import WrappedQuery
 
 
 def test_wrapper_strips_semicolon_and_survives_trailing_comment() -> None:
-    query, params, _ = build_wrapped_query(
-        "select 1 as a -- note\n;\n  ", ["a"], sort=[SortSpec(column="a", direction="asc")]
-    )
+    wrapped = build_wrapped_query("select 1 as a -- note\n;\n  ", ["a"], sort=[SortSpec(column="a", direction="asc")])
 
     # The newline before `)` ends the comment, so the closing parenthesis and the order by stay outside it.
-    assert _text(query) == 'select * from (\nselect 1 as a -- note\n) as q order by q."a" asc'
-    assert params == []
+    assert _text(wrapped) == 'select * from (\nselect 1 as a -- note\n) as q order by q."a" asc'
+    assert wrapped.params == ()
 
 
 def test_semicolon_before_a_trailing_comment_is_blanked() -> None:
-    query, _, _ = build_wrapped_query("select 1 as a; -- note", ["a"])
+    wrapped = build_wrapped_query("select 1 as a; -- note", ["a"])
 
-    assert _text(query) == "select * from (\nselect 1 as a  -- note\n) as q"
+    assert _text(wrapped) == "select * from (\nselect 1 as a  -- note\n) as q"
 
 
 def test_unknown_column_rejected() -> None:
     with pytest.raises(ValueError, match="column 'b' is not a column of the result"):
         build_wrapped_query("select 1 as a", ["a"], sort=[SortSpec(column="b", direction="asc")])
+
     with pytest.raises(ValueError, match="column 'b' is not a column of the result"):
         build_wrapped_query("select 1 as a", ["a"], filters=[FilterSpec(column="b", operator="is_null")])
 
@@ -51,39 +50,41 @@ def test_zero_result_columns_accept_no_sort() -> None:
 
 
 def test_contains_is_a_bound_parameter() -> None:
-    query, params, _ = build_wrapped_query(
+    wrapped = build_wrapped_query(
         "select 'x' as name", ["name"], filters=[FilterSpec(column="name", operator="contains", value="o'brien; drop")]
     )
 
     # `%%` is psycopg's escape for a literal `%` once the query has parameters.
-    assert _text(query) == "select * from (\nselect 'x' as name\n) as q where q.\"name\"::text ilike '%%' || %s || '%%'"
-    assert params == ["o'brien; drop"]
+    assert (
+        _text(wrapped) == "select * from (\nselect 'x' as name\n) as q where q.\"name\"::text ilike '%%' || %s || '%%'"
+    )
+    assert wrapped.params == ("o'brien; drop",)
 
 
 def test_contains_matches_wildcards_literally() -> None:
-    _, params, _ = build_wrapped_query(
+    wrapped = build_wrapped_query(
         "select 'x' as name", ["name"], filters=[FilterSpec(column="name", operator="contains", value="50%_off\\x")]
     )
 
-    assert params == ["50\\%\\_off\\\\x"]
+    assert wrapped.params == ("50\\%\\_off\\\\x",)
 
 
 @pytest.mark.parametrize(
     ("operator", "rendered"), [("=", "="), ("!=", "<>"), ("<", "<"), ("<=", "<="), (">", ">"), (">=", ">=")]
 )
 def test_comparisons_bind_their_value(operator: str, rendered: str) -> None:
-    query, params, _ = build_wrapped_query(
+    wrapped = build_wrapped_query(
         "select 1 as a",
         ["a"],
         filters=[FilterSpec(column="a", operator=operator, value="7")],  # type: ignore[arg-type]
     )
 
-    assert _text(query) == f'select * from (\nselect 1 as a\n) as q where q."a" {rendered} %s'
-    assert params == ["7"]
+    assert _text(wrapped) == f'select * from (\nselect 1 as a\n) as q where q."a" {rendered} %s'
+    assert wrapped.params == ("7",)
 
 
 def test_filters_and_sorts_combine_in_order() -> None:
-    query, params, _ = build_wrapped_query(
+    wrapped = build_wrapped_query(
         "select 1 as a, 2 as b",
         ["a", "b"],
         sort=[SortSpec(column="b", direction="desc"), SortSpec(column="a", direction="asc")],
@@ -95,26 +96,26 @@ def test_filters_and_sorts_combine_in_order() -> None:
         ],
     )
 
-    assert _text(query) == (
+    assert _text(wrapped) == (
         "select * from (\nselect 1 as a, 2 as b\n) as q"
         ' where q."a" >= %s and q."b" is not null and q."b" is null and q."a" <> %s'
         ' order by q."b" desc, q."a" asc'
     )
-    assert params == ["1", "3"]
+    assert wrapped.params == ("1", "3")
 
 
 def test_quotes_in_column_names_are_escaped() -> None:
-    query, _, _ = build_wrapped_query('select 1 as "a""b"', ['a"b'], sort=[SortSpec(column='a"b', direction="asc")])
+    wrapped = build_wrapped_query('select 1 as "a""b"', ['a"b'], sort=[SortSpec(column='a"b', direction="asc")])
 
-    assert _text(query).endswith(' order by q."a""b" asc')
+    assert _text(wrapped).endswith(' order by q."a""b" asc')
 
 
 def test_percent_signs_in_user_sql_are_doubled() -> None:
-    # The wrapped query always runs with a parameter list, so psycopg reads every `%` in it as a placeholder.
-    query, _, prefix = build_wrapped_query("select 5 % 3 as m, '%s' as t", ["m", "t"])
+    # The wrapped query always runs with its parameters, so psycopg reads every `%` in it as a placeholder.
+    wrapped = build_wrapped_query("select 5 % 3 as m, '%s' as t", ["m", "t"])
 
-    assert _text(query) == "select * from (\nselect 5 %% 3 as m, '%%s' as t\n) as q"
-    assert prefix == len("select * from (\n")
+    assert _text(wrapped) == "select * from (\nselect 5 %% 3 as m, '%%s' as t\n) as q"
+    assert wrapped.prefix_length == len("select * from (\n")
 
 
 def test_duplicate_columns_raise() -> None:
@@ -129,11 +130,11 @@ def test_duplicate_columns_raise() -> None:
 def test_prefix_length_matches_text_before_user_sql() -> None:
     sql_text = "select order_id from marts.fct_orders"
 
-    query, _, prefix = build_wrapped_query(
+    wrapped = build_wrapped_query(
         sql_text, ["order_id"], filters=[FilterSpec(column="order_id", operator=">", value="1")]
     )
 
-    text = _text(query)
+    text, prefix = _text(wrapped), wrapped.prefix_length
     assert prefix == 16
     assert text[:prefix] == "select * from (\n"
     assert text[prefix : prefix + len(sql_text)] == sql_text
@@ -180,5 +181,5 @@ def test_strip_terminators_keeps_every_character_in_place(sql_text: str, expecte
     )
 
 
-def _text(query: sql.Composed) -> str:
-    return query.as_string()
+def _text(wrapped: WrappedQuery) -> str:
+    return wrapped.query.as_string()
