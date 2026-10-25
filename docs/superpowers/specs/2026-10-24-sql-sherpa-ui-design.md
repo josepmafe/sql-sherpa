@@ -27,7 +27,7 @@ There are no accounts: everyone uses the same anonymous, read-only access (§5).
 
 ### Success criteria
 1. **Self-contained in docker-compose.** Every screen runs from `docker compose up` with no internet: no CDNs, and fonts, icons and JS are all bundled. The only exception is Ask's model and tracing calls, which degrade to a clear "model unavailable" state while the other screens keep working.
-2. **Always live.** No data is baked into the frontend build or cached long enough to go stale. After adding data in the backend (`make generate` + `make build-prod`), a browser refresh shows it on every screen.
+2. **Always live.** No data is baked into the frontend build or cached long enough to go stale. After adding data in the backend (`make advance` + `make build-prod`), a browser refresh shows it on every screen.
 3. **Every query really hits the warehouse.** Explorer and Ask results come from executing SQL against Postgres through the read-only path, never from mocks or stored results.
 4. **Every visual is drawn from data.** Home and Lineage render from live warehouse and dbt-artifact data, never from static images or hand-maintained JSON.
 5. **One command to try it (ui-5).** Someone with only Docker can clone the repository and get the whole product with data, without Python, uv or make on their machine. This doesn't change the host-based development workflow.
