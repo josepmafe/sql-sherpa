@@ -45,15 +45,19 @@ mcp = [
     # Pinned exactly: sqlglot's parser is the SQL guard's view of a query, so a bump is a guard change.
     "sqlglot==30.24.0",
 ]
+ui = [
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [tool.uv]
-default-groups = ["dev", "generator", "dbt", "mcp"]
+default-groups = ["dev", "generator", "dbt", "mcp", "ui"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["data-platform/generator/src/sherpa_generator", "agent/mcp-server/src/sherpa_mcp"]
+packages = ["data-platform/generator/src/sherpa_generator", "agent/mcp-server/src/sherpa_mcp", "ui/backend/src/sherpa_ui"]
 
 [tool.pytest.ini_options]
-testpaths = ["data-platform/generator/tests", "data-platform/tests", "agent/mcp-server/tests"]
+testpaths = ["data-platform/generator/tests", "data-platform/tests", "agent/mcp-server/tests", "ui/backend/tests"]
 pythonpath = ["data-platform/scripts", "data-platform/generator/tests"]  # scripts is not a package, and the generator tests import their helpers module
 addopts = '-m "not slow and not warehouse" --import-mode=importlib'  # an explicit -m on the command line replaces the marker default; importlib lets two components both have a test_settings.py
 markers = [
@@ -84,7 +88,7 @@ runtime-evaluated-base-classes = [
 ignore_no_config = true
 
 [tool.mypy]
-files = ["data-platform/generator/src", "agent/mcp-server/src"]
+files = ["data-platform/generator/src", "agent/mcp-server/src", "ui/backend/src"]
 python_version = "3.12"
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]  # lets GeneratorSettings() be built from the environment without arguments
