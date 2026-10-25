@@ -38,7 +38,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 ## Commands
 
 - `make up` / `make down`: start / stop every compose service: Postgres, the `mcp` server and the `ui` web app (`make up` builds their images and waits until all are healthy; the app is at `http://127.0.0.1:8090`, port from `SHERPA_UI_PORT`). To work on the database alone, `docker compose up -d --wait postgres`.
-- `make roles`: bring the database roles of an existing volume up to date (creates `sherpa_ui`, resets passwords and role settings) with the SQL the init script runs on a new one (`data-platform/postgres/roles.sql`); idempotent.
+- `make roles`: bring the database roles of an existing volume up to date (creates `sherpa_ui`, resets passwords and role settings) with the SQL the init script runs on a new one (`data-platform/postgres/roles.sql`); idempotent. It uses the variables of the *running* postgres container, so after changing a password or adding `SHERPA_UI_USER`/`SHERPA_UI_PASSWORD` to `.env`: `make up` (recreates postgres with the new environment), `make roles`, `make build-prod`.
 - `make mcp-dev`: run the MCP server on the host over HTTP (`http://127.0.0.1:8765/mcp`, port from `SHERPA_MCP_PORT`).
 - `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
 - `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
@@ -52,7 +52,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
 - `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
 - `make docs-check`: fail if a model or column under `data-platform/dbt/models` has no description.
-- `make ui-dev`: the UI for development: the API with reload on `127.0.0.1:8090` (`ui-api-dev`) and the Vite dev server (`ui-web-dev`), which proxies `/api` to it. Stop the compose `ui` service first, as both use port 8090.
+- `make ui-dev`: the UI for development (like `make lint` and `make e2e`, it needs the frontend's packages: `cd ui/frontend && npm ci` once, Node 22+): the API with reload on `127.0.0.1:8090` (`ui-api-dev`) and the Vite dev server (`ui-web-dev`), which proxies `/api` to it. Stop the compose `ui` service first, as both use port 8090.
 - `make ui-client`: regenerate `ui/frontend/src/api/schema.d.ts` (the typed API client) from the backend's OpenAPI schema; commit the result after any API change.
 - `make e2e`: Playwright against the compose stack (`make up`, `make build-prod`; base URL from `SHERPA_UI_PORT`). Needs `npx playwright install chromium` once in `ui/frontend`. Its freshness spec simulates one extra day and rebuilds prod, at most once per day (it skips itself otherwise); only `make reset` undoes that.
 - `make lint`: ruff check, ruff format check, mypy, sqlfluff, then in `ui/frontend` ESLint and `tsc`, and a check that the committed API client matches the backend's schema.
@@ -61,7 +61,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 ## Conventions
 
 - **Repository layout, grouped by spec:**
-  - `data-platform/`: `postgres/init/` (roles), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
+  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make roles` share), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
   - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
@@ -89,8 +89,9 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - Keep **pure logic separate from I/O**, so most code is testable without a database or a model:
   - generator: `records/`, `RealismRules`, `SimulationCalendar`, `DeterministicRandom` and `OrderPricing` are pure; `database/`, `StoreSnapshotLoader` and `Simulator` do the I/O. `OrderPricing` lives in `behaviour/order_lifecycle.py` and `GeneratorError` in `simulation/simulator.py`
   - MCP server: `sql_guard`, `masking`, the `examples` ranking and the `catalog` parsing are pure; `tools`, `database` and the file reads of the `catalog` loader and of `ExampleIndex.from_yaml` do the I/O
+  - UI backend: `readonly/sort_filter` and the `catalog_service` mapping are pure; `readonly/query_runner` and the `api/` routers do the I/O
   - agent: `guards` and `outcomes` are pure; variants orchestrate
-- One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.
+- One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_ui`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.
 - Module-level `UPPER_CASE` constants for every tunable value (rates, limits, thresholds), with the spec section in a comment where it comes from the spec. No magic numbers inside logic.
 - **Prefer classes over collections of functions.** Behaviour that shares dependencies, configuration or state, or forms one responsibility, lives in a class whose constructor takes those dependencies. Examples: `SqlGuard(catalog)`, `Simulator(db, seed=…, scale=…, today=…)`, `ResultComparator`, one class per variant. Two exceptions stay module-level functions: tiny stateless utilities with no shared context (e.g. `stable_int`), and entry points that frameworks require as functions (Typer commands, MCP tool handlers, which delegate to a class). Don't write namespace-only classes made of `@staticmethod`s.
 - **Top-down ordering (stepdown rule).** A file reads from the public API to the details:

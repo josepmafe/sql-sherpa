@@ -15,7 +15,7 @@ Then open <http://127.0.0.1:8090>. The root redirects to `/explorer`. `make up` 
 
 The port comes from `SHERPA_UI_PORT` (default 8090, bound to 127.0.0.1). If something else already listens on 8090, start the stack with another one, for example `SHERPA_UI_PORT=8091 make up`, and open that port. Put the variable in `.env` to make it stick.
 
-For development there is a second way: `make ui-dev` runs the API on the host with reload (port 8090) and the Vite dev server (<http://localhost:5173>), which forwards `/api` to it. Stop the compose `ui` service first (`docker compose stop ui`), because both use port 8090. See [Extending the UI](../advanced/extending-the-ui.md).
+For development there is a second way (Node 22+, and `cd ui/frontend && npm ci` once): `make ui-dev` runs the API on the host with reload (port 8090) and the Vite dev server (<http://localhost:5173>), which forwards `/api` to it. Stop the compose `ui` service first (`docker compose stop ui`), because both use port 8090. See [Extending the UI](../advanced/extending-the-ui.md).
 
 The left navigation lists only the screens that exist. Home, Ask and Lineage arrive in later milestones.
 
@@ -29,7 +29,7 @@ The tree is `sherpa > marts > <domain> > table > column`, built from the dbt art
 - **Click** a table to open it in the Inspector on the right: description, domain, grain, primary key, synonyms, every column with its description, accepted values and the metrics it feeds, and the dbt tests on the table. The Inspector's "Open in Lineage" button is disabled, with a tooltip, until ui-2 adds Lineage.
 - **Table menu** (right-click a table, or its "..." button):
   - **Preview 100 rows** opens a new worksheet with `select * from marts.<table> limit 100` and runs it.
-  - **Insert SELECT** writes a `select` of the table's columns into the active worksheet.
+  - **Insert SELECT** adds `select *`, `from marts.<table>` and `limit 100` (on separate lines) to the active worksheet, after whatever is already typed.
   - **Copy name** copies `marts.<table>` to the clipboard.
   - **Open in Lineage** is disabled until ui-2.
 
@@ -46,7 +46,7 @@ The editor completes table and column names from the catalog. The buttons above 
 | **Format** | Reformats the SQL (sqlglot, Postgres dialect). SQL that does not parse is left alone and the reason is shown |
 | **Cancel** | Replaces Run while a query runs; stops it in Postgres, and the result area shows "Cancelled after N s" |
 
-While a query runs, "Running... N s" counts the seconds. Starting a new run in a worksheet cancels its previous one.
+While a query runs, "Running… N s" counts the seconds. Starting a new run in a worksheet cancels its previous one.
 
 **History** (top right of the editor) lists the last 200 runs: SQL, time, row count and status. Picking one puts its SQL into the active worksheet. Worksheets and history live in the browser's `localStorage` under the key `sherpa.v1.explorer`, so they survive a reload but belong to one browser: another browser or a private window starts empty, and clearing site data removes them. Result rows are never stored; a re-run fetches them again.
 
@@ -82,9 +82,9 @@ Where it runs depends on the result:
 ## What you can't do, and why
 
 - **Write anything.** Only one `SELECT` or `WITH ... SELECT` statement passes the SQL guard, the same one the agent uses (`sherpa_mcp.sql_guard`). `INSERT`, `UPDATE`, `DELETE`, DDL, `SET` and several statements in one go are rejected with the guard's reason. Behind the guard, the `sherpa_ui` login is read-only at the database too (`default_transaction_read_only = on`), so the guard is not the only line.
-- **Read anything but the marts.** Only `marts.<table>` for the nine marts, with real columns. Staging, intermediate, seeds, raw and the `ops` audit table are rejected by the guard, and the `sherpa_ui` role reads `ops.dbt_run_results` only for the app's own fixed build-status query, never for yours.
+- **Read anything but the marts.** Only `marts.<table>` for the nine marts, with real columns. Staging, intermediate, seeds, raw and the `ops` audit table are rejected by the guard (the `sherpa_ui` role can read `ops.dbt_run_results`, but the guard keeps your queries out of it).
 - **Get more than 1,000 rows.** The row cap is 1,000 (a 1,001st row marks the result `truncated`). Aggregate, add `LIMIT` or `WHERE`, or use server-side sort and filter to find the rows you need.
-- **Run longer than 30 seconds.** The timeout is `SHERPA_UI_STATEMENT_TIMEOUT_S` (whole seconds, default 30, at least 1), set on every connection. The compose `ui` service passes only the variables listed in its `environment:` block, so it always runs with the default; `make ui-dev` reads `.env`, so a value there applies to the development server. To change it in the container, add the variable to the service's `environment:` block in `docker-compose.yml`.
+- **Run longer than 30 seconds.** The timeout is `SHERPA_UI_STATEMENT_TIMEOUT_S` (whole seconds, default 30, at least 1), set on every connection. Set it in `.env` (`SHERPA_UI_STATEMENT_TIMEOUT_S=60`); `make up` passes it to the `ui` container and `make ui-dev` reads it. The row cap works the same way (`SHERPA_UI_ROW_CAP`).
 - **See personal data.** Result columns named `email`, `first_name` or `last_name` (the columns flagged `meta.pii` in the marts) show `***`. The masking is by the result column's name, as for the agent (agent spec section 4.2): `select email as e ...` returns the real address under the name `e`, and so does `lower(email)`. It stops accidents, not a determined reader; the data is synthetic.
 - **Keep work on the server.** Nothing you write is saved server-side, and the UI has no accounts. Worksheets and history are per browser.
 

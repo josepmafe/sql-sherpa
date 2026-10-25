@@ -90,7 +90,7 @@ Postgres has three logins, created from `.env` by `data-platform/postgres/roles.
 | `sherpa_agent` | the MCP server | read the marts; read-only transactions, `statement_timeout = 5s` |
 | `sherpa_ui` | the web app | read the marts and `ops.dbt_run_results`; read-only transactions, `statement_timeout = 30s` |
 
-On a new volume the init script runs `roles.sql` once. A volume created before a role existed (the `sherpa_ui` login arrived with ui-1) keeps its old roles, because init scripts only run on an empty data directory, and `sherpa_admin` cannot create roles. `make roles` runs the same SQL again as the `postgres` superuser inside the container, so no data is lost. It is idempotent: it creates what is missing and resets passwords and role settings to the `.env` values, so run it after changing a password too.
+On a new volume the init script runs `roles.sql` once. An existing volume keeps the roles it has, because init scripts only run on an empty data directory, and `sherpa_admin` cannot create roles. `make roles` runs the same SQL again as the `postgres` superuser inside the container, so no data is lost. It is idempotent: it creates what is missing and resets passwords and role settings. It reads the variables of the *running* Postgres container, not `.env` directly. So to change a password, or to add the UI login to a volume that has none, put `SHERPA_UI_USER` and `SHERPA_UI_PASSWORD` (copy them from `.env.example`) or the new password in `.env`, then run `make up` (it recreates Postgres with the new environment), `make roles` and `make build-prod` (which re-applies the read grants).
 
 ```bash
 make roles

@@ -82,6 +82,8 @@ services:
       SHERPA_UI_USER: ${SHERPA_UI_USER:-sherpa_ui}
       SHERPA_UI_PASSWORD: ${SHERPA_UI_PASSWORD:?set it in .env}
       SHERPA_UI_DBT_TARGET_PATH: /app/dbt/target-prod
+      SHERPA_UI_STATEMENT_TIMEOUT_S: ${SHERPA_UI_STATEMENT_TIMEOUT_S:-30}
+      SHERPA_UI_ROW_CAP: ${SHERPA_UI_ROW_CAP:-1000}
     volumes:
       # The dbt folder, not target-prod itself (see mcp): a rebuilt target-prod must not leave a stale mount.
       - ./data-platform/dbt:/app/dbt:ro

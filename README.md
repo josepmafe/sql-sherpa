@@ -4,7 +4,7 @@
 
 It is a learning project, built to production standards: a realistic synthetic e-commerce business, a dbt project that uses dbt Core's features the way practitioners do, and a text-to-SQL agent where observability and evaluation come first.
 
-> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation), data-platform-2 (Core marts), agent-design-1 (MCP server) and ui-1 (shell and Explorer) are done; agent-design-2 (gold set and evals) and data-platform-3 (Time) are next.
+> **Status:** design complete for the data platform, the agent and the web app (UI); data-platform-1 (Foundation), data-platform-2 (Core marts), agent-design-1 (MCP server) and ui-1 (shell and Explorer) are done; agent-design-2 (gold set and evals) and data-platform-3 (Time) are next.
 
 ---
 
@@ -46,7 +46,7 @@ The target stack. Each tool is introduced in the milestone where it first does a
 
 ## Quickstart
 
-Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
+Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), GNU Make and, for working on the web app's frontend (`make ui-dev`, `make lint`, `make e2e`), Node 22+.
 
 ```bash
 uv run pre-commit install  # hooks enforce lint and format locally; there is no CI yet
@@ -54,6 +54,7 @@ cp .env.example .env     # then replace the change-me passwords with real values
 make up                  # start Postgres, the MCP server and the web app (all wait until healthy)
 make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
 make deps                # install the dbt packages
+(cd ui/frontend && npm ci)  # once, only for frontend work: make ui-dev, make lint, make e2e
 make build               # dbt: seeds, staging, intermediate and mart models, and tests
 make build-prod          # the same into the prod schemas, which the agent and the web app read; also writes catalog.json
 make eval-db             # optional: the frozen evaluation database sherpa_eval (about 5 minutes or more)

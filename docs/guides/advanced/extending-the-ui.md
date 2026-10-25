@@ -59,7 +59,7 @@ Three layers, none of which trusts the one before it:
 | The connection | `UiSettings.ui_conninfo()` in `settings.py` | Every session starts with `default_transaction_read_only=on` and the statement timeout |
 | The role | `data-platform/postgres/roles.sql` | `sherpa_ui` is `LOGIN`, read-only and time-limited by role defaults, has no `CREATE`/`TEMPORARY`, and has only the grants dbt's `grant_read_access` macro gives (`marts`, `extensions`, `ops.dbt_run_results`) |
 
-The guard and the masking (`sherpa_mcp.masking.PiiMasker`) are imported from `sherpa_mcp`, the agent's tool server, not copied. The Explorer and the agent must agree on what a read-only query is and on what is masked, and one implementation guarantees it. A change to the guard is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md) (and its sqlglot rules), then rerun the UI's tests (below). The UI's own allow-list for functions is a parameter of the `SqlGuard` the runner builds; the agent's list is the default.
+The guard and the masking (`sherpa_mcp.masking.PiiMasker`) are imported from `sherpa_mcp`, the agent's tool server, not copied. The Explorer and the agent must agree on what a read-only query is and on what is masked, and one implementation guarantees it. A change to the guard is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md) (and its sqlglot rules), then rerun the UI's tests (below). The runner builds its `SqlGuard` with the default function allow-list, the agent's.
 
 What belongs only to the UI is in `readonly/query_runner.py`: the 1,000-row cap (`SHERPA_UI_ROW_CAP`), the timeout from `SHERPA_UI_STATEMENT_TIMEOUT_S`, cancel (a registry from `query_id` to connection), and the mapping of Postgres error positions back to the user's SQL. The server-side sort/filter wrapper is built in `readonly/sort_filter.py` from validated result-column names and bound parameters; the user's SQL itself is still guard-checked as written.
 
@@ -72,8 +72,10 @@ To loosen or tighten a rule:
 ## 4. The three test layers
 
 ```bash
+cd ui/frontend && npm ci                                  # once: the frontend's packages (Node 22+)
+
 # 1. Backend: pytest, no browser
-uv run --env-file .env pytest ui                         # units and API tests (Postgres needed for the integration ones)
+uv run --env-file .env pytest ui                         # units and API tests, no database needed
 uv run --env-file .env pytest ui -m warehouse            # against the built prod marts as sherpa_ui (make build-prod first)
 
 # 2. Frontend: Vitest + Testing Library, mocked API
