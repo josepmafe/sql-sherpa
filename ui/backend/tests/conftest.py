@@ -95,3 +95,16 @@ def closed_port() -> int:
         sock.bind((LOCALHOST, 0))
         port: int = sock.getsockname()[1]
         return port
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> UiSettings:
+    return UiSettings(
+        _env_file=None,  # type: ignore[call-arg]
+        db_host="127.0.0.1",
+        db_port=1,
+        db_name="sherpa",
+        ui_user="sherpa_ui",
+        ui_password=SecretStr("x"),
+        ui_dbt_target_path=tmp_path / "missing-target",
+    )
