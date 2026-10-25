@@ -18,3 +18,9 @@ data-platform/dbt/target-scratch/
 data-platform/dbt/dbt_packages/
 data-platform/dbt/logs/
 data-platform/dbt/.user.yml
+
+# UI frontend
+ui/frontend/node_modules/
+ui/frontend/dist/
+ui/frontend/test-results/
+ui/frontend/playwright-report/

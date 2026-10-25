@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev lint test
+.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -98,11 +98,35 @@ eval-db:
 mcp-dev:
 	MCP_TRANSPORT=http uv run --env-file .env sherpa-mcp
 
+# The OpenAPI schema goes through a temp file (inside the gitignored node_modules, so Python and Node see the same
+# path on every OS); the committed client types are generated from it.
+UI_SCHEMA = ui/frontend/src/api/schema.d.ts
+UI_TMP = ui/frontend/node_modules/.cache/sherpa
+UI_OPENAPI = $(UI_TMP)/openapi.json
+
+ui-client:
+	uv run python -m sherpa_ui.openapi_export $(UI_OPENAPI)
+	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o src/api/schema.d.ts
+
+# The API (port 8090, reloading) and the Vite dev server, which proxies /api to it.
+ui-dev:
+	$(MAKE) -j2 ui-api-dev ui-web-dev
+
+ui-api-dev:
+	uv run --env-file .env uvicorn sherpa_ui.app:dev_app --reload --port 8090
+
+ui-web-dev:
+	cd ui/frontend && npm run dev
+
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy
 	uv run --env-file .env sqlfluff lint data-platform/dbt
+	cd ui/frontend && npm run lint && npm run typecheck
+	uv run python -m sherpa_ui.openapi_export $(UI_OPENAPI)
+	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o ../../$(UI_TMP)/schema.d.ts
+	diff $(UI_SCHEMA) $(UI_TMP)/schema.d.ts
 
 test:
 	uv run --env-file .env pytest

@@ -65,3 +65,14 @@ def _serve_frontend(app: FastAPI, root: Path) -> None:
             return FileResponse(candidate)
 
         return FileResponse(root / INDEX_FILE)
+
+
+def __getattr__(name: str) -> FastAPI:
+    # `uvicorn sherpa_ui.app:dev_app --reload` (make ui-dev): the API alone, settings read from the environment.
+    # Built on first access, so importing this module (tests, the OpenAPI export) needs no database settings.
+    if name == "dev_app":
+        from sherpa_ui.settings import UiSettings
+
+        return create_app(UiSettings(), static_dir=None)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

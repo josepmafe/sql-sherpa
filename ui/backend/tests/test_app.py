@@ -96,3 +96,31 @@ class TestOpenapiExport:
 
     def test_wrong_argument_count_is_a_usage_error(self) -> None:
         assert export_openapi([]) == 2
+
+
+class TestDevApp:
+    def test_is_built_from_the_environment_without_static_files(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for key, value in {
+            "SHERPA_DB_HOST": "unused",
+            "SHERPA_DB_PORT": "1",
+            "SHERPA_DB_NAME": "unused",
+            "SHERPA_UI_USER": "unused",
+            "SHERPA_UI_PASSWORD": "unused",
+        }.items():
+            monkeypatch.setenv(key, value)
+
+        import sherpa_ui.app as app_module
+
+        dev_app = app_module.dev_app  # type: ignore[attr-defined]
+
+        with TestClient(dev_app, base_url="http://localhost") as client:
+            not_served = client.get("/explorer")
+
+        assert "/api/health" in dev_app.openapi()["paths"]
+        assert not_served.status_code == 404
+
+    def test_unknown_attribute_still_raises(self) -> None:
+        import sherpa_ui.app as app_module
+
+        with pytest.raises(AttributeError):
+            app_module.nonexistent  # noqa: B018
