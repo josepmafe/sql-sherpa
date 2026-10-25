@@ -121,7 +121,7 @@ function Harness({ initial, onSettled = () => {} }: { initial: string; onSettled
   const [sql, setSql] = useState(initial);
   return (
     <MantineProvider env="test">
-      <WorksheetPanel worksheet={{ id: "w1", name: "Worksheet 1", sql }} onSqlChange={setSql} onSettled={onSettled} />
+      <WorksheetPanel worksheet={{ id: "w1", name: "Worksheet 1", sql }} onSqlChange={setSql} onSettled={onSettled} onRunStarted={() => {}} />
     </MantineProvider>
   );
 }

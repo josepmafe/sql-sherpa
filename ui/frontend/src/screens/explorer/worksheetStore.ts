@@ -2,7 +2,8 @@
 export const STORAGE_KEY = "sherpa.v1.explorer";
 export const HISTORY_LIMIT = 200;
 
-export type Worksheet = { id: string; name: string; sql: string };
+// `runOnOpen` asks the worksheet's panel to run its SQL once when it mounts (Preview); the panel clears it.
+export type Worksheet = { id: string; name: string; sql: string; runOnOpen?: boolean };
 export type HistoryStatus = "done" | "error" | "cancelled";
 export type HistoryEntry = {
   sql: string;
@@ -91,6 +92,14 @@ export function insertSelect(state: ExplorerState, qualifiedName: string): Explo
   const statement = `select *\nfrom ${qualifiedName}\nlimit 100`;
   const sql = active.sql.trim() === "" ? statement : `${active.sql.trimEnd()}\n\n${statement}`;
   return updateWorksheet(state, active.id, { sql });
+}
+
+// "Preview 100 rows" opens a new worksheet that runs the statement as soon as its panel mounts.
+export function openPreview(state: ExplorerState, qualifiedName: string): ExplorerState {
+  const added = addWorksheet(state);
+  const sql = `select * from ${qualifiedName} limit 100`;
+  const name = qualifiedName.split(".").pop() ?? qualifiedName;
+  return updateWorksheet(added, added.activeId, { name, sql, runOnOpen: true });
 }
 
 function newWorksheet(existing: readonly Worksheet[]): Worksheet {

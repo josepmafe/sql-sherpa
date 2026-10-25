@@ -13,6 +13,7 @@ import {
   closeWorksheet,
   insertSelect,
   loadExplorerState,
+  openPreview,
   saveExplorerState,
   selectWorksheet,
   updateWorksheet,
@@ -36,6 +37,7 @@ export function ExplorerScreen() {
         <CatalogTree
           selected={selected}
           onSelect={setSelected}
+          onPreview={(name) => setState((previous) => openPreview(previous, name))}
           onInsertSelect={(name) => setState((previous) => insertSelect(previous, name))}
         />
       </ScrollArea>
@@ -63,6 +65,7 @@ export function ExplorerScreen() {
                 activeTable={selected}
                 onSqlChange={(sql) => setState((previous) => updateWorksheet(previous, worksheet.id, { sql }))}
                 onSettled={record}
+                onRunStarted={() => setState((previous) => updateWorksheet(previous, worksheet.id, { runOnOpen: false }))}
               />
             </Box>
           ))}
