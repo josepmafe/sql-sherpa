@@ -88,8 +88,10 @@ class TestQueriesApi:
             ("timeout", 504),
             ("duplicate_query_id", 409),
             ("cancelled", 409),
+            ("busy", 429),
             ("catalog_unavailable", 503),
             ("database_unavailable", 503),
+            ("too_many_connections", 503),
         ],
     )
     def test_error_codes_map_to_statuses(self, client: TestClient, runner: MagicMock, code: str, status: int) -> None:

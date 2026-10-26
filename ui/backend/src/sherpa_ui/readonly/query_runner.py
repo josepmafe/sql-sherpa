@@ -46,8 +46,10 @@ QueryErrorCode = Literal[
     "timeout",
     "cancelled",
     "duplicate_query_id",
+    "busy",
     "catalog_unavailable",
     "database_unavailable",
+    "too_many_connections",
 ]
 
 # What the grid sorts and filters a column as (a Decimal arrives as a string); any other type is "other".
@@ -78,11 +80,28 @@ FETCH_BATCH_ROWS: Final = 100
 # longest) stays near 100 MB however many columns the query has.
 FETCH_BATCH_CELLS: Final = 10_000
 CANCEL_TIMEOUT_SECONDS: Final = 5.0
+# UI spec §5. Runs holding a connection at once, below the sherpa_ui role's CONNECTION LIMIT 10
+# (data-platform/postgres/roles.sql), so the health check still gets one while the runner is full.
+MAX_CONCURRENT_QUERIES: Final = 8
+# SQLSTATE 53300 (too_many_connections). libpq gives no SQLSTATE for a refused connection, so it is recognised by
+# Postgres's messages for it: a role's or database's CONNECTION LIMIT, max_connections, the reserved slots.
+TOO_MANY_CONNECTIONS_MARKERS: Final = (
+    "too many connections for",
+    "too many clients already",
+    "remaining connection slots are reserved",
+)
 CONNECTION_EXCEPTION_CLASS: Final = "08"  # SQLSTATE class: connection exception
 CANCELLED_MESSAGE: Final = "the query was cancelled"
 TIMEOUT_MESSAGE: Final = "the query ran longer than {seconds} s and was stopped; filter or aggregate more narrowly"
 DUPLICATE_MESSAGE: Final = "a query with id {query_id} is already running"
+BUSY_MESSAGE: Final = (
+    f"too many queries are running (at most {MAX_CONCURRENT_QUERIES} at once); wait for one to finish or cancel one"
+)
 UNREACHABLE_MESSAGE: Final = "the warehouse is unreachable ({reason}); is `make up` running?"
+TOO_MANY_CONNECTIONS_MESSAGE: Final = (
+    "the warehouse refused a connection: too many are open for the UI's login ({reason}); another client of that "
+    "login (a second UI, a test run) holds some, so wait for its queries to finish and run again"
+)
 FORMAT_ERROR_MESSAGE: Final = "could not format the query: {reason}"
 FORMAT_SEPARATOR: Final = ";\n\n"
 _TYPE_BY_OID: Final[dict[int, ColumnType]] = {postgres_types[name].oid: kind for name, kind in COLUMN_TYPES.items()}
@@ -114,7 +133,7 @@ class QueryOutcome(BaseModel):
 
 class QueryRunner:
     """Runs each query on a connection of its own as the read-only `sherpa_ui` role, and closes it afterwards; safe to
-    call from several threads at once.
+    call from several threads at once, of which at most `MAX_CONCURRENT_QUERIES` hold a connection.
 
     A connection never outlives its run, so a late `cancel` cannot reach another query. A run that `cancel` reached
     while it was registered always ends `cancelled`, even when the cancel request found Postgres between two
@@ -128,6 +147,7 @@ class QueryRunner:
         # Both guarded by _lock. A query_id maps to None while its run is still connecting.
         self._running: dict[str, psycopg.Connection | None] = {}
         self._cancelled: set[str] = set()
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_QUERIES)
 
     def run(
         self, query_id: str, sql_text: str, sort: Sequence[SortSpec] = (), filters: Sequence[FilterSpec] = ()
@@ -135,19 +155,23 @@ class QueryRunner:
         """Run `sql_text` as written (client mode), or wrapped to sort and filter all of its rows on the server when
         `sort` or `filters` is given (server mode).
 
-        Raises `UiQueryError`; in server mode also `DuplicateColumnsError` (the caller falls back to client mode) and
-        `UnknownColumnError` for a sort or filter column that is not in the result. Whatever else went wrong, a run that
-        `cancel` reached raises `UiQueryError` with code `cancelled`.
+        Raises `UiQueryError` (`busy`, without connecting, while `MAX_CONCURRENT_QUERIES` runs hold a connection); in
+        server mode also `DuplicateColumnsError` (the caller falls back to client mode) and `UnknownColumnError` for a
+        sort or filter column that is not in the result. Whatever else went wrong, a run that `cancel` reached raises
+        `UiQueryError` with code `cancelled`.
         """
         started = time.monotonic()
         mode: QueryMode = "server" if sort or filters else "client"
         self._reserve(query_id)  # first, so a cancel sent right after the request is never lost
         conn: psycopg.Connection | None = None
+        holds_slot = False
         try:
             catalog = self._load_catalog()
             masker = PiiMasker(catalog.pii_columns())
             self._check_guard(catalog, sql_text)
-            self._raise_if_cancelled(query_id)  # before opening a connection the run would not use
+            self._raise_if_cancelled(query_id)  # before taking a slot and a connection the run would not use
+            self._take_slot()
+            holds_slot = True
             conn = self._connect()
             self._attach(query_id, conn)
             fetched = self._execute(conn, strip_terminators(sql_text), sort, filters, masker)
@@ -160,6 +184,9 @@ class QueryRunner:
             cancelled = self._release(query_id)
             if conn is not None:
                 conn.close()
+
+            if holds_slot:
+                self._slots.release()
 
         if cancelled:
             raise UiQueryError("cancelled", CANCELLED_MESSAGE)
@@ -234,11 +261,20 @@ class QueryRunner:
         if not guard.ok:
             raise UiQueryError("guard_rejected", "\n".join(guard.errors))
 
+    def _take_slot(self) -> None:
+        if not self._slots.acquire(blocking=False):
+            raise UiQueryError("busy", BUSY_MESSAGE)
+
     def _connect(self) -> psycopg.Connection:
         try:
             return psycopg.connect(self._settings.ui_conninfo(), autocommit=True)
         except psycopg.OperationalError as error:
-            raise UiQueryError("database_unavailable", UNREACHABLE_MESSAGE.format(reason=_first_line(error))) from error
+            reason = _first_line(error)
+            if any(marker in str(error) for marker in TOO_MANY_CONNECTIONS_MARKERS):
+                message = TOO_MANY_CONNECTIONS_MESSAGE.format(reason=reason)
+                raise UiQueryError("too_many_connections", message) from error
+
+            raise UiQueryError("database_unavailable", UNREACHABLE_MESSAGE.format(reason=reason)) from error
 
     def _attach(self, query_id: str, conn: psycopg.Connection) -> None:
         with self._lock:

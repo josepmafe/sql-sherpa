@@ -13,7 +13,8 @@ import pytest
 from psycopg.postgres import types as postgres_types
 from pydantic import SecretStr
 from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
-from sherpa_ui.readonly.query_runner import QueryRunner, UiQueryError, user_position
+from sherpa_ui.health.health_service import HealthService
+from sherpa_ui.readonly.query_runner import MAX_CONCURRENT_QUERIES, QueryRunner, UiQueryError, user_position
 from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec, UnknownColumnError
 from sherpa_ui.settings import UiSettings
 
@@ -28,9 +29,11 @@ LONG_AGGREGATE = (
     "cross join marts.fct_order_items b cross join marts.fct_order_items c"
 )
 REGISTER_WAIT_SECONDS = 10.0
+SETTLE_SECONDS = 0.5
 DECLARE_OFFSET = len('DECLARE "sherpa_ui" CURSOR FOR ')
 INT4_OID = postgres_types["int4"].oid
 CUT = " …[cut at 10000 chars]"
+ROLE_CONNECTION_LIMIT = 10  # data-platform/postgres/roles.sql
 
 
 @pytest.fixture
@@ -226,6 +229,102 @@ class TestQueryRunnerOffline:
         assert still_running == frozenset({"q1"})
         assert cancelled.value.code == "cancelled"
         connection.close.assert_called_once_with()
+        assert offline_runner.running_query_ids() == frozenset()
+
+    def test_a_query_past_the_concurrency_limit_is_busy_without_connecting(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connecting = threading.Semaphore(0)
+        proceed = threading.Event()
+        connects: list[str] = []
+
+        def slow_connect(*args: object, **kwargs: object) -> MagicMock:
+            connects.append("connect")
+            connecting.release()
+            assert proceed.wait(REGISTER_WAIT_SECONDS)
+            return _fake_connection(rows=[(1,)])
+
+        monkeypatch.setattr(psycopg, "connect", slow_connect)
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_QUERIES) as pool:
+            holders = [pool.submit(offline_runner.run, f"q{n}", "select 1 as a") for n in range(MAX_CONCURRENT_QUERIES)]
+            for _ in holders:
+                assert connecting.acquire(timeout=REGISTER_WAIT_SECONDS)
+
+            with pytest.raises(UiQueryError) as busy:
+                offline_runner.run("one-too-many", "select 1 as a")
+
+            connects_while_full = len(connects)
+            proceed.set()
+            outcomes = [holder.result(timeout=REGISTER_WAIT_SECONDS) for holder in holders]
+
+        again = offline_runner.run("one-too-many", "select 1 as a")  # a slot is free again
+
+        assert busy.value.code == "busy"
+        assert busy.value.message == (
+            "too many queries are running (at most 8 at once); wait for one to finish or cancel one"
+        )
+        assert connects_while_full == 8
+        assert all(outcome.rows == ((1,),) for outcome in outcomes)
+        assert again.rows == ((1,),)
+        assert offline_runner.running_query_ids() == frozenset()
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "succeeds",
+            "guard_rejected",
+            "cancelled_before_connecting",
+            "connect_fails",
+            "cancelled_while_connecting",
+            "sql_error",
+            "duplicate_columns",
+            "unknown_column",
+        ],
+    )
+    def test_every_way_a_run_ends_gives_its_slot_back(
+        self,
+        offline_settings: UiSettings,
+        empty_catalog_loader: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        path: str,
+    ) -> None:
+        runner = QueryRunner(offline_settings, empty_catalog_loader)
+        sql_text, sort = _arrange_exit_path(runner, empty_catalog_loader, monkeypatch, path)
+
+        # One run more than there are slots: a slot kept by each run would make the last one `busy`.
+        endings = [_ending(runner, sql_text, sort) for _ in range(MAX_CONCURRENT_QUERIES + 1)]
+
+        assert "busy" not in endings
+        assert len(set(endings)) == 1
+        assert runner.running_query_ids() == frozenset()
+
+    @pytest.mark.parametrize(
+        "refusal",
+        [
+            'too many connections for role "sherpa_ui"',
+            'too many connections for database "sherpa"',
+            "sorry, too many clients already",
+            "remaining connection slots are reserved for roles with the SUPERUSER attribute",
+        ],
+    )
+    def test_a_connection_refused_by_a_connection_limit_is_too_many_connections(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, refusal: str
+    ) -> None:
+        reason = f'connection failed: connection to server at "127.0.0.1", port 5432 failed: FATAL:  {refusal}'
+
+        def refused(*args: object, **kwargs: object) -> None:
+            raise psycopg.OperationalError(f"{reason}\n")
+
+        monkeypatch.setattr(psycopg, "connect", refused)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a")
+
+        assert error.value.code == "too_many_connections"
+        assert error.value.message == (
+            f"the warehouse refused a connection: too many are open for the UI's login ({reason}); another client of "
+            "that login (a second UI, a test run) holds some, so wait for its queries to finish and run again"
+        )
         assert offline_runner.running_query_ids() == frozenset()
 
     def test_cancel_between_statements_still_ends_the_run_cancelled(
@@ -619,6 +718,53 @@ class TestQueryRunner:
         assert runner.running_query_ids() == frozenset()
         assert leaked_ui_backends() == 0
 
+    def test_eight_running_queries_leave_a_ninth_busy_and_the_health_check_a_connection(
+        self,
+        runner: QueryRunner,
+        ui_settings: UiSettings,
+        prod_loader: MartCatalogLoader,
+        ui_sessions: Callable[[], int],
+        leaked_ui_backends: Callable[[], int],
+    ) -> None:
+        query_ids = [f"long{n}" for n in range(MAX_CONCURRENT_QUERIES)]
+        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_QUERIES) as pool:
+            holders = [pool.submit(runner.run, query_id, LONG_AGGREGATE) for query_id in query_ids]
+            for query_id in query_ids:
+                _wait_until_running(runner, query_id)
+
+            _wait_for_ui_sessions(ui_sessions, MAX_CONCURRENT_QUERIES)
+
+            with pytest.raises(UiQueryError) as busy:
+                runner.run("one-too-many", "select 1 as n")
+
+            health = HealthService(ui_settings, prod_loader).check()
+            for query_id in query_ids:
+                runner.cancel(query_id)
+
+            endings = {_describe(holder.exception(timeout=REGISTER_WAIT_SECONDS)) for holder in holders}
+
+        assert busy.value.code == "busy"
+        assert health.database == "ok"
+        assert endings == {"cancelled"}
+        assert runner.run("one-too-many", "select 1 as n").rows == ((1,),)
+        assert runner.running_query_ids() == frozenset()
+        assert leaked_ui_backends() == 0
+
+    def test_a_full_role_connection_limit_is_too_many_connections(
+        self, runner: QueryRunner, ui_settings: UiSettings
+    ) -> None:
+        held = _fill_the_connection_limit(ui_settings)
+        try:
+            with pytest.raises(UiQueryError) as error:
+                runner.run("q1", "select 1 as n")
+        finally:
+            for conn in held:
+                conn.close()
+
+        assert error.value.code == "too_many_connections"
+        assert 'too many connections for role "sherpa_ui"' in error.value.message
+        assert runner.running_query_ids() == frozenset()
+
     def test_late_cancel_is_a_no_op_and_the_id_is_reusable(self, runner: QueryRunner) -> None:
         runner.run("q1", "select 1 as a")
 
@@ -777,9 +923,84 @@ def _endless_rows(connection: MagicMock, width: int, fetch_sizes: list[int], del
     cursor.fetchmany.side_effect = fetchmany
 
 
+def _arrange_exit_path(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch, path: str
+) -> tuple[str, tuple[SortSpec, ...]]:
+    """Make every run of `runner` end the way `path` names; returns the SQL and sort to run."""
+    connection = _fake_connection(rows=[(1,)], columns=("a", "a") if path == "duplicate_columns" else ("a",))
+    sql_text, sort = "select 1 as a", ()
+    catalog = loader.load.return_value
+
+    def connect(*args: object, **kwargs: object) -> MagicMock:
+        match path:
+            case "connect_fails":
+                raise psycopg.OperationalError("connection failed: connection refused")
+            case "cancelled_while_connecting":
+                runner.cancel("q1")
+
+        return connection
+
+    def load_then_cancel() -> MartCatalog:
+        runner.cancel("q1")
+        return catalog
+
+    match path:
+        case "guard_rejected":
+            sql_text = "delete from marts.fct_orders"
+        case "cancelled_before_connecting":
+            loader.load.side_effect = load_then_cancel
+        case "sql_error":
+            connection.execute.side_effect = psycopg.errors.InsufficientPrivilege("permission denied for schema ops")
+        case "duplicate_columns":
+            sort = (SortSpec(column="a", direction="asc"),)
+        case "unknown_column":
+            sort = (SortSpec(column="b", direction="asc"),)
+
+    monkeypatch.setattr(psycopg, "connect", connect)
+    return sql_text, sort
+
+
+def _ending(runner: QueryRunner, sql_text: str, sort: tuple[SortSpec, ...]) -> str:
+    """How one run ended: `ok`, the `UiQueryError` code, or the type of anything else it raised."""
+    try:
+        runner.run("q1", sql_text, sort=sort)
+    except (UiQueryError, DuplicateColumnsError, UnknownColumnError) as error:
+        return _describe(error)
+
+    return "ok"
+
+
 def _describe(cause: BaseException | None) -> str:
     """A `UiQueryError` by its code, anything else by its type."""
     return cause.code if isinstance(cause, UiQueryError) else type(cause).__name__
+
+
+def _fill_the_connection_limit(settings: UiSettings) -> list[psycopg.Connection]:
+    """Open UI-role connections until Postgres refuses one; the caller closes them."""
+    held: list[psycopg.Connection] = []
+    while len(held) <= ROLE_CONNECTION_LIMIT:
+        try:
+            held.append(psycopg.connect(settings.ui_conninfo(), autocommit=True))
+        except psycopg.OperationalError:
+            return held
+
+    for conn in held:
+        conn.close()
+
+    pytest.fail(f"Postgres accepted more than {ROLE_CONNECTION_LIMIT} connections of the UI role")
+
+
+def _wait_for_ui_sessions(ui_sessions: Callable[[], int], count: int) -> None:
+    """Wait until the UI role has `count` sessions open, then a moment more, so that a short-lived one (the compose
+    service's health check) cannot have stood in for a query still connecting."""
+    deadline = time.monotonic() + REGISTER_WAIT_SECONDS
+    while True:
+        if ui_sessions() >= count:
+            time.sleep(SETTLE_SECONDS)
+            return
+
+        assert time.monotonic() < deadline, f"the UI role never had {count} sessions open at once"
+        time.sleep(0.05)
 
 
 def _must_not_connect(*args: object, **kwargs: object) -> None:

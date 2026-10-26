@@ -27,8 +27,10 @@ QUERY_ERROR_STATUS: Final[dict[str, int]] = {
     "timeout": 504,
     "duplicate_query_id": 409,
     "cancelled": 409,
+    "busy": 429,
     "catalog_unavailable": 503,
     "database_unavailable": 503,
+    "too_many_connections": 503,
 }
 HTTP_STATUS_CODES: Final[dict[int, str]] = {404: "not_found", 405: "method_not_allowed"}
 UNKNOWN_COLUMN_CODE: Final = "unknown_column"  # a sort or filter column that is not in the result

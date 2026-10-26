@@ -71,6 +71,7 @@ When a query fails, the red box under the editor shows what Postgres or the guar
 | `select * from public.x` | Query not allowed: `[guard:table] table public.x is outside marts; query only the marts that list_tables returns` |
 | `select 1/0 from marts.dim_customers` | Query failed: `division by zero` |
 | a query slower than the timeout | Query timed out: `the query ran longer than 30 s and was stopped; filter or aggregate more narrowly`, plus a hint to add a `WHERE` or `LIMIT` |
+| a 9th query while 8 others still run (in any tab or browser) | `too many queries are running (at most 8 at once); wait for one to finish or cancel one` |
 
 For Postgres errors that name a position (a syntax error, say), the editor highlights that spot in your SQL. With "Run selection" the highlight is placed inside the selection.
 
@@ -89,6 +90,7 @@ Where it runs depends on the result:
 - **Write anything.** Only one `SELECT` or `WITH ... SELECT` statement passes the SQL guard, the same one the agent uses (`sherpa_mcp.sql_guard`). `INSERT`, `UPDATE`, `DELETE`, DDL, `SET` and several statements in one go are rejected with the guard's reason. Behind the guard, the `sherpa_ui` login is read-only at the database too (`default_transaction_read_only = on`), so the guard is not the only line.
 - **Read anything but the marts.** Only `marts.<table>` for the nine marts, with real columns. Staging, intermediate, seeds, raw and the `ops` audit table are rejected by the guard (the `sherpa_ui` role can read `ops.dbt_run_results`, but the guard keeps your queries out of it).
 - **Get more than 1,000 rows, or more than 2,000,000 characters.** The row cap is 1,000 (a 1,001st row marks the result `truncated`), each cell is cut at 10,000 characters, and rows past 2,000,000 characters in all are left out. Aggregate, select fewer or shorter columns, add `LIMIT` or `WHERE`, or use server-side sort and filter to find the rows you need.
+- **Run more than 8 queries at once.** The `sherpa_ui` login may hold 10 connections, and the UI keeps two of them free so that its health check still works while every worksheet is busy. A 9th query is refused at once, without touching the database (see the table above); it runs once you wait for one of the others or cancel it.
 - **Run longer than 30 seconds.** The timeout is `SHERPA_UI_STATEMENT_TIMEOUT_S` (whole seconds, default 30, at least 1), set on every connection. Set it in `.env` (`SHERPA_UI_STATEMENT_TIMEOUT_S=60`); `make up` passes it to the `ui` container and `make ui-dev` reads it. The row cap works the same way (`SHERPA_UI_ROW_CAP`).
 - **See personal data.** Result columns named `email`, `first_name` or `last_name` (the columns flagged `meta.pii` in the marts) show `***`. The masking is by the result column's name, as for the agent (agent spec section 4.2): `select email as e ...` returns the real address under the name `e`, and so does `lower(email)`. It stops accidents, not a determined reader; the data is synthetic.
 - **Keep work on the server.** Nothing you write is saved server-side, and the UI has no accounts. Worksheets and history are per browser.
@@ -100,6 +102,7 @@ Where it runs depends on the result:
 | "The SQL Sherpa server is unreachable" | The `ui` container is down: `docker compose ps`, then `make up` |
 | "Database unavailable: queries and the table preview cannot run" | Postgres is down or the `sherpa_ui` login is wrong: `docker compose up -d --wait postgres`; check `SHERPA_UI_PASSWORD` in `.env`, and run `make roles` if the volume predates the role |
 | "dbt artifacts missing" | Run `make build-prod`, then reload |
+| `the warehouse refused a connection: too many are open for the UI's login (...)` | Another client of the `sherpa_ui` login holds connections: a second UI (`make ui-dev` next to the compose `ui` service) or a test run. Wait for its queries to finish or stop it, then run again |
 | Queries fail with a permission error on `marts` | The read grants were lost: `make grant-read` |
 | `make up` cannot bind the port | Another process holds 8090: set `SHERPA_UI_PORT` to a free port |
 

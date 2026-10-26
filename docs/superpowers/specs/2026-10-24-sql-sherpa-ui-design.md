@@ -146,7 +146,7 @@ docker compose --profile demo up -d
 
 ## 4. Backend API
 
-All responses are Pydantic models. All errors are `{code, message, detail?}` with a stable `code`. Clients branch on the `code`; the status only groups the codes: `422` for a refused request (`invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`), `404` for `table_not_found`, `409` for `duplicate_query_id` and `cancelled`, `503` for `catalog_unavailable` and `database_unavailable`, `504` for `timeout`, and `500` for `internal_error`. A timeout is `504`, not `408`: Chromium silently re-sends a POST answered `408` on a reused keep-alive connection, which would run the query twice.
+All responses are Pydantic models. All errors are `{code, message, detail?}` with a stable `code`. Clients branch on the `code`; the status only groups the codes: `422` for a refused request (`invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`), `404` for `table_not_found`, `409` for `duplicate_query_id` and `cancelled`, `429` for `busy`, `503` for `catalog_unavailable`, `database_unavailable` and `too_many_connections`, `504` for `timeout`, and `500` for `internal_error`. A timeout is `504`, not `408`: Chromium silently re-sends a POST answered `408` on a reused keep-alive connection, which would run the query twice.
 
 | Endpoint | Purpose |
 |---|---|
@@ -185,6 +185,10 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
   - A 1,001st row, or a row that would pass the budget, means `truncated`: that row and the rest are left out.
   - Postgres times each FETCH on its own, so fetching also stops at the statement timeout, checked before each batch.
   - As for the agent (agent spec §4.2, known limits), a cell is cut only after Postgres built it and psycopg loaded it, so a huge `string_agg` still costs its memory while it is fetched; the `ui` container's 1 GB limit and restart policy bound it.
+- **Concurrency:** `sherpa_ui` has `CONNECTION LIMIT 10`. At most 8 queries hold a connection at once (`MAX_CONCURRENT_QUERIES`), so the health check still gets one while the runner is full.
+  - A 9th query returns `code = "busy"` (`429`) at once, without opening a connection: "too many queries are running (at most 8 at once); wait for one to finish or cancel one".
+  - A run takes its slot just before connecting (after the guard and a last cancel check) and gives it back however it ends.
+  - A connection that Postgres refuses for a connection limit (SQLSTATE 53300, for instance while another client of the same login holds connections) returns `too_many_connections` (`503`), not `database_unavailable`. libpq reports no SQLSTATE for a refused connection, so the runner recognises it by Postgres's messages for it.
 - **PII masking:** the same name-based masking as the agent (agent spec §4.2). Neither `sherpa_ui` nor `sherpa_agent` has column-level `SELECT` grants, so the masking is by result-column name only: a PII column under an alias or inside an expression is not masked, and `pg_stats` shows the PII columns' stored values to a role that can read them.
 - **Sort and filter:**
   - When the first run was **not** truncated, the frontend sorts and filters the rows it has (`mode = "client"`).
