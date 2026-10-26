@@ -63,6 +63,25 @@ class TestApp:
         assert api_root.status_code == 404
         assert api_root.json()["code"] == "not_found"
 
+    @pytest.mark.parametrize("path", ["/", "/explorer/tables/fct_orders", "/index.html"])
+    def test_the_page_is_revalidated_on_every_load(self, settings: UiSettings, static_dir: Path, path: str) -> None:
+        # index.html names the build's hashed assets, so a cached copy would load the previous build's.
+        with TestClient(create_app(settings, static_dir=static_dir), base_url="http://localhost") as client:
+            response = client.get(path)
+
+        assert response.text == INDEX_HTML
+        assert response.headers["cache-control"] == "no-cache"
+
+    def test_a_missing_asset_is_404_not_the_page(self, settings: UiSettings, static_dir: Path) -> None:
+        with TestClient(create_app(settings, static_dir=static_dir), base_url="http://localhost") as client:
+            missing = client.get("/assets/index-0ld.js")
+            present = client.get("/assets/app.js")
+
+        assert missing.status_code == 404
+        assert missing.json() == {"code": "not_found", "message": "Not Found"}
+        assert (present.status_code, present.text) == (200, "console.log(1)")
+        assert "no-cache" not in present.headers.get("cache-control", "")
+
     def test_static_path_traversal_falls_back_to_index(self, settings: UiSettings, static_dir: Path) -> None:
         with TestClient(create_app(settings, static_dir=static_dir), base_url="http://localhost") as client:
             response = client.get("/%2e%2e/secret.txt")

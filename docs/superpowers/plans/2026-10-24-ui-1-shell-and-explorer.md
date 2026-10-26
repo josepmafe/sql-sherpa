@@ -214,7 +214,7 @@ ui/
 - `create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI`:
   - `TrustedHostMiddleware`
   - routers under `/api`
-  - when `static_dir` exists: static files plus an **SPA fallback** (any non-`/api` GET returns `index.html`)
+  - when `static_dir` exists: static files plus an **SPA fallback** (any GET outside `/api` and `/assets` returns `index.html`, with `Cache-Control: no-cache`; a missing file under `/assets` is a JSON 404)
   - `/api/*` unknown routes return a JSON 404
 - **`GET /api/health`:** `{database: ok|down, artifacts: {status: ok|missing, generated_at}}`. Only these two in ui-1; the tool server and model come with ui-4.
 - **`GET /api/catalog`:** the tree database → `marts` → domain → tables → columns (UI spec §4).

@@ -396,7 +396,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 
 ## 12. Decisions Made by the Spec Author
 
-- One `ui` container: FastAPI serves the API and the built SPA. No separate web server.
+- One `ui` container: FastAPI serves the API and the built SPA. No separate web server. Every path outside `/api` and `/assets` answers `index.html` with `Cache-Control: no-cache` (it names the build's hashed assets, so a reload after a new image gets the new ones); a missing file under `/assets` is a 404, not the page.
 - The agent runs in-process in the UI backend and reaches `mcp` over HTTP.
 - A separate read-only role `sherpa_ui` with a 30 s timeout and a 1,000-row cap; the agent keeps its 5 s and 100 rows.
 - Sorting and filtering run in the browser when the result is complete, and as a server-side wrapper when it was truncated.

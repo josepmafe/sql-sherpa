@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 ALLOWED_HOSTS: Final = ("localhost", "127.0.0.1")
 API_PREFIX: Final = "/api"
 INDEX_FILE: Final = "index.html"
+# The page names the current build's hashed assets, so the browser revalidates it on every load.
+PAGE_HEADERS: Final = {"Cache-Control": "no-cache"}
+ASSETS_DIR: Final = "assets"  # Vite's folder for the hashed scripts and styles: a missing one is a 404, not the page
 CONTAINER_STATIC_DIR: Final = "/app/static"
 
 
@@ -63,11 +66,15 @@ def _serve_frontend(app: FastAPI, root: Path) -> None:
         if f"/{path}".startswith(f"{API_PREFIX}/") or f"/{path}" == API_PREFIX:
             raise HTTPException(404, "Not Found")
 
+        index = root / INDEX_FILE
         candidate = (root / path).resolve()
-        if candidate.is_file() and root in candidate.parents:
+        if candidate.is_file() and root in candidate.parents and candidate != index:
             return FileResponse(candidate)
 
-        return FileResponse(root / INDEX_FILE)
+        if path.startswith(f"{ASSETS_DIR}/"):  # a page from an older build asking for its own hashed files
+            raise HTTPException(404, "Not Found")
+
+        return FileResponse(index, headers=PAGE_HEADERS)
 
 
 def __getattr__(name: str) -> FastAPI:
