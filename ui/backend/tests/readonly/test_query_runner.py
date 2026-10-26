@@ -999,19 +999,22 @@ class TestQueryRunner:
         assert runner.running_query_ids() == frozenset()
         assert leaked_ui_backends() == 0
 
-    def test_a_full_role_connection_limit_is_too_many_connections(
-        self, runner: QueryRunner, ui_settings: UiSettings
+    def test_a_full_role_connection_limit_is_too_many_connections_and_the_database_stays_up(
+        self, runner: QueryRunner, ui_settings: UiSettings, prod_loader: MartCatalogLoader
     ) -> None:
         held = _fill_the_connection_limit(ui_settings)
         try:
             with pytest.raises(UiQueryError) as error:
                 runner.run("q1", "select 1 as n")
+
+            health = HealthService(ui_settings, prod_loader).check()
         finally:
             for conn in held:
                 conn.close()
 
         assert error.value.code == "too_many_connections"
         assert 'too many connections for role "sherpa_ui"' in error.value.message
+        assert health.database == "ok"
         assert runner.running_query_ids() == frozenset()
 
     def test_late_cancel_is_a_no_op_and_the_id_is_reusable(self, runner: QueryRunner) -> None:

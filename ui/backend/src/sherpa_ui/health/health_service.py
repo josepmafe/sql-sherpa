@@ -8,6 +8,8 @@ import psycopg
 from pydantic import BaseModel, ConfigDict
 from sherpa_mcp.catalog import CatalogUnavailable
 
+from sherpa_ui.readonly.query_runner import TOO_MANY_CONNECTIONS_MARKERS
+
 if TYPE_CHECKING:
     from sherpa_mcp.catalog import MartCatalogLoader
 
@@ -47,6 +49,12 @@ class HealthService:
             with psycopg.connect(self._settings.ui_conninfo(), autocommit=True) as conn:
                 conn.execute("select 1")
         except psycopg.Error as error:
+            # Postgres answered, but another client of the UI's login holds all the connections its limit allows: the
+            # database is up, and a query run meanwhile says `too_many_connections` itself.
+            if any(marker in str(error) for marker in TOO_MANY_CONNECTIONS_MARKERS):
+                logger.warning("health: the database is up but refuses more connections for the UI's login: %s", error)
+                return "ok"
+
             logger.warning("health: database is down: %s", error)
             return "down"
 

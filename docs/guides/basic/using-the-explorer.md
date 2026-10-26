@@ -127,7 +127,7 @@ The browser compares values the way Postgres does, so a result gives the same ro
 | "The SQL Sherpa server is unreachable" | The `ui` container is down: `docker compose ps`, then `make up` |
 | "Database unavailable: queries and the table preview cannot run" (the health check runs every 30 seconds, so the banner, and the disabled Run and Preview, come and go on their own) | Postgres is down or the `sherpa_ui` login is wrong: `docker compose up -d --wait postgres`; check `SHERPA_UI_PASSWORD` in `.env`, and run `make roles` if the volume predates the role |
 | "dbt artifacts missing" (yellow), and "Could not load the catalog" with `catalog_unavailable` in the tree | Run `make build-prod`, then reload or press Retry |
-| Warehouse connections full: `the warehouse refused a connection: too many are open for the UI's login (...)` | Another client of the `sherpa_ui` login holds connections: a second UI (`make ui-dev` next to the compose `ui` service) or a test run. Wait for its queries to finish or stop it, then run again |
+| Warehouse connections full: `the warehouse refused a connection: too many are open for the UI's login (...)` | Another client of the `sherpa_ui` login holds connections: a second UI (`make ui-dev` next to the compose `ui` service) or a test run. Wait for its queries to finish or stop it, then run again. The database banner stays off meanwhile: Postgres answered, so the health check counts the database as up |
 | Queries fail with a permission error on `marts` | The read grants were lost: `make grant-read` |
 | `make up` cannot bind the port | Another process holds 8090: set `SHERPA_UI_PORT` to a free port |
 

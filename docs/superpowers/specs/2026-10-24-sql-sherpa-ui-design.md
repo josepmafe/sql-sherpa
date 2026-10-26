@@ -114,7 +114,7 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
   - The backend reloads a file when its mtime changes, checked on each request that uses it. A failed reload of `manifest.json`/`catalog.json` (a file half-written by a running `make build-prod`) keeps the catalog that last loaded, with a warning in the log (`sherpa_mcp`'s `MartCatalogLoader`); only a backend that never loaded one answers `catalog_unavailable`.
   - A node with no row in that invocation shows "not in the last build".
 - **Health:** `GET /api/health` reports each dependency separately:
-  - the **database**, which Explorer, Home and history re-runs need
+  - the **database**, which Explorer, Home and history re-runs need: `down` when it cannot be reached, `ok` when it answers, also with a refusal for the UI login's connection limit (another client of that login holds every connection; a query then answers `too_many_connections`, §5)
   - the **artifacts**, present and when they were generated, which Lineage and the catalog tree need
   - the **tool server** (`mcp`), which Ask needs
   - the **model**: `unknown` until the first Ask call, then `ok` or `unavailable` from the last call's result, kept for 60 seconds. There is no extra Bedrock call just to check it.

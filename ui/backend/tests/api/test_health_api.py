@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+import psycopg
 from sherpa_mcp.catalog import CatalogUnavailable
 
 if TYPE_CHECKING:
+    import pytest
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
 
@@ -28,3 +31,26 @@ class TestHealthApi:
         body = client.get("/api/health").json()
 
         assert body["database"] == "down"
+
+    def test_a_database_that_refuses_more_connections_is_up(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Another client of the UI's login holds every connection its limit allows: Postgres answered, so the database
+        # is up, and a query says `too_many_connections` itself.
+        refusal = (
+            'connection failed: connection to server at "127.0.0.1", port 5432 failed: '
+            'FATAL:  too many connections for role "sherpa_ui"'
+        )
+
+        def refused(*args: object, **kwargs: object) -> None:
+            raise psycopg.OperationalError(refusal)
+
+        monkeypatch.setattr(psycopg, "connect", refused)
+
+        with caplog.at_level(logging.WARNING, logger="sherpa_ui.health.health_service"):
+            body = client.get("/api/health").json()
+
+        assert body["database"] == "ok"
+        assert [record.getMessage() for record in caplog.records] == [
+            f"health: the database is up but refuses more connections for the UI's login: {refusal}"
+        ]
