@@ -22,7 +22,7 @@ EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "exa
 MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_reader_access.py"
 METRICS = (
     *("gross_revenue", "discount_amount", "refunded_revenue", "net_revenue"),
-    *("cogs", "gross_margin", "aov", "refund_rate"),
+    *("cogs", "gross_margin", "aov", "refund_rate", "conversion_rate"),
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 PII_LITERAL = "leak@example.com"

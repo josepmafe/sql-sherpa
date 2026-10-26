@@ -8,6 +8,7 @@ model-paths: ["models"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
 
 clean-targets: ["target", "target-prod", "target-eval", "target-sqlfluff", "target-scratch", "dbt_packages"]
 
