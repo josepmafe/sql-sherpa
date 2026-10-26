@@ -107,7 +107,7 @@ make e2e
 - Specs: `explorer.spec.ts`, `layout.spec.ts`, `offline.spec.ts`, `freshness.spec.ts`. Scrollbar overlap and layout widths show only in a real browser, hence Playwright.
 - `make lint` covers ruff, mypy, sqlfluff, the docs coverage, ESLint, `tsc`, the npm lockfile and the stale-client check.
 
-**`freshness.spec.ts` changes your warehouse.** It runs `make generate DAYS=1` and `make build-prod`, adding a simulated day to the warehouse every checkout shares; only `make reset` and a full rebuild undo it. `make e2e` skips it. Run it deliberately:
+**`freshness.spec.ts` changes your warehouse.** It runs `make advance DAYS=1` and `make build-prod`, adding a simulated day to the warehouse every checkout shares; only `make reset` and a full rebuild undo it. `make e2e` skips it. Run it deliberately:
 
 ```bash
 cd ui/frontend && SHERPA_E2E_FRESHNESS=1 npx playwright test freshness

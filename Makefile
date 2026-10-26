@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill reset build build-prod docs eval-db mcp-dev ui-client ui-dev e2e lint test
+.PHONY: up down advance backfill reset build build-prod docs eval-db mcp-dev ui-client ui-dev e2e lint test
 # Private targets, called by the ones above and not commands of their own; their names start with _.
 .PHONY: _roles _docs-check _lockfile-check _ui-api-dev _ui-web-dev
 
@@ -11,6 +11,7 @@ PROD = --target prod --target-path target-prod
 # but [a-z0-9_] (so they need no quoting in sh or SQL) or equal the main database name.
 # Eval artifacts and database: a frozen warehouse (separate database) built by `make eval-db`.
 EVAL = --target eval --target-path target-eval
+EVAL_START = 2025-01-01
 SHERPA_EVAL_DB_NAME ?= sherpa_eval
 export SHERPA_EVAL_DB_NAME
 SHERPA_DB_NAME ?= sherpa
@@ -30,13 +31,16 @@ up:
 down:
 	docker compose down
 
-generate:
-	$(if $(DAYS),,$(error DAYS is required, e.g. make generate DAYS=3))
+# More days after the last simulated one, then a snapshot of the catalog (about a second).
+advance: $(DBT_PACKAGES)
+	$(if $(DAYS),,$(error DAYS is required, e.g. make advance DAYS=3))
 	uv run sherpa-generate generate --days $(DAYS)
+	$(DBT) snapshot $(PROD)
 
+# A new simulation ending yesterday, in weekly chunks with a snapshot after each (the script runs dbt snapshot).
 backfill: DAYS ?= 365
-backfill:
-	uv run sherpa-generate generate --days $(DAYS)
+backfill: $(DBT_PACKAGES)
+	uv run --env-file .env python data-platform/scripts/backfill.py --days $(DAYS)
 
 # The dbt schemas go first: their views read from the raw schemas.
 reset:
@@ -70,7 +74,7 @@ eval-db: $(DBT_PACKAGES)
 		'test "$$POSTGRES_DB" != $(SHERPA_EVAL_DB_NAME) || { echo "refusing to drop the main database $$POSTGRES_DB" >&2; exit 1; }; \
 		psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)" && \
 		psql -U "$$SHERPA_ADMIN_USER" -d $(SHERPA_EVAL_DB_NAME) -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" -c "REVOKE TEMPORARY ON DATABASE $(SHERPA_EVAL_DB_NAME) FROM PUBLIC"'
-	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run sherpa-generate generate --seed 42 --start-date 2025-01-01 --days 365
+	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run --env-file .env python data-platform/scripts/backfill.py --days 365 --start-date $(EVAL_START) --seed 42 --target eval
 	$(DBT) build $(EVAL)
 	$(DBT) docs generate $(EVAL)
 

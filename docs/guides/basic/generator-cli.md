@@ -38,7 +38,7 @@ raw_shop.orders: 8090
 | `--scale S` | `1.0` | Multiplier for every daily volume. The catalog does not scale. |
 | `--seed K` | `42` | Seed for every random draw. |
 
-The seed and scale are stored on the first run; every later run must pass the same values. `make generate DAYS=3` and `make backfill` (default `DAYS=365`) always use the default seed and scale; call `uv run sherpa-generate` directly for anything else. `make reset` drops the dbt schemas first (their views read the raw schemas), then runs `sherpa-generate reset`.
+The seed and scale are stored on the first run; every later run must pass the same values. `make advance DAYS=3` and `make backfill` (default `DAYS=365`) always use the default seed and scale; call `uv run sherpa-generate` directly for anything else. `make reset` drops the dbt schemas first (their views read the raw schemas), then runs `sherpa-generate reset`.
 
 ## Recipes
 
@@ -63,7 +63,7 @@ diff run1.txt run2.txt && echo identical
 
 Campaigns and promotions cover at most the first 365 days from the start date, or end at yesterday of the first run if that is sooner. Runs therefore match on any later day only when the start date is at least a year back (for example `--start-date 2025-09-01`); with a recent start date they match only if both use the same yesterday.
 
-**Topping up to yesterday.** Rerun `generate` with the same `--scale` and `--seed` and enough days; it stops at yesterday on its own (`make generate DAYS=7` does the same with defaults):
+**Topping up to yesterday.** Rerun `generate` with the same `--scale` and `--seed` and enough days; it stops at yesterday on its own (`make advance DAYS=7` does the same with defaults):
 
 ```bash
 uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
@@ -84,12 +84,12 @@ Every refused run exits with code 2 and writes nothing.
 
 | Symptom | Fix |
 |---|---|
-| `error: stored state has seed 42, scale 0.1; got seed 42, scale 1.0 (reset to start over)` | Pass the stored values (`uv run sherpa-generate status` shows them) or `make reset`. `make generate` always uses the defaults. |
+| `error: stored state has seed 42, scale 0.1; got seed 42, scale 1.0 (reset to start over)` | Pass the stored values (`uv run sherpa-generate status` shows them) or `make reset`. `make advance` always uses the defaults. |
 | `error: a start date can only be given on the first run; the simulation started on …` | Drop `--start-date`, or `make reset` first. |
 | `error: start date 2026-10-23 is after yesterday (2026-10-22)` | Nothing may be timestamped after yesterday (UTC); use yesterday or earlier. |
 | `nothing to simulate: already caught up to yesterday` (exit code 0) | Not an error; run it again tomorrow. |
 | `error: cannot connect to the database (is it running? see make up)…` | Start Postgres with `docker compose up -d --wait postgres` and check `SHERPA_DB_PORT` in `.env`. The attempt gives up after 10 seconds. |
-| `DAYS is required, e.g. make generate DAYS=3.` | Pass `DAYS=n`. `--days` must be at least 1. |
+| `DAYS is required, e.g. make advance DAYS=3.` | Pass `DAYS=n`. `--days` must be at least 1. |
 
 ## Seeing the data and the realism rules
 

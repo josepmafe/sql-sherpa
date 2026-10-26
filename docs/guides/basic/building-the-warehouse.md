@@ -132,7 +132,7 @@ Order 2's lines add up to 69.98 but the order says 79.98, so one model is wrong.
 
 | Symptom | Fix |
 |---|---|
-| `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make generate DAYS=<n>` |
+| `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>` |
 | `role "sherpa_ui" does not exist` at the grants | `make up` re-applies the roles, then build again |
 | `enforced contract that failed` | Make the mart's YAML columns and `data_type`s match the SQL |
 | `make eval-db` refuses `SHERPA_EVAL_DB_NAME` | The name must start with `sherpa_eval` and differ from the main database |

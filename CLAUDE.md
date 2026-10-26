@@ -65,8 +65,8 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
   - `make up` / `make down` start / stop every compose service (Postgres, `mcp`, `ui` at `http://127.0.0.1:8090`). `make up` builds the images, waits until all are healthy, then brings the database roles up to date with `data-platform/postgres/roles.sql` (idempotent: it creates missing roles and resets passwords and settings from `.env`).
   - For the database alone: `docker compose up -d --wait postgres`.
 - **Data:**
-  - `make generate DAYS=<n>` simulates `n` more days (`DAYS` is required).
-  - `make backfill` simulates `DAYS` days (default 365) ending yesterday.
+  - `make advance DAYS=<n>` simulates `n` more days (`DAYS` is required), then snapshots the catalog.
+  - `make backfill` simulates `DAYS` days (default 365) ending yesterday, in weekly chunks with a snapshot after each; it refuses to run on top of an existing simulation.
   - `make reset` drops the dbt schemas and the raw schemas, then recreates the raw schemas empty.
   - The simulated range and row counts: `uv run sherpa-generate status`.
 - **dbt:**

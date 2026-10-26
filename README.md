@@ -69,7 +69,7 @@ From there:
   - `make build` builds your own dev schemas, and `make lint` and `make test` check your changes.
   - For frontend work, run `cd ui/frontend && npm ci` once (Node 22+).
   - `CLAUDE.md` lists every Make target.
-- **Add days:** `make generate DAYS=<n>`, then `make build-prod`.
+- **Add days:** `make advance DAYS=<n>`, then `make build-prod`.
 - **One shared warehouse:** every checkout and git worktree uses the same Docker volume (`sherpa_pgdata`), so `make reset` anywhere resets it for all of them.
 
 ### Windows and corporate networks
