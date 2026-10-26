@@ -13,3 +13,100 @@ models:
         description: The matched lead.
       - name: lead_source
         description: Source of the matched lead.
+
+  - name: int_identity__anonymous_to_customer
+    description: >
+      One row per anonymous_id that has ever been identified (an event with a customer id), mapped
+      to the customer of its most recent identifying event (latest occurred_at, ties: highest
+      event_id). Incremental: a late but older identification never overrides a newer one. Test
+      accounts stay in the map; fct_sessions drops their sessions.
+    columns:
+      - name: anonymous_id
+        description: Primary key; the browser or app identifier.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: Customer of the device's most recent identifying event.
+        data_tests: [not_null]
+      - name: identified_at
+        description: occurred_at of the identifying event (UTC).
+      - name: identifying_event_id
+        description: event_id of the identifying event.
+      - name: last_received_at
+        description: >
+          Latest received_at among the device's identified events (UTC). The next incremental run
+          reads only events received after the table's maximum.
+
+unit_tests:
+  - name: int_identity__anon_to_customer_maps_latest_customer
+    model: int_identity__anonymous_to_customer
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e1, anonymous_id: a1, customer_id: 101, occurred_at: "2025-03-10 10:00:00"}
+          - {event_id: e2, anonymous_id: a1, customer_id: 101, occurred_at: "2025-03-10 11:00:00"}
+          - {event_id: e3, anonymous_id: a2, customer_id: null, occurred_at: "2025-03-10 10:30:00"}
+          - {event_id: e4, anonymous_id: a3, customer_id: 103, occurred_at: "2025-03-10 09:00:00"}
+    expect:
+      rows:
+        - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 11:00:00", identifying_event_id: e2}
+        - {anonymous_id: a3, customer_id: 103, identified_at: "2025-03-10 09:00:00", identifying_event_id: e4}
+
+  - name: int_identity__anon_to_customer_keeps_latest_identification
+    model: int_identity__anonymous_to_customer
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        format: sql
+        rows: |
+          select 'a1'::text as anonymous_id, 101::bigint as customer_id,
+            '2025-03-10 12:00:00'::timestamptz as identified_at, 'e5'::text as identifying_event_id,
+            '2025-03-10 12:00:05'::timestamptz as last_received_at
+          union all
+          select 'a5', 105, '2025-03-09 10:00:00'::timestamptz, 'e1', '2025-03-09 10:00:02'::timestamptz
+      - input: ref('stg_events__events')
+        format: sql
+        rows: |
+          select 'e6'::text as event_id, 'a1'::text as anonymous_id, 102::bigint as customer_id,
+            '2025-03-10 11:00:00'::timestamptz as occurred_at, '2025-03-12 09:00:00'::timestamptz as received_at
+          union all
+          select 'e7', 'a2', 103, '2025-03-11 10:00:00'::timestamptz, '2025-03-11 10:00:03'::timestamptz
+          union all
+          select 'e8', 'a3', null, '2025-03-11 10:05:00'::timestamptz, '2025-03-11 10:05:01'::timestamptz
+          union all
+          select 'e11', 'a5', 106, '2025-03-11 09:00:00'::timestamptz, '2025-03-11 09:00:02'::timestamptz
+          union all
+          select 'e5', 'a1', 101, '2025-03-10 12:00:00'::timestamptz, '2025-03-10 12:00:05'::timestamptz
+    expect:
+      rows:
+        # A late but older identification (e6) does not change the customer; it only advances last_received_at.
+        - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 12:00:00", last_received_at: "2025-03-12 09:00:00"}
+        - {anonymous_id: a2, customer_id: 103, identified_at: "2025-03-11 10:00:00", last_received_at: "2025-03-11 10:00:03"}
+        - {anonymous_id: a5, customer_id: 106, identified_at: "2025-03-11 09:00:00", last_received_at: "2025-03-11 09:00:02"}
+
+  - name: int_identity__anon_to_customer_reads_all_when_table_empty
+    model: int_identity__anonymous_to_customer
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        format: sql
+        rows: |
+          select null::text as anonymous_id, null::bigint as customer_id, null::timestamptz as identified_at,
+            null::text as identifying_event_id, null::timestamptz as last_received_at
+          where false
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e1, anonymous_id: a1, customer_id: 101, occurred_at: "2025-03-10 10:00:00", received_at: "2025-03-10 10:00:01"}
+          - {event_id: e2, anonymous_id: a1, customer_id: 101, occurred_at: "2025-03-10 11:00:00", received_at: "2025-03-10 11:00:01"}
+          - {event_id: e3, anonymous_id: a2, customer_id: null, occurred_at: "2025-03-10 10:30:00", received_at: "2025-03-10 10:30:01"}
+          - {event_id: e4, anonymous_id: a3, customer_id: 103, occurred_at: "2025-03-10 09:00:00", received_at: "2025-03-10 09:00:01"}
+    expect:
+      rows:
+        - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 11:00:00", identifying_event_id: e2, last_received_at: "2025-03-10 11:00:01"}
+        - {anonymous_id: a3, customer_id: 103, identified_at: "2025-03-10 09:00:00", identifying_event_id: e4, last_received_at: "2025-03-10 09:00:01"}
