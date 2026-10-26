@@ -336,9 +336,9 @@ session_id, anonymous_id, customer_id (stitched, nullable), session_date, sessio
 - Web sessions only: app orders have no session (R12).
 - `customer_id` is stitched through `int_identity__anonymous_to_customer`, so a device's sessions from before its login carry the customer too. Sessions stitched to a test account are excluded (R5), because their events from before the login carry no customer.
 - `session_end_at` is the last event's `occurred_at`. `landing_page_path` and `device_type` come from the first event.
-- `campaign_id` is the campaign whose `utm_campaign` equals the session's (null if none). `order_id` comes from the session's purchase event.
+- `campaign_id` is the campaign whose `utm_campaign` equals the session's (null if none). `order_id` is the order of the session's first purchase event.
 - `is_first_session`: the visitor's first session, where the visitor is the stitched customer when there is one, otherwise the device. A customer's device that never logged in counts as its own visitor.
-- Every web order with a `session_id` matches its session's `order_id` and back (singular test `assert_sessions_and_orders_agree`).
+- Every web order with a `session_id` sits in a `purchased` session of `fct_sessions` that contains the order's purchase event, and every `fct_sessions.order_id` is an order with that `session_id` (singular test `assert_sessions_and_orders_agree`). A session with several purchases holds its first order: the sessionizer merges purchases within a 30-minute gap on one device into one session, so the later orders carry the `session_id` but not the `order_id`.
 
 **`fct_ad_spend_daily`** — 1 row per campaign × day · PK (`campaign_id`, `spend_date`) · domain `marketing_web`
 spend_date, campaign_id, channel, spend, impressions, clicks, sessions, orders, attributed_net_revenue, new_customers
