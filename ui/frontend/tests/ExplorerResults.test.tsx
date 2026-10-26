@@ -74,18 +74,23 @@ describe("Explorer results", () => {
     post.mockReset();
   });
 
-  it("guard rejection shows the reason", async () => {
+  it("guard rejection shows the reason without the rule's code, and what is allowed", async () => {
     const user = userEvent.setup();
     post.mockResolvedValue({
-      error: { code: "guard_rejected", message: "Only SELECT statements are allowed." },
+      error: {
+        code: "guard_rejected",
+        message: "[guard:not_select] the statement must be a SELECT query, not DELETE; write one SELECT",
+      },
       response: { status: 422 },
     });
     renderScreen("delete from marts.fct_orders");
 
     await user.click(screen.getByRole("button", { name: "Run" }));
 
-    expect(await screen.findByText("Query not allowed")).toBeInTheDocument();
-    expect(screen.getByText("Only SELECT statements are allowed.")).toBeInTheDocument();
+    const alert = (await screen.findByText("Query not allowed")).closest<HTMLElement>('[role="alert"]')!;
+    expect(alert).toHaveTextContent("the statement must be a SELECT query, not DELETE; write one SELECT");
+    expect(alert).not.toHaveTextContent("[guard:");
+    expect(alert).toHaveTextContent("Only one read-only SELECT (or WITH … SELECT) over the marts.<table> tables runs here.");
   });
 
   it("a timeout shows its hint", async () => {

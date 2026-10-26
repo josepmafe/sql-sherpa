@@ -181,6 +181,18 @@ describe("WorksheetPanel", () => {
     // The second statement, not the first: the selection's start offset (9) is added to the position (0).
     expect(editorView().posAtDOM(mark)).toBe(9);
     expect(screen.getByText('syntax error at or near "selec"')).toBeInTheDocument();
+    expect(screen.getByText("Postgres stopped at the highlighted spot in the editor.")).toBeInTheDocument();
+  });
+
+  it("an error without a position has no highlight hint", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue({ error: { code: "sql_error", message: "boom" }, response: { status: 422 } });
+    render(<Harness initial="select 1" />);
+
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(screen.queryByText(/highlighted spot/)).not.toBeInTheDocument();
   });
 
   it("clears the highlight when the text changes", async () => {

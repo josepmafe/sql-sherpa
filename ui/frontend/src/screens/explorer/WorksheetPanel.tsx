@@ -28,6 +28,10 @@ type PanelProps = {
 type Origin = { sql: string; offset: number };
 
 const TIMEOUT_HINT = "The query hit the time limit. Narrow it with a WHERE clause or a LIMIT.";
+const GUARD_HINT = "Only one read-only SELECT (or WITH … SELECT) over the marts.<table> tables runs here.";
+const POSITION_HINT = "Postgres stopped at the highlighted spot in the editor.";
+// The guard's reasons start with their rule's code (`[guard:not_select] …`), which is for logs, not people.
+const GUARD_RULE_PREFIX = /^\[guard:[^\]]*\]\s*/;
 const RERUN_OPACITY = 0.5;
 const ERROR_TITLES: Record<string, string> = {
   guard_rejected: "Query not allowed",
@@ -114,9 +118,11 @@ export const WorksheetPanel = memo(function WorksheetPanel({
       {status === "error" && error && (
         <Alert color="red" title={ERROR_TITLES[error.code] ?? "Query failed"}>
           <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-            {error.message}
+            {error.message.replace(GUARD_RULE_PREFIX, "")}
           </Text>
           {error.code === "timeout" && <Text size="sm">{TIMEOUT_HINT}</Text>}
+          {error.code === "guard_rejected" && <Text size="sm">{GUARD_HINT}</Text>}
+          {highlight && <Text size="sm">{POSITION_HINT}</Text>}
         </Alert>
       )}
       {/* A Run clears the result; a server re-run keeps it, dimmed, so the grid (its scroll, the filter bar) stays. */}
