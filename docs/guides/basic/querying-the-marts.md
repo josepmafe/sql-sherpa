@@ -19,6 +19,7 @@ docker compose exec postgres psql -U sherpa_admin -d sherpa
 | `dim_products` | product variant (size and colour) |
 | `dim_promotions` | promotion |
 | `dim_date` | calendar day |
+| `fct_sessions` | web session (a visitor's events with no gap over 30 minutes) |
 
 ## Which revenue to use
 
@@ -44,6 +45,14 @@ from marts.fct_order_items as i
 inner join marts.dim_products as p using (variant_id)
 where not i.is_cancelled
 group by 1 order by 2 desc limit 10;
+```
+
+Conversion rate by channel (the share of web sessions that ended in a purchase, defined in the spec's section 6.6):
+
+```sql
+select marketing_channel, count(*) as sessions,
+       round(avg(purchased::int), 4) as conversion_rate
+from marts.fct_sessions group by 1 order by 2 desc;
 ```
 
 Net revenue of orders that used one promotion. An order uses a promotion at most once, so this join does not repeat orders; `d.amount` is this promotion's discount, `o.discount_amount` the whole order's:
@@ -95,6 +104,10 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 ### `as_of_date`, not today
 
 `days_since_last_order` and the segments are measured to `as_of_date`, never `now()`. Use the same anchor in your own queries: `select max(order_date) from marts.fct_orders;`.
+
+### Sessions are web only
+
+App orders (R12) have no session, so session counts and `conversion_rate` leave them out; compare orders per channel with `fct_orders`, not with sessions. `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise; it is not "the session of the first order".
 
 ### Line grain against order grain
 

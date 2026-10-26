@@ -146,6 +146,37 @@ dbt --quiet ls --select intermediate --resource-type model --output json --outpu
 
 The agent role cannot read the `intermediate` schema, so these models can be renamed or restructured freely as long as the marts keep their shape.
 
+## 7. Change an incremental model
+
+Three models build incrementally, each with the strategy its job needs ([spec §6.2 to §6.4](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). All three set `on_schema_change: fail`.
+
+| Model | Strategy | Why | Watermark |
+|---|---|---|---|
+| `stg_events__events` | `microbatch` on `received_at` | Events arrive late and are the biggest table; a run reprocesses today and the 3 days before | None stored: the run date, `lookback=3`, and `begin` from `SHERPA_SIMULATION_START_DATE` |
+| `int_identity__anonymous_to_customer` | `merge` on `anonymous_id` | One row per device whose values change when it is identified again | `max(last_received_at)` of the table itself |
+| `int_events__sessionized` | `delete+insert` on `session_date` | A late event rewrites a whole session, sometimes across midnight, so whole days are replaced | `max(max_received_at)` of the table itself |
+
+The two table watermarks make a run independent of the date it runs: a missed day is caught up by the next run.
+
+**Change the logic.**
+
+1. Edit the `.sql`. Keep the `{% if is_incremental() %}` branch and the full-build branch equal in meaning.
+2. Unit-test the incremental branch with `overrides: macros: {is_incremental: true}`. Give `this` (the table's current content) and any ephemeral input as `format: sql` (dbt can only give an ephemeral model as SQL; see `int_events__sessionized_puts_late_event_in_existing_session` in `models/intermediate/events/_events__models.yml`). Also test the empty-table case (`int_identity__anon_to_customer_reads_all_when_table_empty`): `is_incremental()` is true on the first run after the table exists but is empty.
+3. Rebuild the model and its children: `dbt build --select int_events__sessionized+`. The unit tests run first.
+4. Prove the incremental result equals a full rebuild: run a full refresh in prod, then the analysis (below).
+
+**When the columns change.** `on_schema_change: fail` stops an incremental run whose columns differ from the table's, so a new column needs `dbt build --full-refresh --select <model>+`. Do not use `append_new_columns`: it leaves the old rows null and the incremental result differs from a full rebuild. `--full-refresh` on `stg_events__events` rebuilds every daily batch from `begin`, about two minutes on a year of data.
+
+**Add a column to a snapshot.** `snap_product_variants` (`snapshots/_snapshots.yml`) captures `raw_shop.product_variants` each time `dbt snapshot` runs, and `--full-refresh` does not touch it. A column added later is filled for new versions only; history before it cannot be rebuilt, because the raw table keeps only current values. Add it to the YAML description, run `make advance DAYS=1` or `dbt snapshot --target prod --target-path target-prod`, and say in the column description from which date it is filled.
+
+**The proof.** After a full refresh in prod:
+
+```bash
+dbt show --select fct_sessions_incremental_vs_full_refresh --vars '{compare_schema: marts}'
+```
+
+Run on the dev target (the default), it compares `dev_marts.fct_sessions`, which `make build` has updated incrementally, with the prod table that the full refresh rebuilt; zero rows means identical. The analysis requires `compare_schema` only when it is the selected node; selecting it by `--selector` or resource type skips that check and fails on a placeholder schema.
+
 ## Common errors
 
 | Symptom | Fix |
@@ -157,6 +188,7 @@ The agent role cannot read the `intermediate` schema, so these models can be ren
 | Agent cannot see the new table | Run `make build-prod`; the grant hook runs with every build |
 | Trigram index missing after a rebuild | Use `create_trigram_index` in `post_hook`, not a hand-written `create index if not exists` |
 | Singular test fails after a metric change | Update its expected values on purpose, then the spec |
+| `The source and target schemas on this incremental model are out of sync!` | An incremental model's columns changed: `--full-refresh` that model and its children (section 7) |
 
 ## Next
 

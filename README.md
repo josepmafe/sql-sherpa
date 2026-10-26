@@ -10,7 +10,7 @@ The answers can be trusted because of the platform underneath: one documented, t
 
 It is a learning project held to production standards: a realistic synthetic e-commerce business, dbt Core features used the way practitioners use them, and an agent where observability and evaluation come first. All data is synthetic.
 
-> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), agent-design-1 (MCP server) and ui-1 (shell and Explorer) are built. data-platform-3 (Time) and agent-design-2 (gold set and evals) are next. Each spec's milestones section lists the rest.
+> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), agent-design-1 (MCP server) and ui-1 (shell and Explorer) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
 
 ## How it works
 
@@ -57,7 +57,7 @@ You need Docker, [uv](https://docs.astral.sh/uv/) and GNU Make. On Windows, run 
 ```bash
 cp .env.example .env    # then replace every change-me password
 make up                 # start Postgres, the MCP server and the web app
-make backfill           # simulate a year of data (about 4 minutes)
+make backfill           # simulate a year of data (about 9 minutes)
 make build-prod         # build the warehouse that the agent and the web app read
 ```
 
@@ -113,15 +113,15 @@ docs/
 
 ### Basic: using it
 
-- [Using the generator](docs/guides/basic/generator-cli.md): commands, recipes, errors, and seeing the realism rules in the data
-- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, running dbt directly, the docs, failing tests and the eval database
-- [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers, which revenue to use, example queries, traps and fuzzy search
+- [Using the generator](docs/guides/basic/generator-cli.md): commands (`advance`, `backfill`, `start-date`), recipes, errors, and seeing the realism rules in the data
+- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
+- [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, masking, limitations and tracing
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, worksheets, running, sorting and filtering, and what it won't let you do
 
 ### Advanced: extending it
 
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, and keeping the generator deterministic
-- [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests and intermediate models
+- [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests, intermediate models and incremental models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and new marts
 - [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, where the read-only rules live, and the three test layers

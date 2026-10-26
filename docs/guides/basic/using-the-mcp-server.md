@@ -52,7 +52,7 @@ Tools return JSON text; a failed call has `result.is_error` set and the text `Er
 
 ## The eight tools
 
-- **`get_context {}`**: the as-of date (the latest order date; use it instead of today), what the warehouse covers and does not (`does_not_cover`), and notes on the data.
+- **`get_context {}`**: the as-of date (the latest order date; use it instead of today), what the warehouse covers (one line per domain: sales, customers, products, web sessions, calendar) and does not (`does_not_cover`), and notes on the data, such as that sessions are web only, so `conversion_rate` leaves app orders out.
 - **`list_tables {}`**: every mart with description, domain, grain and primary key.
 - **`describe_table {"table"}`**: grain, primary key, and per column the type, description, PII flag, accepted values, `distinct_values` (the stored values of a short text column) and synonyms, plus three masked sample rows.
 - **`search_values {"table", "column", "term", "limit"}`**: how a value is stored in a text column (`limit` 1 to 50, default 10). Use it before filtering on a name the user typed. PII columns are refused.

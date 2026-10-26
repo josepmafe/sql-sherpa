@@ -270,6 +270,8 @@ Rename to consistent `<entity>_id`, cast types, normalize (R3, R4), parse JSON/t
 
 Models with unit tests (§7) are views, not ephemeral, so they can be unit-tested directly.
 
+Known limitations of the incremental sessionization: it assumes no session that gains a new event lasts longer than a day, and a day whose every session moves away or becomes a test session keeps stale rows (unreachable at hundreds of sessions a day).
+
 ### 6.5 Marts (tables, contracts enforced, fully documented)
 
 **Global rules:** test accounts (R5) and all their orders/events are excluded everywhere. Soft-deleted customers (R6) are kept with `email`, `first_name`, `last_name` set to null and `is_deleted = true`, so facts keep referential integrity. **`as_of_date`** = `max(order_date)` over `fct_orders` (non-test orders, UTC dates; computed from the same CTE inside models that need it). All "days since" columns use it, never `now()`, so results are deterministic.
@@ -470,7 +472,7 @@ A target exists only for a multi-step workflow, a command with non-obvious flags
 | Target | Does |
 |---|---|
 | `make up` / `make down` | Start/stop Docker Compose. `make up` then re-applies the idempotent roles script (`data-platform/postgres/roles.sql`) as the `postgres` superuser, so a role added later (e.g. `sherpa_ui`, ui-1) reaches an existing volume without wiping it |
-| `make generate DAYS=N` | Generator for N more days (`DAYS` required), capped at yesterday. data-platform-3's `make advance` takes its place |
+| `make advance DAYS=N` | Generator for N more days (`DAYS` required, capped at yesterday), then `dbt snapshot --target prod` |
 | `make backfill [DAYS=365]` | Generator for `DAYS` days (default 365), ending yesterday; from data-platform-3, in 7-day chunks with `dbt snapshot --target prod` after each chunk (`data-platform/scripts/backfill.py`), for a new simulation only |
 | `make reset` | Drop the dbt schemas (including the dbt test-failure audit schemas), then drop and recreate the raw schemas empty |
 | `make build` / `make build-prod` | Install the dbt packages when `packages.yml` or `package-lock.yml` changed, then `dbt source freshness` and `dbt build` (seeds included) on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then also runs `dbt docs generate` on prod, so `catalog.json` is current for the UI. From data-platform-3, both pass the simulation's first day to the microbatch model (§6.2) |
@@ -483,7 +485,6 @@ Targets added by later milestones:
 | Target | Milestone | Does |
 |---|---|---|
 | `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
-| `make advance DAYS=3` | data-platform-3 | Generator for N more days (`DAYS` required, capped at yesterday) + `dbt snapshot --target prod`; replaces `make generate` |
 | `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
 
 ---

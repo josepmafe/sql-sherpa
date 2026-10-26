@@ -9,7 +9,7 @@ Code is in `agent/mcp-server/src/sherpa_mcp/`; tests in `agent/mcp-server/tests/
 | File | Holds |
 |---|---|
 | `server.py` | `build_server` (registers the eight tools and their descriptions), `main` (logging, Logfire, startup check, transport) |
-| `tools.py` | `WarehouseTools` (one method per tool), the frozen output models, the scope texts `DOMAIN_SUBJECTS`, `DOES_NOT_COVER`, `NOTES` |
+| `tools.py` | `WarehouseTools` (one method per tool), the frozen output models, the scope texts `DOMAIN_SUBJECTS` (one phrase per `meta.domain`, `marketing_web` included), `DOES_NOT_COVER`, `NOTES` |
 | `sql_guard.py` | `SqlGuard`, `ALLOWED_FUNCTIONS`, the hint maps, the `[guard:<rule>]` codes; pure |
 | `masking.py` | `PiiMasker`; pure |
 | `catalog.py` | `MartCatalogLoader`, `MartCatalog`, built from `manifest.json` and `catalog.json` |
@@ -159,7 +159,7 @@ The query code does not change: marts, domains, grains, PII flags, synonyms and 
 
 1. `make build-prod` refreshes `manifest.json` and `catalog.json` in `data-platform/dbt/target-prod/`. A running server, including the container (it mounts `data-platform/dbt` read-only), reloads when their modification time changes. Mark a new PII column `meta.pii: true` in the dbt YAML first; masking, `search_values` and `distinct_values` follow that flag.
 2. Update the `MARTS` lists in the tests: `data-platform/tests/dbt/test_reader_access.py` (read by `test_tools.py` to check `list_tables`) and `agent/mcp-server/tests/test_examples.py` (compared to the catalog).
-3. Update the scope texts in `tools.py`: add a `DOMAIN_SUBJECTS` phrase for a new domain, and drop the `DOES_NOT_COVER` entries the new marts now cover. `test_get_context_as_of_and_scope` in `test_tools.py` checks them.
+3. Update the scope texts in `tools.py`: add a `DOMAIN_SUBJECTS` phrase for a new domain, and drop the `DOES_NOT_COVER` entries the new marts now cover (the campaign entry stays until data-platform-4 adds its mart); add a `NOTES` line for a trap the marts have (sessions are web only). `test_get_context_as_of_and_scope` in `test_tools.py` checks them.
 4. Run `make test` and `uv run --env-file .env pytest -m warehouse`. Add an example if the mart brings a new pattern (section 5).
 
 ## Common errors

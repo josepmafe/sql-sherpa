@@ -63,8 +63,8 @@
 
 1. **Advancing more than the 3-day lookback in one go** (`make advance DAYS=7`, then a build). Microbatch picks its batches by the wall clock, so the oldest days are skipped. The build must fail before sessionization moves its watermark, and a targeted `--event-time-start/--event-time-end` backfill must repair it with nothing lost. Tests: `assert_every_source_event_is_staged` (Task 4) and Task 8 Step 2.
 2. **An incremental run with no new events** (two builds in a row): sessionization deletes and inserts nothing. Test: `int_events__sessionized_emits_nothing_without_new_events` (Task 6).
-3. **An empty `{{ this }}`** (the table was built before any event existed): the next run reads every event instead of none. Tests: `int_events__sessionized_reads_every_event_when_the_table_is_empty` (Task 6) and `int_identity__anonymous_to_customer_reads_every_event_when_the_table_is_empty` (Task 5).
-4. **A test account's sessions from before it logged in:** their events carry no customer, but stitching maps the device to the test account. They must not reach `fct_sessions`. Test: `fct_sessions_drops_sessions_stitched_to_a_test_account` (Task 7).
+3. **An empty `{{ this }}`** (the table was built before any event existed): the next run reads every event instead of none. Tests: `int_events__sessionized_reads_all_when_table_empty` (Task 6) and `int_identity__anon_to_customer_reads_all_when_table_empty` (Task 5).
+4. **A test account's sessions from before it logged in:** their events carry no customer, but stitching maps the device to the test account. They must not reach `fct_sessions`. Test: `fct_sessions_drops_test_account_sessions` (Task 7).
 5. **`make backfill` on a simulation that has already started, or a chunk that fails:**
    - Backfill refuses before generating anything and names `make advance`.
    - A failing chunk stops the backfill without a snapshot.
@@ -118,7 +118,7 @@ Makefile
 These unit tests replace `assert_customer_segment_boundaries.sql` and `assert_revenue_excluding_tax.sql`. Delete those two singular tests: data-platform-2 used them as stand-ins because unit tests come with this milestone.
 
 - [ ] **Step 1: Write the unit tests:**
-  - **`int_order_items__discount_allocated_puts_the_rounding_remainder_on_the_largest_line`** (`_orders__models.yml`):
+  - **`int_order_items__discount_allocated_remainder_to_largest`** (`_orders__models.yml`):
     - `stg_shop__order_items` (`order_item_id, order_id, quantity, unit_price`):
       - order 1: lines 11, 12, 13, each 1 × 10.00
       - order 2: line 21, 1 × 50.00, and line 22, 1 × 25.00
@@ -130,7 +130,7 @@ These unit tests replace `assert_customer_segment_boundaries.sql` and `assert_re
       - order 2: 21 → 5.00 / 45.00, 22 → 2.50 / 22.50
       - order 3: 31 → 0.00 / 40.00
       - order 4: 41, 42 and 43 → 0.02 / 9.98 each, 44 → 0.04 / 29.96 (a negative remainder)
-  - **`int_orders__refunds_summarized_removes_tax_from_return_and_goodwill_refunds_only`:**
+  - **`int_orders__refunds_summarized_untaxes_returns_and_goodwill`:**
     - Refunds (`order_id`, reason, `amount`): order 1 return 120.00 and goodwill 64.80; order 2 cancellation 50.00; order 3 return 1.00; order 4 goodwill 0.01.
     - Expect (`order_id, refunded_amount, refunded_revenue`): 1 → 184.80 / 154.00, 2 → 50.00 / 0.00, 3 → 1.00 / 0.83, 4 → 0.01 / 0.01.
   - **`dim_customers_segments_at_the_90_and_180_day_boundaries`** (`_customers__models.yml`):
@@ -179,7 +179,7 @@ These unit tests replace `assert_customer_segment_boundaries.sql` and `assert_re
   - **Fallback:** without one, the variant's earliest version (the spec's documented limitation for orders before the first captured version).
   - **Tests:** unique + not_null `order_item_id`; not_null `unit_cost_at_sale`; `dbt_utils.equal_rowcount` against `stg_shop__order_items`, because `fct_order_items` inner-joins this model and a line without a cost would vanish.
 
-- [ ] **Step 1: Unit test `int_order_items__costed_uses_the_cost_valid_when_the_order_was_placed`.** Snapshot rows (`id, cost_price, dbt_valid_from, dbt_valid_to`), all UTC:
+- [ ] **Step 1: Unit test `int_order_items__costed_uses_cost_valid_at_placement`.** Snapshot rows (`id, cost_price, dbt_valid_from, dbt_valid_to`), all UTC:
   - (1, 10.00, 2025-03-01 00:00, 2025-03-10 12:00)
   - (1, 12.00, 2025-03-10 12:00, null)
   - (2, 7.00, 2025-03-05 00:00, null)
@@ -415,7 +415,7 @@ These unit tests replace `assert_customer_segment_boundaries.sql` and `assert_re
     Session `s3` (a2, 2025-03-11 09:00, one page_view). Map a2 → 202 (a non-test customer). Expect:
     - `s2`: `event_count` 5, `page_view_count` 1, `duration_seconds` 600, `landing_page_path` `/home`, `device_type` desktop, all four funnel flags true, `order_id` 9001, `is_first_session` true, `customer_id` 202
     - `s3`: `is_first_session` false
-  - **`fct_sessions_drops_sessions_stitched_to_a_test_account`:** session `s1` of device a1 (events without a customer) and `s2` of a2. Map a1 → 201 (`is_test_account` true) and a2 → 202. Expect only `s2`.
+  - **`fct_sessions_drops_test_account_sessions`:** session `s1` of device a1 (events without a customer) and `s2` of a2. Map a1 → 201 (`is_test_account` true) and a2 → 202. Expect only `s2`.
 - [ ] **Step 2:** Run (FAIL) → implement the model, YAML, doc block and singular tests → `make build` (PASS). `make lint`.
 - [ ] **Step 3:** `uv run dbt show --inline "select marketing_channel, count(*), avg(purchased::int) from {{ ref('fct_sessions') }} group by 1 order by 2 desc"` (dev). Expected:
   - roughly the generator's channel mix
