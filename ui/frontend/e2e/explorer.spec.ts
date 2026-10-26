@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 
 import { adminScalar, runQuery } from "./warehouse";
 
+// The UI's login, which `make e2e` passes from .env (compose's default otherwise).
+const UI_USER = process.env.SHERPA_UI_USER ?? "sherpa_ui";
+const SESSION_GONE_MS = 5_000;
+
 const MARTS = [
   "dim_customers",
   "dim_date",
@@ -80,15 +84,19 @@ test("a small result sorts in the browser without another request", async ({ pag
   expect(queryPosts).toHaveLength(1);
 });
 
-test("a long aggregate is cancelled with the button", async ({ page }) => {
+test("a long aggregate is cancelled with the button and its session ends", async ({ page }) => {
+  // The health checks' short sessions come and go, so the baseline is the lowest of a few counts.
+  const before = Math.min(uiSessions(), uiSessions(), uiSessions());
   await runQuery(
     page,
     "select count(*) from marts.fct_order_items a cross join marts.fct_order_items b cross join marts.fct_order_items c",
   );
+  await expect.poll(uiSessions).toBeGreaterThan(before); // the query holds a connection
 
   await page.getByRole("button", { name: "Cancel" }).first().click();
 
   await expect(page.getByText(/Cancelled after/)).toBeVisible();
+  await expect.poll(uiSessions, { timeout: SESSION_GONE_MS }).toBeLessThanOrEqual(before);
 });
 
 test("Preview 100 rows runs from the table menu", async ({ page }) => {
@@ -97,3 +105,8 @@ test("Preview 100 rows runs from the table menu", async ({ page }) => {
 
   await expect(page.getByText(/^100 rows in /)).toBeVisible();
 });
+
+// By user name only: Postgres shows the admin the state and query of another role's sessions as NULL.
+function uiSessions(): number {
+  return Number(adminScalar(`select count(*) from pg_stat_activity where usename = '${UI_USER.replaceAll("'", "''")}'`));
+}
