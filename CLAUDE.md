@@ -20,12 +20,28 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
     - `advanced/`: how to *extend or modify* it, i.e. which files to touch, in which order, and which tests prove the change.
 
     Every milestone that adds something a person runs or extends gets at least one guide of each kind, or updates existing guides. Guides follow the current-state rule like every other doc.
+- **The last task, after the documentation task, is a panel review** of the whole branch. The plan names the panel for what the milestone builds and gives each reviewer a focus:
+  - a data engineer for dbt and the generator
+  - a software engineer for Python and the Makefile
+  - a frontend engineer for the UI
+  - a security engineer when roles, SQL access, PII or the network surface change
+  - an AI engineer for the agent, its tools and evals
+  - an analytics domain expert for metric and data semantics
+  - always a devil's advocate
+
+  The controller session runs the task itself (it dispatches the reviewers):
+  1. **Reviewers:** it dispatches every reviewer in parallel on `opus`. Each is a fresh subagent with its focus, `git diff main...HEAD`, the plan and the relevant spec sections. A reviewer reads the code and runs read-only commands, and makes no edits. It returns findings as `Critical | Important | Minor` · `file:line` · what is wrong · why it matters · the fix.
+  2. **Devil's advocate:** then it dispatches the devil's advocate on `opus`, with the diff and every finding. It challenges findings that are wrong or would over-engineer, and adds the failure modes the panel missed.
+  3. **Triage:** it triages every finding in one table as fix, defer or reject, with a one-line reason. A rejection cites the spec or a test. Deferring a Critical or Important finding needs the owner's OK; an agreed deferral becomes a spec later idea or a line in the next plan.
+  4. **Fixes:** each fix starts with a test that reproduces the problem, then goes through the usual implement → review loop. A fix that changes a design decision also updates the spec and the guides.
+
+  The panel is the plan's final whole-branch review. Its report isn't committed: the triage table goes in the PR description.
 - **Every plan task names its models.** Each task has a `**Model:**` line naming its implementer and its reviewer:
   - `haiku` for mechanical work (docs-only edits, renames, config).
   - `sonnet` by default.
   - `opus` only for genuinely hard design or concurrency work.
 
-  Fix rounds 4–5 go one tier up. Plan writing and the final whole-branch review run on `opus`. Implementation sessions run on Sonnet (`/model sonnet`). `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, so a dispatch that names no model gets Sonnet rather than the session's model; an explicit `model` on the dispatch still wins.
+  Fix rounds 4–5 go one tier up. Plan writing and the panel review run on `opus`. Implementation sessions run on Sonnet (`/model sonnet`). `.claude/settings.json` sets `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, so a dispatch that names no model gets Sonnet rather than the session's model; an explicit `model` on the dispatch still wins.
 - **Docs describe the current state only.** `CLAUDE.md`, the README, the specs and the plans say what *is*, not what used to be. When something changes, rewrite the affected text in place. Don't add "previously…", "no longer…", "was replaced by…" or notes about discarded approaches; git history is the archive. Anything removed was removed on purpose, so don't carry it over.
 
 ## Principles

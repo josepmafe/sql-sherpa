@@ -365,7 +365,7 @@ p50 latency < 20 s, p95 < 60 s per question; mean cost per question is reported,
 
 ## 8. Milestones
 
-Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent-design-<n>-<name>.md`. Each milestone ends with tests green, `make lint` clean, and its acceptance met. **Every plan's last task is a documentation task.** It updates `CLAUDE.md` and `README.md` wherever the milestone changed what they describe (commands, layout, status, conventions). It also writes or updates how-to guides in `docs/guides/basic/` (using what was built, with easy and complete examples) and `docs/guides/advanced/` (extending or modifying it). The guides list per milestone is part of the plan.
+Each milestone has one implementation plan, `docs/superpowers/plans/<date>-agent-design-<n>-<name>.md`. Each milestone ends with tests green, `make lint` clean, and its acceptance met. **Every plan ends with a documentation task, then a panel review of the whole branch (`CLAUDE.md`).** The documentation task updates `CLAUDE.md` and `README.md` wherever the milestone changed what they describe (commands, layout, status, conventions). It also writes or updates how-to guides in `docs/guides/basic/` (using what was built, with easy and complete examples) and `docs/guides/advanced/` (extending or modifying it). The guides list per milestone is part of the plan.
 
 | Milestone | Builds | Acceptance |
 |---|---|---|
