@@ -15,6 +15,8 @@ type EditorActions = {
   onInsertSelect: (qualifiedName: string) => void;
 };
 
+const SUMMARY_MAX_CHARS = 200;
+
 type TreeProps = EditorActions & {
   selected?: string;
   onSelect: (table: string) => void;
@@ -112,7 +114,22 @@ const NAME_STYLE = {
 function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect }: TableRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const qualified = `${schema}.${table.name}`;
-  const tip = `${table.description} Grain: ${table.grain}. PK: ${table.primary_key.join(", ")}`;
+  // UI spec §6.4: description, grain and PK. The full description is the Inspector's.
+  const tip = (
+    <>
+      <div>{summary(table.description)}</div>
+      {table.grain && (
+        <div>
+          <b>Grain:</b> {table.grain}
+        </div>
+      )}
+      {table.primary_key.length > 0 && (
+        <div>
+          <b>PK:</b> {table.primary_key.join(", ")}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <Box>
@@ -136,7 +153,8 @@ function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview,
         >
           {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
         </ActionIcon>
-        <Tooltip label={tip} multiline w={320} openDelay={200}>
+        {/* Closed while the menu is open, which it would cover. */}
+        <Tooltip label={tip} multiline w={320} openDelay={200} disabled={menuOpen}>
           <Text
             component="button"
             type="button"
@@ -172,7 +190,7 @@ function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview,
 
 function ColumnRow({ column }: { column: ColumnSummary }) {
   return (
-    <Tooltip label={column.description} multiline w={320} openDelay={200}>
+    <Tooltip label={summary(column.description)} multiline w={320} openDelay={200}>
       <Group gap={6} ml="xl" wrap="nowrap">
         <Text size="xs">{column.name}</Text>
         <Text size="xs" c="dimmed">
@@ -182,4 +200,11 @@ function ColumnRow({ column }: { column: ColumnSummary }) {
       </Group>
     </Tooltip>
   );
+}
+
+// The first sentence of a description, at most SUMMARY_MAX_CHARS long.
+function summary(description: string): string {
+  const text = description.replace(/\s+/g, " ").trim();
+  const sentence = /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+  return sentence.length > SUMMARY_MAX_CHARS ? `${sentence.slice(0, SUMMARY_MAX_CHARS - 1)}…` : sentence;
 }

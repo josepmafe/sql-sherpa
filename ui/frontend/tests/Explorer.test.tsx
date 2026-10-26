@@ -45,6 +45,13 @@ const CATALOG = {
   ],
 };
 
+// The catalog with fct_orders changed.
+function withOrders(change: object) {
+  const [sales, ...others] = CATALOG.domains;
+  const [orders, ...rest] = sales!.tables;
+  return { ...CATALOG, domains: [{ ...sales!, tables: [{ ...orders!, ...change }, ...rest] }, ...others] };
+}
+
 const DETAILS = {
   name: "fct_orders",
   domain: "sales",
@@ -128,13 +135,42 @@ describe("CatalogTree", () => {
     expect(screen.queryByText("product")).not.toBeInTheDocument();
   });
 
-  it("hover shows the description", async () => {
+  it("hover shows the description's first sentence, the grain and the PK", async () => {
     const user = userEvent.setup();
+    const description = "One row per order.\nCancelled orders are kept and flagged. Metrics filter on them.";
+    useCatalog.mockReturnValue({ data: withOrders({ description }) });
     renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.hover(screen.getByRole("button", { name: "fct_orders" }));
 
-    expect(await screen.findByText(/One row per order\. Grain: one row per order\. PK: order_id/)).toBeInTheDocument();
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent("One row per order.Grain: one row per orderPK: order_id");
+    expect(tip).not.toHaveTextContent("Cancelled");
+  });
+
+  it("hover cuts a long first sentence at 200 characters", async () => {
+    const user = userEvent.setup();
+    useCatalog.mockReturnValue({ data: withOrders({ description: `${"word ".repeat(60)}end. Next.` }) });
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+
+    await user.hover(screen.getByRole("button", { name: "fct_orders" }));
+
+    const summary = (await screen.findByRole("tooltip")).firstElementChild?.textContent ?? "";
+    expect(summary).toHaveLength(200);
+    expect(summary.endsWith("…")).toBe(true);
+  });
+
+  it("the tooltip closes when the table menu opens", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    const name = screen.getByRole("button", { name: "fct_orders" });
+    await user.hover(name);
+    await screen.findByRole("tooltip");
+
+    await user.pointer({ keys: "[MouseRight]", target: name });
+
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
   it("menu opens from right-click and runs the editor action", async () => {
