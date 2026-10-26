@@ -19,6 +19,14 @@ class TestBoundedResult:
 
         assert result.rows == (("1.50", "2025-03-01", None),)
 
+    def test_integers_past_what_a_browser_holds_exactly_become_strings(self) -> None:
+        # JavaScript numbers are doubles: 2**53 + 1 would arrive as 9007199254740992.
+        result = BoundedResult(("a", "b", "c", "d", "e"), NO_PII, row_cap=10)
+
+        result.extend([(2**53 - 1, 2**53, -(2**53 - 1), -(2**53 + 1), True)])
+
+        assert result.rows == ((9007199254740991, "9007199254740992", -9007199254740991, "-9007199254740993", True),)
+
     def test_a_cell_over_the_cap_is_cut_with_a_visible_marker(self) -> None:
         result = BoundedResult(("at_cap", "over"), NO_PII, row_cap=10)
 

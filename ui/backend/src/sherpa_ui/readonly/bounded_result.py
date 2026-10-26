@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 MAX_RESULT_CHARS: Final = 2_000_000
 # After a row this long before cutting, rows are fetched one at a time, so at most one such row is in memory.
 LARGE_ROW_CHARS: Final = 1_000_000
+# JavaScript's Number.MAX_SAFE_INTEGER: a browser parses a larger JSON integer into the nearest double, so an int8
+# value past it is sent as a string, like a numeric's Decimal. sherpa_mcp's json_safe stays as the agent needs it.
+MAX_SAFE_INTEGER: Final = 2**53 - 1
 
 
 class BoundedResult:
@@ -43,7 +46,7 @@ class BoundedResult:
     def extend(self, batch: Sequence[Sequence[object]]) -> bool:
         """Add a batch of fetched rows in order; False once one does not fit, when the caller stops fetching."""
         # Masked first, so a personal value is never measured, cut or counted.
-        masked = self._masker.mask(self._columns, [[json_safe(value) for value in raw] for raw in batch])
+        masked = self._masker.mask(self._columns, [[_browser_safe(json_safe(value)) for value in raw] for raw in batch])
         for row in masked:
             # A row past the cap only tells that there were more.
             if len(self._rows) == self._row_cap or not self._append(row):
@@ -83,3 +86,11 @@ class BoundedResult:
         self._chars += row_chars
         self._rows.append(tuple(cut))
         return True
+
+
+def _browser_safe(value: object) -> object:
+    """A cell's top-level integer as the browser can hold it (nested JSON and array values are left as they are)."""
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > MAX_SAFE_INTEGER:
+        return str(value)
+
+    return value

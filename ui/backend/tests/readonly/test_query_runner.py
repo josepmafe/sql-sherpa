@@ -1159,6 +1159,14 @@ class TestQueryRunner:
 
         assert outcome.rows == (("1.50", "2025-03-01", "2025-03-01T04:05:00+00:00", True, {"k": [1]}),)
 
+    def test_an_int8_past_the_browser_s_precision_arrives_as_a_string_of_a_number_column(
+        self, runner: QueryRunner
+    ) -> None:
+        outcome = runner.run("q1", "select 9007199254740993::int8 as big, 9007199254740991::int8 as safe")
+
+        assert outcome.rows == (("9007199254740993", 9007199254740991),)
+        assert outcome.column_types == ("number", "number")
+
 
 def _fake_connection(rows: list[tuple[object, ...]] | None = None, columns: tuple[str, ...] = ("a",)) -> MagicMock:
     """A connection whose server-side cursor returns `rows` of int4 `columns`, afresh for every query declared."""
