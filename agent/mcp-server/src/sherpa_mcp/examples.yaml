@@ -278,7 +278,7 @@
     group by p.brand
     order by gross_margin desc
   notes: >-
-    Line gross_margin already nets refunds and recovered returned cost; costs use the current cost price. Line
+    Line gross_margin already nets refunds and recovered returned cost; costs are each line's cost at the time of sale. Line
     refunded_revenue covers return refunds only, not goodwill refunds, so brand net revenue does not add up to
     fct_orders.net_revenue.
 

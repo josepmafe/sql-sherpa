@@ -422,7 +422,7 @@ models:
         description: gross_amount minus allocated_discount in EUR, kept when the order is cancelled.
         data_type: numeric(12,2)
       - name: unit_cost_at_sale
-        description: Cost per unit in EUR at the time of sale, taken as the variant's current cost price.
+        description: Cost per unit in EUR at the time of sale, from the variant's snapshot version valid when the order was placed.
         data_type: numeric(12,2)
       - name: cogs
         description: quantity × unit_cost_at_sale in EUR; 0 when the order is cancelled.

@@ -17,7 +17,7 @@ SHERPA_DB_NAME ?= sherpa
 DB_NAME_CHARS = a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 _
 # $(call strip-chars,text,chars): text with every character in the word list chars removed.
 strip-chars = $(if $(2),$(call strip-chars,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,$(words $(2)),$(2))),$(1))
-DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_test_failures, seeds, staging, intermediate, marts, test_failures, ops
+DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_test_failures, seeds, staging, intermediate, marts, test_failures, snapshots, ops
 # The dbt packages, installed again whenever packages.yml or package-lock.yml changes; every target that runs dbt
 # depends on them.
 DBT_PACKAGES = data-platform/dbt/dbt_packages/.installed

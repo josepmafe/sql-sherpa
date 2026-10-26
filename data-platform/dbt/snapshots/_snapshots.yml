@@ -1,0 +1,27 @@
+version: 2
+
+# A snapshot keeps the history of a table that only holds current values. dbt adds dbt_valid_from and
+# dbt_valid_to to each captured version; the open (current) version has a null dbt_valid_to.
+snapshots:
+  - name: snap_product_variants
+    description: >
+      One row per version of a product variant, captured from the raw product_variants table each time
+      `dbt snapshot` runs. A price change closes the old version and opens a new one, so it keeps the cost
+      and list price a variant had at any point in time. Dev and prod models share this one copy.
+    relation: source('shop', 'product_variants')
+    config:
+      unique_key: id
+      strategy: timestamp
+      updated_at: updated_at
+      hard_deletes: invalidate
+    columns:
+      - name: id
+        description: The variant's primary key in the raw table; several versions share it.
+      - name: cost_price
+        description: What the variant cost the shop in this version, EUR, net of tax.
+      - name: list_price
+        description: The selling price in this version, EUR, net of tax.
+      - name: dbt_valid_from
+        description: When this version became valid (UTC), taken from the row's updated_at.
+      - name: dbt_valid_to
+        description: When the next version replaced this one (UTC); null for the current version.

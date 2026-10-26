@@ -30,14 +30,15 @@ It is 0 for a cancelled order. This is what "revenue" means unless stated otherw
 Cost of goods sold (COGS): Σ quantity × unit cost at the time of sale, in EUR. Returned COGS is the
 restockable returned quantity × unit cost at the time of sale: those units go back into stock, so
 their cost is recovered. Both are 0 for a cancelled order. The unit cost at the time of sale
-(unit_cost_at_sale) is the variant's current cost price: cost price history is not kept yet, so
-cogs for older periods can be off when a variant's cost has changed since.
+(unit_cost_at_sale) is the variant's cost price in the product variants snapshot version that was
+valid when the order was placed. Two limits: an order placed before the variant's first captured
+version uses that earliest version's cost, and when a variant's cost changes twice inside one 7-day
+backfill chunk, the intermediate cost is not captured.
 {% enddocs %}
 
 {% docs metric_gross_margin %}
 Gross margin: net_revenue − (cogs − returned_cogs), in EUR. It is 0 for a cancelled order. Its cost
-side uses the variant's current cost price (see cogs), so margins for older periods can be off when a
-variant's cost has changed since.
+side uses the cost at the time of sale (see cogs, including its two limits).
 {% enddocs %}
 
 {% docs metric_aov %}
