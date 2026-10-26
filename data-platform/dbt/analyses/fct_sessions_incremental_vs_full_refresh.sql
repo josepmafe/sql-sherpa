@@ -3,11 +3,15 @@
 -- prod full refresh:
 --   dbt show --select fct_sessions_incremental_vs_full_refresh
 --     --vars '{compare_schema: marts}'
--- Zero rows means they match. compare_schema has no default, so `dbt show`
--- fails at compile time without it; build, compile and docs generate use a
--- placeholder schema because they never run the query.
+-- Zero rows means they match. compare_schema is read with a none default
+-- because dbt compiles every analysis in build, compile and docs generate,
+-- where a placeholder schema stands in. `dbt show` with this analysis in its
+-- --select fails at compile time unless compare_schema is passed.
 {% set compare_schema = var('compare_schema', none) %}
-{% if compare_schema is none and flags.WHICH == 'show' %}
+{% set selected = (invocation_args_dict.get('select') or []) | join(' ') %}
+{% if compare_schema is none
+    and flags.WHICH == 'show'
+    and this.identifier in selected %}
     {{ exceptions.raise_compiler_error("Pass --vars '{compare_schema: marts}'") }}
 {% endif %}
 
