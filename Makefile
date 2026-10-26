@@ -1,4 +1,4 @@
-.PHONY: lockfile-check up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev e2e lint test
+.PHONY: lockfile-check up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev e2e e2e-freshness lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -131,9 +131,13 @@ ui-api-dev:
 ui-web-dev:
 	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) npm run dev
 
-# Playwright against the compose stack (`make up`, `make build-prod`) on SHERPA_UI_PORT.
+# Playwright against the compose stack (`make up`, `make build-prod`) on SHERPA_UI_PORT. The freshness spec skips
+# itself here: it adds a simulated day and rebuilds prod, so it runs only with e2e-freshness.
 e2e:
 	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) SHERPA_UI_USER=$(UI_USER) npx playwright test
+
+e2e-freshness:
+	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) SHERPA_E2E_FRESHNESS=1 npx playwright test freshness
 
 # The lockfile must resolve packages from the public registry only (entries without a `resolved` field are fine).
 lockfile-check:

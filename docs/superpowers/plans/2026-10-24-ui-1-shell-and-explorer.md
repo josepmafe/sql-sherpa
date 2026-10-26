@@ -374,7 +374,7 @@ Behaviour (UI spec §5, §6.4):
   - ports `127.0.0.1:${SHERPA_UI_PORT:-8090}:8090`
   - `depends_on: postgres` healthy
   - a healthcheck that GETs `/api/health` and passes on any 200 (a missing dbt artifact is a banner in the UI, not an unhealthy container, so `make up` works before `make build-prod`)
-- the `ui` service joins `make up`, which already starts every service with `--build` (agent-design-1); no per-service target. Makefile **`e2e`** (`cd ui/frontend && npx playwright test` with `SHERPA_UI_PORT` and `SHERPA_UI_USER` passed through, base URL `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`)
+- the `ui` service joins `make up`, which already starts every service with `--build` (agent-design-1); no per-service target. Makefile **`e2e`** (`cd ui/frontend && npx playwright test` with `SHERPA_UI_PORT` and `SHERPA_UI_USER` passed through, base URL `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`), and **`e2e-freshness`**, the only target that runs the freshness spec (Step 3), which changes the shared warehouse
 - Playwright config and its browser install documented in the guide. Playwright browsers are downloaded once; the tests themselves run offline.
 
 **Interfaces:** `sherpa_ui.app:container_app` is the app with `static_dir=/app/static`.
@@ -387,7 +387,7 @@ Behaviour (UI spec §5, §6.4):
   - **cancel:** a long aggregate is cancelled with the button
   - **Preview:** Preview 100 rows works
 - [ ] **Step 2: Playwright `e2e/offline.spec.ts`:** route every request that isn't to `http://127.0.0.1:8090` to `abort()` and fail the test on any such request. Load `/explorer` and run a query. Expected: no blocked request, and the screen works (criterion 1).
-- [ ] **Step 3: Criterion 2:** `make generate DAYS=1 && make build-prod`, then reload Explorer. The `fct_orders` count changes without restarting `ui` (the e2e test asserts the count changed).
+- [ ] **Step 3: Criterion 2:** `make generate DAYS=1 && make build-prod`, then reload Explorer. The `fct_orders` count changes without restarting `ui` (`e2e/freshness.spec.ts` asserts the count changed; it skips itself unless `SHERPA_E2E_FRESHNESS` is set, which only `make e2e-freshness` does).
 - [ ] **Step 4:** Commit `feat: ui image, compose service and Explorer end-to-end tests`.
 
 ---
