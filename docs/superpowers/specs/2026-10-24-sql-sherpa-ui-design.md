@@ -112,7 +112,7 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
 - **dbt artifacts:** `data-platform/dbt/target-prod/` is mounted read-only. The UI reads `manifest.json` and `catalog.json` from it (`make build-prod` regenerates `catalog.json` after every build), and `sources.json` for freshness (only `dbt source freshness` writes it).
   - **Build status comes from the database, not the files:** the `ops.dbt_run_results` audit table (data platform spec §8, "Added by ui-1"). The UI reads the latest invocation with `target_name = 'prod'`, `command = 'build'` and `is_full_run`. The table is needed because dbt rewrites `target-prod/run_results.json` on every compiling command, so the file can't say what the last full build did.
   - The backend reloads a file when its mtime changes, checked on each request that uses it. A failed reload of `manifest.json`/`catalog.json` (a file half-written by a running `make build-prod`) keeps the catalog that last loaded, with a warning in the log (`sherpa_mcp`'s `MartCatalogLoader`); only a backend that never loaded one answers `catalog_unavailable`.
-  - A node with no row in that invocation shows "not in the last build".
+  - A model, seed or snapshot with no row in that invocation shows "not in the last build" (an ephemeral model never runs, so it is "inlined"); §6.5 has the full status rules.
 - **Health:** `GET /api/health` reports each dependency separately:
   - the **database**, which Explorer, Home and history re-runs need: `down` when it cannot be reached, `ok` when it answers, also with a refusal for the UI login's connection limit (another client of that login holds every connection; a query then answers `too_many_connections`, §5)
   - the **artifacts**, present and when they were generated, which Lineage and the catalog tree need
@@ -146,7 +146,7 @@ docker compose --profile demo up -d
 
 ## 4. Backend API
 
-All responses are Pydantic models. All errors are `{code, message, detail?}` with a stable `code`. Clients branch on the `code`; the status only groups the codes: `422` for a refused request (`invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`), `404` for `table_not_found`, `409` for `duplicate_query_id` and `cancelled`, `429` for `busy`, `503` for `catalog_unavailable`, `database_unavailable` and `too_many_connections`, `504` for `timeout`, and `500` for `internal_error`. A timeout is `504`, not `408`: Chromium silently re-sends a POST answered `408` on a reused keep-alive connection, which would run the query twice. The OpenAPI schema declares every endpoint's error statuses with the `ApiError` model, and none with FastAPI's own validation-error shape, so the generated client types the errors the API really sends. A POST body over 1,048,576 bytes is refused before it is read (by its `Content-Length`, or counted as it arrives when it is sent chunked) with `422 invalid_request`: the largest valid query request is about 600,000 bytes. The schema is served at `/openapi.json`; FastAPI's Swagger UI and ReDoc pages (`/docs`, `/redoc`) are off, because they load their scripts from a CDN (§1, criterion 1).
+All responses are Pydantic models. All errors are `{code, message, detail?}` with a stable `code`. Clients branch on the `code`; the status only groups the codes: `422` for a refused request (`invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector`), `404` for `table_not_found` and `node_not_found`, `409` for `duplicate_query_id` and `cancelled`, `429` for `busy`, `503` for `catalog_unavailable`, `database_unavailable` and `too_many_connections`, `504` for `timeout`, and `500` for `internal_error`. A timeout is `504`, not `408`: Chromium silently re-sends a POST answered `408` on a reused keep-alive connection, which would run the query twice. The OpenAPI schema declares every endpoint's error statuses with the `ApiError` model, and none with FastAPI's own validation-error shape, so the generated client types the errors the API really sends. A POST body over 1,048,576 bytes is refused before it is read (by its `Content-Length`, or counted as it arrives when it is sent chunked) with `422 invalid_request`: the largest valid query request is about 600,000 bytes. The schema is served at `/openapi.json`; FastAPI's Swagger UI and ReDoc pages (`/docs`, `/redoc`) are off, because they load their scripts from a CDN (§1, criterion 1).
 
 | Endpoint | Purpose |
 |---|---|
@@ -156,8 +156,8 @@ All responses are Pydantic models. All errors are `{code, message, detail?}` wit
 | `POST /api/queries` | `{query_id, sql, sort?: [{column, direction}], filters?: [{column, operator, value}]}` → `{query_id, columns, rows, returned_rows, truncated, elapsed_ms, mode: "client"\|"server", warning?}`; §5. The **client generates `query_id`** (a UUID), so it can cancel while the request is still running. A duplicate `query_id` returns `409`. `sql` holds at most 100,000 characters and no NUL character (libpq would end the query text there, so Postgres would run less than the guard checked); either is `422 invalid_request` |
 | `POST /api/queries/{query_id}/cancel` | Cancels a running query; idempotent, and a no-op for an unknown or finished id |
 | `POST /api/queries/format` | `{sql}` → `{sql}` formatted with sqlglot (Postgres dialect); never executes |
-| `GET /api/lineage?select=<selector>&layers=…&failing_only=<bool>` | Nodes and edges for the selection; §6.5 |
-| `GET /api/lineage/nodes/{unique_id}` | The node panel: description, materialization, contract, domain, file path, raw and compiled SQL, columns, last full build's status and tests |
+| `GET /api/lineage?select=<selector>&layers=…&failing_only=<bool>` | Nodes and edges for the selection; an empty `select` is the whole project, `layers` is a comma list of the layers to show (a hidden node takes its edges with it), and `failing_only` keeps the nodes whose last full build failed them. Each node carries its layer, materialization, domain and build status; the answer also says when the last full build ran, or why there is no status (§6.5). `unsupported_selector` for a form outside the subset |
+| `GET /api/lineage/nodes/{unique_id}` | The node panel: description, materialization, contract, domain, file path, raw and compiled SQL, columns, last full build's status and tests; `node_not_found` for an id that is not a graph node (§6.5) |
 | `GET /api/home` | Tiles, trend and data status; §6.2 |
 | `POST /api/ask/plan` (SSE) | `{question, corrections: [Correction]}` → progress events, then one plan outcome (`Draft`, `NeedsClarification`, `Unanswerable` or `Failed`); §6.3 |
 | `POST /api/ask/answer` (SSE) | `{draft_id}` → progress events, then `Answered` or `Failed` |
@@ -313,15 +313,28 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
   - **graph operators on any atom:** `+atom`, `atom+`, `n+atom+m`
   - **unions:** atoms separated by spaces
 
-  Anything else returns `code = "unsupported_selector"`, listing what is supported. An integration test checks that, for a fixed list of selectors, the backend's node set equals `dbt ls --select <selector> --output json` on the prod manifest.
-- **Layout:** left to right by layer, auto-placed with ELK, with edges from each node's `depends_on`.
-- **Node styling:** colour by layer, a badge for materialization, red when the last full build failed it or one of its tests, and grey with "not in the last build" when the build didn't include it (§3).
+  Anything else returns `code = "unsupported_selector"`, listing what is supported. An integration test checks that, for a fixed list of selectors, the backend's node set equals `dbt ls --select <selector> --output json` (restricted to the graph's resource types) on the same fresh `dbt parse` into a temporary target path, so a stale `target-prod` cannot fail it.
+- **Graph nodes:** sources, seeds, models, snapshots and exposures. Tests, unit tests, analyses and hooks are not nodes: they appear in the node panel and decide a node's status. The layer filter lists only the layers the manifest has (exposures arrive with data-platform-4).
+- **Layout:** left to right by layer, auto-placed with ELK, with edges from each node's `depends_on`. A hidden layer's nodes and their edges disappear; edges are never bridged across them.
+- **Node styling:** colour by layer, a badge for materialization, and the status below. Status is always an icon and a text label as well as a colour (WCAG AA, not colour alone).
+- **Build status** of a node, from the last full prod build (§3):
+  - `failed`: its own row is `error`, or a test counted against it failed. A generic test counts against the node it is defined on, a singular test against every node it depends on, a unit test against the model it checks.
+  - `warned`: not failed, and a test with severity `warn` warned. A warning is never "failing".
+  - `skipped`: dbt skipped it because an upstream node failed.
+  - `ok`: it ran and its tests passed.
+  - "not in the last build" (grey): a model, seed or snapshot with no row.
+  - `inlined`: an ephemeral model, which never runs.
+  - No status at all for sources and exposures.
+  - A warehouse with no full prod build recorded shows no status anywhere and a note ("run `make build-prod`"), never "not in the last build". With the database down, the graph still draws from the manifest with a note.
+- **Selecting a node** (a click, or Enter on a focused node) emphasises it, highlights all its ancestors and descendants among the nodes shown and the edges between them, dims the rest (still focusable), and opens the node panel. Esc, the panel's close button or a click on the background clears it. The highlight is computed in the browser from the edges shown, so a chain through a hidden layer ends there.
+- **URL:** `/lineage?select=<selector>&layers=<comma list>&failing=1&node=<unique_id>`. The three modes only write the selector, so reload, back/forward and a shared link restore the view. Selecting a node replaces the history entry rather than adding one. The Explorer's "Open in Lineage" links to `select=+<table>+`, and Lineage's "Open in Explorer" to `/explorer?table=<table>`.
 - **Node panel:**
   - description, materialization, contract, domain and file path
   - **source and compiled SQL**
   - columns
   - the last full build: status, duration, tests
-  - "Open in Explorer" (marts only), "Copy dbt selector"
+  - "Open in Explorer" (marts only), "Copy dbt selector" (the node's own name)
+  - **compiled SQL** is read from `target-prod/compiled/<package>/<path of the node's file>` (the manifest's `original_file_path`, with `\` turned into `/`: dbt writes the separator of the machine it ran on, and the `ui` container is Linux) (a YAML-defined node, such as a snapshot, from `<path of the YAML>/<name>.sql`), because `manifest.json` carries none. A missing file shows the raw SQL with a note, and the path never leaves `compiled/`.
 - Names and SQL only, never data, so the whole project is visible to everyone.
 
 ---
