@@ -213,6 +213,75 @@ describe("useWorksheetRun", () => {
     });
   });
 
+  describe("a re-run with a sort or filter", () => {
+    const SORT = { sort: [{ column: "n", direction: "asc" as const }], filters: [] };
+
+    async function finishedRun(settled: () => void) {
+      const hook = renderHook(() => useWorksheetRun("w1", settled));
+      act(() => void hook.result.current.run("select 1"));
+      await act(async () => pending[0]!.resolve(queryResponse(calls("/api/queries")[0]!.options.body!.query_id, 1)));
+      return hook;
+    }
+
+    it("keeps the last result while it runs and when it fails, and is not reported", async () => {
+      const settled = vi.fn();
+      const { result } = await finishedRun(settled);
+      settled.mockClear();
+      const onApplied = vi.fn();
+
+      act(() => void result.current.run("select 1", { ...SORT, onApplied }));
+      expect(result.current.status).toBe("running");
+      expect(result.current.response?.returned_rows).toBe(1);
+      await act(async () =>
+        pending[1]!.resolve({ error: { code: "sql_error", message: "bad value" }, response: { status: 422 } }),
+      );
+
+      expect(result.current.status).toBe("error");
+      expect(result.current.error?.message).toBe("bad value");
+      expect(result.current.response?.returned_rows).toBe(1);
+      expect(onApplied).not.toHaveBeenCalled();
+      expect(settled).not.toHaveBeenCalled();
+      expect(calls("/api/queries")[1]!.options.body).toMatchObject({ sql: "select 1", sort: SORT.sort, filters: [] });
+    });
+
+    it("replaces the result with its answer and calls onApplied", async () => {
+      const settled = vi.fn();
+      const { result } = await finishedRun(settled);
+      settled.mockClear();
+      const onApplied = vi.fn();
+
+      act(() => void result.current.run("select 1", { ...SORT, onApplied }));
+      await act(async () => pending[1]!.resolve(queryResponse(calls("/api/queries")[1]!.options.body!.query_id, 7)));
+
+      expect(result.current.status).toBe("done");
+      expect(result.current.response?.returned_rows).toBe(7);
+      expect(onApplied).toHaveBeenCalledOnce();
+      expect(settled).not.toHaveBeenCalled();
+    });
+
+    it("keeps the last result when cancelled, and is not reported", async () => {
+      const settled = vi.fn();
+      const { result } = await finishedRun(settled);
+      settled.mockClear();
+
+      act(() => void result.current.run("select 1", { ...SORT, onApplied: () => {} }));
+      act(() => result.current.cancel());
+
+      expect(result.current.status).toBe("cancelled");
+      expect(result.current.response?.returned_rows).toBe(1);
+      expect(settled).not.toHaveBeenCalled();
+    });
+
+    it("a Run after it clears the result while it runs", async () => {
+      const { result } = await finishedRun(() => {});
+
+      act(() => void result.current.run("select 2"));
+
+      expect(result.current.status).toBe("running");
+      expect(result.current.response).toBeUndefined();
+    });
+  });
+
   it("aborts and cancels the running query on unmount, and ignores its answer", async () => {
     const settled = vi.fn();
     const { result, unmount } = renderHook(() => useWorksheetRun("w1", settled));

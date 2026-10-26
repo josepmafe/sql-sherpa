@@ -20,5 +20,7 @@ class ResizeObserverStub {
   disconnect(): void {}
 }
 globalThis.ResizeObserver ??= ResizeObserverStub;
+// A Select's dropdown scrolls its selected option into view.
+Element.prototype.scrollIntoView ??= () => {};
 
 afterEach(cleanup);

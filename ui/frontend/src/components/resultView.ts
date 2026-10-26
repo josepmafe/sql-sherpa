@@ -53,6 +53,23 @@ export function applyView(rows: readonly Row[], types: readonly ColumnType[], vi
     .map(({ row }) => row);
 }
 
+// Why Postgres would refuse a filter value for the column's type, if it would: server mode sends the value as a bound
+// parameter, and an unreadable one fails the whole re-run. `contains` matches text, so any value goes.
+export function filterValueProblem(type: ColumnType, operator: Operator, value: string): string | undefined {
+  if (operator === "contains" || VALUELESS_OPERATORS.includes(operator)) return undefined;
+  switch (type) {
+    case "number":
+      return Number.isNaN(parseNumber(value)) ? "Enter a number, like 12.5" : undefined;
+    case "date":
+    case "timestamp":
+      return Number.isNaN(parseTime(value)) ? "Enter a date, like 2025-01-15 or 2025-01-15 10:30" : undefined;
+    case "boolean":
+      return parseBoolean(value) === undefined ? "Enter true or false" : undefined;
+    default:
+      return undefined;
+  }
+}
+
 // A cell as Postgres's `::text` writes it, which is what server mode's `contains` matches: jsonb as `{"a": 1}` and
 // a timestamp as `2025-01-15 08:30:00.12+00`. A Postgres array arrives as JSON too, so it reads `[1, 2]`, not `{1,2}`.
 export function cellText(value: Cell, type?: ColumnType): string | null {

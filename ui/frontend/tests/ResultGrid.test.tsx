@@ -134,6 +134,55 @@ describe("ResultGrid", () => {
     expect(firstColumn()).toEqual(["a", "b", "c"]);
   });
 
+  it("refuses a filter value Postgres would not read as the column's type", async () => {
+    const user = userEvent.setup();
+    const typed = response({
+      columns: ["amount", "day", "active", "name"],
+      column_types: ["number", "date", "boolean", "text"],
+      rows: [["10", "2025-01-15", true, "a"]],
+      returned_rows: 1,
+    });
+    render(<Harness data={typed} />);
+    const tryValue = async (column: string, value: string) => {
+      await user.click(screen.getByRole("combobox", { name: "Filter column" }));
+      await user.click(await screen.findByRole("option", { name: column }));
+      const input = screen.getByRole("textbox", { name: "Filter value" });
+      await user.clear(input);
+      await user.type(input, value);
+    };
+    const addFilter = () => screen.getByRole("button", { name: "Add filter" });
+
+    await tryValue("amount", "abc");
+    expect(addFilter()).toBeDisabled();
+    expect(screen.getByText("Enter a number, like 12.5")).toBeInTheDocument();
+    await tryValue("day", "15/01/2025");
+    expect(addFilter()).toBeDisabled();
+    expect(screen.getByText("Enter a date, like 2025-01-15 or 2025-01-15 10:30")).toBeInTheDocument();
+    await tryValue("active", "maybe");
+    expect(addFilter()).toBeDisabled();
+    expect(screen.getByText("Enter true or false")).toBeInTheDocument();
+    await tryValue("amount", " ");
+    expect(addFilter()).toBeDisabled();
+
+    await tryValue("active", "yes");
+    expect(addFilter()).toBeEnabled();
+    await tryValue("name", "abc");
+    expect(addFilter()).toBeEnabled();
+  });
+
+  it("does not check the value of a contains filter, which matches text", async () => {
+    const user = userEvent.setup();
+    render(<Harness data={response()} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Filter column" }));
+    await user.click(await screen.findByRole("option", { name: "amount" }));
+    await user.click(screen.getByRole("combobox", { name: "Filter operator" }));
+    await user.click(await screen.findByRole("option", { name: "contains" }));
+    await user.type(screen.getByRole("textbox", { name: "Filter value" }), ".5");
+
+    expect(screen.getByRole("button", { name: "Add filter" })).toBeEnabled();
+  });
+
   it("renders only a window of 1,000 rows", () => {
     const rows = Array.from({ length: 1000 }, (_, i) => [`row${i}`, String(i)]);
     render(<Harness data={response({ rows, returned_rows: 1000, truncated: true })} />);

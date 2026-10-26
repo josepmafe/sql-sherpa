@@ -16,6 +16,7 @@ import {
   type Cell,
   cellText,
   type ColumnType,
+  filterValueProblem,
   hasDuplicateColumns,
   isServerSide,
   type Operator,
@@ -120,7 +121,7 @@ export function ResultGrid({ response, view, onViewChange }: GridProps) {
         </Text>
       ) : (
         <>
-          <FilterBar columns={columns} view={view} onViewChange={onViewChange} />
+          <FilterBar columns={columns} types={types} view={view} onViewChange={onViewChange} />
           <Box ref={scrollRef} style={{ height: VIEWPORT_HEIGHT, overflow: "auto" }}>
             <Table stickyHeader withTableBorder withColumnBorders style={{ width: columns.length * COLUMN_WIDTH }}>
               <Table.Thead>
@@ -224,13 +225,18 @@ function Spacer({ height, columns }: { height: number; columns: number }) {
   );
 }
 
-function FilterBar({ columns, view, onViewChange }: Omit<GridProps, "response"> & { columns: string[] }) {
+type FilterBarProps = Omit<GridProps, "response"> & { columns: string[]; types: ColumnType[] };
+
+function FilterBar({ columns, types, view, onViewChange }: FilterBarProps) {
   const [column, setColumn] = useState<string | null>(null);
   const [operator, setOperator] = useState<Operator>("=");
   const [value, setValue] = useState("");
   const needsValue = !VALUELESS_OPERATORS.includes(operator);
+  const type = column === null ? undefined : types[Number(column)];
+  const problem = type === undefined || value === "" ? undefined : filterValueProblem(type, operator, value);
+  const ready = column !== null && (!needsValue || (value !== "" && problem === undefined));
   const add = () => {
-    if (column === null || (needsValue && value === "")) return;
+    if (!ready) return;
     onViewChange({ ...view, filters: [...view.filters, { index: Number(column), operator, value }] });
     setValue("");
   };
@@ -262,10 +268,11 @@ function FilterBar({ columns, view, onViewChange }: Omit<GridProps, "response"> 
             value={value}
             onChange={(event) => setValue(event.currentTarget.value)}
             onKeyDown={(event) => event.key === "Enter" && add()}
+            error={problem}
             size="xs"
           />
         )}
-        <Button size="xs" variant="light" disabled={column === null || (needsValue && value === "")} onClick={add}>
+        <Button size="xs" variant="light" disabled={!ready} onClick={add}>
           Add filter
         </Button>
       </Group>

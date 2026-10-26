@@ -48,7 +48,7 @@ The editor completes table and column names from the catalog. The buttons above 
 
 While a query runs, "Running… N s" counts the seconds. Starting a new run in a worksheet cancels its previous one.
 
-**History** (top right of the editor) lists the last 200 runs: SQL, time, row count and status. Picking one puts its SQL into the active worksheet. Worksheets and history live in the browser's `localStorage` under the key `sherpa.v1.explorer`, so they survive a reload but belong to one browser: another browser or a private window starts empty, and clearing site data removes them. A browser that blocks site data still runs the Explorer; its worksheets and history then last only until the page closes. Result rows are never stored; a re-run fetches them again.
+**History** (top right of the editor) lists the last 200 runs (Run and Run selection, not the server-side sorts and filters): SQL, time, row count and status. Picking one puts its SQL into the active worksheet. Worksheets and history live in the browser's `localStorage` under the key `sherpa.v1.explorer`, so they survive a reload but belong to one browser: another browser or a private window starts empty, and clearing site data removes them. A browser that blocks site data still runs the Explorer; its worksheets and history then last only until the page closes. Result rows are never stored; a re-run fetches them again.
 
 ### Reading the result
 
@@ -80,12 +80,12 @@ A failed cast or computation (a Postgres data exception) never shows the value P
 
 ## Sorting and filtering
 
-Click a column header to sort (click again to reverse). The filter bar above the grid adds filters with the operators `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains` (case-insensitive), `is null` and `is not null`.
+Click a column header to sort (click again to reverse). The filter bar above the grid adds filters with the operators `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains` (case-insensitive), `is null` and `is not null`. A comparison value must fit the column's type, as Postgres would read it: `abc` on a number column, `15/01/2025` on a date or `maybe` on a boolean is refused before anything runs, and the filter bar says what it expects (`Enter a number, like 12.5`). `contains` takes any text.
 
 Where it runs depends on the result:
 
 - **Not truncated** (fewer rows than the cap): the browser sorts and filters the rows it already has. Nothing is sent to the server, and the status line shows `12 of 340 rows` while a filter is on.
-- **Truncated** (the row cap or the size budget was hit): the rows in the grid are only the first ones, so sorting them would mislead. The Explorer re-sends the SQL of the last run with the sort and filters, and the server applies them over all rows (`select * from (<your sql>) as q where ... order by ...`). A blue note says "Truncated at 1,000 rows: sorting and filtering run on the server over all rows". The wrapped statement goes through the same guarded, read-only path.
+- **Truncated** (the row cap or the size budget was hit): the rows in the grid are only the first ones, so sorting them would mislead. The Explorer re-sends the SQL of the last run with the sort and filters, and the server applies them over all rows (`select * from (<your sql>) as q where ... order by ...`). A blue note says "Truncated at 1,000 rows: sorting and filtering run on the server over all rows". The wrapped statement goes through the same guarded, read-only path. While it runs, the grid keeps the last rows, dimmed. If it fails (or you cancel it), the error shows above the grid, and the grid stays on the last rows with the sort and filters they had. These re-runs are not history entries.
 - **Masked columns** (`email`, `first_name`, `last_name`, see below): on a truncated result the server would sort and filter by the real values, and the order or the rows that match would give them away (a `contains` filter on `email` would test addresses one guess at a time). So the server refuses: sorting or filtering a truncated result by a masked column fails with `column 'email' holds personal data, shown as ***; the server does not sort or filter by it, since the order or the matching rows would reveal the hidden values`. On a result that is not truncated the browser sorts and filters the `***` it has, which reveals nothing.
 - **Duplicate column names** (for example `select o.order_id, i.order_id ...`): the server cannot wrap a result with two columns of one name, so sorting and filtering stay in the browser, over the rows shown, and a yellow "Duplicate column names" banner says so. Alias the columns (`i.order_id as item_order_id`) to get server-side sorting back.
 

@@ -1,4 +1,4 @@
-import { Alert, Stack, Text } from "@mantine/core";
+import { Alert, Box, Stack, Text } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 
 import { ResultGrid } from "../../components/ResultGrid";
@@ -19,13 +19,18 @@ type PanelProps = {
 type Origin = { sql: string; offset: number };
 
 const TIMEOUT_HINT = "The query hit the time limit. Narrow it with a WHERE clause or a LIMIT.";
+const RERUN_OPACITY = 0.5;
 const ERROR_TITLES: Record<string, string> = { guard_rejected: "Query not allowed", timeout: "Query timed out" };
 
 // One panel per worksheet, all kept mounted: each has its own editor history and its own run.
 export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled, onRunStarted }: PanelProps) {
   const { status, response, error, elapsedSeconds, run, cancel } = useWorksheetRun(worksheet.id, onSettled);
   const [origin, setOrigin] = useState<Origin>({ sql: "", offset: 0 });
+  // `view` is what the rows shown have; a server re-run's view shows only while it runs, so a failed or cancelled
+  // one falls back to the last applied view.
   const [view, setView] = useState<ResultView>(EMPTY_VIEW);
+  const [requested, setRequested] = useState<ResultView>();
+  const shownView = status === "running" && requested ? requested : view;
 
   // A Preview worksheet runs once when it opens. The timer keeps StrictMode's mount-unmount-mount probe from
   // starting (and then cancelling) a first run: only the last mount's timer fires.
@@ -42,8 +47,12 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
 
   // Sorting and filtering a truncated result re-runs the SQL of the last run, not the editor's current text.
   const changeView = (next: ResultView) => {
-    setView(next);
-    if (response && isServerSide(response)) void run(origin.sql, toServerOptions(next, response.columns));
+    if (!response || !isServerSide(response)) {
+      setView(next);
+      return;
+    }
+    setRequested(next);
+    void run(origin.sql, { ...toServerOptions(next, response.columns), onApplied: () => setView(next) });
   };
 
   const highlight = useMemo(
@@ -66,11 +75,11 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
         onRun={(sql, offset) => {
           setOrigin({ sql, offset });
           setView(EMPTY_VIEW);
+          setRequested(undefined);
           void run(sql);
         }}
         onCancel={cancel}
       />
-      {status === "done" && response && <ResultGrid response={response} view={view} onViewChange={changeView} />}
       {status === "cancelled" && (
         <Text size="sm" c="dimmed">
           Cancelled after {elapsedSeconds} s
@@ -83,6 +92,12 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
           </Text>
           {error.code === "timeout" && <Text size="sm">{TIMEOUT_HINT}</Text>}
         </Alert>
+      )}
+      {/* A Run clears the result; a server re-run keeps it, dimmed, so the grid (its scroll, the filter bar) stays. */}
+      {response && (
+        <Box aria-busy={status === "running"} style={{ opacity: status === "running" ? RERUN_OPACITY : 1 }}>
+          <ResultGrid response={response} view={shownView} onViewChange={changeView} />
+        </Box>
       )}
     </Stack>
   );

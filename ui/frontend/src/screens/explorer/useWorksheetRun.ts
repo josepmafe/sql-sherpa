@@ -10,7 +10,8 @@ type FilterSpec = components["schemas"]["FilterSpec"];
 export type RunStatus = "idle" | "running" | "done" | "error" | "cancelled";
 // The API's one error shape (UI spec §4); `position` is a 0-based code point offset into the SQL that was sent.
 export type RunError = { code: string; message: string; position?: number };
-export type RunOptions = { sort?: SortSpec[]; filters?: FilterSpec[] };
+// A re-run of the last SQL with a server-side sort and filters; `onApplied` is called when its answer is shown.
+export type Rerun = { sort: SortSpec[]; filters: FilterSpec[]; onApplied: () => void };
 export type RunOutcome = {
   sql: string;
   status: "done" | "error" | "cancelled";
@@ -37,12 +38,15 @@ type InFlight = {
   sql: string;
   controller: AbortController;
   startedAt: number;
+  rerun: boolean;
 };
 type InFlightRef = { current: InFlight | undefined };
 
 // One worksheet runs one query at a time. A new run, `cancel()` and unmounting all abandon the in-flight one:
 // they clear `inFlight` first, and every response is applied only while its query_id is still the in-flight one,
 // so a late answer for a superseded query can never overwrite a newer result.
+// A Run clears the result and reports its outcome to `onSettled` (the history). A re-run (`run(sql, rerun)`) keeps
+// the last result until its answer replaces it, also when it fails or is cancelled, and is not reported.
 export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOutcome) => void) {
   const [state, setState] = useState<RunState>(IDLE);
   const inFlight = useRef<InFlight | undefined>(undefined);
@@ -74,22 +78,24 @@ export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOu
     return () => clearInterval(timer);
   }, [running]);
 
-  const run = useCallback(async (sql: string, options: RunOptions = {}): Promise<void> => {
+  const run = useCallback(async (sql: string, rerun?: Rerun): Promise<void> => {
     abandon(inFlight);
     const current: InFlight = {
       queryId: crypto.randomUUID(),
       sql,
       controller: new AbortController(),
       startedAt: Date.now(),
+      rerun: rerun !== undefined,
     };
     inFlight.current = current;
-    setState({ status: "running", elapsedSeconds: 0 });
+    setState((previous) => ({ status: "running", elapsedSeconds: 0, response: rerun ? previous.response : undefined }));
 
     const finish = (next: RunState, returnedRows: number | null) => {
       if (inFlight.current?.queryId !== current.queryId) return; // superseded, cancelled or unmounted
       inFlight.current = undefined;
-      setState(next);
-      if (next.status === "done" || next.status === "error" || next.status === "cancelled") {
+      setState((previous) => ({ ...next, response: next.response ?? previous.response }));
+      if (rerun && next.status === "done") rerun.onApplied();
+      if (!rerun && (next.status === "done" || next.status === "error" || next.status === "cancelled")) {
         settled.current?.({ sql, status: next.status, returnedRows });
       }
     };
@@ -99,8 +105,8 @@ export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOu
         body: {
           query_id: current.queryId,
           sql,
-          sort: options.sort ?? [],
-          filters: options.filters ?? [],
+          sort: rerun?.sort ?? [],
+          filters: rerun?.filters ?? [],
         },
         signal: current.controller.signal,
       });
@@ -129,10 +135,12 @@ export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOu
     const current = inFlight.current;
     if (!current) return;
     abandon(inFlight);
-    setState({
+    setState((previous) => ({
       status: "cancelled",
       elapsedSeconds: secondsSince(current.startedAt),
-    });
+      response: previous.response,
+    }));
+    if (current.rerun) return;
     settled.current?.({
       sql: current.sql,
       status: "cancelled",

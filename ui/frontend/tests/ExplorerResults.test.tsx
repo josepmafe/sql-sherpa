@@ -118,6 +118,79 @@ describe("Explorer results", () => {
     ).toBeInTheDocument();
   });
 
+  describe("a server re-run", () => {
+    const TRUNCATED = { data: { ...RESPONSE, truncated: true, returned_rows: 1000 }, response: { status: 200 } };
+    const firstColumn = () =>
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => row.querySelector("td")?.textContent);
+
+    // Unmounting a worksheet with a query in flight cancels it.
+    beforeEach(() => post.mockImplementation(() => Promise.resolve({ response: { status: 204 } })));
+
+    async function runTruncated(user: ReturnType<typeof userEvent.setup>) {
+      renderScreen("select * from marts.fct_orders");
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await screen.findByRole("columnheader", { name: "amount" });
+    }
+
+    async function addFilter(user: ReturnType<typeof userEvent.setup>, column: string, value: string) {
+      await user.click(screen.getByRole("combobox", { name: "Filter column" }));
+      await user.click(await screen.findByRole("option", { name: column }));
+      await user.type(screen.getByRole("textbox", { name: "Filter value" }), value);
+      await user.click(screen.getByRole("button", { name: "Add filter" }));
+    }
+
+    it("keeps the last rows, dimmed, and the filter bar while it runs", async () => {
+      const user = userEvent.setup();
+      let answer!: (value: unknown) => void;
+      post.mockResolvedValueOnce(TRUNCATED);
+      post.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+      await runTruncated(user);
+      await user.click(screen.getByRole("combobox", { name: "Filter column" }));
+      await user.click(await screen.findByRole("option", { name: "name" }));
+
+      await user.click(screen.getByRole("columnheader", { name: "amount" }));
+
+      expect(firstColumn()).toEqual(["a", "b"]);
+      expect(screen.getByRole("table").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+      expect(screen.getByRole("combobox", { name: "Filter column" })).toHaveValue("name");
+      expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
+      const sorted = { ...RESPONSE, mode: "server", truncated: true, returned_rows: 1000, rows: [["b", "9"], ["a", "10"]] };
+      await act(async () => answer({ data: sorted, response: { status: 200 } }));
+      expect(firstColumn()).toEqual(["b", "a"]);
+      expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
+    });
+
+    it("that fails shows its error above the last rows and drops the filter it tried", async () => {
+      const user = userEvent.setup();
+      const message = "a value could not be converted or computed (InvalidTextRepresentation); check the literal format";
+      post.mockResolvedValueOnce(TRUNCATED);
+      post.mockResolvedValueOnce({ error: { code: "sql_error", message }, response: { status: 422 } });
+      await runTruncated(user);
+
+      await addFilter(user, "name", "zzz");
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(firstColumn()).toEqual(["a", "b"]);
+      expect(screen.queryByRole("button", { name: "Remove filter on name" })).not.toBeInTheDocument();
+      expect(queryCalls()[1]?.[1].body.filters).toEqual([{ column: "name", operator: "=", value: "zzz" }]);
+    });
+
+    it("is not a history entry: history records Runs", async () => {
+      const user = userEvent.setup();
+      post.mockResolvedValueOnce(TRUNCATED);
+      post.mockResolvedValueOnce({ data: { ...TRUNCATED.data, mode: "server" }, response: { status: 200 } });
+      await runTruncated(user);
+
+      await user.click(screen.getByRole("columnheader", { name: "amount" }));
+
+      await waitFor(() => expect(queryCalls()).toHaveLength(2));
+      expect(await screen.findByRole("button", { name: "History (1)" })).toBeInTheDocument();
+    });
+  });
+
   it("an untruncated result sorts in the browser without a request", async () => {
     const user = userEvent.setup();
     post.mockResolvedValue({ data: RESPONSE, response: { status: 200 } });
