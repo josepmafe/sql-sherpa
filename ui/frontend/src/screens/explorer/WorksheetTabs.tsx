@@ -27,6 +27,8 @@ export function WorksheetTabs({ worksheets, activeId, onSelect, onAdd, onClose, 
                 size="xs"
                 aria-label="Worksheet name"
                 defaultValue={worksheet.name}
+                // The field appears because the user asked to rename the tab, so focus goes where they expect it.
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
                 onFocus={(event) => event.currentTarget.select()}
                 onBlur={(event) => {

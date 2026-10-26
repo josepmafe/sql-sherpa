@@ -1,4 +1,17 @@
-import { ActionIcon, Alert, Badge, Box, Button, Group, Select, Stack, Table, Text, TextInput } from "@mantine/core";
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Select,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from "@mantine/core";
 import { IconArrowDown, IconArrowUp, IconX } from "@tabler/icons-react";
 import {
   type ColumnDef,
@@ -139,20 +152,27 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
                   <Table.Tr key={group.id}>
                     {group.headers.map((header) => {
                       const direction = header.column.getIsSorted();
-                      const sortable = header.column.getCanSort();
+                      const label = (
+                        <Group gap={4} wrap="nowrap">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {direction === "asc" && <IconArrowUp size={14} />}
+                          {direction === "desc" && <IconArrowDown size={14} />}
+                        </Group>
+                      );
                       return (
                         <Table.Th
                           key={header.id}
                           aria-sort={direction ? (direction === "asc" ? "ascending" : "descending") : "none"}
-                          title={sortable ? undefined : MASKED_HINT}
-                          onClick={sortable ? header.column.getToggleSortingHandler() : undefined}
-                          style={{ cursor: sortable ? "pointer" : undefined, width: COLUMN_WIDTH }}
+                          style={{ width: COLUMN_WIDTH }}
                         >
-                          <Group gap={4} wrap="nowrap">
-                            {flexRender(header.column.columnDef.header, header.getContext())}
-                            {direction === "asc" && <IconArrowUp size={14} />}
-                            {direction === "desc" && <IconArrowDown size={14} />}
-                          </Group>
+                          {/* A real button, so sorting works from the keyboard too. */}
+                          {header.column.getCanSort() ? (
+                            <UnstyledButton w="100%" style={{ font: "inherit" }} onClick={header.column.getToggleSortingHandler()}>
+                              {label}
+                            </UnstyledButton>
+                          ) : (
+                            <Box title={MASKED_HINT}>{label}</Box>
+                          )}
                         </Table.Th>
                       );
                     })}

@@ -45,11 +45,24 @@ describe("ResultGrid", () => {
     const user = userEvent.setup();
     render(<Harness data={response()} />);
 
-    await user.click(screen.getByRole("columnheader", { name: "amount" }));
+    await user.click(screen.getByRole("button", { name: "amount" }));
 
     expect(firstColumn()).toEqual(["c", "b", "a"]);
-    await user.click(screen.getByRole("columnheader", { name: "amount" }));
+    await user.click(screen.getByRole("button", { name: "amount" }));
     expect(firstColumn()).toEqual(["a", "b", "c"]);
+  });
+
+  it("sorts from the keyboard: each header holds a button", async () => {
+    const user = userEvent.setup();
+    render(<Harness data={response()} />);
+
+    screen.getByRole("button", { name: "amount" }).focus();
+    await user.keyboard("{Enter}");
+
+    expect(firstColumn()).toEqual(["c", "b", "a"]);
+    expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
+    await user.keyboard(" ");
+    expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "descending");
   });
 
   it("says 1 row, not 1 rows", () => {
@@ -200,7 +213,8 @@ describe("ResultGrid", () => {
     await user.click(screen.getByRole("combobox", { name: "Filter column" }));
 
     expect(screen.getByRole("columnheader", { name: "Email" })).toHaveAttribute("aria-sort", "none");
-    expect(screen.getByRole("columnheader", { name: "Email" })).toHaveAttribute("title", MASKED_HINT);
+    expect(screen.getByTitle(MASKED_HINT)).toHaveTextContent("Email");
+    expect(screen.queryByRole("button", { name: "Email" })).not.toBeInTheDocument();
     expect(await screen.findByRole("option", { name: "Email (masked)" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("option", { name: "name" })).not.toHaveAttribute("aria-disabled");
   });

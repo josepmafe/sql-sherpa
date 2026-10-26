@@ -52,8 +52,8 @@ test("a truncated result sorts on the server", async ({ page }) => {
   await expect(page.getByText(/Truncated at .* rows: sorting and filtering run on the server/)).toBeVisible();
 
   const header = page.getByRole("columnheader", { name: "order_item_id" });
-  await header.click();
-  await header.click();
+  await header.getByRole("button").click();
+  await header.getByRole("button").click();
 
   await expect(header).toHaveAttribute("aria-sort", "descending");
   await expect(page.locator("tbody tr").first().getByRole("cell").first()).toHaveText(maxId);
@@ -70,8 +70,8 @@ test("a small result sorts in the browser without another request", async ({ pag
   await runQuery(page, sql);
   await expect(page.getByText(/^20 rows in /)).toBeVisible();
   const header = page.getByRole("columnheader", { name: "order_id" });
-  await header.click();
-  await header.click();
+  await header.getByRole("button").click();
+  await header.getByRole("button").click();
 
   await expect(header).toHaveAttribute("aria-sort", "descending");
   await expect(page.locator("tbody tr").first().getByRole("cell").first()).toHaveText(maxId);

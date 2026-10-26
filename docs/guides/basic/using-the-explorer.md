@@ -82,7 +82,7 @@ A failed cast or computation (a Postgres data exception) never shows the value P
 
 ## Sorting and filtering
 
-Click a column header to sort (click again to reverse). The filter bar above the grid adds filters with the operators `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains` (case-insensitive), `is null` and `is not null`. A comparison value must fit the column's type, as Postgres would read it: `abc` on a number column, `15/01/2025` on a date or `maybe` on a boolean is refused before anything runs, and the filter bar says what it expects (`Enter a number, like 12.5`). `contains` takes any text.
+Click a column header to sort (click again to reverse), or Tab to it and press Enter or Space. The filter bar above the grid adds filters with the operators `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains` (case-insensitive), `is null` and `is not null`. A comparison value must fit the column's type, as Postgres would read it: `abc` on a number column, `15/01/2025` on a date or `maybe` on a boolean is refused before anything runs, and the filter bar says what it expects (`Enter a number, like 12.5`). `contains` takes any text.
 
 Where it runs depends on the result:
 

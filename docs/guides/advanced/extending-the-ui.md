@@ -90,7 +90,7 @@ uv run --env-file .env pytest ui -m warehouse            # against the built pro
 
 # 2. Frontend: Vitest + Testing Library, mocked API
 cd ui/frontend && npm test
-cd ui/frontend && npm run lint && npm run typecheck      # ESLint and tsc
+cd ui/frontend && npm run lint && npm run typecheck      # ESLint (typescript-eslint, react-hooks, jsx-a11y) and tsc
 
 # 3. End to end: Playwright against the compose stack
 cd ui/frontend && npx playwright install chromium        # once, downloads the browser

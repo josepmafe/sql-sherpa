@@ -102,7 +102,7 @@ describe("Explorer results", () => {
     });
     renderScreen("select * from marts.fct_orders");
     await user.click(screen.getByRole("button", { name: "Run" }));
-    const header = await screen.findByRole("columnheader", { name: "amount" });
+    const header = await screen.findByRole("button", { name: "amount" });
     const editor = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "select 99" } }));
 
@@ -152,7 +152,7 @@ describe("Explorer results", () => {
       await user.click(screen.getByRole("combobox", { name: "Filter column" }));
       await user.click(await screen.findByRole("option", { name: "name" }));
 
-      await user.click(screen.getByRole("columnheader", { name: "amount" }));
+      await user.click(screen.getByRole("button", { name: "amount" }));
 
       expect(firstColumn()).toEqual(["a", "b"]);
       expect(screen.getByRole("table").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
@@ -187,6 +187,7 @@ describe("Explorer results", () => {
 
       await user.click(screen.getByRole("columnheader", { name: "EMAIL" }));
 
+      expect(screen.queryByRole("button", { name: "EMAIL" })).not.toBeInTheDocument();
       expect(queryCalls()).toHaveLength(1);
       expect(screen.getByRole("columnheader", { name: "EMAIL" })).toHaveAttribute("aria-sort", "none");
     });
@@ -197,7 +198,7 @@ describe("Explorer results", () => {
       post.mockResolvedValueOnce({ data: { ...TRUNCATED.data, mode: "server" }, response: { status: 200 } });
       await runTruncated(user);
 
-      await user.click(screen.getByRole("columnheader", { name: "amount" }));
+      await user.click(screen.getByRole("button", { name: "amount" }));
 
       await waitFor(() => expect(queryCalls()).toHaveLength(2));
       expect(await screen.findByRole("button", { name: "History (1)" })).toBeInTheDocument();
@@ -210,7 +211,7 @@ describe("Explorer results", () => {
     renderScreen("select 1");
     await user.click(screen.getByRole("button", { name: "Run" }));
 
-    await user.click(await screen.findByRole("columnheader", { name: "amount" }));
+    await user.click(await screen.findByRole("button", { name: "amount" }));
 
     expect(queryCalls()).toHaveLength(1);
   });
