@@ -1,11 +1,13 @@
 import { Alert, Badge, Button, Code, Group, Stack, Text, Title } from "@mantine/core";
+import { useId } from "react";
 
 import { useTableDetails } from "../../api/queries";
 import { ColumnBadges } from "./ColumnBadges";
-import { DisabledHint, LINEAGE_DISABLED_HINT } from "./DisabledHint";
+import { LINEAGE_UNAVAILABLE } from "./lineage";
 
 export function Inspector({ table }: { table: string | undefined }) {
   const details = useTableDetails(table);
+  const lineageNote = useId();
 
   if (table === undefined) return <Text c="dimmed">Select a table to inspect it.</Text>;
   if (details.isError) return <Alert color="red">Could not load {table}.</Alert>;
@@ -30,11 +32,14 @@ export function Inspector({ table }: { table: string | undefined }) {
           <b>Synonyms:</b> {t.synonyms.join(", ")}
         </Text>
       )}
-      <DisabledHint hint={LINEAGE_DISABLED_HINT} show>
-        <Button disabled variant="default" size="xs">
+      <Group gap="xs">
+        <Button disabled variant="default" size="xs" aria-describedby={lineageNote}>
           Open in Lineage
         </Button>
-      </DisabledHint>
+        <Text id={lineageNote} size="xs" c="dimmed">
+          {LINEAGE_UNAVAILABLE}
+        </Text>
+      </Group>
 
       <Title order={5}>Columns</Title>
       {t.columns.map((column) => (

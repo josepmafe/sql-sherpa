@@ -200,12 +200,13 @@ describe("CatalogTree", () => {
     renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
-    const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: "Open in Lineage" })).toBeDisabled();
-    expect(within(menu).getByRole("menuitem", { name: "Copy name" })).toBeEnabled();
 
-    await user.hover(within(menu).getByText("Open in Lineage"));
-    expect(await screen.findByText("Lineage arrives with ui-2")).toBeInTheDocument();
+    const menu = await screen.findByRole("menu");
+    const lineage = within(menu).getByRole("menuitem", { name: "Open in Lineage" });
+    expect(lineage).toBeDisabled();
+    expect(lineage).toHaveAccessibleDescription("Lineage is not available yet.");
+    expect(within(menu).getByText("Lineage is not available yet.")).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Copy name" })).toBeEnabled();
   });
 });
 
@@ -218,6 +219,9 @@ describe("Inspector", () => {
     expect(screen.getByText(/Synonyms: state/)).toBeInTheDocument();
     expect(screen.getByText(/Revenue after refunds\./)).toBeInTheDocument();
     expect(screen.getByText("unique_fct_orders_order_id")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open in Lineage" })).toBeDisabled();
+    const lineage = screen.getByRole("button", { name: "Open in Lineage" });
+    expect(lineage).toBeDisabled();
+    expect(lineage).toHaveAccessibleDescription("Lineage is not available yet.");
+    expect(screen.getByText("Lineage is not available yet.")).toBeVisible();
   });
 });

@@ -1,11 +1,11 @@
 import { ActionIcon, Alert, Box, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconDots } from "@tabler/icons-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { useCatalog } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { ColumnBadges } from "./ColumnBadges";
-import { DisabledHint, LINEAGE_DISABLED_HINT } from "./DisabledHint";
+import { LINEAGE_UNAVAILABLE } from "./lineage";
 
 type TableSummary = components["schemas"]["TableSummary"];
 type ColumnSummary = components["schemas"]["ColumnSummary"];
@@ -113,6 +113,7 @@ const NAME_STYLE = {
 
 function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect }: TableRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const lineageNote = useId();
   const qualified = `${schema}.${table.name}`;
   // UI spec §6.4: description, grain and PK. The full description is the Inspector's.
   const tip = (
@@ -177,9 +178,13 @@ function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview,
             <Menu.Item onClick={() => onPreview(qualified)}>Preview 100 rows</Menu.Item>
             <Menu.Item onClick={() => onInsertSelect(qualified)}>Insert SELECT</Menu.Item>
             <Menu.Item onClick={() => void navigator.clipboard.writeText(qualified)}>Copy name</Menu.Item>
-            <DisabledHint hint={LINEAGE_DISABLED_HINT} show>
-              <Menu.Item disabled>Open in Lineage</Menu.Item>
-            </DisabledHint>
+            <Menu.Item disabled aria-describedby={lineageNote}>
+              Open in Lineage
+            </Menu.Item>
+            {/* Outside the disabled item, whose faded text would be hard to read. */}
+            <Text id={lineageNote} size="xs" c="dimmed" px="sm" pb={4}>
+              {LINEAGE_UNAVAILABLE}
+            </Text>
           </Menu.Dropdown>
         </Menu>
       </Group>
