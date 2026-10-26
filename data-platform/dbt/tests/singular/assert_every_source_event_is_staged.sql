@@ -1,7 +1,7 @@
 -- Returns each received_at date (UTC) with the number of source events
 -- missing from stg_events__events; dbt fails the test if any row comes back.
 -- Cause: microbatch picks the batches of an incremental run from the wall clock
--- (today and the 3 days before), not from the data. After advancing the
+-- (today and the 7 days before), not from the data. After advancing the
 -- simulation by more days than that, the oldest days are skipped.
 -- Fix: load the missing days, then run the normal build:
 --   dbt build --select stg_events__events

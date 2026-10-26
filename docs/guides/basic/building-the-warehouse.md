@@ -24,11 +24,11 @@ make build-prod  # the same on prod, then dbt docs generate
 
 ### Keeping it current
 
-Three models are incremental, so a build processes only what is new ([why each strategy](../advanced/adding-or-changing-a-mart.md#7-change-an-incremental-model)). `stg_events__events` is a microbatch model: each run reprocesses today and the 3 days before, counted from today (not from the data), one batch per day, with `begin` set to the simulation's first day by `make build`:
+Three models are incremental, so a build processes only what is new ([why each strategy](../advanced/adding-or-changing-a-mart.md#7-change-an-incremental-model)). `stg_events__events` is a microbatch model: each run reprocesses today and the 7 days before (8 batches), counted from today (not from the data), one batch per day, with `begin` set to the simulation's first day by `make build`:
 
 ```
-Batch 1 of 4 OK created batch 2026-10-23 of dev_staging.stg_events__events ... [MERGE 1448 in 0.57s]
-Batch 4 of 4 OK created batch 2026-10-26 of dev_staging.stg_events__events ... [MERGE 0 in 0.31s]
+Batch 1 of 8 OK created batch 2026-10-19 of dev_staging.stg_events__events ... [MERGE 1448 in 0.57s]
+Batch 8 of 8 OK created batch 2026-10-26 of dev_staging.stg_events__events ... [MERGE 0 in 0.31s]
 ```
 
 The other two (`int_identity__anonymous_to_customer`, `int_events__sessionized`) read only events newer than their own newest `received_at`. A second `make build` right after the first therefore changes almost nothing.
@@ -123,8 +123,8 @@ dbt compares each mart's YAML columns and `data_type`s with the model's real col
 
 | Symptom | Fix |
 |---|---|
-| `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>`. After a break of more than 3 days the next build then fails the guard test below; that is the normal path |
-| `assert_every_source_event_is_staged` fails: a simulated day older than 3 days before today was not loaded by any earlier build | The failing rows list the days. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; for prod add `--target prod --target-path target-prod`). `lookback` in the model config is the knob ([spec §6.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Never build the downstream models alone after this failure; if you did, `--full-refresh --select int_events__sessionized+` and the map |
+| `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>`. A break of up to 7 days then recovers on its own; after a longer one the next build fails the guard test below, which is the normal path |
+| `assert_every_source_event_is_staged` fails: a simulated day older than 7 days before today that no earlier build loaded | The failing rows list the days. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; for prod add `--target prod --target-path target-prod`). `lookback` in the model config is the knob ([spec §6.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Never build the downstream models alone after this failure; if you did, `--full-refresh --select int_events__sessionized+` and the map |
 | `on_schema_change` fail on `int_events__sessionized` or `stg_events__events`, or `fct_sessions` missing (after merging or switching checkouts), or every variant has one snapshot version | Reset sequence on the shared warehouse: `make reset && make backfill && make build && make build-prod` |
 | An incremental model is out of sync because another checkout built it with other code; duplicate sessions / the unique test on `session_id` fails after concurrent builds | `dbt build --full-refresh --select <model>+` on that target. Rebase every worktree before touching the warehouse; one build per target at a time |
 | `make advance` fails at its snapshot / `make backfill` fails midway | `dbt snapshot --target prod --target-path target-prod` / `make reset && make backfill` |

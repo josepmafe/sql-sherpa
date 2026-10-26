@@ -152,7 +152,7 @@ Three models build incrementally, each with the strategy its job needs ([spec §
 
 | Model | Strategy | Why | Watermark |
 |---|---|---|---|
-| `stg_events__events` | `microbatch` on `received_at` | Events arrive late and are the biggest table; a run reprocesses today and the 3 days before | None stored: the run date, `lookback=3`, and `begin` from `SHERPA_SIMULATION_START_DATE` |
+| `stg_events__events` | `microbatch` on `received_at` | Events arrive late and are the biggest table; a run reprocesses today and the 7 days before | None stored: the run date, `lookback=7`, and `begin` from `SHERPA_SIMULATION_START_DATE` |
 | `int_identity__anonymous_to_customer` | `merge` on `anonymous_id` | One row per device whose values change when it is identified again | `max(last_received_at)` of the table itself |
 | `int_events__sessionized` | `delete+insert` on `session_date` | A late event rewrites a whole session, sometimes across midnight, so whole days are replaced | `max(max_received_at)` of the table itself |
 

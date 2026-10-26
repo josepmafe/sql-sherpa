@@ -1,6 +1,7 @@
 {#-
-    Microbatch: each run reprocesses `lookback` + 1 daily batches of received_at (today and the 3 days
-    before). On Postgres dbt runs every batch as a MERGE on unique_key, served by the unique index.
+    Microbatch: each run reprocesses `lookback` + 1 daily batches of received_at (today and the 7 days
+    before). The lookback matches the 7-day backfill chunk: it is a catch-up window, not a late-data guard,
+    because the generator writes each event in the batch of the day containing its received_at. On Postgres dbt runs every batch as a MERGE on unique_key, served by the unique index.
     `begin` comes from the environment because Postgres runs batches one after another: it must be the
     first simulated day, not an early fixed date that costs a batch per empty day on every fresh build.
 -#}
@@ -11,7 +12,7 @@
         unique_key='event_id',
         event_time='received_at',
         batch_size='day',
-        lookback=3,
+        lookback=7,
         begin=(env_var('SHERPA_SIMULATION_START_DATE', '') or var('date_spine_start')),
         on_schema_change='fail',
         indexes=[{'columns': ['event_id'], 'unique': True}, {'columns': ['received_at']}]
