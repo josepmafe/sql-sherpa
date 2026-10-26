@@ -192,6 +192,18 @@ class TestQueriesApi:
         assert response.json()["code"] == "invalid_request"
         runner.run.assert_not_called()
 
+    @pytest.mark.parametrize("sql", ["select 1 as n\x00; delete from marts.fct_orders", "\x00"])
+    def test_sql_with_a_nul_character_is_rejected(self, client: TestClient, runner: MagicMock, sql: str) -> None:
+        # libpq ends the query text at a NUL, so Postgres would run less than the guard checked.
+        response = client.post("/api/queries", json=body(sql=sql))
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "code": "invalid_request",
+            "message": "body.sql: Value error, the SQL contains a NUL character (\\x00), which Postgres cannot receive",
+        }
+        runner.run.assert_not_called()
+
     def test_sql_at_the_limit_is_accepted(self, client: TestClient, runner: MagicMock) -> None:
         runner.run.return_value = outcome()
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Final
 
 from fastapi import APIRouter, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from sherpa_ui.api.errors import PII_COLUMN_CODE, UNKNOWN_COLUMN_CODE, ApiException, error_responses
 from sherpa_ui.readonly.query_runner import QueryOutcome
@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 MAX_SQL_CHARS: Final = 100_000  # a request body bound; far above anything typed into the editor
 MAX_QUERY_ID_CHARS: Final = 100  # the client sends a UUID
 DISCONNECT_POLL_SECONDS: Final = 0.5  # UI spec §4
+# libpq ends the query text at a NUL, so Postgres would run less than the guard checked.
+NUL: Final = "\x00"
+NUL_MESSAGE: Final = "the SQL contains a NUL character (\\x00), which Postgres cannot receive"
 
 router = APIRouter(prefix="/queries", tags=["queries"], responses=error_responses(422))
 
@@ -31,6 +34,14 @@ class QueryRequest(BaseModel):
     sql: str = Field(max_length=MAX_SQL_CHARS)
     sort: tuple[SortSpec, ...] = ()
     filters: tuple[FilterSpec, ...] = ()
+
+    @field_validator("sql")
+    @classmethod
+    def _without_nul(cls, sql: str) -> str:
+        if NUL in sql:
+            raise ValueError(NUL_MESSAGE)
+
+        return sql
 
 
 # The API's name for the runner's outcome, which the OpenAPI schema and the generated client use.
