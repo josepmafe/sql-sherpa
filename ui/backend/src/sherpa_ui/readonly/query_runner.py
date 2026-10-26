@@ -178,7 +178,7 @@ class QueryRunner:
             holds_slot = True
             conn = self._connect()
             self._attach(query_id, conn)
-            fetched = self._execute(conn, strip_terminators(sql_text), sort, filters, masker)
+            fetched = self._execute(conn, query_id, strip_terminators(sql_text), sort, filters, masker)
         except (UiQueryError, DuplicateColumnsError, UnknownColumnError, PiiColumnError) as error:
             if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
                 raise
@@ -306,6 +306,7 @@ class QueryRunner:
     def _execute(
         self,
         conn: psycopg.Connection,
+        query_id: str,
         statement: str,
         sort: Sequence[SortSpec],
         filters: Sequence[FilterSpec],
@@ -317,11 +318,12 @@ class QueryRunner:
                 conn.execute(sql.SQL("set local statement_timeout = {}").format(sql.Literal(timeout)))
                 if not sort and not filters:
                     # No parameters, so psycopg leaves every `%` of the user's SQL alone.
-                    return self._fetch(conn, statement, None, len(DECLARE_PREFIX), len(statement), masker)
+                    return self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement), masker)
 
                 probe = build_wrapped_query(statement, (), masker)
                 with self._declared(
                     conn,
+                    query_id,
                     probe.query + sql.SQL(PROBE_SUFFIX),
                     probe.params,
                     len(DECLARE_PREFIX) + probe.prefix_length,
@@ -332,6 +334,7 @@ class QueryRunner:
                 wrapped = build_wrapped_query(statement, columns, masker, sort, filters)
                 return self._fetch(
                     conn,
+                    query_id,
                     wrapped.query,
                     wrapped.params,
                     len(DECLARE_PREFIX) + wrapped.prefix_length,
@@ -344,6 +347,7 @@ class QueryRunner:
     def _fetch(
         self,
         conn: psycopg.Connection,
+        query_id: str,
         query: str | sql.Composed,
         params: Sequence[object] | None,
         offset: int,
@@ -351,9 +355,9 @@ class QueryRunner:
         masker: PiiMasker,
     ) -> _Fetched:
         """The rows in batches, until the result is complete or `BoundedResult` says it is full. Postgres times each
-        FETCH on its own, so fetching stops at the statement timeout too, checked before each FETCH."""
+        FETCH on its own, so fetching stops at the statement timeout too, checked before each FETCH, like a cancel."""
         timeout = self._settings.ui_statement_timeout_s
-        with self._declared(conn, query, params, offset, length) as cursor:
+        with self._declared(conn, query_id, query, params, offset, length) as cursor:
             description = cursor.description or ()
             columns = tuple(column.name for column in description)
             result = BoundedResult(columns, masker, self._settings.ui_row_cap)
@@ -363,6 +367,7 @@ class QueryRunner:
                 if time.monotonic() > deadline:
                     raise UiQueryError("timeout", TIMEOUT_MESSAGE.format(seconds=timeout))
 
+                self._raise_if_cancelled(query_id)
                 batch = cursor.fetchmany(result.fetch_size(batch_rows))
                 if not batch or not result.extend(batch):
                     break
@@ -378,13 +383,18 @@ class QueryRunner:
     def _declared(
         self,
         conn: psycopg.Connection,
+        query_id: str,
         query: str | sql.Composed,
         params: Sequence[object] | None,
         offset: int,
         length: int,
     ) -> Iterator[psycopg.ServerCursor[Any]]:
         """A server-side cursor for `query`, whose text holds the user's SQL (`length` characters) after `offset`
-        characters of its own, counting the declaration. Errors while declaring or fetching are mapped here."""
+        characters of its own, counting the declaration. Errors while declaring or fetching are mapped here.
+
+        A cancel that arrived between two statements found nothing running in Postgres, so it is checked before each.
+        """
+        self._raise_if_cancelled(query_id)
         try:
             with conn.cursor(name=CURSOR_NAME) as cursor:
                 cursor.execute(query, params)

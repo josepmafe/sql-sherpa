@@ -198,24 +198,33 @@ class TestQueryRunnerOffline:
         assert runner.running_query_ids() == frozenset()
 
     @pytest.mark.parametrize(
-        ("columns", "sort", "connect_fails", "cause"),
+        ("sort", "connect_fails", "declare_fails", "cause"),
         [
-            (("a",), (), True, "database_unavailable"),
-            (("a", "a"), (SortSpec(column="a", direction="asc"),), False, "DuplicateColumnsError"),
-            (("a",), (SortSpec(column="b", direction="asc"),), False, "UnknownColumnError"),
+            ((), True, False, "database_unavailable"),
+            ((), False, True, "timeout"),  # Postgres stopped the statement the cancel reached: QueryCanceled
+            ((SortSpec(column="b", direction="asc"),), False, False, "UnknownColumnError"),
         ],
     )
     def test_a_cancelled_run_is_cancelled_whatever_else_failed(
         self,
         offline_runner: QueryRunner,
         monkeypatch: pytest.MonkeyPatch,
-        columns: tuple[str, ...],
         sort: tuple[SortSpec, ...],
         connect_fails: bool,
+        declare_fails: bool,
         cause: str,
     ) -> None:
-        connection = _fake_connection(columns=columns)
-        connection.execute.side_effect = lambda *args, **kwargs: offline_runner.cancel("q1")
+        connection = _fake_connection()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        declare = cursor.execute.side_effect
+
+        def cancel_while_declaring(*args: object, **kwargs: object) -> None:
+            declare(*args, **kwargs)
+            offline_runner.cancel("q1")
+            if declare_fails:
+                raise psycopg.errors.QueryCanceled("canceling statement due to user request")
+
+        cursor.execute.side_effect = cancel_while_declaring
 
         def connect(*args: object, **kwargs: object) -> MagicMock:
             if connect_fails:
@@ -381,6 +390,51 @@ class TestQueryRunnerOffline:
         assert again.rows == ((1,),)
         assert connection.close.call_count == 2
         assert offline_runner.running_query_ids() == frozenset()
+
+    def test_a_cancel_after_the_probe_stops_the_run_before_its_next_statement(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The probe is over when the cancel arrives, so Postgres has nothing to cancel: the runner must not go on.
+        connection = _fake_connection(rows=[(1,)])
+        cursor = connection.cursor.return_value.__enter__.return_value
+        declare = cursor.execute.side_effect
+
+        def probe_then_cancel(*args: object, **kwargs: object) -> None:
+            declare(*args, **kwargs)
+            offline_runner.cancel("q1")
+
+        cursor.execute.side_effect = probe_then_cancel
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a", sort=(SortSpec(column="a", direction="asc"),))
+
+        assert error.value.code == "cancelled"
+        assert cursor.execute.call_count == 1  # the probe; the wrapped query was never declared
+        cursor.fetchmany.assert_not_called()
+
+    def test_a_cancel_between_fetches_stops_fetching(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connection = _fake_connection()
+        fetch_sizes: list[int] = []
+        _endless_rows(connection, width=1, fetch_sizes=fetch_sizes)
+        cursor = connection.cursor.return_value.__enter__.return_value
+        fetch = cursor.fetchmany.side_effect
+
+        def fetch_then_cancel(size: int) -> list[tuple[object, ...]]:
+            rows: list[tuple[object, ...]] = fetch(size)
+            offline_runner.cancel("q1")
+            return rows
+
+        cursor.fetchmany.side_effect = fetch_then_cancel
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a")
+
+        assert error.value.code == "cancelled"
+        assert fetch_sizes == [100]
 
     def test_a_failed_run_releases_its_id_and_closes_its_connection(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
