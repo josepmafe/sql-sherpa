@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOCALHOST = "127.0.0.1"
 BACKEND_EXIT_SECONDS = 2.0  # how long the server process of a closed connection may take to leave pg_stat_activity
-UI_BACKENDS = "select count(*) from pg_stat_activity where usename = %s and backend_type = 'client backend'"
+# By user name only: the admin is not a member of the UI role, so Postgres shows it every other column of the UI's
+# sessions (backend_type, state, query) as NULL.
+UI_SESSIONS = "select count(*) from pg_stat_activity where usename = %s"
 
 
 class AdminSettings(BaseSettings):
@@ -66,23 +68,29 @@ def admin() -> Iterator[psycopg.Connection]:
 
 
 @pytest.fixture
-def leaked_ui_backends(admin: psycopg.Connection, ui_settings: UiSettings) -> Callable[[], int]:
-    """How many more server processes the UI role has open than when the test started, once closed connections
-    have had `BACKEND_EXIT_SECONDS` to go away."""
+def ui_sessions(admin: psycopg.Connection, ui_settings: UiSettings) -> Callable[[], int]:
+    """How many sessions the UI role has open right now."""
 
     def count() -> int:
-        row = admin.execute(UI_BACKENDS, [ui_settings.ui_user]).fetchone()
+        row = admin.execute(UI_SESSIONS, [ui_settings.ui_user]).fetchone()
         assert row is not None
         return int(row[0])
 
-    baseline = count()
+    return count
+
+
+@pytest.fixture
+def leaked_ui_backends(ui_sessions: Callable[[], int]) -> Callable[[], int]:
+    """How many more server processes the UI role has open than when the test started, once closed connections
+    have had `BACKEND_EXIT_SECONDS` to go away."""
+    baseline = ui_sessions()
 
     def leaked() -> int:
         deadline = time.monotonic() + BACKEND_EXIT_SECONDS
-        current = count()
+        current = ui_sessions()
         while current > baseline and time.monotonic() < deadline:
             time.sleep(0.05)
-            current = count()
+            current = ui_sessions()
         return max(current - baseline, 0)
 
     return leaked

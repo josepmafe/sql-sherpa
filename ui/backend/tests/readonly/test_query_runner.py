@@ -349,6 +349,15 @@ class TestQueryRunnerOffline:
 
 @pytest.mark.warehouse
 class TestQueryRunner:
+    def test_the_leak_check_sees_an_open_ui_connection(
+        self, ui_settings: UiSettings, leaked_ui_backends: Callable[[], int]
+    ) -> None:
+        # The leak checks below are only worth something if a connection left open is counted.
+        with psycopg.connect(ui_settings.ui_conninfo(), autocommit=True):
+            leaked = leaked_ui_backends()
+
+        assert leaked == 1
+
     def test_runs_and_caps_at_1000(self, runner: QueryRunner, admin: psycopg.Connection) -> None:
         description = admin.execute("select * from marts.fct_order_items limit 0").description
         assert description is not None
