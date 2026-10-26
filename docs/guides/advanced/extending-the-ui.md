@@ -51,6 +51,8 @@ Example: Lineage in ui-2. The shell lists only screens that exist, so a half-bui
 4. Enable what the earlier screens left disabled: the Explorer's "Open in Lineage" menu item and Inspector button use `LINEAGE_DISABLED_HINT` from `screens/explorer/DisabledHint.tsx`. Wire them to the route and remove the hint.
 5. Add a Playwright spec in `ui/frontend/e2e/` for the screen's main flow, and a case to `offline.spec.ts` so the new screen loads with every request outside the app's origin blocked (no CDN or font fetches).
 
+The Explorer keeps every worksheet's panel mounted, so switching tabs never cancels a query. `WorksheetPanel` and `ResultGrid` are memoized, so a keystroke re-renders only the worksheet typed in, and not its grid. Their props must therefore keep their identity across renders: the Explorer's callbacks take the worksheet id as an argument and are wrapped in `useCallback` once, in `ExplorerScreen.tsx`. A new prop that is a fresh function or object on every render undoes this, and the test `typing in one worksheet re-renders neither the other worksheets nor any result grid` (`tests/ExplorerScreen.test.tsx`) fails.
+
 State that belongs to the user lives in `localStorage` under a `sherpa.v1.<screen>` key, never result rows. A change to a stored shape bumps the version in the key or migrates it in the screen's store (`worksheetStore.ts` is the model: it resets with a console warning when the stored value has an unexpected shape).
 
 ## 3. Where the read-only rules live

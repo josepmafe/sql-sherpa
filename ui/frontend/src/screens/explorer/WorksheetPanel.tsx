@@ -1,5 +1,5 @@
 import { Alert, Box, Stack, Text } from "@mantine/core";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useCatalog } from "../../api/queries";
 import { ResultGrid } from "../../components/ResultGrid";
@@ -14,12 +14,14 @@ import { errorHighlight, SqlEditor } from "../../components/SqlEditor";
 import { useWorksheetRun, type RunOutcome } from "./useWorksheetRun";
 import type { Worksheet } from "./worksheetStore";
 
+// The callbacks take the worksheet's id, so the screen passes the same functions to every panel and a keystroke in
+// one worksheet re-renders no other (each panel holds an editor and a result grid).
 type PanelProps = {
   worksheet: Worksheet;
   activeTable?: string;
-  onSqlChange: (sql: string) => void;
+  onSqlChange: (worksheetId: string, sql: string) => void;
   onSettled: (outcome: RunOutcome) => void;
-  onRunStarted: () => void;
+  onRunStarted: (worksheetId: string) => void;
 };
 
 // What was sent and where it started in the editor: an error position counts from the start of the sent text.
@@ -30,8 +32,15 @@ const RERUN_OPACITY = 0.5;
 const ERROR_TITLES: Record<string, string> = { guard_rejected: "Query not allowed", timeout: "Query timed out" };
 
 // One panel per worksheet, all kept mounted: each has its own editor history and its own run.
-export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled, onRunStarted }: PanelProps) {
-  const { status, response, error, elapsedSeconds, run, cancel } = useWorksheetRun(worksheet.id, onSettled);
+export const WorksheetPanel = memo(function WorksheetPanel({
+  worksheet,
+  activeTable,
+  onSqlChange,
+  onSettled,
+  onRunStarted,
+}: PanelProps) {
+  const { id, sql: initialSql, runOnOpen } = worksheet;
+  const { status, response, error, elapsedSeconds, run, cancel } = useWorksheetRun(id, onSettled);
   const [origin, setOrigin] = useState<Origin>({ sql: "", offset: 0 });
   // `view` is what the rows shown have; a server re-run's view shows only while it runs, so a failed or cancelled
   // one falls back to the last applied view.
@@ -43,26 +52,28 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
 
   // A Preview worksheet runs once when it opens. The timer keeps StrictMode's mount-unmount-mount probe from
   // starting (and then cancelling) a first run: only the last mount's timer fires.
-  const { sql: initialSql, runOnOpen } = worksheet;
   useEffect(() => {
     if (!runOnOpen) return;
     const timer = setTimeout(() => {
-      onRunStarted();
+      onRunStarted(id);
       setOrigin({ sql: initialSql, offset: 0 });
       void run(initialSql);
     }, 0);
     return () => clearTimeout(timer);
-  }, [runOnOpen, initialSql, run, onRunStarted]);
+  }, [runOnOpen, initialSql, run, onRunStarted, id]);
 
   // Sorting and filtering a truncated result re-runs the SQL of the last run, not the editor's current text.
-  const changeView = (next: ResultView) => {
-    if (!response || !isServerSide(response)) {
-      setView(next);
-      return;
-    }
-    setRequested(next);
-    void run(origin.sql, { ...toServerOptions(next, response.columns), onApplied: () => setView(next) });
-  };
+  const changeView = useCallback(
+    (next: ResultView) => {
+      if (!response || !isServerSide(response)) {
+        setView(next);
+        return;
+      }
+      setRequested(next);
+      void run(origin.sql, { ...toServerOptions(next, response.columns), onApplied: () => setView(next) });
+    },
+    [response, origin.sql, run],
+  );
 
   const highlight = useMemo(
     () =>
@@ -76,7 +87,7 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
     <Stack gap="sm">
       <SqlEditor
         value={worksheet.sql}
-        onChange={onSqlChange}
+        onChange={(sql) => onSqlChange(id, sql)}
         running={status === "running"}
         elapsedSeconds={elapsedSeconds}
         highlight={highlight}
@@ -110,4 +121,4 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
       )}
     </Stack>
   );
-}
+});

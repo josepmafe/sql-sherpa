@@ -1,5 +1,5 @@
 import { Box, Group, ScrollArea, Stack } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { CatalogTree } from "./CatalogTree";
 import { Inspector } from "./Inspector";
@@ -28,8 +28,20 @@ export function ExplorerScreen() {
   useEffect(() => saveExplorerState(state), [state]);
 
   const active = state.worksheets.find((w) => w.id === state.activeId) ?? state.worksheets[0]!;
-  const record = (outcome: RunOutcome) =>
-    setState((previous) => appendHistory(previous, { ...outcome, ranAt: new Date().toISOString() }));
+  // Stable across renders, so the memoized panels skip a render that changes none of their props.
+  const record = useCallback(
+    (outcome: RunOutcome) =>
+      setState((previous) => appendHistory(previous, { ...outcome, ranAt: new Date().toISOString() })),
+    [],
+  );
+  const changeSql = useCallback(
+    (id: string, sql: string) => setState((previous) => updateWorksheet(previous, id, { sql })),
+    [],
+  );
+  const markRunStarted = useCallback(
+    (id: string) => setState((previous) => updateWorksheet(previous, id, { runOnOpen: false })),
+    [],
+  );
 
   return (
     <Group align="stretch" wrap="nowrap" gap="md" h="calc(100vh - 100px)">
@@ -63,9 +75,9 @@ export function ExplorerScreen() {
               <WorksheetPanel
                 worksheet={worksheet}
                 activeTable={selected}
-                onSqlChange={(sql) => setState((previous) => updateWorksheet(previous, worksheet.id, { sql }))}
+                onSqlChange={changeSql}
                 onSettled={record}
-                onRunStarted={() => setState((previous) => updateWorksheet(previous, worksheet.id, { runOnOpen: false }))}
+                onRunStarted={markRunStarted}
               />
             </Box>
           ))}

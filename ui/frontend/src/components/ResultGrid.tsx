@@ -9,7 +9,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 
 import {
   applyView,
@@ -53,7 +53,8 @@ const OPERATORS: { value: Operator; label: string }[] = [
   { value: "is_not_null", label: "is not null" },
 ];
 
-export function ResultGrid({ response, view, onViewChange, masked }: GridProps) {
+// Memoized: a worksheet's editor re-renders its panel on every keystroke, and the grid's props stay the same.
+export const ResultGrid = memo(function ResultGrid({ response, view, onViewChange, masked }: GridProps) {
   const { columns, column_types: types } = response;
   const serverSide = isServerSide(response);
   // In server mode the rows already are the sorted and filtered ones.
@@ -184,7 +185,7 @@ export function ResultGrid({ response, view, onViewChange, masked }: GridProps) 
       )}
     </Stack>
   );
-}
+});
 
 function StatusLine({ response, shown, filtered }: { response: QueryResponse; shown: number; filtered: boolean }) {
   const total = response.returned_rows.toLocaleString("en-US");
