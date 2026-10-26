@@ -1,4 +1,4 @@
-import { ActionIcon, Alert, Box, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
+import { ActionIcon, Box, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconDots } from "@tabler/icons-react";
 import { useId, useState } from "react";
 
@@ -6,6 +6,7 @@ import { useCatalog } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { ColumnBadges } from "./ColumnBadges";
 import { LINEAGE_UNAVAILABLE } from "./lineage";
+import { LoadError } from "./LoadError";
 
 type TableSummary = components["schemas"]["TableSummary"];
 type ColumnSummary = components["schemas"]["ColumnSummary"];
@@ -30,7 +31,9 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const needle = search.trim().toLowerCase();
 
-  if (catalog.isError) return <Alert color="red">Could not load the catalog.</Alert>;
+  if (catalog.isError) {
+    return <LoadError title="Could not load the catalog" error={catalog.error} onRetry={() => void catalog.refetch()} />;
+  }
   if (!catalog.data) return <Text c="dimmed">Loading catalog…</Text>;
 
   const { database, schema_name: schema } = catalog.data;

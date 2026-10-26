@@ -1,16 +1,19 @@
-import { Alert, Badge, Button, Code, Group, Stack, Text, Title } from "@mantine/core";
+import { Badge, Button, Code, Group, Stack, Text, Title } from "@mantine/core";
 import { useId } from "react";
 
 import { useTableDetails } from "../../api/queries";
 import { ColumnBadges } from "./ColumnBadges";
 import { LINEAGE_UNAVAILABLE } from "./lineage";
+import { LoadError } from "./LoadError";
 
 export function Inspector({ table }: { table: string | undefined }) {
   const details = useTableDetails(table);
   const lineageNote = useId();
 
   if (table === undefined) return <Text c="dimmed">Select a table to inspect it.</Text>;
-  if (details.isError) return <Alert color="red">Could not load {table}.</Alert>;
+  if (details.isError) {
+    return <LoadError title={`Could not load ${table}`} error={details.error} onRetry={() => void details.refetch()} />;
+  }
   if (!details.data) return <Text c="dimmed">Loading {table}…</Text>;
 
   const t = details.data;

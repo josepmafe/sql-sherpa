@@ -81,6 +81,9 @@ vi.mock("../src/api/queries", () => ({
   useTableDetails: (name: string | undefined) => useTableDetails(name),
 }));
 
+// What the hooks throw for an API error answer (ApiRequestError): an Error with the API's code.
+const apiError = (code: string, message: string) => Object.assign(new Error(message), { code, status: 503 });
+
 function renderWithMantine(ui: ReactNode) {
   return render(<MantineProvider env="test">{ui}</MantineProvider>);
 }
@@ -88,6 +91,30 @@ function renderWithMantine(ui: ReactNode) {
 describe("CatalogTree", () => {
   beforeEach(() => {
     useCatalog.mockReset().mockReturnValue({ data: CATALOG });
+  });
+
+  it("a catalog that fails to load shows the API's message and code, and Retry fetches it again", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    const error = apiError("catalog_unavailable", "the dbt artifacts are missing; run make build-prod");
+    useCatalog.mockReturnValue({ isError: true, error, refetch });
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Could not load the catalog");
+    expect(alert).toHaveTextContent("the dbt artifacts are missing; run make build-prod");
+    expect(alert).toHaveTextContent("catalog_unavailable");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("a catalog request that got no answer says the server is unreachable", () => {
+    useCatalog.mockReturnValue({ isError: true, error: new TypeError("Failed to fetch"), refetch: () => {} });
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not reach the server.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Failed to fetch");
   });
 
   it("groups by domain and shows badges", async () => {
@@ -226,6 +253,22 @@ describe("CatalogTree", () => {
 });
 
 describe("Inspector", () => {
+  it("a table that fails to load shows the API's message and code, and Retry fetches it again", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    const error = apiError("table_not_found", "no mart named fct_orders");
+    useTableDetails.mockReset().mockReturnValue({ isError: true, error, refetch });
+    renderWithMantine(<Inspector table="fct_orders" />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Could not load fct_orders");
+    expect(alert).toHaveTextContent("no mart named fct_orders");
+    expect(alert).toHaveTextContent("table_not_found");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
   it("shows accepted values, synonyms, metric definitions and tests", () => {
     useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
     renderWithMantine(<Inspector table="fct_orders" />);
