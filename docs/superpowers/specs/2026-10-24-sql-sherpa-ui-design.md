@@ -368,7 +368,7 @@ The container also receives `AWS_PROFILE`, `AWS_REGION`, `LOGFIRE_TOKEN`, `ANTHR
 
 ## 10. Milestones
 
-Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, and ends with tests green, lint clean (including `eslint`, `tsc --noEmit` and the OpenAPI client check), and its acceptance met. **Every plan's last task is a documentation task** (`CLAUDE.md`, `README.md`, and how-to guides in `docs/guides/basic/` and `docs/guides/advanced/`), as in the other specs.
+Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, and ends with tests green, lint clean (including `eslint`, `tsc --noEmit` and the OpenAPI client check), and its acceptance met. **Every plan ends with a documentation task** (`CLAUDE.md`, `README.md`, and how-to guides in `docs/guides/basic/` and `docs/guides/advanced/`) **and then a panel review of the whole branch** (`CLAUDE.md`), as in the other specs.
 
 | Milestone | Builds | Needs | Acceptance |
 |---|---|---|---|
