@@ -16,7 +16,6 @@ from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.health.health_service import HealthService
 from sherpa_ui.readonly.query_runner import MAX_CONCURRENT_QUERIES, QueryRunner, UiQueryError, user_position
 from sherpa_ui.readonly.sort_filter import (
-    DuplicateColumnsError,
     FilterSpec,
     PiiColumnError,
     SortSpec,
@@ -413,6 +412,57 @@ class TestQueryRunnerOffline:
         assert cursor.execute.call_count == 1  # the probe; the wrapped query was never declared
         cursor.fetchmany.assert_not_called()
 
+    def test_duplicate_columns_fall_back_to_client_mode_in_the_same_run(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connection = _fake_connection(rows=[(1, 2)], columns=("a", "a"))
+        cursor = connection.cursor.return_value.__enter__.return_value
+        declare = cursor.execute.side_effect
+        reserved_at_each_declare: list[bool] = []
+
+        def declare_while_reserved(*args: object, **kwargs: object) -> None:
+            reserved_at_each_declare.append("q1" in offline_runner.running_query_ids())
+            declare(*args, **kwargs)
+
+        cursor.execute.side_effect = declare_while_reserved
+        connects: list[MagicMock] = []
+
+        def connect(*args: object, **kwargs: object) -> MagicMock:
+            connects.append(connection)
+            return connection
+
+        monkeypatch.setattr(psycopg, "connect", connect)
+
+        outcome = offline_runner.run("q1", "select 1 as a, 2 as a", sort=(SortSpec(column="a", direction="asc"),))
+
+        assert (outcome.mode, outcome.rows) == ("client", ((1, 2),))
+        assert outcome.warning == "duplicate column names: sorting and filtering apply only to the rows shown"
+        # The probe and the client-mode query, on one connection and under one reservation of the id, so a cancel
+        # sent at any moment reaches the run.
+        assert reserved_at_each_declare == [True, True]
+        assert len(connects) == 1
+        assert offline_runner.running_query_ids() == frozenset()
+
+    def test_a_cancel_during_the_duplicate_columns_probe_stops_the_fallback(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connection = _fake_connection(rows=[(1, 2)], columns=("a", "a"))
+        cursor = connection.cursor.return_value.__enter__.return_value
+        declare = cursor.execute.side_effect
+
+        def probe_then_cancel(*args: object, **kwargs: object) -> None:
+            declare(*args, **kwargs)
+            offline_runner.cancel("q1")
+
+        cursor.execute.side_effect = probe_then_cancel
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a, 2 as a", sort=(SortSpec(column="a", direction="asc"),))
+
+        assert error.value.code == "cancelled"
+        assert cursor.execute.call_count == 1  # the fallback's query was never declared
+
     def test_a_cancel_between_fetches_stops_fetching(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -805,12 +855,11 @@ class TestQueryRunner:
     def test_duplicate_columns_fall_back_to_client(self, runner: QueryRunner) -> None:
         sql_text = "select order_id, order_id from marts.fct_orders"
 
-        with pytest.raises(DuplicateColumnsError, match="duplicate column names: order_id"):
-            runner.run("q1", sql_text, sort=[SortSpec(column="order_id", direction="desc")])
+        outcome = runner.run("q1", sql_text, sort=[SortSpec(column="order_id", direction="desc")])
 
-        client = runner.run("q2", sql_text)
-
-        assert client.columns == ("order_id", "order_id")
+        assert (outcome.mode, outcome.columns) == ("client", ("order_id", "order_id"))
+        assert outcome.warning == "duplicate column names: sorting and filtering apply only to the rows shown"
+        assert (outcome.returned_rows, outcome.truncated) == (1000, True)
         assert runner.running_query_ids() == frozenset()
 
     @pytest.mark.parametrize("sort", [(), (SortSpec(column="n", direction="desc"),)], ids=["client", "server"])
@@ -944,7 +993,7 @@ class TestQueryRunner:
         [
             ("select 1 as a", (), None),
             ("select nope from marts.fct_orders", (), UiQueryError),
-            ("select 1 as a, 2 as a", (SortSpec(column="a", direction="asc"),), DuplicateColumnsError),
+            ("select 1 as a, 2 as a", (SortSpec(column="a", direction="asc"),), None),
             ("select 1 as a", (SortSpec(column="b", direction="asc"),), UnknownColumnError),
         ],
         ids=["ok", "sql_error", "duplicate_columns", "unknown_column"],
@@ -1094,7 +1143,8 @@ def _arrange_exit_path(
     runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch, path: str
 ) -> tuple[str, tuple[SortSpec, ...]]:
     """Make every run of `runner` end the way `path` names; returns the SQL and sort to run."""
-    connection = _fake_connection(rows=[(1,)], columns=("a", "a") if path == "duplicate_columns" else ("a",))
+    columns = ("a", "a") if path == "duplicate_columns" else ("a",)
+    connection = _fake_connection(rows=[(1,) * len(columns)], columns=columns)
     sql_text, sort = "select 1 as a", ()
     catalog = loader.load.return_value
 
@@ -1131,7 +1181,7 @@ def _ending(runner: QueryRunner, sql_text: str, sort: tuple[SortSpec, ...]) -> s
     """How one run ended: `ok`, the `UiQueryError` code, or the type of anything else it raised."""
     try:
         runner.run("q1", sql_text, sort=sort)
-    except (UiQueryError, DuplicateColumnsError, UnknownColumnError) as error:
+    except (UiQueryError, UnknownColumnError) as error:
         return _describe(error)
 
     return "ok"

@@ -7,7 +7,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 import psycopg
@@ -107,6 +107,7 @@ TOO_MANY_CONNECTIONS_MESSAGE: Final = (
     "login (a second UI, a test run) holds some, so wait for its queries to finish and run again"
 )
 FORMAT_ERROR_MESSAGE: Final = "could not format the query: {reason}"
+DUPLICATE_COLUMNS_WARNING: Final = "duplicate column names: sorting and filtering apply only to the rows shown"
 FORMAT_SEPARATOR: Final = ";\n\n"
 _TYPE_BY_OID: Final[dict[int, ColumnType]] = {postgres_types[name].oid: kind for name, kind in COLUMN_TYPES.items()}
 
@@ -133,6 +134,7 @@ class QueryOutcome(BaseModel):
     truncated: bool
     elapsed_ms: int
     mode: QueryMode
+    warning: str | None = None  # why a run asked for server mode came back in client mode
 
 
 class QueryRunner:
@@ -159,13 +161,15 @@ class QueryRunner:
         """Run `sql_text` as written (client mode), or wrapped to sort and filter all of its rows on the server when
         `sort` or `filters` is given (server mode).
 
+        A result with duplicate column names cannot be wrapped, so server mode falls back to client mode in the same
+        run (same connection, same `query_id`) and says so in `warning`.
+
         Raises `UiQueryError` (`busy`, without connecting, while `MAX_CONCURRENT_QUERIES` runs hold a connection); in
-        server mode also `DuplicateColumnsError` (the caller falls back to client mode), `UnknownColumnError` for a
-        sort or filter column that is not in the result and `PiiColumnError` for one that is masked. Whatever else went
-        wrong, a run that `cancel` reached raises `UiQueryError` with code `cancelled`.
+        server mode also `UnknownColumnError` for a sort or filter column that is not in the result and
+        `PiiColumnError` for one that is masked. Whatever else went wrong, a run that `cancel` reached raises
+        `UiQueryError` with code `cancelled`.
         """
         started = time.monotonic()
-        mode: QueryMode = "server" if sort or filters else "client"
         self._reserve(query_id)  # first, so a cancel sent right after the request is never lost
         conn: psycopg.Connection | None = None
         holds_slot = False
@@ -179,7 +183,7 @@ class QueryRunner:
             conn = self._connect()
             self._attach(query_id, conn)
             fetched = self._execute(conn, query_id, strip_terminators(sql_text), sort, filters, masker)
-        except (UiQueryError, DuplicateColumnsError, UnknownColumnError, PiiColumnError) as error:
+        except (UiQueryError, UnknownColumnError, PiiColumnError) as error:
             if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
                 raise
 
@@ -203,7 +207,8 @@ class QueryRunner:
             returned_rows=len(fetched.rows),
             truncated=fetched.truncated,
             elapsed_ms=round((time.monotonic() - started) * 1000),
-            mode=mode,
+            mode=fetched.mode,
+            warning=fetched.warning,
         )
         logger.info(
             "query %s returned %d rows (truncated: %s) in %d ms, %s mode",
@@ -211,7 +216,7 @@ class QueryRunner:
             outcome.returned_rows,
             outcome.truncated,
             outcome.elapsed_ms,
-            mode,
+            outcome.mode,
         )
         return outcome
 
@@ -331,8 +336,14 @@ class QueryRunner:
                 ) as cursor:
                     columns = [column.name for column in cursor.description or ()]
 
-                wrapped = build_wrapped_query(statement, columns, masker, sort, filters)
-                return self._fetch(
+                try:
+                    wrapped = build_wrapped_query(statement, columns, masker, sort, filters)
+                except DuplicateColumnsError:
+                    # `q.<name>` would be ambiguous: the browser sorts and filters the rows of the query as written.
+                    fetched = self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement), masker)
+                    return replace(fetched, warning=DUPLICATE_COLUMNS_WARNING)
+
+                fetched = self._fetch(
                     conn,
                     query_id,
                     wrapped.query,
@@ -341,6 +352,7 @@ class QueryRunner:
                     len(statement),
                     masker,
                 )
+                return replace(fetched, mode="server")
         except psycopg.Error as error:  # outside a cursor (the timeout, the commit): no position in the user's SQL
             raise self._query_error(error, position=None) from error
 
@@ -438,6 +450,8 @@ class _Fetched:
     column_types: tuple[ColumnType, ...]
     rows: tuple[tuple[object, ...], ...]  # JSON-safe, PII-masked and cut
     truncated: bool
+    mode: QueryMode = "client"
+    warning: str | None = None
 
 
 def _is_connection_failure(error: psycopg.Error) -> bool:

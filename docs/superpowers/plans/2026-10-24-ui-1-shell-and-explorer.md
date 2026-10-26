@@ -168,7 +168,7 @@ ui/
   - the wrapper is `select * from (\n<sql>\n) as q where … order by …`; trailing `;` and whitespace are stripped first
   - columns must be in `result_columns`, otherwise `ValueError`; `contains` → `q.<col>::text ilike '%' || %s || '%'`
   - raises `DuplicateColumnsError` when `result_columns` has duplicates
-- `QueryOutcome` (frozen): `query_id`, `columns`, `column_types: tuple[Literal["number", "text", "date", "timestamp", "boolean", "other"], ...]` (from the cursor description's type OIDs), `rows` (JSON-safe, masked), `returned_rows`, `truncated`, `elapsed_ms`, `mode: Literal["client", "server"]`.
+- `QueryOutcome` (frozen): `query_id`, `columns`, `column_types: tuple[Literal["number", "text", "date", "timestamp", "boolean", "other"], ...]` (from the cursor description's type OIDs), `rows` (JSON-safe, masked), `returned_rows`, `truncated`, `elapsed_ms`, `mode: Literal["client", "server"]`, `warning: str | None`.
 - `QueryRunner(settings, loader)`:
   - `run(query_id: str, sql_text: str, sort=(), filters=()) -> QueryOutcome`
   - `cancel(query_id) -> None`, idempotent
@@ -176,7 +176,7 @@ ui/
   - **Errors** raise `UiQueryError(code, message, position: int | None)`:
     - `code` ∈ `guard_rejected`, `sql_error`, `timeout`, `cancelled`, `duplicate_query_id`, `catalog_unavailable`
     - `position` is mapped back to the user's SQL by subtracting the `DECLARE … CURSOR FOR ` prefix and, in server mode, the wrapper prefix; `None` if it falls outside
-  - `run` in server mode (sort or filters given) first runs `select * from (<sql>\n) as q limit 0` to learn the result columns
+  - `run` in server mode (sort or filters given) first runs `select * from (<sql>\n) as q limit 0` to learn the result columns; on `DuplicateColumnsError` it runs the SQL in client mode on the same connection, under the same `query_id` (so a cancel is never lost between two runs), and sets `warning = "duplicate column names: sorting and filtering apply only to the rows shown"`
   - the running-queries registry is a `dict[str, psycopg.Connection]` behind a lock; `cancel` calls `conn.cancel_safe()`
   - a duplicate running `query_id` raises `duplicate_query_id`
 
@@ -194,7 +194,7 @@ ui/
     - `test_server_mode_sorts_all_rows`: sorting `fct_order_items` by `order_item_id desc` in server mode returns the maximum id first, as an admin query confirms
     - `test_server_mode_filter`
     - `test_server_mode_with_trailing_comment`
-    - `test_duplicate_columns_fall_back_to_client`: the API layer decides; here `DuplicateColumnsError` propagates
+    - `test_duplicate_columns_fall_back_to_client`: the run comes back in client mode with the warning
     - `test_cancel_stops_a_long_query`: run an aggregate over a self cross join of `fct_order_items` in a thread, cancel after 1 s, `code == "cancelled"` within 3 s
     - `test_timeout`: with `ui_statement_timeout_s=1`, `code == "timeout"`
     - `test_pii_masked`
@@ -222,7 +222,7 @@ ui/
   - Domains are sorted alphabetically, with `shared` last; tables alphabetically.
 - **`GET /api/catalog/tables/{name}`:** Inspector details, including `tests` and each column's `metric_refs` with the metric definitions' text.
 - **`POST /api/queries`:** `{query_id, sql, sort, filters}` → `QueryOutcome`.
-  - On `DuplicateColumnsError` in server mode: re-run in client mode and set `warning = "duplicate column names: sorting and filtering apply only to the rows shown"`.
+  - The runner's duplicate-columns fallback reaches the client as `warning`; the endpoint never runs the query twice.
   - The endpoint watches `request.is_disconnected()` (poll every 0.5 s in a task) and cancels on disconnect.
   - Status codes: `422` for `guard_rejected`/`sql_error`, `504` for `timeout` (not `408`, which Chromium silently re-sends on a reused connection), `409` for `duplicate_query_id` and for `cancelled`, `503` for `catalog_unavailable` (also what the catalog endpoints answer when the dbt artifacts are missing). Clients branch on the body's `code`, never on the status alone.
 - **`POST /api/queries/{query_id}/cancel`:** `204` always.

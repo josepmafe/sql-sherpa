@@ -15,7 +15,6 @@ from sherpa_ui.api.queries import MAX_SQL_CHARS, QueryRequest, QueryService
 from sherpa_ui.app import create_app
 from sherpa_ui.readonly.query_runner import QueryOutcome, QueryRunner, UiQueryError
 from sherpa_ui.readonly.sort_filter import (
-    DuplicateColumnsError,
     FilterSpec,
     PiiColumnError,
     SortSpec,
@@ -41,7 +40,7 @@ CLIENT_GIVES_UP_SECONDS = 1.0
 SAMPLE_SECONDS = 0.02
 
 
-def outcome(mode: str = "client") -> QueryOutcome:
+def outcome(mode: str = "client", warning: str | None = None) -> QueryOutcome:
     return QueryOutcome(
         query_id=QUERY_ID,
         columns=("n",),
@@ -51,6 +50,7 @@ def outcome(mode: str = "client") -> QueryOutcome:
         truncated=False,
         elapsed_ms=3,
         mode=mode,  # type: ignore[arg-type]
+        warning=warning,
     )
 
 
@@ -129,15 +129,14 @@ class TestQueriesApi:
         assert response.json()["code"] == "duplicate_query_id"
 
     def test_duplicate_columns_fall_back_with_warning(self, client: TestClient, runner: MagicMock) -> None:
-        runner.run.side_effect = [DuplicateColumnsError("duplicate column names: n"), outcome()]
+        warning = "duplicate column names: sorting and filtering apply only to the rows shown"
+        runner.run.return_value = outcome(warning=warning)
 
         response = client.post("/api/queries", json=body(sort=[{"column": "n", "direction": "asc"}]))
 
         assert response.status_code == 200
-        assert response.json()["warning"] == (
-            "duplicate column names: sorting and filtering apply only to the rows shown"
-        )
-        assert runner.run.call_args_list[1].args == (QUERY_ID, "select 1 as n")  # client mode: no sort, no filters
+        assert (response.json()["mode"], response.json()["warning"]) == ("client", warning)
+        runner.run.assert_called_once()  # the runner falls back within the run, under the one query id
 
     def test_unknown_sort_column_is_422(self, client: TestClient, runner: MagicMock) -> None:
         runner.run.side_effect = UnknownColumnError("column 'zzz' is not a column of the result")

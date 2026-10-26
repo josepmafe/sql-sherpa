@@ -10,13 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from sherpa_ui.api.errors import PII_COLUMN_CODE, UNKNOWN_COLUMN_CODE, ApiException, error_responses
 from sherpa_ui.readonly.query_runner import QueryOutcome
-from sherpa_ui.readonly.sort_filter import (
-    DuplicateColumnsError,
-    FilterSpec,
-    PiiColumnError,
-    SortSpec,
-    UnknownColumnError,
-)
+from sherpa_ui.readonly.sort_filter import FilterSpec, PiiColumnError, SortSpec, UnknownColumnError
 
 if TYPE_CHECKING:
     from sherpa_ui.readonly.query_runner import QueryRunner
@@ -26,7 +20,6 @@ logger = logging.getLogger(__name__)
 MAX_SQL_CHARS: Final = 100_000  # a request body bound; far above anything typed into the editor
 MAX_QUERY_ID_CHARS: Final = 100  # the client sends a UUID
 DISCONNECT_POLL_SECONDS: Final = 0.5  # UI spec §4
-DUPLICATE_COLUMNS_WARNING: Final = "duplicate column names: sorting and filtering apply only to the rows shown"
 
 router = APIRouter(prefix="/queries", tags=["queries"], responses=error_responses(422))
 
@@ -40,8 +33,9 @@ class QueryRequest(BaseModel):
     filters: tuple[FilterSpec, ...] = ()
 
 
+# The API's name for the runner's outcome, which the OpenAPI schema and the generated client use.
 class QueryResponse(QueryOutcome):
-    warning: str | None = None
+    pass
 
 
 class FormatRequest(BaseModel):
@@ -77,12 +71,7 @@ class QueryService:
 
     def _run(self, body: QueryRequest) -> QueryResponse:
         try:
-            try:
-                outcome = self._runner.run(body.query_id, body.sql, body.sort, body.filters)
-            except DuplicateColumnsError:
-                # The browser sorts and filters what it got; say so instead of failing.
-                outcome = self._runner.run(body.query_id, body.sql)
-                return QueryResponse(**outcome.model_dump(), warning=DUPLICATE_COLUMNS_WARNING)
+            outcome = self._runner.run(body.query_id, body.sql, body.sort, body.filters)
         except UnknownColumnError as error:  # a sort or filter column that is not in the result
             raise ApiException(422, UNKNOWN_COLUMN_CODE, str(error)) from error
         except PiiColumnError as error:  # a masked one: no fallback, the browser's rows are masked already
