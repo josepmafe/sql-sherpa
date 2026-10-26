@@ -1,3 +1,23 @@
+{#-
+    Microbatch: each run reprocesses `lookback` + 1 daily batches of received_at (today and the 3 days
+    before). On Postgres dbt runs every batch as a MERGE on unique_key, served by the unique index.
+    `begin` comes from the environment because Postgres runs batches one after another: it must be the
+    first simulated day, not an early fixed date that costs a batch per empty day on every fresh build.
+-#}
+{{
+    config(
+        materialized='incremental',
+        incremental_strategy='microbatch',
+        unique_key='event_id',
+        event_time='received_at',
+        batch_size='day',
+        lookback=3,
+        begin=(env_var('SHERPA_SIMULATION_START_DATE', '') or var('date_spine_start')),
+        on_schema_change='fail',
+        indexes=[{'columns': ['event_id'], 'unique': True}, {'columns': ['received_at']}]
+    )
+}}
+
 with
 
 source as (

@@ -12,6 +12,8 @@ PROD = --target prod --target-path target-prod
 # Eval artifacts and database: a frozen warehouse (separate database) built by `make eval-db`.
 EVAL = --target eval --target-path target-eval
 EVAL_START = 2025-01-01
+# The frozen year needs a frozen microbatch range (end exclusive).
+EVAL_END = 2026-01-01
 SHERPA_EVAL_DB_NAME ?= sherpa_eval
 export SHERPA_EVAL_DB_NAME
 SHERPA_DB_NAME ?= sherpa
@@ -22,6 +24,10 @@ DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_test_fail
 # The dbt packages, installed again whenever packages.yml or package-lock.yml changes; every target that runs dbt
 # depends on them.
 DBT_PACKAGES = data-platform/dbt/dbt_packages/.installed
+# The simulation's first day is the `begin` of the microbatch model (spec 6.2). Recursive, so only the targets that
+# use it run the command (make up does not).
+SIMULATION_START = $(shell uv run sherpa-generate start-date 2>/dev/null)
+build build-prod: export SHERPA_SIMULATION_START_DATE = $(SIMULATION_START)
 
 # After the services are healthy, the roles are brought up to date (_roles), so an existing volume never lags behind.
 up:
@@ -75,7 +81,7 @@ eval-db: $(DBT_PACKAGES)
 		psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)" && \
 		psql -U "$$SHERPA_ADMIN_USER" -d $(SHERPA_EVAL_DB_NAME) -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" -c "REVOKE TEMPORARY ON DATABASE $(SHERPA_EVAL_DB_NAME) FROM PUBLIC"'
 	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run --env-file .env python data-platform/scripts/backfill.py --days 365 --start-date $(EVAL_START) --seed 42 --target eval
-	$(DBT) build $(EVAL)
+	$(DBT) build $(EVAL) --event-time-start $(EVAL_START) --event-time-end $(EVAL_END)
 	$(DBT) docs generate $(EVAL)
 
 # The MCP server on the host over Streamable HTTP (http://127.0.0.1:8765/mcp), e.g. for MCP Inspector.
