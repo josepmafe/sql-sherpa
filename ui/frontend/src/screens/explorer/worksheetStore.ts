@@ -24,9 +24,9 @@ export function loadExplorerState(): ExplorerState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) return freshState();
-    const parsed: unknown = JSON.parse(raw);
-    if (isExplorerState(parsed)) return parsed;
-    console.warn(`${STORAGE_KEY} has an unexpected shape; starting with an empty worksheet`);
+    const parsed = parseExplorerState(raw);
+    if (parsed) return parsed;
+    console.warn(`${STORAGE_KEY} is not a valid Explorer state; starting with an empty worksheet`);
   } catch (error) {
     console.warn(`${STORAGE_KEY} could not be read; starting with an empty worksheet`, error);
   }
@@ -40,6 +40,30 @@ export function saveExplorerState(state: ExplorerState): void {
     // The quota or blocked site data: the session carries on, it just won't survive a reload.
     console.warn(`could not save ${STORAGE_KEY}`, error);
   }
+}
+
+// A stored value (this tab's at load, another tab's in a `storage` event), or undefined when it is not valid.
+export function parseExplorerState(raw: string): ExplorerState | undefined {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isExplorerState(parsed) ? parsed : undefined;
+  } catch {
+    return undefined; // not JSON
+  }
+}
+
+// Another tab saved its state (UI spec §7). Its new worksheets join after this tab's, this tab's copy wins where both
+// have one, and the two histories are united by run (time and SQL). Closing a worksheet does not reach the other tab.
+// When the other tab brings nothing new, `local` itself comes back, so the two tabs stop saving to each other.
+export function mergeExplorerState(local: ExplorerState, other: ExplorerState): ExplorerState {
+  const known = new Set(local.worksheets.map((w) => w.id));
+  // A Preview from the other tab already ran there.
+  const arrived = other.worksheets.filter((w) => !known.has(w.id)).map((w) => ({ ...w, runOnOpen: false }));
+  const seen = new Set(local.history.map(historyKey));
+  const runs = other.history.filter((entry) => !seen.has(historyKey(entry)));
+  if (arrived.length === 0 && runs.length === 0) return local;
+  const history = [...local.history, ...runs].sort((a, b) => (a.ranAt < b.ranAt ? -1 : a.ranAt > b.ranAt ? 1 : 0));
+  return { ...local, worksheets: [...local.worksheets, ...arrived], history: history.slice(-HISTORY_LIMIT) };
 }
 
 export function freshState(): ExplorerState {
@@ -108,6 +132,10 @@ function newWorksheet(existing: readonly Worksheet[]): Worksheet {
   let n = 1;
   while (names.has(`Worksheet ${n}`)) n += 1;
   return { id: crypto.randomUUID(), name: `Worksheet ${n}`, sql: "" };
+}
+
+function historyKey(entry: HistoryEntry): string {
+  return JSON.stringify([entry.ranAt, entry.sql]);
 }
 
 function isExplorerState(value: unknown): value is ExplorerState {

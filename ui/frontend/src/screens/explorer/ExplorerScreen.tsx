@@ -13,9 +13,12 @@ import {
   closeWorksheet,
   insertSelect,
   loadExplorerState,
+  mergeExplorerState,
   openPreview,
+  parseExplorerState,
   saveExplorerState,
   selectWorksheet,
+  STORAGE_KEY,
   updateWorksheet,
 } from "./worksheetStore";
 
@@ -26,6 +29,17 @@ export function ExplorerScreen() {
   const [selected, setSelected] = useState<string>();
   const [state, setState] = useState(() => loadExplorerState());
   useEffect(() => saveExplorerState(state), [state]);
+  // Another tab of the Explorer saved: take in its new worksheets and runs instead of overwriting them.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY || event.newValue === null) return;
+      const other = parseExplorerState(event.newValue);
+      if (other) setState((previous) => mergeExplorerState(previous, other));
+      else console.warn(`another tab saved an invalid ${STORAGE_KEY}; ignoring it`);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const active = state.worksheets.find((w) => w.id === state.activeId) ?? state.worksheets[0]!;
   // Stable across renders, so the memoized panels skip a render that changes none of their props.

@@ -327,7 +327,7 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
 ## 7. Browser Storage
 
 No accounts, so state that belongs to "the user" lives in the browser's `localStorage`, versioned (`sherpa.v1.*`) so a schema change can migrate or reset it:
-- Explorer: worksheet tabs (name, SQL), query history (last 200: SQL, time, row count, status).
+- Explorer: worksheet tabs (name, SQL), query history (last 200: SQL, time, row count, status). Two browser tabs merge on the `storage` event instead of overwriting each other: a tab takes in the worksheets it lacks (by id; where both have one, its own copy wins) and the history entries it lacks (by time and SQL, last 200). Closing a worksheet does not propagate.
 - Ask: questions and their runs (last 100 questions).
 
 Browser storage never holds result rows; results are always re-fetched (criteria 2 and 3). It does hold SQL, interpretations and row counts, which can contain values from the warehouse such as a grounded product name in a `where` clause.

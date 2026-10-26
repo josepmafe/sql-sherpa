@@ -7,7 +7,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cellText } from "../src/components/resultView";
 import { ExplorerScreen } from "../src/screens/explorer/ExplorerScreen";
 import { useWorksheetRun } from "../src/screens/explorer/useWorksheetRun";
-import { addWorksheet, freshState, saveExplorerState, updateWorksheet } from "../src/screens/explorer/worksheetStore";
+import {
+  addWorksheet,
+  type ExplorerState,
+  freshState,
+  saveExplorerState,
+  STORAGE_KEY,
+  updateWorksheet,
+} from "../src/screens/explorer/worksheetStore";
 
 const post = vi.fn();
 vi.mock("../src/api/client", () => ({ api: { POST: (...args: unknown[]) => post(...args) } }));
@@ -74,6 +81,32 @@ describe("ExplorerScreen", () => {
     expect(screen.getAllByRole("button", { name: "Cancel" })[0]).toBeInTheDocument();
   });
 
+  it("takes in the worksheets and history another tab saves, and ignores other keys and bad values", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderScreen();
+    const mine = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ExplorerState;
+    const theirs: ExplorerState = {
+      worksheets: [...mine.worksheets, { id: "theirs", name: "From the other tab", sql: "select 2" }],
+      activeId: "theirs",
+      history: [{ sql: "select 2", ranAt: "2026-10-26T09:00:00.000Z", returnedRows: 1, status: "done" }],
+    };
+    const storageEvent = (key: string, newValue: string) =>
+      act(() => void window.dispatchEvent(new StorageEvent("storage", { key, newValue })));
+
+    storageEvent("another.key", JSON.stringify(theirs));
+    storageEvent(STORAGE_KEY, "{not json");
+    expect(screen.queryByRole("tab", { name: "From the other tab" })).not.toBeInTheDocument();
+
+    storageEvent(STORAGE_KEY, JSON.stringify(theirs));
+
+    expect(screen.getByRole("tab", { name: "From the other tab" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Worksheet 1" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "History (1)" })).toBeInTheDocument();
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ExplorerState;
+    expect(saved.worksheets.map((w) => w.id)).toEqual([mine.worksheets[0]!.id, "theirs"]);
+    warn.mockRestore();
+  });
+
   it("typing in one worksheet re-renders neither the other worksheets nor any result grid", async () => {
     const user = userEvent.setup();
     post.mockImplementation(() => Promise.resolve({ data: RESPONSE, response: { status: 200 } }));
@@ -86,7 +119,7 @@ describe("ExplorerScreen", () => {
       await user.click(screen.getAllByRole("button", { name: "Run" }).find(isShown)!);
     }
     expect(await screen.findAllByText("2 rows in 5 ms")).toHaveLength(2);
-    const [first, second] = JSON.parse(localStorage.getItem("sherpa.v1.explorer")!).worksheets as { id: string }[];
+    const [first, second] = JSON.parse(localStorage.getItem(STORAGE_KEY)!).worksheets as { id: string }[];
     const panelRenders = (id: string) => vi.mocked(useWorksheetRun).mock.calls.filter(([w]) => w === id).length;
     const before = { first: panelRenders(first!.id), second: panelRenders(second!.id) };
     vi.mocked(cellText).mockClear();
