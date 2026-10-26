@@ -115,19 +115,25 @@ ui-client:
 	uv run python -m sherpa_ui.openapi_export $(UI_OPENAPI)
 	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o src/api/schema.d.ts
 
-# The API (port 8090, reloading) and the Vite dev server, which proxies /api to it.
+# The UI's port and login as compose reads them: from the environment or the make command line, else from .env, else
+# the default. make reads only these from .env, for the Node tools; uv loads the rest for the Python ones.
+dotenv-value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1 | tr -d '\r"')
+UI_PORT = $(or $(SHERPA_UI_PORT),$(call dotenv-value,SHERPA_UI_PORT),8090)
+UI_USER = $(or $(SHERPA_UI_USER),$(call dotenv-value,SHERPA_UI_USER),sherpa_ui)
+
+# The API (reloading, on SHERPA_UI_PORT) and the Vite dev server, which proxies /api to it.
 ui-dev:
 	$(MAKE) -j2 ui-api-dev ui-web-dev
 
 ui-api-dev:
-	uv run --env-file .env uvicorn sherpa_ui.app:dev_app --reload --port 8090
+	uv run --env-file .env uvicorn sherpa_ui.app:dev_app --reload --port $(UI_PORT)
 
 ui-web-dev:
-	cd ui/frontend && npm run dev
+	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) npm run dev
 
-# Playwright against the compose stack (`make up`, `make build-prod`); the base URL follows SHERPA_UI_PORT (default 8090).
+# Playwright against the compose stack (`make up`, `make build-prod`) on SHERPA_UI_PORT.
 e2e:
-	cd ui/frontend && npx playwright test
+	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) SHERPA_UI_USER=$(UI_USER) npx playwright test
 
 # The lockfile must resolve packages from the public registry only (entries without a `resolved` field are fine).
 lockfile-check:

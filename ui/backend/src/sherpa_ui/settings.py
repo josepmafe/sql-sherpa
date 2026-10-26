@@ -22,7 +22,6 @@ class UiSettings(BaseSettings):
     db_name: str
     ui_user: str
     ui_password: SecretStr
-    ui_port: int = 8090
     # At least 1 s: Postgres reads a statement_timeout of 0 as no timeout at all.
     ui_statement_timeout_s: int = Field(default=DEFAULT_STATEMENT_TIMEOUT_SECONDS, ge=1)
     ui_row_cap: int = Field(default=DEFAULT_ROW_CAP, ge=1)

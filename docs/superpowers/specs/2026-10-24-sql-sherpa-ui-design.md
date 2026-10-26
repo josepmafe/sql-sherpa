@@ -352,7 +352,7 @@ Browser storage never holds result rows; results are always re-fetched (criteria
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SHERPA_UI_PORT` | `8090` | Port on 127.0.0.1 |
+| `SHERPA_UI_PORT` | `8090` | Port on 127.0.0.1: compose publishes `ui` on it, and `make ui-dev` (the API and the Vite proxy) and `make e2e` use it too |
 | `SHERPA_UI_USER`, `SHERPA_UI_PASSWORD` | `sherpa_ui`, — | The UI's read-only role |
 | `SHERPA_UI_STATEMENT_TIMEOUT_S` | `30` | Per-query timeout, in whole seconds (at least 1) |
 | `SHERPA_UI_ROW_CAP` | `1000` | Rows returned per query |

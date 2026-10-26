@@ -160,7 +160,7 @@ ui/
 
 **Produces:**
 - `UiSettings(BaseSettings)`: the same `model_config` as `McpSettings` (frozen, prefix `SHERPA_`, `.env`, `extra="ignore"`).
-  - Fields: `db_host`, `db_port`, `db_name`, `ui_user`, `ui_password: SecretStr`, `ui_port: int = 8090`, `ui_statement_timeout_s: int = 30`, `ui_row_cap: int = 1000`, `ui_dbt_target_path: Path = Path("data-platform/dbt/target-prod")` (so the variable is `SHERPA_UI_DBT_TARGET_PATH`, UI spec §9, and never collides with the MCP server's `SHERPA_DBT_TARGET_PATH`).
+  - Fields: `db_host`, `db_port`, `db_name`, `ui_user`, `ui_password: SecretStr`, `ui_statement_timeout_s: int = 30`, `ui_row_cap: int = 1000`, `ui_dbt_target_path: Path = Path("data-platform/dbt/target-prod")` (so the variable is `SHERPA_UI_DBT_TARGET_PATH`, UI spec §9, and never collides with the MCP server's `SHERPA_DBT_TARGET_PATH`).
   - `ui_conninfo() -> str`.
 - `SortSpec(column, direction: Literal["asc", "desc"])` and `FilterSpec(column, operator: Literal["=", "!=", "<", "<=", ">", ">=", "contains", "is_null", "is_not_null"], value: str | None)` (frozen).
 - `build_wrapped_query(sql_text: str, result_columns: Sequence[str], sort, filters) -> tuple[sql.Composed, list[object], int]`:
@@ -256,7 +256,7 @@ ui/
 - `.gitignore` += `ui/frontend/node_modules/`, `ui/frontend/dist/`, `ui/frontend/test-results/`, `ui/frontend/playwright-report/`
 - Makefile:
   - **`ui-client`**: export OpenAPI to a temp file, then `npx openapi-typescript` → `src/api/schema.d.ts`
-  - **`ui-dev`**: runs `ui-api-dev` (`uv run --env-file .env uvicorn sherpa_ui.app:dev_app --reload --port 8090`) and `ui-web-dev` (`cd ui/frontend && npm run dev`, with the Vite dev server proxying `/api` to 8090) via `$(MAKE) -j2`
+  - **`ui-dev`**: runs `ui-api-dev` (`uv run --env-file .env uvicorn sherpa_ui.app:dev_app --reload --port $(UI_PORT)`) and `ui-web-dev` (`cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) npm run dev`, with the Vite dev server proxying `/api` to that port) via `$(MAKE) -j2`; `UI_PORT` is `SHERPA_UI_PORT` from the environment or the command line, else from `.env`, else 8090
 - `make lint` += `cd ui/frontend && npm run lint && npm run typecheck`, plus the client check: regenerate into a temp file and `diff` it with the committed one.
 - `sherpa_ui.app:dev_app`: a module-level app built from `UiSettings()` with no static dir.
 
@@ -374,7 +374,7 @@ Behaviour (UI spec §5, §6.4):
   - ports `127.0.0.1:${SHERPA_UI_PORT:-8090}:8090`
   - `depends_on: postgres` healthy
   - a healthcheck that GETs `/api/health` and passes on any 200 (a missing dbt artifact is a banner in the UI, not an unhealthy container, so `make up` works before `make build-prod`)
-- the `ui` service joins `make up`, which already starts every service with `--build` (agent-design-1); no per-service target. Makefile **`e2e`** (`cd ui/frontend && npx playwright test`, base URL `http://127.0.0.1:8090`)
+- the `ui` service joins `make up`, which already starts every service with `--build` (agent-design-1); no per-service target. Makefile **`e2e`** (`cd ui/frontend && npx playwright test` with `SHERPA_UI_PORT` and `SHERPA_UI_USER` passed through, base URL `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`)
 - Playwright config and its browser install documented in the guide. Playwright browsers are downloaded once; the tests themselves run offline.
 
 **Interfaces:** `sherpa_ui.app:container_app` is the app with `static_dir=/app/static`.
