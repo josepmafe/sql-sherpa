@@ -89,18 +89,18 @@ To loosen or tighten a rule:
 ## 4. The three test layers
 
 ```bash
-cd ui/frontend && npm ci                                  # once: the frontend's packages (Node 22+)
+(cd ui/frontend && npm ci)                                # once: the frontend's packages (Node 22+)
 
 # 1. Backend: pytest, no browser
 uv run --env-file .env pytest ui                         # units and API tests, no database needed
 uv run --env-file .env pytest ui -m warehouse            # against the built prod marts as sherpa_ui (make build-prod first)
 
 # 2. Frontend: Vitest + Testing Library, mocked API
-cd ui/frontend && npm test
-cd ui/frontend && npm run lint && npm run typecheck      # ESLint (typescript-eslint, react-hooks, jsx-a11y) and tsc
+(cd ui/frontend && npm test)
+(cd ui/frontend && npm run lint && npm run typecheck)    # ESLint (typescript-eslint, react-hooks, jsx-a11y) and tsc
 
 # 3. End to end: Playwright against the compose stack
-cd ui/frontend && npx playwright install chromium        # once, downloads the browser
+(cd ui/frontend && npx playwright install chromium)      # once, downloads the browser
 make up && make build-prod
 make e2e
 ```
