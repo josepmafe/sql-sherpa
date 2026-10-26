@@ -1,66 +1,65 @@
 # Extending the UI
 
-How to change the web app: add an API endpoint, add a screen, change the read-only rules, and run the three layers of tests that prove a change. Each section lists the files to touch, in order. Read [Using the Explorer](../basic/using-the-explorer.md) first. Commands run from the repository root unless a `cd` says otherwise.
+How to change the web app: add an endpoint, add a screen, change the read-only rules, and run the three test layers that prove a change. Read [Using the Explorer](../basic/using-the-explorer.md) first. Rules and design: the [UI spec](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md). Commands run from the repository root.
 
 ## The split
 
-The backend is the Python package `sherpa_ui` in `ui/backend/src/sherpa_ui/`; the frontend is a React + TypeScript + Vite app in `ui/frontend/`. In production one process serves both: FastAPI answers `/api/...` and serves the built frontend for every other path (`container_app` in `app.py`, used by `ui/Dockerfile`). In development they run apart: `dev_app` is the API alone, and Vite proxies `/api` to it.
+The backend is the Python package `sherpa_ui` (`ui/backend/src/sherpa_ui/`). The frontend is React + TypeScript + Vite (`ui/frontend/`). In production one process serves both: FastAPI answers `/api/...` and serves the built frontend for every other path (`container_app`). In development `dev_app` serves the API alone and Vite proxies `/api` to it (`make ui-dev`).
 
 | Where | Holds |
 |---|---|
-| `ui/backend/src/sherpa_ui/app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`, serves the frontend. The only place the pieces are wired |
-| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`), the request/response models, the error shape (`errors.py`) and the POST body cap (`body_limit.py`, 1 MiB, refused as `422 invalid_request` before the body is read). Routers are thin: they call a service |
-| `catalog/`, `health/` | `CatalogService` and `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` (the dbt artifacts) |
-| `readonly/` | `QueryRunner` (guard, role, timeout, cancel, error positions, the batched fetch), `bounded_result.py` (row cap, masking, cell cut and result budget) and `sort_filter.py` (the server-side wrapper). Pure logic and I/O are kept apart |
+| `app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`. The only place the pieces are wired |
+| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`), `errors.py` (error shape) and `body_limit.py` (1 MiB POST cap) |
+| `catalog/`, `health/` | `CatalogService`, `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` |
+| `readonly/` | `query_runner.py`, `bounded_result.py`, `sort_filter.py` |
 | `settings.py` | `UiSettings`, the only place that reads configuration (`SHERPA_UI_*`, `SHERPA_DB_*`) |
-| `openapi_export.py` | Writes the OpenAPI schema the frontend's types are generated from |
-| `ui/frontend/src/api/` | `client.ts` (typed `openapi-fetch` client), `queries.ts` (TanStack Query hooks), `schema.d.ts` (generated, committed) |
+| `openapi_export.py` | Writes the OpenAPI schema the frontend types come from |
+| `ui/frontend/src/api/` | `client.ts` (typed `openapi-fetch`), `queries.ts` (TanStack Query hooks), `schema.d.ts` (generated, committed) |
 | `ui/frontend/src/app/` | `AppShell.tsx`, `routes.tsx`, `navItems.ts`, `HealthBanner.tsx` |
 | `ui/frontend/src/screens/<screen>/` | One folder per screen (today `explorer/`) |
 | `ui/frontend/src/components/` | Components shared between screens (`ResultGrid`, `SqlEditor`) |
 
-Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds the Vitest tests and `ui/frontend/e2e/` the Playwright specs.
+Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds Vitest, `ui/frontend/e2e/` holds Playwright.
 
 ## 1. Add an endpoint
 
-Example: `GET /api/catalog/domains`, the domain names. Five steps, in this order, so each is proved before the next one builds on it.
+Example: `GET /api/catalog/domains`. Do the steps in order, so each is proved before the next builds on it.
 
-1. **The model and the service method.** Responses are frozen Pydantic models; no bare dicts cross the boundary. Add the model and the method to the service that owns the data (`catalog/catalog_service.py` for the catalog). Test the method on its own in `ui/backend/tests/` with a catalog built from fixtures, with no HTTP.
-2. **The route** in the resource's router (`api/catalog.py`): read the service from `request.app.state`, run blocking work with `run_in_threadpool` (the services call psycopg and read files), and return the model. Failures raise `ApiException(status, code, message)`; the body is always `{code, message, detail?}`. A new error code from the query runner also needs its HTTP status in `QUERY_ERROR_STATUS` (`api/errors.py`), and the Explorer shows it with its own title once it is in `ERROR_TITLES` (`ui/frontend/src/screens/explorer/WorksheetPanel.tsx`; otherwise "Query failed").
-
-   Declare every error status the route answers, so the OpenAPI schema (and the client generated from it) matches what the API sends. `error_responses(*statuses)` (`api/errors.py`) declares each status with the `ApiError` model and its description from `ERROR_STATUS_DESCRIPTIONS`, where a new code is listed under its status. Every route under `/api` gets `500`, and a router passes the statuses all of its routes share: the catalog router declares `503` (missing artifacts), so `/api/catalog/domains` needs nothing more, while `/tables/{name}` adds `responses=error_responses(404, 422)`. A route with a path or body parameter must declare `422`, or FastAPI describes it with its own `HTTPValidationError`, which the API never sends. `TestOpenapiErrors` in `tests/test_app.py` lists every route's statuses: add the new route to its table.
-
-   Test the route through `TestClient` in `ui/backend/tests/api/`, including the unhappy path (unknown name, missing artifacts).
-3. **Regenerate the client types:**
+1. **Model and service method.** Responses are frozen Pydantic models; no bare dicts. Add the method to the service that owns the data (`catalog/catalog_service.py`). Test it alone in `ui/backend/tests/`, with no HTTP.
+2. **Route** in the resource's router (`api/catalog.py`).
+   - Read the service from `request.app.state`; run blocking work with `run_in_threadpool`.
+   - Raise `ApiException(status, code, message)`; the body is always `{code, message, detail?}`.
+   - A new query-runner error code needs its status in `QUERY_ERROR_STATUS` (`api/errors.py`) and a title in `ERROR_TITLES` (`screens/explorer/WorksheetPanel.tsx`).
+   - Declare every error status with `error_responses(*statuses)`. Every `/api` route gets `500`; the catalog router adds `503`. A route with a path or body parameter must declare `422`.
+   - Add the route to the table in `TestOpenapiErrors` (`tests/test_app.py`).
+   - Test through `TestClient` in `ui/backend/tests/api/`, including the unhappy path.
+3. **Regenerate the client types** and commit the result:
 
    ```bash
    make ui-client
    ```
 
-   It exports the OpenAPI schema (`uv run python -m sherpa_ui.openapi_export`) and runs `openapi-typescript`, rewriting `ui/frontend/src/api/schema.d.ts`. Commit the result. `make lint` regenerates the file into a temporary path and fails with a `diff` if the committed one is stale, so a forgotten step cannot slip through. A running API also serves the schema at `/openapi.json`; FastAPI's `/docs` and `/redoc` pages are switched off, because they load Swagger UI and ReDoc from a CDN and the app works offline.
-4. **The hook** in `ui/frontend/src/api/queries.ts`, next to `useCatalog`: a `useQuery` that calls `api.GET("/api/catalog/domains")`. The types come from `schema.d.ts`, so a wrong path or response shape is a `tsc` error. Mutations (like running a query) call `api.POST` from the component or a hook of the screen.
-5. **Use it** in a component, and test the component with Vitest and mocked API responses (`ui/frontend/tests/`).
+   `make lint` regenerates the file elsewhere and fails on a `diff`, so a stale client cannot slip through.
+4. **Hook** in `ui/frontend/src/api/queries.ts`, next to `useCatalog`: a `useQuery` calling `api.GET("/api/catalog/domains")`. A wrong path or shape is a `tsc` error.
+5. **Use it** in a component; test with Vitest and mocked API responses (`ui/frontend/tests/`).
 
 ## 2. Add a screen
 
-Example: Lineage in ui-2. The shell lists only screens that exist, so a half-built screen never appears in the navigation.
+The shell lists only screens that exist, so a half-built screen never appears in the navigation. Example: Lineage.
 
-1. Create `ui/frontend/src/screens/<name>/<Name>Screen.tsx` with its components next to it. Anything a second screen would share goes to `src/components/` only when that second screen exists.
+1. Create `ui/frontend/src/screens/<name>/<Name>Screen.tsx`. Move code to `src/components/` only when a second screen needs it.
 2. Add the route in `src/app/routes.tsx`, as a child of the `AppShell` route.
-3. Add the entry to `NAV_ITEMS` in `src/app/navItems.ts` (`{ path: "/lineage", label: "Lineage" }`), in the order of the UI spec's navigation: Home, Ask, Explorer, Lineage. The `/` route redirects to the Explorer until Home arrives; Home's milestone changes that redirect.
-4. Enable what the earlier screens left disabled: the Explorer's "Open in Lineage" menu item (`CatalogTree.tsx`) and Inspector button (`Inspector.tsx`) are disabled, with `LINEAGE_UNAVAILABLE` from `screens/explorer/lineage.ts` as a visible note that is their `aria-describedby`. Wire them to the route, then remove the note and `lineage.ts`.
-5. Add a Playwright spec in `ui/frontend/e2e/` for the screen's main flow, and a case to `offline.spec.ts` so the new screen loads with every request outside the app's origin blocked (no CDN or font fetches).
+3. Add the entry to `NAV_ITEMS` in `src/app/navItems.ts`, in the UI spec's order: Home, Ask, Explorer, Lineage.
+4. Enable what earlier screens left disabled. The Explorer's "Open in Lineage" (`CatalogTree.tsx`) and Inspector button (`Inspector.tsx`) carry the `LINEAGE_UNAVAILABLE` note from `screens/explorer/lineage.ts`. Wire them to the route, then delete the note and the file.
+5. Add a Playwright spec in `ui/frontend/e2e/` for the main flow, and a case in `offline.spec.ts` (every request outside the app's origin is blocked).
 
-The Explorer keeps every worksheet's panel mounted, so switching tabs never cancels a query. The worksheet tabs are Mantine's `Tabs` (a tab list with arrow keys, each tab tied to its `Tabs.Panel`) with `keepMountedMode="display-none"`: Mantine's default hides inactive panels with React's `Activity`, which runs their effects' cleanup, and the cleanup of `useWorksheetRun` cancels the query. Only tabs go inside `Tabs.List` (accessibility checkers flag any other control there), so the new-worksheet button sits next to it and a tab's x is a mouse shortcut for its Delete key. `WorksheetPanel` and `ResultGrid` are memoized, so a keystroke re-renders only the worksheet typed in, and not its grid. Their props must therefore keep their identity across renders: the Explorer's callbacks take the worksheet id as an argument and are wrapped in `useCallback` once, in `ExplorerScreen.tsx`. A new prop that is a fresh function or object on every render undoes this, and the test `typing in one worksheet re-renders neither the other worksheets nor any result grid` (`tests/ExplorerScreen.test.tsx`) fails.
+Conventions the Explorer follows, which a new screen should too:
 
-A few conventions the Explorer follows, which a new screen should too:
-
-- **Health.** A screen disables only what needs a dependency that is down (UI spec §3) and says why. The Explorer reads `useHealth()` once, in `ExplorerScreen.tsx`, and passes a `blockedReason` string down: `SqlEditor` disables Run and Run selection and shows the reason as their `aria-describedby`, and the tree disables Preview with the same note. A string keeps the memoized panels' props stable.
-- **Load errors.** A failed `useQuery` shows `LoadError` (`screens/explorer/LoadError.tsx`): the `ApiRequestError`'s message and code, or "Could not reach the server." when the request got no answer, and a Retry that calls `refetch()`.
-- **Width.** The Explorer has three columns from 1280 px (`WIDE_QUERY` in `ExplorerScreen.tsx`); below, the Inspector is a `Drawer`. `e2e/layout.spec.ts` checks the editor's width and its one-row buttons at 1024 x 700; run it after a change to the columns.
-- **Contrast.** `main.tsx` sets Mantine's `--mantine-color-dimmed` to greys that meet WCAG AA (4.5:1) on both themes, so `c="dimmed"` is fine for text people must read.
-
-State that belongs to the user lives in `localStorage` under a `sherpa.v1.<screen>` key, never result rows. A change to a stored shape bumps the version in the key or migrates it in the screen's store (`worksheetStore.ts` is the model: it resets with a console warning when the stored value has an unexpected shape).
+- **Mounted panels.** Worksheet panels stay mounted (`keepMountedMode="display-none"` on Mantine `Tabs`), so a tab switch never cancels a query. `WorksheetPanel` and `ResultGrid` are memoized: pass stable props (callbacks take the worksheet id and are wrapped in `useCallback` in `ExplorerScreen.tsx`). A fresh function or object per render fails the test `typing in one worksheet re-renders neither the other worksheets nor any result grid`.
+- **Health.** Disable only what needs a down dependency, and say why (UI spec §3). The Explorer reads `useHealth()` once and passes a `blockedReason` string down.
+- **Load errors.** A failed `useQuery` shows `LoadError` (`screens/explorer/LoadError.tsx`) with a Retry.
+- **Width.** Three columns from 1280 px (`WIDE_QUERY`), a `Drawer` below. Run `e2e/layout.spec.ts` after changing the columns.
+- **Browser storage.** User state lives in `localStorage` under `sherpa.v1.<screen>`, never result rows. Bump the version or migrate when a stored shape changes (`worksheetStore.ts`).
 
 ## 3. Where the read-only rules live
 
@@ -68,48 +67,66 @@ Three layers, none of which trusts the one before it:
 
 | Layer | Where | Does |
 |---|---|---|
-| The SQL guard | `sherpa_mcp.sql_guard.SqlGuard`, built in `QueryRunner` from `catalog.mart_columns()` | One `SELECT`/`WITH` statement, the function allow-list, only `marts.<visible mart>` tables and real columns, no `SET`/`RESET`/`ALTER`, no whole-row references |
-| The connection | `UiSettings.ui_conninfo()` in `settings.py` | Every session starts with `default_transaction_read_only=on` and the statement timeout |
-| The role | `data-platform/postgres/roles.sql` | `sherpa_ui` is `LOGIN`, read-only and time-limited by role defaults, has no `CREATE`/`TEMPORARY`, and has only the grants dbt's `grant_read_access` macro gives (`marts`, `extensions`, `ops.dbt_run_results`) |
+| SQL guard | `sherpa_mcp.sql_guard.SqlGuard`, built in `QueryRunner` | One `SELECT`/`WITH`, function allow-list, only visible `marts` tables and real columns |
+| Connection | `UiSettings.ui_conninfo()` | `default_transaction_read_only=on` and the statement timeout on every session |
+| Role | `data-platform/postgres/roles.sql` | `sherpa_ui` is read-only, time-limited, with only the grants dbt's `grant_read_access` macro gives |
 
-The guard and the masking (`sherpa_mcp.masking.PiiMasker`) are imported from `sherpa_mcp`, the agent's tool server, not copied. The Explorer and the agent must agree on what a read-only query is and on what is masked, and one implementation guarantees it. A change to the guard is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md) (and its sqlglot rules), then rerun the UI's tests (below). The runner builds its `SqlGuard` with the default function allow-list, the agent's.
+The guard and the masking (`sherpa_mcp.masking.PiiMasker`) are imported from `sherpa_mcp`, not copied. The Explorer and the agent must agree on what a read-only query is and what is masked, and one implementation guarantees it. A guard change is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md), then rerun the UI tests.
 
 What belongs only to the UI is in `readonly/`:
 
-- `query_runner.py`: the timeout from `SHERPA_UI_STATEMENT_TIMEOUT_S` (also checked between FETCHes), the batched fetch (`FETCH_BATCH_ROWS`, `FETCH_BATCH_CELLS`), cancel (a registry from `query_id` to connection), the concurrency gate, and the mapping of Postgres errors to `UiQueryError`: error positions back into the user's SQL, and data exceptions (SQLSTATE class 22), whose text can quote a masked value, reworded by `sherpa_mcp.database.data_error_message`, the MCP server's own.
-- The concurrency gate: `MAX_CONCURRENT_QUERIES` (8) runs hold a connection at once, below the role's `CONNECTION LIMIT 10` in `data-platform/postgres/roles.sql`; another one fails `busy` without connecting. Raising either number means keeping the gate below the limit, with room for the health check; the gate's tests (`test_a_query_past_the_concurrency_limit_is_busy_without_connecting`, `test_every_way_a_run_ends_gives_its_slot_back` and the `warehouse` test with eight real queries) prove it. A connection Postgres refuses for a connection limit is `too_many_connections`, recognised by `TOO_MANY_CONNECTIONS_MARKERS` (libpq gives no SQLSTATE at connect time). `HealthService` reads the same markers and reports such a database as `ok`, since it answered: only an unreachable one is `down`.
-- `bounded_result.py`: what a result may hold. `BoundedResult` converts and masks each batch, cuts every cell with `sherpa_mcp.database.cap_cell` (10,000 characters, the MCP server's cut), and stops at the 1,000-row cap (`SHERPA_UI_ROW_CAP`) or at `MAX_RESULT_CHARS` (2,000,000), marking the result `truncated`. It is pure, so its rules are tested in `tests/readonly/test_bounded_result.py` without a database. The cell cut is shared with the MCP server on purpose: the guard's `MAX_PAD_LENGTH` assumes it. The server-side sort/filter wrapper is built in `readonly/sort_filter.py` from validated result-column names and bound parameters; the user's SQL itself is still guard-checked as written. `build_wrapped_query` takes the runner's `PiiMasker` and refuses (`PiiColumnError`, answered `422 pii_column`) to sort or filter by any column the masker hides, using the masker's own `masks(column)`, so the refusal and the masking can never disagree about which columns are personal. The grid offers no sort or filter on those columns in the first place: `maskedColumnNames` (`ui/frontend/src/components/resultView.ts`) takes the catalog's `is_pii` names and the grid matches result columns against them in any case, like `masks`. The server's refusal stays the guarantee, for instance while the catalog is not loaded.
+- `query_runner.py`: timeout (`SHERPA_UI_STATEMENT_TIMEOUT_S`), batched fetch, cancel, the concurrency gate, and the mapping of Postgres errors to `UiQueryError`.
+- The gate: `MAX_CONCURRENT_QUERIES` (8) stays below the role's `CONNECTION LIMIT 10`, with room for the health check. Another query fails `busy` without connecting.
+- `bounded_result.py`: the 1,000-row cap (`SHERPA_UI_ROW_CAP`), the cell cut shared with the MCP server (the guard's `MAX_PAD_LENGTH` assumes it) and `MAX_RESULT_CHARS`. Pure, tested in `tests/readonly/test_bounded_result.py`.
+- `sort_filter.py`: the server-side sort/filter wrapper. It refuses (`422 pii_column`) any column the masker hides, so the refusal and the masking agree. The grid hides those controls too (`maskedColumnNames` in `components/resultView.ts`).
 
 To loosen or tighten a rule:
 
-1. Write the failing test first, in `ui/backend/tests/readonly/test_query_runner.py` (pure rules) or `tests/api/test_queries_api.py` (through HTTP, `warehouse` marker for the ones that need real marts).
+1. Write the failing test first: `tests/readonly/test_query_runner.py` (pure rules) or `tests/api/test_queries_api.py` (through HTTP; `warehouse` marker when it needs real marts).
 2. Change the code, then run the `warehouse` tests, which exercise the real role.
-3. If the role's privileges change, edit `data-platform/postgres/roles.sql` or the `grant_read_access` macro, run `make roles` and `make grant-read`, and update the data platform spec's role table.
+3. If privileges change, edit `roles.sql` or the `grant_read_access` macro, run `make up` (re-applies the roles) and `make build-prod` (re-applies the grants), and update the data platform spec's role table.
 
 ## 4. The three test layers
 
 ```bash
-(cd ui/frontend && npm ci)                                # once: the frontend's packages (Node 22+)
+(cd ui/frontend && npm ci)                                # once (Node 22+)
 
-# 1. Backend: pytest, no browser
-uv run --env-file .env pytest ui                         # units and API tests, no database needed
-uv run --env-file .env pytest ui -m warehouse            # against the built prod marts as sherpa_ui (make build-prod first)
+uv run --env-file .env pytest ui                          # 1. backend, no database needed
+uv run --env-file .env pytest ui -m warehouse             #    against the built prod marts (make build-prod first)
 
-# 2. Frontend: Vitest + Testing Library, mocked API
-(cd ui/frontend && npm test)
-(cd ui/frontend && npm run lint && npm run typecheck)    # ESLint (typescript-eslint, react-hooks, jsx-a11y) and tsc
+(cd ui/frontend && npm test)                              # 2. Vitest + Testing Library, mocked API
+(cd ui/frontend && npm run lint && npm run typecheck)     #    ESLint and tsc
 
-# 3. End to end: Playwright against the compose stack
-(cd ui/frontend && npx playwright install chromium)      # once, downloads the browser
+(cd ui/frontend && npx playwright install chromium)       # 3. once; then end to end on the compose stack
 make up && make build-prod
 make e2e
 ```
 
-- The Vitest tests mock the API at `src/api/client`. Mock it partially (`vi.mock("../src/api/client", async (importOriginal) => ({ ...(await importOriginal()), api: { POST: ... } }))`), so `apiError`, which turns an error answer into `{code, message, detail}`, stays real. Give `beforeEach` a block body: Vitest runs a function returned from it as the test's teardown, and `mockReset()` returns the mock.
-- `make lint` covers ruff, mypy, sqlfluff, ESLint, `tsc` and the stale-client check in one go.
-- `make e2e` runs `npx playwright test` in `ui/frontend`, with one worker. Its base URL is `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`, with `SHERPA_UI_PORT` taken from the environment, the command line or `.env`, like compose does; with the stack on another port, run `SHERPA_UI_PORT=8091 make e2e` or set it in `.env`. The same goes for `make ui-dev`, whose API listens on that port and whose Vite proxy forwards to it (`vite.config.ts`).
-- The specs are `explorer.spec.ts` (tree and Inspector, a count that matches an admin `psql` count, a guard rejection with its reason, server-side sort on a truncated result, Cancel of a long aggregate, whose `sherpa_ui` session must then leave `pg_stat_activity` within 5 s, Preview 100 rows), `layout.spec.ts` (a real, unforced click on a table's "⋯" while the tree scrolls, at 1440 x 900; the editor's width, its one-row buttons and the Inspector drawer at 1024 x 700), `offline.spec.ts` (every request outside the app's origin blocked) and `freshness.spec.ts`. Scrollbar overlap and layout widths only show in a real browser, which is why they are Playwright specs and not Vitest tests.
-- **`freshness.spec.ts` changes your warehouse, so it runs only with `make e2e-freshness`.** To prove a rebuilt warehouse shows up on reload, it runs `make generate DAYS=1` and `make build-prod`, which adds one simulated day to the warehouse every checkout shares. It cannot be undone except by `make reset` and a full rebuild. `make e2e` (and a plain `npx playwright test`) skips it ("changes the shared warehouse: run it with make e2e-freshness"); `make e2e-freshness` sets `SHERPA_E2E_FRESHNESS=1` and runs it alone. Even then it can add a day only while the data ends before yesterday, so it runs at most once per day and skips itself otherwise ("the warehouse already runs through yesterday").
+- Mock the API at `src/api/client` partially (`vi.mock(..., async (importOriginal) => ({ ...(await importOriginal()), api: { POST: ... } }))`), so `apiError` stays real. Give `beforeEach` a block body: Vitest treats a returned function as teardown.
+- `make e2e` uses one worker and `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`. For another port run `SHERPA_UI_PORT=8091 make e2e` or set it in `.env`; `make ui-dev` follows the same variable.
+- Specs: `explorer.spec.ts`, `layout.spec.ts`, `offline.spec.ts`, `freshness.spec.ts`. Scrollbar overlap and layout widths show only in a real browser, hence Playwright.
+- `make lint` covers ruff, mypy, sqlfluff, the docs coverage, ESLint, `tsc`, the npm lockfile and the stale-client check.
+
+**`freshness.spec.ts` changes your warehouse.** It runs `make generate DAYS=1` and `make build-prod`, adding a simulated day to the warehouse every checkout shares; only `make reset` and a full rebuild undo it. `make e2e` skips it. Run it deliberately:
+
+```bash
+cd ui/frontend && SHERPA_E2E_FRESHNESS=1 npx playwright test freshness
+```
+
+It skips itself when the warehouse already runs through yesterday, so it runs at most once per day.
+
+## Common errors
+
+| Symptom | Fix |
+|---|---|
+| `make lint` fails on the `diff` of `schema.d.ts` | Run `make ui-client` and commit the file |
+| `tsc` rejects an `api.GET` path | The client is stale: run `make ui-client` |
+| OpenAPI shows `HTTPValidationError` for a route | Declare `422` with `error_responses(422)` |
+| `TestOpenapiErrors` fails for a new route | Add the route and its statuses to its table |
+| A new error shows "Query failed" | Add its code to `ERROR_TITLES` |
+| The memoization test fails after adding a prop | Make the prop stable (`useCallback`, a string) |
+| Playwright cannot connect | `make up && make build-prod`, and match `SHERPA_UI_PORT` |
+| `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next
 

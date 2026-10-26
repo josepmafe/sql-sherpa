@@ -59,7 +59,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ## Commands
 
-A Make target exists only for a multi-step workflow, a command with non-obvious flags, or a daily dev loop; anything else is a documented plain command. Don't add aliases or one-off repair targets.
+A Make target exists only for a multi-step workflow, a command with non-obvious flags, or a daily dev loop; anything else is a documented plain command. Don't add aliases. A helper that other targets call is a private target: its name starts with `_` (`_roles`, `_docs-check`, `_lockfile-check`, `_ui-api-dev`, `_ui-web-dev`), it sits at the bottom of the Makefile, and docs don't list it as a command.
 
 - **Stack:**
   - `make up` / `make down` start / stop every compose service (Postgres, `mcp`, `ui` at `http://127.0.0.1:8090`). `make up` builds the images, waits until all are healthy, then brings the database roles up to date with `data-platform/postgres/roles.sql` (idempotent: it creates missing roles and resets passwords and settings from `.env`).

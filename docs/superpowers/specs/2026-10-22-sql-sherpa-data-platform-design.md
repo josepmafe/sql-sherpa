@@ -439,7 +439,7 @@ The UI's first milestone makes three data-platform changes, because the UI needs
 
 ## 10. Developer Workflow (Makefile)
 
-A target exists only for a multi-step workflow, a command with non-obvious flags, or a daily dev loop; anything else is a documented plain command (e.g. `uv run sherpa-generate status`, `dbt run-operation grant_read_access`).
+A target exists only for a multi-step workflow, a command with non-obvious flags, or a daily dev loop; anything else is a documented plain command (e.g. `uv run sherpa-generate status`, `dbt run-operation grant_read_access`). Helpers that other targets call are private targets named `_<name>` (e.g. `_roles`, which `make up` runs).
 
 | Target | Does |
 |---|---|
