@@ -6,7 +6,9 @@ models:
       One row per event of a non-test session, carrying its session's columns. A gap greater than
       session_timeout_minutes since the previous event of the same anonymous_id starts a new session.
       Sessions with an event of a test account are excluded. The session's first event decides the
-      session_utm_* columns, session_referrer and marketing_channel.
+      session_utm_* columns, session_referrer and marketing_channel. Incremental: a run recomputes the
+      sessions from the day before its earliest new event (received after the table's maximum
+      max_received_at) and replaces those days, so a late event lands in its existing session.
     columns:
       - name: event_id
         description: Primary key; the tracker's event id.
@@ -30,6 +32,10 @@ models:
           - unique:
               config:
                 where: "event_type = 'purchase' and order_id is not null"
+      - name: device_type
+        description: Device of the event; desktop, mobile or tablet.
+      - name: page_path
+        description: Page path the event was recorded on; null for events without a page.
       - name: session_id
         description: md5 of anonymous_id and the epoch microseconds of session_start_at.
         data_tests: [not_null]
@@ -37,7 +43,7 @@ models:
         description: occurred_at of the session's first event (UTC).
         data_tests: [not_null]
       - name: session_date
-        description: UTC date of session_start_at.
+        description: UTC date of session_start_at; an incremental run replaces whole session_dates.
       - name: session_utm_source
         description: utm_source of the session's first event.
       - name: session_utm_medium
@@ -57,4 +63,140 @@ models:
               arguments:
                 values: [direct, organic, paid_search, paid_social, email, affiliate, referral, unknown]
       - name: max_received_at
-        description: Latest received_at among the session's events (UTC).
+        description: >
+          Latest received_at among the session's events (UTC). The table's maximum is the watermark of
+          the next incremental run.
+
+# Timestamps carry +00, so the UTC dates under test do not depend on the server's time zone.
+unit_tests:
+  - name: int_events__sessionized_new_session_after_gap_over_timeout
+    model: int_events__sessionized
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e1, anonymous_id: a1, occurred_at: "2025-03-10 10:00:00+00", received_at: "2025-03-10 10:00:01+00"}
+          - {event_id: e2, anonymous_id: a1, occurred_at: "2025-03-10 10:29:00+00", received_at: "2025-03-10 10:29:01+00"}
+          # Exactly the timeout after e2: the same session.
+          - {event_id: e3, anonymous_id: a1, occurred_at: "2025-03-10 10:59:00+00", received_at: "2025-03-10 10:59:01+00"}
+          # A minute over the timeout: a new session.
+          - {event_id: e4, anonymous_id: a1, occurred_at: "2025-03-10 11:30:00+00", received_at: "2025-03-10 11:30:01+00"}
+      - input: ref('stg_shop__customers')
+        rows: []
+      - input: ref('channel_mapping')
+        rows: []
+    expect:
+      rows:
+        - {event_id: e1, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10"}
+        - {event_id: e2, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10"}
+        - {event_id: e3, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10"}
+        - {event_id: e4, session_start_at: "2025-03-10 11:30:00+00", session_date: "2025-03-10"}
+
+  - name: int_events__sessionized_keeps_midnight_session_on_first_day
+    model: int_events__sessionized
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e1, anonymous_id: a1, occurred_at: "2025-03-10 23:50:00+00", received_at: "2025-03-10 23:50:01+00"}
+          - {event_id: e2, anonymous_id: a1, occurred_at: "2025-03-11 00:10:00+00", received_at: "2025-03-11 00:10:01+00"}
+      - input: ref('stg_shop__customers')
+        rows: []
+      - input: ref('channel_mapping')
+        rows: []
+    expect:
+      rows:
+        - {event_id: e1, session_start_at: "2025-03-10 23:50:00+00", session_date: "2025-03-10"}
+        - {event_id: e2, session_start_at: "2025-03-10 23:50:00+00", session_date: "2025-03-10"}
+
+  - name: int_events__sessionized_puts_late_event_in_existing_session
+    model: int_events__sessionized
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      # The sessions of e0, a2, a3 (e6 only) and e1-e2 are already in the table: the watermark is 03-10 10:10:01.
+      - input: this
+        format: sql
+        rows: |
+          select '2025-03-07 08:00:01+00'::timestamptz as max_received_at
+          union all
+          select '2025-03-09 00:10:01+00'::timestamptz
+          union all
+          select '2025-03-09 23:50:01+00'::timestamptz
+          union all
+          select '2025-03-10 10:10:01+00'::timestamptz
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e0, anonymous_id: a1, occurred_at: "2025-03-07 08:00:00+00", received_at: "2025-03-07 08:00:01+00"}
+          # A session from 03-08 into the cutoff day 03-09: read whole from 03-08, it starts before the cutoff and is
+          # not emitted. Read from 03-09, it would come out cut, as a session of 03-09.
+          - {event_id: e4, anonymous_id: a2, occurred_at: "2025-03-08 23:50:00+00", received_at: "2025-03-08 23:50:01+00"}
+          - {event_id: e5, anonymous_id: a2, occurred_at: "2025-03-09 00:10:00+00", received_at: "2025-03-09 00:10:01+00"}
+          - {event_id: e6, anonymous_id: a3, occurred_at: "2025-03-09 23:50:00+00", received_at: "2025-03-09 23:50:01+00"}
+          # New and late, after midnight: it joins e6's session of 03-09, which is why the cutoff is the day before.
+          - {event_id: e7, anonymous_id: a3, occurred_at: "2025-03-10 00:05:00+00", received_at: "2025-03-12 09:00:00+00"}
+          - {event_id: e1, anonymous_id: a1, occurred_at: "2025-03-10 10:00:00+00", received_at: "2025-03-10 10:00:01+00"}
+          - {event_id: e2, anonymous_id: a1, occurred_at: "2025-03-10 10:10:00+00", received_at: "2025-03-10 10:10:01+00"}
+          # New and two days late: the cutoff is 03-09, so reading starts at 03-08.
+          - {event_id: e3, anonymous_id: a1, occurred_at: "2025-03-10 10:20:00+00", received_at: "2025-03-12 09:00:00+00"}
+      - input: ref('stg_shop__customers')
+        rows: []
+      - input: ref('channel_mapping')
+        rows: []
+    expect:
+      rows:
+        - {event_id: e1, session_start_at: "2025-03-10 10:00:00+00", max_received_at: "2025-03-12 09:00:00+00"}
+        - {event_id: e2, session_start_at: "2025-03-10 10:00:00+00", max_received_at: "2025-03-12 09:00:00+00"}
+        - {event_id: e3, session_start_at: "2025-03-10 10:00:00+00", max_received_at: "2025-03-12 09:00:00+00"}
+        - {event_id: e6, session_start_at: "2025-03-09 23:50:00+00", max_received_at: "2025-03-12 09:00:00+00"}
+        - {event_id: e7, session_start_at: "2025-03-09 23:50:00+00", max_received_at: "2025-03-12 09:00:00+00"}
+
+  - name: int_events__sessionized_emits_nothing_without_new_events
+    model: int_events__sessionized
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        format: sql
+        rows: |
+          select '2025-03-10 10:10:01+00'::timestamptz as max_received_at
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e1, anonymous_id: a1, occurred_at: "2025-03-10 10:00:00+00", received_at: "2025-03-10 10:00:01+00"}
+          - {event_id: e2, anonymous_id: a1, occurred_at: "2025-03-10 10:10:00+00", received_at: "2025-03-10 10:10:01+00"}
+      - input: ref('stg_shop__customers')
+        rows: []
+      - input: ref('channel_mapping')
+        rows: []
+    expect:
+      rows: []
+
+  - name: int_events__sessionized_reads_all_when_table_empty
+    model: int_events__sessionized
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        format: sql
+        rows: |
+          select null::timestamptz as max_received_at
+          where false
+      - input: ref('stg_events__events')
+        rows:
+          - {event_id: e1, anonymous_id: a1, occurred_at: "2025-03-10 10:00:00+00", received_at: "2025-03-10 10:00:01+00"}
+          - {event_id: e2, anonymous_id: a1, occurred_at: "2025-03-10 10:10:00+00", received_at: "2025-03-10 10:10:01+00"}
+      - input: ref('stg_shop__customers')
+        rows: []
+      - input: ref('channel_mapping')
+        rows: []
+    expect:
+      rows:
+        - {event_id: e1, session_start_at: "2025-03-10 10:00:00+00"}
+        - {event_id: e2, session_start_at: "2025-03-10 10:00:00+00"}

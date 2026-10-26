@@ -138,7 +138,7 @@ Intermediate models (`models/intermediate/`) default to `ephemeral`. Override wi
 | `view` | A view in the `intermediate` schema | You need to query it, test it or unit-test it |
 | `table` | A table, rebuilt each run | The query is expensive and several models read it |
 
-Current choices: `int_events__sessionized` is a table (window functions over every event, read by `fct_orders` and `dim_customers`); `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` are views because they carry their own tests; the rest are ephemeral. List them with:
+Current choices: `int_events__sessionized` (`delete+insert`) and `int_identity__anonymous_to_customer` (`merge`) are incremental tables, so a build recomputes only what the new events touch; `int_order_items__costed`, `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` are views because they carry their own tests; the rest are ephemeral. List them with:
 
 ```bash
 dbt --quiet ls --select intermediate --resource-type model --output json --output-keys name config.materialized

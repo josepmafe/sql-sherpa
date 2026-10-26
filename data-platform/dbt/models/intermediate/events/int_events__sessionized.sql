@@ -1,11 +1,59 @@
-{#- A table two marts read; the project's analyze hook covers marts only. -#}
-{{ config(materialized='table', post_hook="analyze {{ this }}") }}
+{#-
+    Incremental with `delete+insert` on session_date: dbt deletes every row whose session_date the run
+    emits, then inserts the run's rows, so a run rewrites whole days of sessions. The watermark is the
+    table's own max(max_received_at), as in the device map. Two marts read the table; the project's
+    analyze hook covers marts only, so it has its own.
+-#}
+{{
+    config(
+        materialized='incremental',
+        incremental_strategy='delete+insert',
+        unique_key='session_date',
+        on_schema_change='fail',
+        indexes=[{'columns': ['session_date']}],
+        post_hook="analyze {{ this }}"
+    )
+}}
 
 with
 
+-- The first session day an incremental run rewrites (spec 6.4). A new event
+-- (received after the watermark) can join a session that started the day
+-- before it happened, across midnight, so the cutoff is the day before the
+-- earliest new event (this holds while no session lasts longer than a day).
+-- Without new events the cutoff is null and the run emits nothing. A full
+-- build rewrites every day.
+cutoff as (
+
+    {% if is_incremental() %}
+        select (min(occurred_at) at time zone 'UTC')::date - 1 as cutoff_date
+        from {{ ref('stg_events__events') }}
+        where
+            received_at > (
+                select
+                    coalesce(
+                        max(watermark.max_received_at),
+                        '-infinity'::timestamptz
+                    )
+                from {{ this }} as watermark
+            )
+    {% else %}
+        select '-infinity'::date as cutoff_date
+    {% endif %}
+
+),
+
+-- Reading starts a day before the cutoff, so a session that runs from that
+-- day into the cutoff day is seen whole: it starts before the cutoff and is
+-- not emitted, instead of coming out cut as a session of the cutoff day.
 events as (
 
     select * from {{ ref('stg_events__events') }}
+    where
+        occurred_at >= (
+            select (cutoff.cutoff_date - 1)::timestamp at time zone 'UTC'
+            from cutoff
+        )
 
 ),
 
@@ -96,6 +144,8 @@ sessions as (
         occurred_at,
         received_at,
         order_id,
+        device_type,
+        page_path,
         session_start_at,
         session_utm_source,
         session_utm_medium,
@@ -141,3 +191,4 @@ sessionized as (
 )
 
 select * from sessionized
+where session_date >= (select cutoff.cutoff_date from cutoff)
