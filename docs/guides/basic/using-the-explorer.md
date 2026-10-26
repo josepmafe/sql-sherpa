@@ -63,7 +63,7 @@ A result is bounded in size as well as in rows:
 - **10,000 characters per cell.** A longer text, bytes (shown as hex), array or JSON cell is cut, and the cut shows at its end. `select string_agg(order_number, ',') as numbers from marts.fct_orders` returns one cell of 10,022 characters ending in ` …[cut at 10000 chars]`, and the result is not `truncated` (no row was left out).
 - **2,000,000 characters in all.** Rows past the budget are left out, and the result is `truncated`. Ten columns of `lpad('a', 10000, 'b')` over `marts.fct_order_items` (100,000 characters a row) return 20 rows. A full 1,000-row result of the widest mart, `select * from marts.fct_orders`, is about 250,000 characters, well inside it.
 
-When a query fails, the red box under the editor shows what Postgres or the guard said, verbatim:
+When a query fails, the red box under the editor shows the guard's or Postgres's message (data errors reworded, see below the table):
 
 | You ran | You see |
 |---|---|
@@ -76,7 +76,7 @@ When a query fails, the red box under the editor shows what Postgres or the guar
 
 For Postgres errors that name a position (a syntax error, say), the editor highlights that spot in your SQL. With "Run selection" the highlight is placed inside the selection.
 
-A failed cast or computation (a Postgres data exception) never shows the value Postgres complained about: its message would quote it (`invalid input syntax for type integer: "<the email>"`), and the value can be one the masking hides. You get the kind of error and a remedy instead, as in the last two rows above, and the highlight still points at the spot when Postgres names one (`select 'abc'::int` highlights `'abc'`).
+A failed cast or computation (a Postgres data exception) never shows the value Postgres complained about: its message would quote it (`invalid input syntax for type integer: "<the email>"`), and the value can be one the masking hides. You get the kind of error and a remedy instead, as in the `1/0` and `email::int` rows above, and the highlight still points at the spot when Postgres names one (`select 'abc'::int` highlights `'abc'`).
 
 ## Sorting and filtering
 
