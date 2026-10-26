@@ -48,7 +48,8 @@ type GridProps = {
 };
 
 const ROW_HEIGHT = 32;
-const VIEWPORT_HEIGHT = 420;
+// Under the editor and a truncated result's note, the grid still ends inside a 900 px high screen.
+const VIEWPORT_HEIGHT = 380;
 const OVERSCAN = 10;
 const COLUMN_WIDTH = 160;
 const DISPLAY_MAX_CHARS = 200; // Long text is cut in the display only; the full value is the hover title.
@@ -127,13 +128,14 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
   return (
     <Stack gap="xs">
       <StatusLine response={response} shown={tableRows.length} filtered={filtered} />
+      {/* One-line notes, so the grid stays in view on a 900 px high screen. */}
       {response.truncated && hasDuplicateColumns(columns) && (
-        <Alert color="yellow" title="Duplicate column names">
-          {response.warning ?? DUPLICATE_WARNING}
+        <Alert color="yellow" py={6} px="sm">
+          <b>Duplicate column names:</b> {response.warning ?? DUPLICATE_WARNING}
         </Alert>
       )}
       {serverSide && (
-        <Alert color="blue">
+        <Alert color="blue" py={6} px="sm">
           {response.truncated
             ? `Truncated at ${response.returned_rows.toLocaleString("en-US")} rows: sorting and filtering run on the server over all rows`
             : "Sorting and filtering run on the server over all rows"}

@@ -39,6 +39,18 @@ describe("HealthBanner", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(2);
   });
 
+  it("a database that is down is red; missing dbt artifacts are yellow, since the Explorer still runs queries", () => {
+    useHealth.mockReturnValue({ data: { database: "down", artifacts: { status: "missing", generated_at: null } } });
+
+    renderBanner();
+
+    const [database, artifacts] = screen.getAllByRole("alert") as [HTMLElement, HTMLElement];
+    expect(database).toHaveTextContent(/database/i);
+    expect(database.getAttribute("style")).toContain("--mantine-color-red");
+    expect(artifacts).toHaveTextContent(/dbt artifacts missing/);
+    expect(artifacts.getAttribute("style")).toContain("--mantine-color-yellow");
+  });
+
   it("shows nothing while the health check has not answered", () => {
     useHealth.mockReturnValue({ data: undefined });
 

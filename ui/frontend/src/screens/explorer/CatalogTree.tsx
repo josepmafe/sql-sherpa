@@ -1,6 +1,6 @@
-import { ActionIcon, Box, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
+import { ActionIcon, Box, CloseButton, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconDots } from "@tabler/icons-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { useCatalog } from "../../api/queries";
 import type { components } from "../../api/schema";
@@ -28,6 +28,7 @@ type TreeProps = EditorActions & {
 export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, previewBlocked }: TreeProps) {
   const catalog = useCatalog();
   const [search, setSearch] = useState("");
+  const searchBox = useRef<HTMLInputElement>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const needle = search.trim().toLowerCase();
 
@@ -51,14 +52,33 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
   return (
     <Stack gap="xs">
       <TextInput
+        ref={searchBox}
         placeholder="Search tables and columns"
         aria-label="Search tables and columns"
         value={search}
         onChange={(event) => setSearch(event.currentTarget.value)}
+        rightSectionPointerEvents="all"
+        rightSection={
+          search !== "" && (
+            <CloseButton
+              size="sm"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearch("");
+                searchBox.current?.focus();
+              }}
+            />
+          )
+        }
       />
       <Text size="xs" c="dimmed">
         {database} › {schema}
       </Text>
+      {needle !== "" && domains.length === 0 && (
+        <Text size="sm" c="dimmed">
+          No table or column matches “{search.trim()}”.
+        </Text>
+      )}
       {domains.map((domain) => (
         <Box key={domain.name}>
           <Text fw={600} size="sm" tt="capitalize">

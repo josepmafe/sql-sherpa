@@ -162,6 +162,22 @@ describe("CatalogTree", () => {
     expect(screen.queryByText("product")).not.toBeInTheDocument();
   });
 
+  it("a search that matches nothing says so, and the clear button brings every table back", async () => {
+    const user = userEvent.setup();
+    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search tables and columns"), " zzz ");
+    expect(screen.getByText("No table or column matches “zzz”.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "fct_orders" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(screen.getByLabelText("Search tables and columns")).toHaveValue("");
+    expect(screen.getByLabelText("Search tables and columns")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+    expect(screen.queryByText(/No table or column matches/)).not.toBeInTheDocument();
+  });
+
   it("hover shows the description's first sentence, the grain and the PK", async () => {
     const user = userEvent.setup();
     const description = "One row per order.\nCancelled orders are kept and flagged. Metrics filter on them.";
