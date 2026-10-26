@@ -29,6 +29,7 @@ MARTS = (
     "fct_orders",
     "fct_refunds",
     "fct_returns",
+    "fct_sessions",
 )
 NOT_EXPOSED = (
     ("staging", "stg_shop__orders"),

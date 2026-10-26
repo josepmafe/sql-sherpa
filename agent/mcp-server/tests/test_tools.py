@@ -30,7 +30,7 @@ HOSTILE_SQL = f"select email from marts.dim_customers where email = '{PII_LITERA
 
 
 def _expected_marts() -> tuple[str, ...]:
-    """The data platform's own list of the nine marts, loaded from its test module."""
+    """The data platform's own list of the marts, loaded from its test module."""
     spec = importlib.util.spec_from_file_location("data_platform_agent_access", MARTS_SPEC)
     assert spec is not None
     assert spec.loader is not None
@@ -53,16 +53,16 @@ class TestWarehouseTools:
         # The built warehouse holds a year of history (make backfill), shorter than two years.
         assert context.does_not_cover == (*DOES_NOT_COVER, SHORT_HISTORY)
         assert context.notes == NOTES
-        assert set(context.domains) == {"customers", "products", "sales", "shared"}
+        assert set(context.domains) == {"customers", "marketing_web", "products", "sales", "shared"}
         assert context.covers[0] == (
             "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history "
             "(dim_customers)"
         )
-        assert context.covers[2].endswith(
+        assert context.covers[3].endswith(
             "(dim_promotions, fct_order_discounts, fct_order_items, fct_orders, fct_refunds, fct_returns)"
         )
 
-    def test_list_tables_are_the_nine_marts(self, tools: WarehouseTools) -> None:
+    def test_list_tables_are_the_marts(self, tools: WarehouseTools) -> None:
         names = [table.name for table in tools.list_tables().tables]
 
         assert sorted(names) == sorted(_expected_marts())

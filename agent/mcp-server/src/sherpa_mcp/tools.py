@@ -41,18 +41,20 @@ CLOCK_WARNING: Final = (
 # What each domain's marts are about, as the subject of a question; a domain missing here is named as it is.
 DOMAIN_SUBJECTS: Final = {
     "customers": "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history",
+    "marketing_web": (
+        "web sessions: traffic source and channel, campaign, landing page, device and the browse-to-purchase funnel"
+    ),
     "products": "products and their variants: brand, three-level category, current list and cost prices",
     "sales": "orders, order lines, discounts and promotions, returns and refunds: revenue, cost, margin, delivery",
     "shared": "a calendar of days with weeks, months, quarters, weekends and Black Friday week",
 }
-# Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The sessions entry changes when
-# data-platform-3 adds fct_sessions, the campaign and lead entries when data-platform-4 adds their marts.
+# Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The campaign and lead entries
+# change when data-platform-4 adds their marts.
 DOES_NOT_COVER: Final = (
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "web sessions and on-site behaviour (orders carry only session_id and marketing_channel)",
-    "campaign names, budgets and ad spend (customers and promotions carry only a campaign id)",
+    "campaign names, budgets and ad spend (customers, promotions and sessions carry only a campaign id)",
     "leads that never became customers (customers carry lead_id and lead_source)",
 )
 TWO_YEARS_DAYS: Final = 730
@@ -68,6 +70,7 @@ NOTES: Final = (
     "dates and timestamps are UTC",
     "cancelled orders are kept and flagged: metrics filter on not is_cancelled",
     "test accounts and their orders are left out of every mart",
+    "sessions are web only: app orders have no session, so conversion_rate and session counts leave app orders out",
 )
 MAX_DISTINCT_VALUES: Final = 30  # a text column with at most this many stored values lists them in describe_table
 NO_MATCH_HINT: Final = (

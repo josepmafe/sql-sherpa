@@ -16,13 +16,14 @@ const MARTS = [
   "fct_orders",
   "fct_refunds",
   "fct_returns",
+  "fct_sessions",
 ];
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/explorer");
 });
 
-test("tree lists the nine marts and the Inspector shows the grain", async ({ page }) => {
+test("tree lists every mart and the Inspector shows the grain", async ({ page }) => {
   for (const mart of MARTS) {
     await expect(page.getByRole("button", { name: mart, exact: true })).toBeVisible();
   }

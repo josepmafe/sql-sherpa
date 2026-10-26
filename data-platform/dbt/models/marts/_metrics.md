@@ -58,3 +58,9 @@ order_total, and on the lines gross_amount, allocated_discount and net_amount. T
 are 0, because nothing was sold: net_revenue, cogs, returned_cogs and gross_margin, and the line cogs.
 Metrics over non-cancelled orders filter on `not is_cancelled`.
 {% enddocs %}
+
+{% docs metric_conversion_rate %}
+Conversion rate: sessions with `purchased` / all sessions, as a fraction. Sessions are web only: app
+orders (35% of orders, R12) have no session, so they are in neither the numerator nor the
+denominator.
+{% enddocs %}

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
 
-EXPECTED_MART_COUNT = 9
+EXPECTED_MART_COUNT = 10
 
 
 class TestCatalogApi:
@@ -64,7 +64,7 @@ class TestCatalogApi:
         assert response.json()["code"] == "table_not_found"
 
     @pytest.mark.warehouse
-    def test_real_catalog_has_nine_marts(self, warehouse_client: TestClient) -> None:
+    def test_real_catalog_has_every_mart(self, warehouse_client: TestClient) -> None:
         body = warehouse_client.get("/api/catalog").json()
 
         tables = [table for domain in body["domains"] for table in domain["tables"]]
