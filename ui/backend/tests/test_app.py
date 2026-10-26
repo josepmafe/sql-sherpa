@@ -83,6 +83,17 @@ class TestApp:
         assert response.status_code == 404
         assert response.json()["code"] == "not_found"
 
+    def test_serves_the_openapi_schema_but_no_docs_pages(self, settings: UiSettings) -> None:
+        # Swagger UI and ReDoc load their scripts from a CDN, and the UI works offline (UI spec §1, criterion 1).
+        with TestClient(create_app(settings, static_dir=None), base_url="http://localhost") as client:
+            docs = client.get("/docs")
+            redoc = client.get("/redoc")
+            schema = client.get("/openapi.json")
+
+        assert (docs.status_code, redoc.status_code) == (404, 404)
+        assert schema.status_code == 200
+        assert "/api/queries" in schema.json()["paths"]
+
     def test_wrong_method_is_json_405(self, settings: UiSettings) -> None:
         with TestClient(create_app(settings, static_dir=None), base_url="http://localhost") as client:
             response = client.get("/api/queries/format")

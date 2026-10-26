@@ -31,7 +31,9 @@ CONTAINER_STATIC_DIR: Final = "/app/static"
 def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
     """The API under `/api`; with a `static_dir` that exists, also the built frontend, where every other GET answers
     `index.html` so the browser's router can take over."""
-    app = FastAPI(title="SQL Sherpa UI")
+    # No Swagger UI or ReDoc pages: they load their scripts from a CDN, and the UI works offline (UI spec §1,
+    # criterion 1). The schema itself stays at /openapi.json.
+    app = FastAPI(title="SQL Sherpa UI", docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(ALLOWED_HOSTS))
     install_error_handlers(app)
 

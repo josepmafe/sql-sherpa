@@ -37,7 +37,7 @@ Example: `GET /api/catalog/domains`, the domain names. Five steps, in this order
    make ui-client
    ```
 
-   It exports the OpenAPI schema (`uv run python -m sherpa_ui.openapi_export`) and runs `openapi-typescript`, rewriting `ui/frontend/src/api/schema.d.ts`. Commit the result. `make lint` regenerates the file into a temporary path and fails with a `diff` if the committed one is stale, so a forgotten step cannot slip through.
+   It exports the OpenAPI schema (`uv run python -m sherpa_ui.openapi_export`) and runs `openapi-typescript`, rewriting `ui/frontend/src/api/schema.d.ts`. Commit the result. `make lint` regenerates the file into a temporary path and fails with a `diff` if the committed one is stale, so a forgotten step cannot slip through. A running API also serves the schema at `/openapi.json`; FastAPI's `/docs` and `/redoc` pages are switched off, because they load Swagger UI and ReDoc from a CDN and the app works offline.
 4. **The hook** in `ui/frontend/src/api/queries.ts`, next to `useCatalog`: a `useQuery` that calls `api.GET("/api/catalog/domains")`. The types come from `schema.d.ts`, so a wrong path or response shape is a `tsc` error. Mutations (like running a query) call `api.POST` from the component or a hook of the screen.
 5. **Use it** in a component, and test the component with Vitest and mocked API responses (`ui/frontend/tests/`).
 
