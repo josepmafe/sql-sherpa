@@ -96,6 +96,25 @@ describe("CatalogTree", () => {
     expect(screen.getByText("bigint")).toBeInTheDocument();
   });
 
+  it("the chevron opens and closes a table's columns without selecting it; the name does both", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderWithMantine(<CatalogTree onSelect={onSelect} onPreview={() => {}} onInsertSelect={() => {}} />);
+    const name = screen.getByRole("button", { name: "fct_orders" });
+
+    await user.click(screen.getByRole("button", { name: "Show the columns of fct_orders" }));
+    expect(name).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("order_id")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Hide the columns of fct_orders" }));
+    expect(screen.queryByText("order_id")).not.toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await user.click(name);
+
+    expect(onSelect).toHaveBeenCalledWith("fct_orders");
+    expect(name).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("search keeps parents of matching columns", async () => {
     const user = userEvent.setup();
     renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);

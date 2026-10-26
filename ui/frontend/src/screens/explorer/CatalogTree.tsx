@@ -1,5 +1,5 @@
 import { ActionIcon, Alert, Box, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
-import { IconDots } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight, IconDots } from "@tabler/icons-react";
 import { useState } from "react";
 
 import { useCatalog } from "../../api/queries";
@@ -69,6 +69,7 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect }: T
                 onSelect(table.name);
                 toggle(table.name);
               }}
+              onToggle={needle === "" ? () => toggle(table.name) : undefined}
               onPreview={onPreview}
               onInsertSelect={onInsertSelect}
             />
@@ -91,32 +92,58 @@ type TableRowProps = EditorActions & {
   schema: string;
   selected: boolean;
   open: boolean;
+  // Selects the table (the Inspector) and opens or closes its columns.
   onClick: () => void;
+  // Only opens or closes the columns; none while a search keeps every table open.
+  onToggle?: () => void;
 };
 
-function TableRow({ table, schema, selected, open, onClick, onPreview, onInsertSelect }: TableRowProps) {
+const NAME_STYLE = {
+  background: "none",
+  border: 0,
+  padding: 0,
+  cursor: "pointer",
+  textAlign: "left",
+  color: "inherit",
+  flex: 1,
+  minWidth: 0,
+} as const;
+
+function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect }: TableRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const qualified = `${schema}.${table.name}`;
   const tip = `${table.description} Grain: ${table.grain}. PK: ${table.primary_key.join(", ")}`;
 
   return (
-    <Box ml="xs">
+    <Box>
       <Group
-        gap={4}
+        gap={2}
         wrap="nowrap"
-        justify="space-between"
         onContextMenu={(event) => {
           event.preventDefault();
           setMenuOpen(true);
         }}
       >
+        {/* A mouse shortcut, out of the tab order: the name button does the same from the keyboard. */}
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          size="xs"
+          tabIndex={-1}
+          aria-label={`${open ? "Hide" : "Show"} the columns of ${table.name}`}
+          disabled={!onToggle}
+          onClick={onToggle}
+        >
+          {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+        </ActionIcon>
         <Tooltip label={tip} multiline w={320} openDelay={200}>
           <Text
             component="button"
             type="button"
             size="sm"
             fw={selected ? 700 : 500}
-            style={{ background: "none", border: 0, padding: 0, cursor: "pointer", textAlign: "left", color: "inherit" }}
+            aria-expanded={open}
+            style={NAME_STYLE}
             onClick={onClick}
           >
             {table.name}
@@ -146,7 +173,7 @@ function TableRow({ table, schema, selected, open, onClick, onPreview, onInsertS
 function ColumnRow({ column }: { column: ColumnSummary }) {
   return (
     <Tooltip label={column.description} multiline w={320} openDelay={200}>
-      <Group gap={6} ml="md" wrap="nowrap">
+      <Group gap={6} ml="xl" wrap="nowrap">
         <Text size="xs">{column.name}</Text>
         <Text size="xs" c="dimmed">
           {column.data_type}

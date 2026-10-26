@@ -25,8 +25,10 @@ test("tree lists the nine marts and the Inspector shows the grain", async ({ pag
 
   await page.getByRole("button", { name: "fct_orders", exact: true }).click();
 
-  await expect(page.getByText("Grain:")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "fct_orders" })).toBeVisible();
+  // At 1280 px the Inspector has its own column (the hover tooltip also says "Grain:").
+  const inspector = page.getByRole("complementary", { name: "Table details" });
+  await expect(inspector.getByText("Grain:")).toBeVisible();
+  await expect(inspector.getByRole("heading", { name: "fct_orders" })).toBeVisible();
 });
 
 test("a count matches the admin psql count", async ({ page }) => {

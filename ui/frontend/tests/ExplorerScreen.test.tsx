@@ -35,7 +35,8 @@ vi.mock("../src/components/resultView", async (importOriginal) => {
   return { ...actual, cellText: vi.fn(actual.cellText) };
 });
 
-const CATALOG = { database: "sherpa", schema_name: "marts", domains: [] };
+const ORDERS = { name: "fct_orders", domain: "sales", description: "", grain: "", primary_key: [], columns: [] };
+const CATALOG = { database: "sherpa", schema_name: "marts", domains: [{ name: "sales", tables: [ORDERS] }] };
 const RESPONSE = {
   query_id: "q",
   columns: ["n"],
@@ -54,6 +55,19 @@ function renderScreen() {
     </MantineProvider>,
   );
 }
+
+// A screen at least 1280 px wide; the setup's stub matches no query.
+const wideScreen = (query: string) =>
+  ({
+    matches: query === "(min-width: 80em)",
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }) as MediaQueryList;
 
 // Hidden worksheets stay mounted under a `display: none` box.
 const isShown = (element: HTMLElement) => element.closest('[style*="display: none"]') === null;
@@ -149,6 +163,32 @@ describe("ExplorerScreen", () => {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ExplorerState;
     expect(saved.worksheets.map((w) => w.id)).toEqual([mine.worksheets[0]!.id, "theirs"]);
     warn.mockRestore();
+  });
+
+  it("below 1280 px the Inspector opens as a drawer when a table is clicked", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    expect(screen.queryByText("Select a table to inspect it.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+
+    const drawer = screen.getByRole("dialog", { name: "Table details" });
+    expect(drawer).toHaveTextContent("Loading fct_orders…");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("from 1280 px the Inspector has its own column", async () => {
+    const user = userEvent.setup();
+    const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
+    renderScreen();
+    expect(screen.getByText("Select a table to inspect it.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Table details" })).toHaveTextContent("Loading fct_orders…");
+    matchMedia.mockRestore();
   });
 
   it("typing in one worksheet re-renders neither the other worksheets nor any result grid", async () => {

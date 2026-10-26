@@ -17,7 +17,7 @@ export function WorksheetTabs({ worksheets, activeId, onSelect, onAdd, onClose, 
   const [renaming, setRenaming] = useState<string>();
 
   return (
-    <Group gap="xs" wrap="nowrap" role="tablist" aria-label="Worksheets">
+    <Group gap="xs" role="tablist" aria-label="Worksheets">
       {worksheets.map((worksheet) => {
         const active = worksheet.id === activeId;
         return (

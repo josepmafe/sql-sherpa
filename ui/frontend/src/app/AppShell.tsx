@@ -4,7 +4,8 @@ import { NavLink as RouterLink, Outlet } from "react-router-dom";
 import { HealthBanner } from "./HealthBanner";
 import { NAV_ITEMS } from "./navItems";
 
-const NAV_WIDTH = 200;
+// A narrow rail: the screens' labels are single words, and the Explorer needs the width.
+const NAV_WIDTH = 140;
 const HEADER_HEIGHT = 56;
 
 export function AppShell() {
