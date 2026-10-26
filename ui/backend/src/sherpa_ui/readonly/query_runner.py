@@ -23,6 +23,7 @@ from sqlglot.errors import SqlglotError
 from sherpa_ui.readonly.bounded_result import BoundedResult
 from sherpa_ui.readonly.sort_filter import (
     DuplicateColumnsError,
+    PiiColumnError,
     UnknownColumnError,
     build_wrapped_query,
     strip_terminators,
@@ -156,9 +157,9 @@ class QueryRunner:
         `sort` or `filters` is given (server mode).
 
         Raises `UiQueryError` (`busy`, without connecting, while `MAX_CONCURRENT_QUERIES` runs hold a connection); in
-        server mode also `DuplicateColumnsError` (the caller falls back to client mode) and `UnknownColumnError` for a
-        sort or filter column that is not in the result. Whatever else went wrong, a run that `cancel` reached raises
-        `UiQueryError` with code `cancelled`.
+        server mode also `DuplicateColumnsError` (the caller falls back to client mode), `UnknownColumnError` for a
+        sort or filter column that is not in the result and `PiiColumnError` for one that is masked. Whatever else went
+        wrong, a run that `cancel` reached raises `UiQueryError` with code `cancelled`.
         """
         started = time.monotonic()
         mode: QueryMode = "server" if sort or filters else "client"
@@ -175,7 +176,7 @@ class QueryRunner:
             conn = self._connect()
             self._attach(query_id, conn)
             fetched = self._execute(conn, strip_terminators(sql_text), sort, filters, masker)
-        except (UiQueryError, DuplicateColumnsError, UnknownColumnError) as error:
+        except (UiQueryError, DuplicateColumnsError, UnknownColumnError, PiiColumnError) as error:
             if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
                 raise
 
@@ -315,7 +316,7 @@ class QueryRunner:
                     # No parameters, so psycopg leaves every `%` of the user's SQL alone.
                     return self._fetch(conn, statement, None, len(DECLARE_PREFIX), len(statement), masker)
 
-                probe = build_wrapped_query(statement, ())
+                probe = build_wrapped_query(statement, (), masker)
                 with self._declared(
                     conn,
                     probe.query + sql.SQL(PROBE_SUFFIX),
@@ -325,7 +326,7 @@ class QueryRunner:
                 ) as cursor:
                     columns = [column.name for column in cursor.description or ()]
 
-                wrapped = build_wrapped_query(statement, columns, sort, filters)
+                wrapped = build_wrapped_query(statement, columns, masker, sort, filters)
                 return self._fetch(
                     conn,
                     wrapped.query,

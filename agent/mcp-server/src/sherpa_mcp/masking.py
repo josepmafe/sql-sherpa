@@ -17,8 +17,12 @@ class PiiMasker:
         self._pii_columns = frozenset(name.lower() for name in pii_columns)
 
     def mask(self, columns: Sequence[str], rows: Sequence[Sequence[object]]) -> list[list[object]]:
-        masked = [column.lower() in self._pii_columns for column in columns]
+        masked = [self.masks(column) for column in columns]
         return [
             [MASK if hide and value is not None else value for hide, value in zip(masked, row, strict=True)]
             for row in rows
         ]
+
+    def masks(self, column: str) -> bool:
+        """Whether a result column of this name is masked."""
+        return column.lower() in self._pii_columns

@@ -34,6 +34,7 @@ QUERY_ERROR_STATUS: Final[dict[str, int]] = {
 }
 HTTP_STATUS_CODES: Final[dict[int, str]] = {404: "not_found", 405: "method_not_allowed"}
 UNKNOWN_COLUMN_CODE: Final = "unknown_column"  # a sort or filter column that is not in the result
+PII_COLUMN_CODE: Final = "pii_column"  # a sort or filter column whose values the masking hides
 INVALID_REQUEST_CODE: Final = "invalid_request"
 DEFAULT_HTTP_CODE: Final = "http_error"
 INTERNAL_ERROR_CODE: Final = "internal_error"

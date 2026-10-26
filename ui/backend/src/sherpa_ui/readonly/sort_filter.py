@@ -16,6 +16,7 @@ from sqlglot.tokens import TokenType
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from sherpa_mcp.masking import PiiMasker
     from sqlglot.tokens import Token
 
 SortDirection = Literal["asc", "desc"]
@@ -29,12 +30,21 @@ DIRECTION_SQL: Final[dict[str, str]] = {"asc": "asc", "desc": "desc"}
 NULL_OPERATORS: Final[frozenset[str]] = frozenset({"is_null", "is_not_null"})
 # `contains` is a substring match, so the wildcards of LIKE (and its default escape character) in the value are escaped.
 LIKE_ESCAPES: Final = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
+PII_COLUMN_MESSAGE: Final = (
+    "column {column!r} holds personal data, shown as ***; the server does not sort or filter by it, since the order "
+    "or the matching rows would reveal the hidden values"
+)
 _TRAILING_TERMINATORS: Final = re.compile(r"[\s;]+\Z")
 _POSTGRES: Final = Dialect.get_or_raise(DIALECT)
 
 
 class UnknownColumnError(ValueError):
     """A sort or filter column that is not a column of the result."""
+
+
+class PiiColumnError(ValueError):
+    """A sort or filter column whose values the masking hides: sorting or filtering by it on the server would reveal
+    them (a `contains` filter is an oracle)."""
 
 
 class DuplicateColumnsError(Exception):
@@ -79,14 +89,16 @@ class WrappedQuery(BaseModel):
 def build_wrapped_query(
     sql_text: str,
     result_columns: Sequence[str],
+    masker: PiiMasker,
     sort: Sequence[SortSpec] = (),
     filters: Sequence[FilterSpec] = (),
 ) -> WrappedQuery:
     """`select * from (\\n<sql>\\n) as q where … order by …` over the user's SQL.
 
-    Columns are only ever the result's own names (`UnknownColumnError` otherwise), quoted as identifiers; values are
-    bound parameters. Run it with its parameters even when there are none: psycopg then reads `%%` (which every `%`
-    of the user's SQL is doubled to) as `%`, so Postgres gets the user's SQL unchanged and its error positions hold.
+    Columns are only ever the result's own names (`UnknownColumnError` otherwise) that `masker` leaves alone
+    (`PiiColumnError` otherwise), quoted as identifiers; values are bound parameters. Run it with its parameters even
+    when there are none: psycopg then reads `%%` (which every `%` of the user's SQL is doubled to) as `%`, so Postgres
+    gets the user's SQL unchanged and its error positions hold.
     """
     duplicates = sorted(name for name, count in Counter(result_columns).items() if count > 1)
     if duplicates:
@@ -97,6 +109,10 @@ def build_wrapped_query(
     unknown = [column for column in named if column not in known]
     if unknown:
         raise UnknownColumnError(f"column {unknown[0]!r} is not a column of the result")
+
+    masked = [column for column in named if masker.masks(column)]
+    if masked:
+        raise PiiColumnError(PII_COLUMN_MESSAGE.format(column=masked[0]))
 
     params: list[object] = []
     parts: list[sql.Composable] = [

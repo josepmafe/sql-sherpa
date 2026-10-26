@@ -15,7 +15,13 @@ from pydantic import SecretStr
 from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.health.health_service import HealthService
 from sherpa_ui.readonly.query_runner import MAX_CONCURRENT_QUERIES, QueryRunner, UiQueryError, user_position
-from sherpa_ui.readonly.sort_filter import DuplicateColumnsError, FilterSpec, SortSpec, UnknownColumnError
+from sherpa_ui.readonly.sort_filter import (
+    DuplicateColumnsError,
+    FilterSpec,
+    PiiColumnError,
+    SortSpec,
+    UnknownColumnError,
+)
 from sherpa_ui.settings import UiSettings
 
 if TYPE_CHECKING:
@@ -824,11 +830,32 @@ class TestQueryRunner:
         sql_text = "select customer_id, email, first_name, last_name, country_code from marts.dim_customers"
 
         client = runner.run("q1", sql_text + " order by customer_id limit 3")
-        server = runner.run("q2", sql_text, filters=[FilterSpec(column="email", operator="contains", value="@")])
+        server = runner.run("q2", sql_text, filters=[FilterSpec(column="customer_id", operator="<=", value="3")])
 
         for outcome in (client, server):
             assert {row[1:4] for row in outcome.rows} == {("***", "***", "***")}
             assert all(isinstance(row[0], int) and row[4] != "***" for row in outcome.rows)
+
+    @pytest.mark.parametrize(
+        ("sort", "filters"),
+        [
+            ((SortSpec(column="first_name", direction="asc"),), ()),
+            ((), (FilterSpec(column="email", operator="contains", value="@hotmail"),)),
+        ],
+        ids=["sort", "filter"],
+    )
+    def test_server_mode_refuses_masked_columns(
+        self,
+        runner: QueryRunner,
+        sort: tuple[SortSpec, ...],
+        filters: tuple[FilterSpec, ...],
+        leaked_ui_backends: Callable[[], int],
+    ) -> None:
+        with pytest.raises(PiiColumnError, match="holds personal data, shown as \\*\\*\\*"):
+            runner.run("q1", "select customer_id, email, first_name from marts.dim_customers", sort, filters)
+
+        assert runner.running_query_ids() == frozenset()
+        assert leaked_ui_backends() == 0
 
     def test_zero_rows_and_zero_columns(self, runner: QueryRunner) -> None:
         no_rows = runner.run("q1", "select order_id, order_total from marts.fct_orders where false")

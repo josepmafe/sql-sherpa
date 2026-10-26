@@ -4,9 +4,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
+from sherpa_mcp.masking import PiiMasker
 from sherpa_ui.readonly.sort_filter import (
     DuplicateColumnsError,
     FilterSpec,
+    PiiColumnError,
     SortSpec,
     UnknownColumnError,
     build_wrapped_query,
@@ -16,9 +18,14 @@ from sherpa_ui.readonly.sort_filter import (
 if TYPE_CHECKING:
     from sherpa_ui.readonly.sort_filter import WrappedQuery
 
+NO_PII = PiiMasker(frozenset())
+PII = PiiMasker(frozenset({"email", "first_name"}))
+
 
 def test_wrapper_strips_semicolon_and_survives_trailing_comment() -> None:
-    wrapped = build_wrapped_query("select 1 as a -- note\n;\n  ", ["a"], sort=[SortSpec(column="a", direction="asc")])
+    wrapped = build_wrapped_query(
+        "select 1 as a -- note\n;\n  ", ["a"], NO_PII, sort=[SortSpec(column="a", direction="asc")]
+    )
 
     # The newline before `)` ends the comment, so the closing parenthesis and the order by stay outside it.
     assert _text(wrapped) == 'select * from (\nselect 1 as a -- note\n) as q order by q."a" asc'
@@ -26,33 +33,83 @@ def test_wrapper_strips_semicolon_and_survives_trailing_comment() -> None:
 
 
 def test_semicolon_before_a_trailing_comment_is_blanked() -> None:
-    wrapped = build_wrapped_query("select 1 as a; -- note", ["a"])
+    wrapped = build_wrapped_query("select 1 as a; -- note", ["a"], NO_PII)
 
     assert _text(wrapped) == "select * from (\nselect 1 as a  -- note\n) as q"
 
 
 def test_unknown_column_rejected() -> None:
     with pytest.raises(UnknownColumnError, match="column 'b' is not a column of the result"):
-        build_wrapped_query("select 1 as a", ["a"], sort=[SortSpec(column="b", direction="asc")])
+        build_wrapped_query("select 1 as a", ["a"], NO_PII, sort=[SortSpec(column="b", direction="asc")])
 
     with pytest.raises(UnknownColumnError, match="column 'b' is not a column of the result"):
-        build_wrapped_query("select 1 as a", ["a"], filters=[FilterSpec(column="b", operator="is_null")])
+        build_wrapped_query("select 1 as a", ["a"], NO_PII, filters=[FilterSpec(column="b", operator="is_null")])
 
 
 def test_column_names_match_exactly() -> None:
     # Postgres keeps a quoted "A" apart from a; the result's names are what it reported.
     with pytest.raises(UnknownColumnError, match="column 'a' is not a column of the result"):
-        build_wrapped_query('select 1 as "A"', ["A"], sort=[SortSpec(column="a", direction="asc")])
+        build_wrapped_query('select 1 as "A"', ["A"], NO_PII, sort=[SortSpec(column="a", direction="asc")])
 
 
 def test_zero_result_columns_accept_no_sort() -> None:
     with pytest.raises(UnknownColumnError, match="column 'a' is not a column of the result"):
-        build_wrapped_query("select from marts.fct_orders", [], sort=[SortSpec(column="a", direction="asc")])
+        build_wrapped_query("select from marts.fct_orders", [], NO_PII, sort=[SortSpec(column="a", direction="asc")])
+
+
+@pytest.mark.parametrize(
+    ("result_columns", "sort", "filters"),
+    [
+        (["customer_id", "email"], [SortSpec(column="email", direction="asc")], []),
+        (["customer_id", "email"], [], [FilterSpec(column="email", operator="contains", value="@hotmail")]),
+        (["customer_id", "EMAIL"], [], [FilterSpec(column="EMAIL", operator="is_null")]),  # masked as well
+        (
+            ["customer_id", "first_name"],
+            [SortSpec(column="customer_id", direction="asc")],
+            [FilterSpec(column="first_name", operator="=", value="Ann")],
+        ),
+    ],
+    ids=["sort", "contains", "quoted_upper_case", "filter_next_to_a_sort"],
+)
+def test_masked_columns_are_neither_sorted_nor_filtered(
+    result_columns: list[str], sort: list[SortSpec], filters: list[FilterSpec]
+) -> None:
+    # The hidden values would still decide the order and which rows match: a `contains` filter is an oracle.
+    column = [*sort, *filters][-1].column
+
+    with pytest.raises(PiiColumnError) as error:
+        build_wrapped_query("select 1", result_columns, PII, sort=sort, filters=filters)
+
+    assert str(error.value) == (
+        f"column {column!r} holds personal data, shown as ***; the server does not sort or filter by it, since the "
+        "order or the matching rows would reveal the hidden values"
+    )
+
+
+def test_columns_the_masking_leaves_alone_can_be_sorted_and_filtered() -> None:
+    # By result-column name, exactly like the masking: an alias is not masked, so nothing is hidden to reveal.
+    wrapped = build_wrapped_query(
+        "select email as e, customer_id from marts.dim_customers",
+        ["e", "customer_id"],
+        PII,
+        sort=[SortSpec(column="e", direction="asc")],
+        filters=[FilterSpec(column="customer_id", operator=">", value="1")],
+    )
+
+    assert _text(wrapped).endswith(' where q."customer_id" > %s order by q."e" asc')
+
+
+def test_an_unknown_column_is_reported_before_a_pii_one() -> None:
+    with pytest.raises(UnknownColumnError, match="column 'email' is not a column of the result"):
+        build_wrapped_query("select 1 as a", ["a"], PII, sort=[SortSpec(column="email", direction="asc")])
 
 
 def test_contains_is_a_bound_parameter() -> None:
     wrapped = build_wrapped_query(
-        "select 'x' as name", ["name"], filters=[FilterSpec(column="name", operator="contains", value="o'brien; drop")]
+        "select 'x' as name",
+        ["name"],
+        NO_PII,
+        filters=[FilterSpec(column="name", operator="contains", value="o'brien; drop")],
     )
 
     # `%%` is psycopg's escape for a literal `%` once the query has parameters.
@@ -64,7 +121,10 @@ def test_contains_is_a_bound_parameter() -> None:
 
 def test_contains_matches_wildcards_literally() -> None:
     wrapped = build_wrapped_query(
-        "select 'x' as name", ["name"], filters=[FilterSpec(column="name", operator="contains", value="50%_off\\x")]
+        "select 'x' as name",
+        ["name"],
+        NO_PII,
+        filters=[FilterSpec(column="name", operator="contains", value="50%_off\\x")],
     )
 
     assert wrapped.params == ("50\\%\\_off\\\\x",)
@@ -77,6 +137,7 @@ def test_comparisons_bind_their_value(operator: str, rendered: str) -> None:
     wrapped = build_wrapped_query(
         "select 1 as a",
         ["a"],
+        NO_PII,
         filters=[FilterSpec(column="a", operator=operator, value="7")],  # type: ignore[arg-type]
     )
 
@@ -88,6 +149,7 @@ def test_filters_and_sorts_combine_in_order() -> None:
     wrapped = build_wrapped_query(
         "select 1 as a, 2 as b",
         ["a", "b"],
+        NO_PII,
         sort=[SortSpec(column="b", direction="desc"), SortSpec(column="a", direction="asc")],
         filters=[
             FilterSpec(column="a", operator=">=", value="1"),
@@ -106,14 +168,14 @@ def test_filters_and_sorts_combine_in_order() -> None:
 
 
 def test_quotes_in_column_names_are_escaped() -> None:
-    wrapped = build_wrapped_query('select 1 as "a""b"', ['a"b'], sort=[SortSpec(column='a"b', direction="asc")])
+    wrapped = build_wrapped_query('select 1 as "a""b"', ['a"b'], NO_PII, sort=[SortSpec(column='a"b', direction="asc")])
 
     assert _text(wrapped).endswith(' order by q."a""b" asc')
 
 
 def test_percent_signs_in_user_sql_are_doubled() -> None:
     # The wrapped query always runs with its parameters, so psycopg reads every `%` in it as a placeholder.
-    wrapped = build_wrapped_query("select 5 % 3 as m, '%s' as t", ["m", "t"])
+    wrapped = build_wrapped_query("select 5 % 3 as m, '%s' as t", ["m", "t"], NO_PII)
 
     assert _text(wrapped) == "select * from (\nselect 5 %% 3 as m, '%%s' as t\n) as q"
     assert wrapped.prefix_length == len("select * from (\n")
@@ -124,6 +186,7 @@ def test_duplicate_columns_raise() -> None:
         build_wrapped_query(
             "select 1 as a, 2 as a, 3 as b, 4 as b, 5 as c",
             ["a", "a", "b", "b", "c"],
+            NO_PII,
             sort=[SortSpec(column="c", direction="asc")],
         )
 
@@ -132,7 +195,7 @@ def test_prefix_length_matches_text_before_user_sql() -> None:
     sql_text = "select order_id from marts.fct_orders"
 
     wrapped = build_wrapped_query(
-        sql_text, ["order_id"], filters=[FilterSpec(column="order_id", operator=">", value="1")]
+        sql_text, ["order_id"], NO_PII, filters=[FilterSpec(column="order_id", operator=">", value="1")]
     )
 
     text, prefix = _text(wrapped), wrapped.prefix_length

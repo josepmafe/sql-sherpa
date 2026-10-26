@@ -173,7 +173,7 @@ Rules (spec §4.2, all required):
 **Files:** `masking.py`, `examples.py`, `examples.yaml`, `tests/test_masking.py`, `tests/test_examples.py`.
 
 **Interfaces — Produces:**
-- `MASK: Final = "***"`. `PiiMasker(pii_columns: frozenset[str])`: `mask(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> list[list[object]]`. It replaces non-null values of columns whose name (case-insensitive) is a PII column; null stays null. Name-based by design (spec §4.2).
+- `MASK: Final = "***"`. `PiiMasker(pii_columns: frozenset[str])`: `mask(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> list[list[object]]`. It replaces non-null values of columns whose name (case-insensitive) is a PII column; null stays null. `masks(column: str) -> bool` says whether a column of that name is masked (the UI's server-side sort and filter refuse those). Name-based by design (spec §4.2).
 - `Example` (frozen): `question`, `sql`, `notes`.
 - `ExampleIndex(examples: Sequence[Example])`: `top(question: str, k: int) -> list[Example]`. Ranking is by token-set Jaccard (tokens = lower-cased `[a-z0-9]+`, stop words removed, with a fixed tuple of ~30 English stop words in the module); ties break by file order. `k` must be 1..10.
 - `ExampleIndex.from_yaml(path) -> ExampleIndex`.
