@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +42,7 @@ DECLARE_OFFSET = len('DECLARE "sherpa_ui" CURSOR FOR ')
 INT4_OID = postgres_types["int4"].oid
 CUT = " …[cut at 10000 chars]"
 ROLE_CONNECTION_LIMIT = 10  # data-platform/postgres/roles.sql
+RUNNER_LOGGER = "sherpa_ui.readonly.query_runner"
 
 
 @pytest.fixture
@@ -152,6 +156,56 @@ class TestQueryRunnerOffline:
             "the warehouse is unreachable (connection failed: connection refused); is `make up` running?"
         )
         assert offline_runner.running_query_ids() == frozenset()
+
+    def test_a_refused_query_is_logged_by_code_without_its_text(
+        self, offline_runner: QueryRunner, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sql_text = "select 'jurre931@hotmail.com' as a from pg_catalog.pg_roles"
+        digest = hashlib.sha256(sql_text.encode()).hexdigest()[:12]
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
+            offline_runner.run("q1", sql_text)
+
+        [record] = caplog.records
+        assert record.levelno == logging.INFO
+        assert re.fullmatch(
+            rf"query q1 failed \(guard_rejected\) after \d+ ms, sql {len(sql_text)} chars sha256 {digest}",
+            record.getMessage(),
+        )
+
+    def test_an_unreachable_warehouse_is_a_warning_with_its_reason(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def refused(*args: object, **kwargs: object) -> None:
+            raise psycopg.OperationalError("connection failed: connection refused")
+
+        monkeypatch.setattr(psycopg, "connect", refused)
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
+            offline_runner.run("q1", "select 1 as a")
+
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert re.fullmatch(
+            r"query q1 failed \(database_unavailable\) after \d+ ms, sql 13 chars sha256 [0-9a-f]{12}: "
+            r"the warehouse is unreachable \(connection failed: connection refused\); is `make up` running\?",
+            record.getMessage(),
+        )
+
+    def test_a_successful_run_is_logged_with_its_digest(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        connection = _fake_connection(rows=[(1,)])
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER):
+            offline_runner.run("q1", "select 1 as a")
+
+        [record] = caplog.records
+        assert re.fullmatch(
+            r"query q1 returned 1 rows \(truncated: False\) in \d+ ms, client mode, sql 13 chars sha256 [0-9a-f]{12}",
+            record.getMessage(),
+        )
 
     def test_cancel_of_an_unknown_id_is_a_no_op(self, offline_runner: QueryRunner) -> None:
         offline_runner.cancel("never-ran")

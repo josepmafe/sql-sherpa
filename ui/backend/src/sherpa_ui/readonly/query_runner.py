@@ -3,6 +3,7 @@ size, masking, server-side sort and filter, cancel, and error positions in the S
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
@@ -107,8 +108,14 @@ TOO_MANY_CONNECTIONS_MESSAGE: Final = (
     "login (a second UI, a test run) holds some, so wait for its queries to finish and run again"
 )
 FORMAT_ERROR_MESSAGE: Final = "could not format the query: {reason}"
-DUPLICATE_COLUMNS_WARNING: Final = "duplicate column names: sorting and filtering apply only to the rows shown"
 FORMAT_SEPARATOR: Final = ";\n\n"
+DUPLICATE_COLUMNS_WARNING: Final = "duplicate column names: sorting and filtering apply only to the rows shown"
+# Failures logged as warnings, with their message: the warehouse or the server could not serve the query. Every
+# other failure is the query's own and is logged at INFO by its code alone.
+WARNING_CODES: Final = frozenset(
+    {"timeout", "busy", "catalog_unavailable", "database_unavailable", "too_many_connections"}
+)
+SQL_DIGEST_LENGTH: Final = 12  # hex characters of the SQL's sha256 in the log
 _TYPE_BY_OID: Final[dict[int, ColumnType]] = {postgres_types[name].oid: kind for name, kind in COLUMN_TYPES.items()}
 
 
@@ -168,55 +175,24 @@ class QueryRunner:
         server mode also `UnknownColumnError` for a sort or filter column that is not in the result and
         `PiiColumnError` for one that is masked. Whatever else went wrong, a run that `cancel` reached raises
         `UiQueryError` with code `cancelled`.
+
+        Every run is logged by its id, outcome and duration; the SQL only by its length and hash.
         """
         started = time.monotonic()
-        self._reserve(query_id)  # first, so a cancel sent right after the request is never lost
-        conn: psycopg.Connection | None = None
-        holds_slot = False
         try:
-            catalog = self._load_catalog()
-            masker = PiiMasker(catalog.pii_columns())
-            self._check_guard(catalog, sql_text)
-            self._raise_if_cancelled(query_id)  # before taking a slot and a connection the run would not use
-            self._take_slot()
-            holds_slot = True
-            conn = self._connect()
-            self._attach(query_id, conn)
-            fetched = self._execute(conn, query_id, strip_terminators(sql_text), sort, filters, masker)
+            outcome = self._run(query_id, sql_text, sort, filters, started)
         except (UiQueryError, UnknownColumnError, PiiColumnError) as error:
-            if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
-                raise
+            _log_failure(query_id, sql_text, error, started)
+            raise
 
-            raise UiQueryError("cancelled", CANCELLED_MESSAGE) from error
-        finally:
-            cancelled = self._release(query_id)
-            if conn is not None:
-                conn.close()
-
-            if holds_slot:
-                self._slots.release()
-
-        if cancelled:
-            raise UiQueryError("cancelled", CANCELLED_MESSAGE)
-
-        outcome = QueryOutcome(
-            query_id=query_id,
-            columns=fetched.columns,
-            column_types=fetched.column_types,
-            rows=fetched.rows,
-            returned_rows=len(fetched.rows),
-            truncated=fetched.truncated,
-            elapsed_ms=round((time.monotonic() - started) * 1000),
-            mode=fetched.mode,
-            warning=fetched.warning,
-        )
         logger.info(
-            "query %s returned %d rows (truncated: %s) in %d ms, %s mode",
+            "query %s returned %d rows (truncated: %s) in %d ms, %s mode, sql %s",
             query_id,
             outcome.returned_rows,
             outcome.truncated,
             outcome.elapsed_ms,
             outcome.mode,
+            _digest(sql_text),
         )
         return outcome
 
@@ -251,6 +227,50 @@ class QueryRunner:
             raise UiQueryError("sql_error", FORMAT_ERROR_MESSAGE.format(reason=_first_line(error))) from error
 
         return FORMAT_SEPARATOR.join(statement for statement in statements if statement) or sql_text
+
+    def _run(
+        self, query_id: str, sql_text: str, sort: Sequence[SortSpec], filters: Sequence[FilterSpec], started: float
+    ) -> QueryOutcome:
+        self._reserve(query_id)  # first, so a cancel sent right after the request is never lost
+        conn: psycopg.Connection | None = None
+        holds_slot = False
+        try:
+            catalog = self._load_catalog()
+            masker = PiiMasker(catalog.pii_columns())
+            self._check_guard(catalog, sql_text)
+            self._raise_if_cancelled(query_id)  # before taking a slot and a connection the run would not use
+            self._take_slot()
+            holds_slot = True
+            conn = self._connect()
+            self._attach(query_id, conn)
+            fetched = self._execute(conn, query_id, strip_terminators(sql_text), sort, filters, masker)
+        except (UiQueryError, UnknownColumnError, PiiColumnError) as error:
+            if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
+                raise
+
+            raise UiQueryError("cancelled", CANCELLED_MESSAGE) from error
+        finally:
+            cancelled = self._release(query_id)
+            if conn is not None:
+                conn.close()
+
+            if holds_slot:
+                self._slots.release()
+
+        if cancelled:
+            raise UiQueryError("cancelled", CANCELLED_MESSAGE)
+
+        return QueryOutcome(
+            query_id=query_id,
+            columns=fetched.columns,
+            column_types=fetched.column_types,
+            rows=fetched.rows,
+            returned_rows=len(fetched.rows),
+            truncated=fetched.truncated,
+            elapsed_ms=_elapsed_ms(started),
+            mode=fetched.mode,
+            warning=fetched.warning,
+        )
 
     def _reserve(self, query_id: str) -> None:
         with self._lock:
@@ -461,6 +481,32 @@ def _is_connection_failure(error: psycopg.Error) -> bool:
     return (sqlstate.startswith(CONNECTION_EXCEPTION_CLASS) and sqlstate != PROTOCOL_VIOLATION) or (
         isinstance(error, psycopg.OperationalError) and not sqlstate
     )
+
+
+def _log_failure(query_id: str, sql_text: str, error: Exception, started: float) -> None:
+    code = error.code if isinstance(error, UiQueryError) else type(error).__name__
+    if code in WARNING_CODES:  # the warehouse or the server could not serve it; the message holds no SQL
+        logger.warning(
+            "query %s failed (%s) after %d ms, sql %s: %s",
+            query_id,
+            code,
+            _elapsed_ms(started),
+            _digest(sql_text),
+            error,
+        )
+        return
+
+    # The guard's and Postgres's messages can quote the query or a stored value, so only the code is logged.
+    logger.info("query %s failed (%s) after %d ms, sql %s", query_id, code, _elapsed_ms(started), _digest(sql_text))
+
+
+def _digest(sql_text: str) -> str:
+    """The SQL as the log shows it: its length and a short hash, never the text, which can hold personal values."""
+    return f"{len(sql_text)} chars sha256 {hashlib.sha256(sql_text.encode()).hexdigest()[:SQL_DIGEST_LENGTH]}"
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
 
 
 def _first_line(error: Exception) -> str:
