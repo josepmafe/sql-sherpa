@@ -28,7 +28,8 @@ class BodySizeLimit:
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        # Only POST routes read a body (and declare 422); the others never do, so they keep their own statuses.
+        if scope["type"] != "http" or scope["method"] != "POST":
             await self._app(scope, receive, send)
             return
 

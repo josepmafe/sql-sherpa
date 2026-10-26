@@ -213,6 +213,11 @@ class TestQueriesApi:
         assert response.json() == {"code": "invalid_request", "message": "the request body is over 1,048,576 bytes"}
         runner.run.assert_not_called()
 
+    def test_a_get_with_a_large_body_keeps_its_declared_statuses(self, client: TestClient) -> None:
+        response = client.request("GET", "/api/catalog", content=_padded_body(MAX_BODY_BYTES + 1))
+
+        assert response.status_code == 200  # the route never reads a body, so no 422 it does not declare
+
     def test_a_body_at_the_cap_is_read(self, client: TestClient, runner: MagicMock) -> None:
         runner.run.return_value = outcome()
 
