@@ -128,21 +128,21 @@ unit_tests:
           - {order_item_id: 5, order_id: 5, variant_id: 2}
       - input: ref('stg_shop__orders')
         rows:
-          - {order_id: 1, placed_at: "2025-03-05 00:00:00"}
-          - {order_id: 2, placed_at: "2025-03-10 12:00:00"}
-          - {order_id: 3, placed_at: "2025-03-10 11:59:59"}
-          - {order_id: 4, placed_at: "2025-02-20 00:00:00"}
-          - {order_id: 5, placed_at: "2025-03-01 00:00:00"}
+          - {order_id: 1, placed_at: "2025-03-05 00:00:00+00"}
+          - {order_id: 2, placed_at: "2025-03-10 12:00:00+00"}
+          - {order_id: 3, placed_at: "2025-03-10 11:59:59+00"}
+          - {order_id: 4, placed_at: "2025-02-20 00:00:00+00"}
+          - {order_id: 5, placed_at: "2025-03-01 00:00:00+00"}
       # In SQL, so the test needs no snapshot relation in the database.
       - input: ref('snap_product_variants')
         format: sql
         rows: |
           select 1 as id, 10.00::numeric(12, 2) as cost_price,
-            '2025-03-01 00:00:00'::timestamp as dbt_valid_from, '2025-03-10 12:00:00'::timestamp as dbt_valid_to
+            '2025-03-01 00:00:00+00'::timestamptz as dbt_valid_from, '2025-03-10 12:00:00+00'::timestamptz as dbt_valid_to
           union all
-          select 1, 12.00::numeric(12, 2), '2025-03-10 12:00:00'::timestamp, null::timestamp
+          select 1, 12.00::numeric(12, 2), '2025-03-10 12:00:00+00'::timestamptz, null::timestamptz
           union all
-          select 2, 7.00::numeric(12, 2), '2025-03-05 00:00:00'::timestamp, null::timestamp
+          select 2, 7.00::numeric(12, 2), '2025-03-05 00:00:00+00'::timestamptz, null::timestamptz
     expect:
       rows:
         # The start of a version is inclusive and its end is exclusive.

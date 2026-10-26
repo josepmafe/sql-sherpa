@@ -25,3 +25,6 @@ snapshots:
         description: When this version became valid (UTC), taken from the row's updated_at.
       - name: dbt_valid_to
         description: When the next version replaced this one (UTC); null for the current version.
+      - name: dbt_scd_id
+        description: dbt's key for the version (hash of the id and dbt_updated_at); unique per version.
+        data_tests: [unique]

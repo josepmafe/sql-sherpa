@@ -3,16 +3,17 @@ version: 2
 models:
   - name: fct_sessions
     description: >
-      Web session fact, one row per session: one visitor's events with no gap over 30 minutes, with
-      the traffic source, landing page, device and the browse-to-purchase funnel flags. Sessions
-      are web only: app orders (R12) have no session. Sessions of test accounts are excluded.
+      Web session fact, one row per session: one device's events (anonymous_id) with no gap over 30
+      minutes, with the traffic source, device and the browse-to-purchase funnel flags. Sessions of
+      test accounts are excluded. To count or sum orders by session attributes, join fct_orders to
+      fct_sessions on session_id, not on order_id: a session holds only its first purchase's order.
       {{ doc('metric_conversion_rate') }}
     config:
       meta:
         domain: marketing_web
         grain: >-
-          one row per web session, i.e. one visitor's events with no gap over 30 minutes; app
-          orders have no session
+          one row per web session, i.e. one device's (anonymous_id) events with no gap over 30
+          minutes; app orders have no session
         primary_key: session_id
         synonyms: [visits, web sessions, traffic]
     data_tests:
@@ -27,7 +28,9 @@ models:
             expression: "purchased = (order_id is not null)"
     columns:
       - name: session_id
-        description: The session. Primary key.
+        description: >
+          The session. Primary key. Join to fct_orders on session_id (not order_id) to count or sum
+          orders by session attributes.
         data_type: text
         constraints:
           - type: not_null
@@ -75,10 +78,14 @@ models:
         description: Number of events in the session.
         data_type: integer
       - name: page_view_count
-        description: Number of page_view events in the session.
+        description: >
+          Number of page_view events in the session. Only page_view events count: product pages are
+          product_view events, so this is not the number of products viewed.
         data_type: integer
       - name: landing_page_path
-        description: Page path of the session's first event.
+        description: >
+          Page path of the session's first event. In this data every visit starts on `/`; the few other
+          values are visits the 30-minute rule split.
         data_type: text
         config:
           meta:
@@ -126,7 +133,10 @@ models:
       - name: is_first_session
         description: >
           True for the visitor's first session. The visitor is the identified customer when there is
-          one (across devices), otherwise the device.
+          one (across devices), otherwise the device. A visitor who is not a customer gets a new
+          device identifier every session, so every such session is a first session:
+          `count(*) filter (where is_first_session)` counts customers plus anonymous sessions, not
+          returning-visitor behaviour.
         data_type: boolean
         config:
           meta:
@@ -150,7 +160,8 @@ models:
       - name: order_id
         description: >
           The order the session's first purchase event created; null when the session did not purchase.
-          A session with a second purchase leaves that later order to fct_orders.session_id alone.
+          A session with a second purchase leaves that later order to fct_orders.session_id alone, so
+          join fct_orders on session_id to count orders by session attributes.
         data_type: bigint
         data_tests:
           - relationships:
@@ -172,6 +183,7 @@ unit_tests:
           - {event_id: e4, anonymous_id: a2, event_type: begin_checkout, occurred_at: "2025-03-10 10:08:00+00", device_type: desktop, page_path: /checkout, session_id: s2, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10", marketing_channel: direct}
           - {event_id: e5, anonymous_id: a2, event_type: purchase, occurred_at: "2025-03-10 10:10:00+00", order_id: 9001, device_type: desktop, page_path: /thanks, session_id: s2, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10", marketing_channel: direct}
           - {event_id: e6, anonymous_id: a2, event_type: page_view, occurred_at: "2025-03-11 09:00:00+00", device_type: mobile, page_path: /sale, session_id: s3, session_start_at: "2025-03-11 09:00:00+00", session_date: "2025-03-11", marketing_channel: direct}
+          - {event_id: e7, anonymous_id: a2, event_type: purchase, occurred_at: "2025-03-10 10:12:00+00", order_id: 9002, device_type: desktop, page_path: /thanks, session_id: s2, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10", marketing_channel: direct}
       - input: ref('int_identity__anonymous_to_customer')
         rows:
           - {anonymous_id: a2, customer_id: 202}
@@ -182,8 +194,36 @@ unit_tests:
         rows: []
     expect:
       rows:
-        - {session_id: s2, customer_id: 202, session_date: "2025-03-10", session_start_at: "2025-03-10 10:00:00+00", session_end_at: "2025-03-10 10:10:00+00", duration_seconds: 600, event_count: 5, page_view_count: 1, landing_page_path: /home, device_type: desktop, viewed_product: true, added_to_cart: true, began_checkout: true, purchased: true, order_id: 9001, is_first_session: true}
+        - {session_id: s2, customer_id: 202, session_date: "2025-03-10", session_start_at: "2025-03-10 10:00:00+00", session_end_at: "2025-03-10 10:12:00+00", duration_seconds: 720, event_count: 6, page_view_count: 1, landing_page_path: /home, device_type: desktop, viewed_product: true, added_to_cart: true, began_checkout: true, purchased: true, order_id: 9001, is_first_session: true}
         - {session_id: s3, customer_id: 202, session_date: "2025-03-11", session_start_at: "2025-03-11 09:00:00+00", session_end_at: "2025-03-11 09:00:00+00", duration_seconds: 0, event_count: 1, page_view_count: 1, landing_page_path: /sale, device_type: mobile, viewed_product: false, added_to_cart: false, began_checkout: false, purchased: false, order_id: null, is_first_session: false}
+
+  - name: fct_sessions_first_session_is_per_visitor_not_device
+    model: fct_sessions
+    given:
+      - input: ref('int_events__sessionized')
+        rows:
+          # a4 is a second device of customer 202 with an earlier session: it, not s2, is the customer's first.
+          - {event_id: e1, anonymous_id: a2, event_type: page_view, occurred_at: "2025-03-10 10:00:00+00", device_type: desktop, page_path: /, session_id: s2, session_start_at: "2025-03-10 10:00:00+00", session_date: "2025-03-10", marketing_channel: direct}
+          - {event_id: e2, anonymous_id: a4, event_type: page_view, occurred_at: "2025-03-09 08:00:00+00", device_type: mobile, page_path: /, session_id: s4, session_start_at: "2025-03-09 08:00:00+00", session_date: "2025-03-09", marketing_channel: direct}
+          # Two unidentified devices are two visitors, and the one tagged with a known campaign gets its id.
+          - {event_id: e3, anonymous_id: a5, event_type: page_view, occurred_at: "2025-03-10 12:00:00+00", device_type: desktop, page_path: /, session_id: s5, session_start_at: "2025-03-10 12:00:00+00", session_date: "2025-03-10", marketing_channel: paid_search, session_utm_campaign: spring}
+          - {event_id: e4, anonymous_id: a6, event_type: page_view, occurred_at: "2025-03-10 13:00:00+00", device_type: desktop, page_path: /, session_id: s6, session_start_at: "2025-03-10 13:00:00+00", session_date: "2025-03-10", marketing_channel: direct}
+      - input: ref('int_identity__anonymous_to_customer')
+        rows:
+          - {anonymous_id: a2, customer_id: 202}
+          - {anonymous_id: a4, customer_id: 202}
+      - input: ref('stg_shop__customers')
+        rows:
+          - {customer_id: 202, is_test_account: false}
+      - input: ref('stg_marketing__campaigns')
+        rows:
+          - {campaign_id: 7, utm_campaign: spring}
+    expect:
+      rows:
+        - {session_id: s2, customer_id: 202, is_first_session: false, campaign_id: null}
+        - {session_id: s4, customer_id: 202, is_first_session: true, campaign_id: null}
+        - {session_id: s5, customer_id: null, is_first_session: true, campaign_id: 7}
+        - {session_id: s6, customer_id: null, is_first_session: true, campaign_id: null}
 
   - name: fct_sessions_drops_test_account_sessions
     model: fct_sessions

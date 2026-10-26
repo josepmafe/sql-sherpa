@@ -49,10 +49,14 @@ unit_tests:
           - {event_id: e2, anonymous_id: a1, customer_id: 101, occurred_at: "2025-03-10 11:00:00"}
           - {event_id: e3, anonymous_id: a2, customer_id: null, occurred_at: "2025-03-10 10:30:00"}
           - {event_id: e4, anonymous_id: a3, customer_id: 103, occurred_at: "2025-03-10 09:00:00"}
+          # Same occurred_at: the highest event_id wins.
+          - {event_id: e5, anonymous_id: a4, customer_id: 104, occurred_at: "2025-03-10 08:00:00"}
+          - {event_id: e6, anonymous_id: a4, customer_id: 105, occurred_at: "2025-03-10 08:00:00"}
     expect:
       rows:
         - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 11:00:00", identifying_event_id: e2}
         - {anonymous_id: a3, customer_id: 103, identified_at: "2025-03-10 09:00:00", identifying_event_id: e4}
+        - {anonymous_id: a4, customer_id: 105, identified_at: "2025-03-10 08:00:00", identifying_event_id: e6}
 
   - name: int_identity__anon_to_customer_keeps_latest_identification
     model: int_identity__anonymous_to_customer
@@ -84,9 +88,9 @@ unit_tests:
     expect:
       rows:
         # A late but older identification (e6) does not change the customer; it only advances last_received_at.
-        - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 12:00:00", last_received_at: "2025-03-12 09:00:00"}
-        - {anonymous_id: a2, customer_id: 103, identified_at: "2025-03-11 10:00:00", last_received_at: "2025-03-11 10:00:03"}
-        - {anonymous_id: a5, customer_id: 106, identified_at: "2025-03-11 09:00:00", last_received_at: "2025-03-11 09:00:02"}
+        - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 12:00:00", identifying_event_id: e5, last_received_at: "2025-03-12 09:00:00"}
+        - {anonymous_id: a2, customer_id: 103, identified_at: "2025-03-11 10:00:00", identifying_event_id: e7, last_received_at: "2025-03-11 10:00:03"}
+        - {anonymous_id: a5, customer_id: 106, identified_at: "2025-03-11 09:00:00", identifying_event_id: e11, last_received_at: "2025-03-11 09:00:02"}
 
   - name: int_identity__anon_to_customer_reads_all_when_table_empty
     model: int_identity__anonymous_to_customer
