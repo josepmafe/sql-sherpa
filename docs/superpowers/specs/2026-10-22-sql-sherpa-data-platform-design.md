@@ -89,7 +89,7 @@ The init script is a shell script (not `.sql`) because the Postgres image runs `
 |---|---|---|
 | `sherpa_admin` | Owner of database `sherpa` | Generator, dbt |
 | `sherpa_agent` | `LOGIN`, no privileges at creation. Receives `USAGE` on `marts` and `SELECT` on mart relations **via dbt** (`grants` + hook, §8). Role default `default_transaction_read_only = on`, `statement_timeout = 5s`. Like every role but the owner it cannot create temporary tables, large objects (`EXECUTE` on `lo_create`, `lo_creat`, `lo_from_bytea`, `lo_open`, `lowrite`, `lo_put` is revoked from `PUBLIC` in the main database and in `template1`, so the eval database inherits it) or connect to the `postgres` database. | The agent's MCP server |
-| `sherpa_ui` (ui-1, created by the idempotent roles script that `make roles` re-runs on existing volumes) | Like `sherpa_agent`: `LOGIN`, `USAGE` on `marts` and `extensions` and `SELECT` on mart relations via the same dbt `grants` and hook, the same `PUBLIC` revokes. In addition, `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`, for the UI's build status (§8, "Added by ui-1"). Its connections set `statement_timeout = 30s` (UI spec §5). | The UI backend |
+| `sherpa_ui` (ui-1, created by the idempotent roles script, which `make up` re-applies on existing volumes) | Like `sherpa_agent`: `LOGIN`, `USAGE` on `marts` and `extensions` and `SELECT` on mart relations via the same dbt `grants` and hook, the same `PUBLIC` revokes. In addition, `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`, for the UI's build status (§8, "Added by ui-1"). Its connections set `statement_timeout = 30s` (UI spec §5). | The UI backend |
 
 Passwords come from `.env`.
 
@@ -376,7 +376,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 ### data-platform-1 — Foundation
 **Builds:** Docker Compose, roles, generator (full §5), dbt project, sources, seeds, all staging models, `dim_date`.
 **dbt features:** project config, `profiles.yml` with `env_var()` and `dev`/`prod` targets, custom `generate_schema_name`, `--target-path` for prod artifacts, **sources + freshness** (`dbt source freshness`), **seeds** (with `column_types`), view materialization, **generic tests**, `dbt_utils`, `vars` (`tax_rate`, `session_timeout_minutes`, `date_spine_start/end`), `meta` on `dim_date` (`domain`, `grain`, `primary_key`), `dbt docs generate/serve`, a `__overview__` doc block. CLI: `dbt debug`, `dbt parse`, `dbt compile`, `dbt ls` (selection syntax), **`dbt show`** (preview a model's output without materializing it).
-**Acceptance:** `make up && make backfill DAYS=365 && make deps && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
+**Acceptance:** `make up && make backfill DAYS=365 && make build` succeeds, including `dbt source freshness` with no errors; every staging model and column has a description.
 
 ### data-platform-2 — Core marts
 **Builds:** intermediate order models, `int_events__sessionized` (as a table), `int_identity__lead_to_customer`, `dim_customers`, `dim_products`, `dim_promotions`, `fct_orders`, `fct_order_items`, `fct_order_discounts`, `fct_returns`, `fct_refunds`. Sessionization and lead matching come here rather than later because `fct_orders` and `dim_customers` need their columns, and the agent's interface must be complete at the end of this milestone.
@@ -410,7 +410,7 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 
 ### Added by ui-1 (UI spec)
 The UI's first milestone makes three data-platform changes, because the UI needs them before data-platform-3 to 5:
-- **The `sherpa_ui` role** (§3), with the idempotent roles script and `make roles` (§10).
+- **The `sherpa_ui` role** (§3), with the idempotent roles script that `make up` re-applies (§10).
 - **An `on-run-end` audit hook** that writes one row per executed node to **`ops.dbt_run_results`**:
   - columns: `invocation_id`, `target_name`, `command`, `is_full_run` (true when the invocation ran every node of its command on the real data: no `--select`, `--exclude`, `--selector`, `--resource-type` or `--exclude-resource-type`, and no `--empty` or `--sample`; `--defer`/`--state` only move unselected nodes, so they leave a run full), `unique_id`, `resource_type`, `status`, `failures`, `execution_time_s`, `message`, `run_started_at`
   - `ops` is created by the hook if missing and dropped by `make reset`
@@ -418,7 +418,7 @@ The UI's first milestone makes three data-platform changes, because the UI needs
   dbt rewrites `target-prod/run_results.json` on every command that compiles (`docs generate`, `run-operation`, `snapshot`), so the file can't tell the UI what the last full build did. The table keeps every run, and the UI reads the latest full prod build from it.
 - **`make build-prod` also runs `dbt docs generate`**, so `catalog.json` is always current for the UI.
 
-**Acceptance:** after `make build-prod`, `ops.dbt_run_results` has exactly one row per built node (model, seed, snapshot, test, unit test) for that invocation, with `is_full_run = true`; a `--select` build and a `--resource-type` run add rows with `is_full_run = false` and don't change what the UI reports. (`run-operation`, e.g. `make grant-read`, runs no hooks, so it adds none.)
+**Acceptance:** after `make build-prod`, `ops.dbt_run_results` has exactly one row per built node (model, seed, snapshot, test, unit test) for that invocation, with `is_full_run = true`; a `--select` build and a `--resource-type` run add rows with `is_full_run = false` and don't change what the UI reports. (`run-operation`, e.g. `dbt run-operation grant_read_access`, runs no hooks, so it adds none.)
 
 ---
 
@@ -439,18 +439,17 @@ The UI's first milestone makes three data-platform changes, because the UI needs
 
 ## 10. Developer Workflow (Makefile)
 
+A target exists only for a multi-step workflow, a command with non-obvious flags, or a daily dev loop; anything else is a documented plain command (e.g. `uv run sherpa-generate status`, `dbt run-operation grant_read_access`). Helpers that other targets call are private targets named `_<name>` (e.g. `_roles`, which `make up` runs).
+
 | Target | Does |
 |---|---|
-| `make up` / `make down` | Start/stop Docker Compose |
+| `make up` / `make down` | Start/stop Docker Compose. `make up` then re-applies the idempotent roles script (`data-platform/postgres/roles.sql`) as the `postgres` superuser, so a role added later (e.g. `sherpa_ui`, ui-1) reaches an existing volume without wiping it |
 | `make generate DAYS=N` | Generator for N more days (`DAYS` required), capped at yesterday |
 | `make backfill [DAYS=365]` | Generator for `DAYS` days (default 365); from data-platform-3, in 7-day chunks with `dbt snapshot --target prod` after each chunk |
-| `make status` | Simulated range and row counts |
 | `make reset` | Drop the dbt schemas (including the dbt test-failure audit schemas), then drop and recreate the raw schemas empty |
-| `make deps` / `make seed` | `dbt deps` / `dbt seed` on `dev` |
-| `make build` / `make build-prod` | `dbt source freshness` then `dbt build` on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then also runs `dbt docs generate` on prod, so `catalog.json` is current for the UI |
-| `make docs` / `make docs-prod` | `dbt docs generate && dbt docs serve` on dev / prod (`--target-path target-prod`) |
-| `make docs-check` | `dbt docs generate`, then check every model's YAML columns against the real columns |
-| `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt` |
+| `make build` / `make build-prod` | Install the dbt packages when `packages.yml` or `package-lock.yml` changed, then `dbt source freshness` and `dbt build` (seeds included) on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then also runs `dbt docs generate` on prod, so `catalog.json` is current for the UI |
+| `make docs` | `dbt docs generate && dbt docs serve` on dev |
+| `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt`, and the docs coverage check (`dbt docs generate`, then every model's YAML columns against the real columns); from ui-1 also the frontend's checks |
 | `make test` | `pytest` with `.env` loaded; integration tests need Postgres |
 
 Targets added by later milestones:
@@ -460,7 +459,6 @@ Targets added by later milestones:
 | `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
 | `make advance DAYS=3` | data-platform-3 | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
 | `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
-| `make roles` | ui-1 | Re-run the idempotent roles script (`data-platform/postgres/roles.sql`) as the `postgres` superuser, so a role added later (e.g. `sherpa_ui`) reaches an existing volume without wiping it |
 
 ---
 

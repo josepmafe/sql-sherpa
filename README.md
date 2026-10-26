@@ -53,19 +53,16 @@ uv run pre-commit install  # hooks enforce lint and format locally; there is no 
 cp .env.example .env     # then replace the change-me passwords with real values
 make up                  # start Postgres, the MCP server and the web app (all wait until healthy)
 make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
-make deps                # install the dbt packages
 (cd ui/frontend && npm ci)  # once, only for frontend work: make ui-dev, make lint, make e2e
-make build               # dbt: seeds, staging, intermediate and mart models, and tests
+make build               # dbt: installs its packages, then seeds, staging, intermediate and mart models, and tests
 make build-prod          # the same into the prod schemas, which the agent and the web app read; also writes catalog.json
 make eval-db             # optional: the frozen evaluation database sherpa_eval (about 5 minutes or more)
 make docs                # generate and serve the dev dbt docs until you press Ctrl+C
 ```
 
-`make docs` and `make docs-prod` serve on the same port (8080), so stop one before starting the other.
-
 Open <http://127.0.0.1:8090> for the web app's Explorer ([Using the Explorer](docs/guides/basic/using-the-explorer.md)); if something else holds port 8090, set `SHERPA_UI_PORT` (for example `SHERPA_UI_PORT=8091 make up`). `make ui-dev` runs it for development.
 
-`make mcp-dev` runs the MCP server on the host instead of the container ([Using the MCP server](docs/guides/basic/using-the-mcp-server.md)). `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy, sqlfluff, ESLint and `tsc`.
+`make mcp-dev` runs the MCP server on the host instead of the container ([Using the MCP server](docs/guides/basic/using-the-mcp-server.md)). `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs every static check (ruff, mypy, sqlfluff, the dbt docs coverage, ESLint, `tsc` and the API client diff). `CLAUDE.md` lists all fifteen Make targets.
 
 The database lives in one Docker volume, `sherpa_pgdata`, shared by every checkout and git worktree of the repository (the compose project is pinned to `sql-sherpa`). `make up` in a new worktree reuses the existing warehouse instead of starting an empty one (it also builds and starts the `mcp` and `ui` services). The flip side is that `make down` (which stops Postgres, `mcp` and `ui`) or `make reset` from any of them affects that one database.
 
@@ -75,7 +72,7 @@ To add days later, run `make generate DAYS=<n>`. Days added after the first run 
 
 - Run `make` from **Git Bash**. In PowerShell or `cmd`, GNU make runs the recipes with `cmd.exe`, and they need a POSIX shell.
 - OneDrive folders can break uv's hardlinks (`Failed to hardlink files` or "access denied" errors). Set `UV_LINK_MODE=copy`.
-- Behind a TLS-intercepting proxy, `uv` downloads and `make deps` fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and set `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) to its path in `.env`; `.env.example` shows the lines.
+- Behind a TLS-intercepting proxy, `uv` downloads and the dbt package install in `make build` fail with certificate verification errors. Export the proxy's root certificate, together with the usual public roots, into a PEM bundle outside the repository and set `SSL_CERT_FILE` (uv) and `REQUESTS_CA_BUNDLE` (dbt's package hub client) to its path in `.env`; `.env.example` shows the lines.
 - `localhost` can resolve to IPv6 on Windows while Docker publishes the port on IPv4, which is why `.env.example` uses `127.0.0.1`.
 
 ## Repository layout

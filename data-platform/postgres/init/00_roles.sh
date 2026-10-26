@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs once, on first initialisation of the data directory. The SQL lives in /sherpa (the postgres folder, mounted
-# read-only) so `make roles` can run the same files on an existing volume.
+# read-only) so `make up` can run the same files on an existing volume.
 set -eu
 # alpine's /bin/sh is busybox; pipefail is not POSIX there, so enable it only when available.
 (set -o pipefail) 2>/dev/null && set -o pipefail
