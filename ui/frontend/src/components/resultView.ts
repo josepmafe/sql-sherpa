@@ -1,6 +1,7 @@
 import type { components } from "../api/schema";
 
 export type QueryResponse = components["schemas"]["QueryResponse"];
+type CatalogTree = components["schemas"]["CatalogTree"];
 export type ColumnType = QueryResponse["column_types"][number];
 export type Operator = components["schemas"]["FilterSpec"]["operator"];
 export type Cell = unknown;
@@ -13,6 +14,13 @@ export type ResultView = { sort?: SortState; filters: FilterState[] };
 
 export const EMPTY_VIEW: ResultView = { filters: [] };
 export const VALUELESS_OPERATORS: readonly Operator[] = ["is_null", "is_not_null"];
+
+// The lower-cased names of the catalog's PII columns. The backend masks a result column by its name in any case, and
+// refuses to sort or filter by it on the server (UI spec §5), so the grid offers neither.
+export function maskedColumnNames(catalog: CatalogTree | undefined): ReadonlySet<string> {
+  const tables = catalog?.domains.flatMap((domain) => domain.tables) ?? [];
+  return new Set(tables.flatMap((table) => table.columns.filter((c) => c.is_pii).map((c) => c.name.toLowerCase())));
+}
 
 // Server mode wraps the SQL in a subquery, which duplicate column names would make ambiguous (UI spec §5).
 export function hasDuplicateColumns(columns: readonly string[]): boolean {

@@ -10,21 +10,22 @@ import { freshState, saveExplorerState, updateWorksheet } from "../src/screens/e
 
 const post = vi.fn();
 vi.mock("../src/api/client", () => ({ api: { POST: (...args: unknown[]) => post(...args) } }));
-vi.mock("../src/api/queries", () => ({
-  useCatalog: () => ({
-    data: {
-      database: "sherpa",
-      schema_name: "marts",
-      domains: [
-        {
-          name: "sales",
-          tables: [
-            { name: "fct_orders", domain: "sales", description: "", grain: "", primary_key: [], columns: [] },
-          ],
-        },
+const EMAIL = { name: "email", data_type: "text", description: "", is_primary_key: false, is_pii: true };
+const CATALOG = {
+  database: "sherpa",
+  schema_name: "marts",
+  domains: [
+    {
+      name: "sales",
+      tables: [
+        { name: "fct_orders", domain: "sales", description: "", grain: "", primary_key: [], columns: [] },
+        { name: "dim_customers", domain: "sales", description: "", grain: "", primary_key: [], columns: [EMAIL] },
       ],
     },
-  }),
+  ],
+};
+vi.mock("../src/api/queries", () => ({
+  useCatalog: () => ({ data: CATALOG }),
   useTableDetails: () => ({ data: undefined }),
 }));
 
@@ -129,10 +130,10 @@ describe("Explorer results", () => {
     // Unmounting a worksheet with a query in flight cancels it.
     beforeEach(() => post.mockImplementation(() => Promise.resolve({ response: { status: 204 } })));
 
-    async function runTruncated(user: ReturnType<typeof userEvent.setup>) {
+    async function runTruncated(user: ReturnType<typeof userEvent.setup>, column = "amount") {
       renderScreen("select * from marts.fct_orders");
       await user.click(screen.getByRole("button", { name: "Run" }));
-      await screen.findByRole("columnheader", { name: "amount" });
+      await screen.findByRole("columnheader", { name: column });
     }
 
     async function addFilter(user: ReturnType<typeof userEvent.setup>, column: string, value: string) {
@@ -176,6 +177,18 @@ describe("Explorer results", () => {
       expect(firstColumn()).toEqual(["a", "b"]);
       expect(screen.queryByRole("button", { name: "Remove filter on name" })).not.toBeInTheDocument();
       expect(queryCalls()[1]?.[1].body.filters).toEqual([{ column: "name", operator: "=", value: "zzz" }]);
+    });
+
+    it("is never sent for a column the catalog marks as PII", async () => {
+      const user = userEvent.setup();
+      const withEmail = { ...TRUNCATED.data, columns: ["name", "EMAIL"], column_types: ["text", "text"] };
+      post.mockResolvedValueOnce({ data: withEmail, response: { status: 200 } });
+      await runTruncated(user, "EMAIL");
+
+      await user.click(screen.getByRole("columnheader", { name: "EMAIL" }));
+
+      expect(queryCalls()).toHaveLength(1);
+      expect(screen.getByRole("columnheader", { name: "EMAIL" })).toHaveAttribute("aria-sort", "none");
     });
 
     it("is not a history entry: history records Runs", async () => {

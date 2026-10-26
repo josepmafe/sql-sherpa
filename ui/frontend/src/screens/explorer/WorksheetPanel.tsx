@@ -1,8 +1,15 @@
 import { Alert, Box, Stack, Text } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 
+import { useCatalog } from "../../api/queries";
 import { ResultGrid } from "../../components/ResultGrid";
-import { EMPTY_VIEW, isServerSide, type ResultView, toServerOptions } from "../../components/resultView";
+import {
+  EMPTY_VIEW,
+  isServerSide,
+  maskedColumnNames,
+  type ResultView,
+  toServerOptions,
+} from "../../components/resultView";
 import { errorHighlight, SqlEditor } from "../../components/SqlEditor";
 import { useWorksheetRun, type RunOutcome } from "./useWorksheetRun";
 import type { Worksheet } from "./worksheetStore";
@@ -31,6 +38,8 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
   const [view, setView] = useState<ResultView>(EMPTY_VIEW);
   const [requested, setRequested] = useState<ResultView>();
   const shownView = status === "running" && requested ? requested : view;
+  const catalog = useCatalog();
+  const masked = useMemo(() => maskedColumnNames(catalog.data), [catalog.data]);
 
   // A Preview worksheet runs once when it opens. The timer keeps StrictMode's mount-unmount-mount probe from
   // starting (and then cancelling) a first run: only the last mount's timer fires.
@@ -96,7 +105,7 @@ export function WorksheetPanel({ worksheet, activeTable, onSqlChange, onSettled,
       {/* A Run clears the result; a server re-run keeps it, dimmed, so the grid (its scroll, the filter bar) stays. */}
       {response && (
         <Box aria-busy={status === "running"} style={{ opacity: status === "running" ? RERUN_OPACITY : 1 }}>
-          <ResultGrid response={response} view={shownView} onViewChange={changeView} />
+          <ResultGrid response={response} view={shownView} onViewChange={changeView} masked={masked} />
         </Box>
       )}
     </Stack>
