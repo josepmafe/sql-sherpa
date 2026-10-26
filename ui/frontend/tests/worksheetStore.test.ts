@@ -76,17 +76,22 @@ describe("worksheetStore", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("resets with a warning when storage cannot be read", () => {
-    const blocked = {
-      getItem: () => {
-        throw new DOMException("denied", "SecurityError");
-      },
-    } as unknown as Storage;
+  it("starts fresh and saves nothing, with warnings, when the browser blocks localStorage itself", () => {
+    // Blocked site data makes the `localStorage` getter throw, before any getItem.
+    const getter = vi.spyOn(window, "localStorage", "get").mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
 
-    const state = loadExplorerState(blocked);
+    try {
+      const state = loadExplorerState();
+      saveExplorerState(state);
 
-    expect(state.worksheets).toHaveLength(1);
-    expect(warn).toHaveBeenCalledOnce();
+      expect(state.worksheets).toHaveLength(1);
+      expect(state.history).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      getter.mockRestore();
+    }
   });
 
   it("starts fresh without warning when nothing is stored", () => {

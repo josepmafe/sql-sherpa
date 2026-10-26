@@ -19,9 +19,10 @@ export type ExplorerState = {
 
 const HISTORY_STATUSES: readonly string[] = ["done", "error", "cancelled"];
 
-export function loadExplorerState(storage: Storage = localStorage): ExplorerState {
+// `localStorage` is read inside the try: with site data blocked, reading it throws (SecurityError).
+export function loadExplorerState(): ExplorerState {
   try {
-    const raw = storage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) return freshState();
     const parsed: unknown = JSON.parse(raw);
     if (isExplorerState(parsed)) return parsed;
@@ -32,11 +33,11 @@ export function loadExplorerState(storage: Storage = localStorage): ExplorerStat
   return freshState();
 }
 
-export function saveExplorerState(state: ExplorerState, storage: Storage = localStorage): void {
+export function saveExplorerState(state: ExplorerState): void {
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (error) {
-    // Typically the quota: the session carries on, it just won't survive a reload.
+    // The quota or blocked site data: the session carries on, it just won't survive a reload.
     console.warn(`could not save ${STORAGE_KEY}`, error);
   }
 }

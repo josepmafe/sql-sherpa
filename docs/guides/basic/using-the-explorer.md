@@ -48,7 +48,7 @@ The editor completes table and column names from the catalog. The buttons above 
 
 While a query runs, "Running… N s" counts the seconds. Starting a new run in a worksheet cancels its previous one.
 
-**History** (top right of the editor) lists the last 200 runs: SQL, time, row count and status. Picking one puts its SQL into the active worksheet. Worksheets and history live in the browser's `localStorage` under the key `sherpa.v1.explorer`, so they survive a reload but belong to one browser: another browser or a private window starts empty, and clearing site data removes them. Result rows are never stored; a re-run fetches them again.
+**History** (top right of the editor) lists the last 200 runs: SQL, time, row count and status. Picking one puts its SQL into the active worksheet. Worksheets and history live in the browser's `localStorage` under the key `sherpa.v1.explorer`, so they survive a reload but belong to one browser: another browser or a private window starts empty, and clearing site data removes them. A browser that blocks site data still runs the Explorer; its worksheets and history then last only until the page closes. Result rows are never stored; a re-run fetches them again.
 
 ### Reading the result
 
