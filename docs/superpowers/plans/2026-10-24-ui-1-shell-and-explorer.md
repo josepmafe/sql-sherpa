@@ -124,7 +124,7 @@ ui/
   - it still runs its SQL itself and returns `''`
 - **`record_run_results(results)`:** runs on every target. It creates `ops` and `ops.dbt_run_results` if missing (columns exactly as data platform spec §8, "Added by ui-1"), then inserts one row per result:
   - `invocation_id` (from the `invocation_id` context variable), `target_name`, `command` (from `flags.WHICH`)
-  - `is_full_run`: true when `invocation_args_dict` has no `select`, `exclude` or `selector`
+  - `is_full_run`: `audit_is_full_run(invocation_args_dict)`, true when it has no `select`, `exclude`, `selector`, `resource_types` or `exclude_resource_types`, and no `empty` or `sample`
   - `unique_id`, `resource_type`, `status`, `failures`, `execution_time_s`, `message`, `run_started_at`
   - values escaped with `adapter.quote`/literals, never string concatenation of untrusted text without escaping. `message` is truncated to 2,000 characters.
 
@@ -132,9 +132,10 @@ ui/
   - In `test_reader_access.py`, parametrize the existing read and deny tests over `role ∈ {agent, ui}` (the settings class gains `ui_user`/`ui_password`).
   - Add `test_ui_reads_run_results_and_agent_does_not`.
   - Create `test_run_results_audit.py` (marker `warehouse`):
-    - `test_full_prod_build_is_recorded`: the latest invocation with `target_name='prod'` and `command='build'` has `is_full_run`, and a row for every model in the manifest
-    - `test_selected_build_is_not_full`: after `dbt build --select dim_date --target prod --target-path target-prod`, the newest invocation has `is_full_run = false`
-    - `test_run_operation_adds_no_rows`: `make grant-read` leaves the row count unchanged
+    - `test_full_prod_build_records_every_built_node_once`: the latest full prod build has exactly one row, with `is_full_run`, per model (not ephemeral), seed, snapshot, test and unit test in the manifest
+    - `test_a_selected_build_is_not_full`: after `dbt build --select <one data test of dim_date> --target prod --target-path target-scratch` (it reads the warehouse and rebuilds nothing), the newest invocation has `is_full_run = false` and that test's row only
+    - `test_a_run_limited_to_a_resource_type_is_not_full`: the same after `dbt test --resource-type test`
+    - `test_an_empty_run_is_not_full` and `test_which_invocations_are_full_runs`: `audit_is_full_run` rendered by one `dbt compile --empty --inline`, for that compile's own arguments and for an argument dict per flag
 
   Run them. Expected: FAIL.
 - [ ] **Step 2:** Implement, then `make build-prod`. Re-run the tests. Expected: PASS. Also `make docs-check` and `make lint`.

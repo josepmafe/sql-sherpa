@@ -70,7 +70,7 @@ Three hooks in `data-platform/dbt/dbt_project.yml` do work outside the models:
 
 - `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name, `SHERPA_AGENT_USER` and `SHERPA_UI_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with, for example, `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
 - A `post-hook: analyze {{ this }}` on every mart, and on the `int_events__sessionized` table, refreshes its table statistics after it is built, so Postgres plans queries well.
-- `on-run-end` runs two macros, in this order. `record_run_results` appends one row per executed node to `ops.dbt_run_results` (it creates the `ops` schema and the table if missing), on every target; `is_full_run` is false when the invocation used `--select`, `--exclude` or `--selector`. `grant_read_access` then gives the `sherpa_agent` and `sherpa_ui` roles `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables, and the UI role `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`; it does this on `prod` and `eval` only (on `dev`: `grant_read_access: skipped on dev`).
+- `on-run-end` runs two macros, in this order. `record_run_results` appends one row per executed node to `ops.dbt_run_results` (it creates the `ops` schema and the table if missing), on every target; `is_full_run` is false when the invocation used `--select`, `--exclude`, `--selector`, `--resource-type`, `--exclude-resource-type`, `--empty` or `--sample`. `grant_read_access` then gives the `sherpa_agent` and `sherpa_ui` roles `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables, and the UI role `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`; it does this on `prod` and `eval` only (on `dev`: `grant_read_access: skipped on dev`).
 
 `make grant-read` runs `grant_read_access` on prod without a build, which re-applies the grants if they were lost (`run-operation` runs no hooks, so it records no run results):
 
@@ -115,7 +115,7 @@ The `record_run_results` hook appends to `ops.dbt_run_results` after every dbt c
 |---|---|
 | `invocation_id`, `run_started_at` | which dbt invocation, and when it started |
 | `target_name`, `command` | `dev`, `prod` or `eval`; `build`, `freshness`, ... |
-| `is_full_run` | true when the invocation had no `--select`, `--exclude` or `--selector` |
+| `is_full_run` | true when the invocation ran every node of its command on the real data: no `--select`, `--exclude`, `--selector`, `--resource-type` or `--exclude-resource-type`, and no `--empty` or `--sample` (the `audit_is_full_run` macro) |
 | `unique_id`, `resource_type` | the node (`model.sherpa.fct_orders`, `test.sherpa...`, `source.sherpa...`) and its kind |
 | `status` | `success`, `pass`, `warn`, `error`, `fail`, `skipped`, ... |
 | `failures`, `execution_time_s`, `message` | test failure count, seconds, dbt's message (cut at 2,000 characters) |

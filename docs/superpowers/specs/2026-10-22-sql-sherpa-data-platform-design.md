@@ -412,13 +412,13 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 The UI's first milestone makes three data-platform changes, because the UI needs them before data-platform-3 to 5:
 - **The `sherpa_ui` role** (§3), with the idempotent roles script and `make roles` (§10).
 - **An `on-run-end` audit hook** that writes one row per executed node to **`ops.dbt_run_results`**:
-  - columns: `invocation_id`, `target_name`, `command`, `is_full_run` (true when the invocation had no `--select`, `--exclude` or `--selector`), `unique_id`, `resource_type`, `status`, `failures`, `execution_time_s`, `message`, `run_started_at`
+  - columns: `invocation_id`, `target_name`, `command`, `is_full_run` (true when the invocation ran every node of its command on the real data: no `--select`, `--exclude`, `--selector`, `--resource-type` or `--exclude-resource-type`, and no `--empty` or `--sample`; `--defer`/`--state` only move unselected nodes, so they leave a run full), `unique_id`, `resource_type`, `status`, `failures`, `execution_time_s`, `message`, `run_started_at`
   - `ops` is created by the hook if missing and dropped by `make reset`
 
   dbt rewrites `target-prod/run_results.json` on every command that compiles (`docs generate`, `run-operation`, `snapshot`), so the file can't tell the UI what the last full build did. The table keeps every run, and the UI reads the latest full prod build from it.
 - **`make build-prod` also runs `dbt docs generate`**, so `catalog.json` is always current for the UI.
 
-**Acceptance:** after `make build-prod`, `ops.dbt_run_results` has one row per built node and test for that invocation, with `is_full_run = true`; a `--select` build adds rows with `is_full_run = false` and doesn't change what the UI reports (`run-operation`, e.g. `make grant-read`, runs no hooks and adds none).
+**Acceptance:** after `make build-prod`, `ops.dbt_run_results` has exactly one row per built node (model, seed, snapshot, test, unit test) for that invocation, with `is_full_run = true`; a `--select` build and a `--resource-type` run add rows with `is_full_run = false` and don't change what the UI reports. (`run-operation`, e.g. `make grant-read`, runs no hooks, so it adds none.)
 
 ---
 

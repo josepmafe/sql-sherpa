@@ -1,15 +1,13 @@
 {#-
     Appends one row per executed node of this invocation to ops.dbt_run_results (created here if missing), on every
     target. dbt rewrites run_results.json on each command that compiles, so the file cannot tell which build was the
-    last full one; this table keeps them all. is_full_run is true when the invocation had no --select, --exclude
-    or --selector.
+    last full one; this table keeps them all. is_full_run comes from audit_is_full_run.
     Runs as the on-run-end hook, before grant_read_access so the table exists when the UI role is granted on it.
     It runs its SQL itself and returns '' so the hook has nothing left to execute.
 -#}
 {% macro record_run_results(results) -%}
     {%- if execute -%}
-        {%- set args = invocation_args_dict -%}
-        {%- set is_full_run = not (args.get('select') or args.get('exclude') or args.get('selector')) -%}
+        {%- set is_full_run = audit_is_full_run(invocation_args_dict) -%}
         {%- set rows = [] -%}
         {%- for result in results -%}
             {#- Freshness results carry the source as `node` too; a result without one has nothing to record. -#}
@@ -53,6 +51,18 @@
             ~ ' on ' ~ target.name, info=true) -%}
     {%- endif -%}
     {{- return('') -}}
+{%- endmacro %}
+
+{#- Whether an invocation with these arguments (invocation_args_dict) ran every node of its command on the real data:
+    true when it had no --select, --exclude, --selector, --resource-type or --exclude-resource-type, and no --empty
+    or --sample (zero-row or sampled inputs). --defer and --state only change where unselected nodes resolve, and a
+    run without a selection has none, so they leave it full. -#}
+{% macro audit_is_full_run(args) -%}
+    {{- return(not (
+        args.get('select') or args.get('exclude') or args.get('selector')
+        or args.get('resource_types') or args.get('exclude_resource_types')
+        or args.get('empty') or args.get('sample')
+    )) -}}
 {%- endmacro %}
 
 {#- A SQL string literal, or null; doubles single quotes (standard_conforming_strings is on, so backslashes stay literal). -#}
