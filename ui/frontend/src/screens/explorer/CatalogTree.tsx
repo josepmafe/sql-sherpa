@@ -13,6 +13,8 @@ type ColumnSummary = components["schemas"]["ColumnSummary"];
 type EditorActions = {
   onPreview: (qualifiedName: string) => void;
   onInsertSelect: (qualifiedName: string) => void;
+  // Why Preview cannot run now (the database is down): its menu item is disabled, with this as its note.
+  previewBlocked?: string;
 };
 
 const SUMMARY_MAX_CHARS = 200;
@@ -22,7 +24,7 @@ type TreeProps = EditorActions & {
   onSelect: (table: string) => void;
 };
 
-export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect }: TreeProps) {
+export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, previewBlocked }: TreeProps) {
   const catalog = useCatalog();
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -74,6 +76,7 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect }: T
               onToggle={needle === "" ? () => toggle(table.name) : undefined}
               onPreview={onPreview}
               onInsertSelect={onInsertSelect}
+              previewBlocked={previewBlocked}
             />
           ))}
         </Box>
@@ -111,9 +114,11 @@ const NAME_STYLE = {
   minWidth: 0,
 } as const;
 
-function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect }: TableRowProps) {
+function TableRow(props: TableRowProps) {
+  const { table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect, previewBlocked } = props;
   const [menuOpen, setMenuOpen] = useState(false);
   const lineageNote = useId();
+  const previewNote = useId();
   const qualified = `${schema}.${table.name}`;
   // UI spec §6.4: description, grain and PK. The full description is the Inspector's.
   const tip = (
@@ -175,7 +180,18 @@ function TableRow({ table, schema, selected, open, onClick, onToggle, onPreview,
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
-            <Menu.Item onClick={() => onPreview(qualified)}>Preview 100 rows</Menu.Item>
+            <Menu.Item
+              disabled={previewBlocked !== undefined}
+              aria-describedby={previewBlocked !== undefined ? previewNote : undefined}
+              onClick={() => onPreview(qualified)}
+            >
+              Preview 100 rows
+            </Menu.Item>
+            {previewBlocked !== undefined && (
+              <Text id={previewNote} size="xs" c="dimmed" px="sm" pb={4}>
+                {previewBlocked}
+              </Text>
+            )}
             <Menu.Item onClick={() => onInsertSelect(qualified)}>Insert SELECT</Menu.Item>
             <Menu.Item onClick={() => void navigator.clipboard.writeText(qualified)}>Copy name</Menu.Item>
             <Menu.Item disabled aria-describedby={lineageNote}>

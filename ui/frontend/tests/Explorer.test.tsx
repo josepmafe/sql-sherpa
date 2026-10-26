@@ -184,6 +184,21 @@ describe("CatalogTree", () => {
     expect(onPreview).toHaveBeenCalledWith("marts.fct_orders");
   });
 
+  it("a blocked preview is disabled in the menu and says why", async () => {
+    const user = userEvent.setup();
+    const onPreview = vi.fn();
+    renderWithMantine(
+      <CatalogTree onSelect={() => {}} onPreview={onPreview} onInsertSelect={() => {}} previewBlocked="Database unavailable" />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
+
+    const preview = await screen.findByRole("menuitem", { name: "Preview 100 rows" });
+    expect(preview).toBeDisabled();
+    expect(preview).toHaveAccessibleDescription("Database unavailable");
+    expect(screen.getByRole("menuitem", { name: "Insert SELECT" })).toBeEnabled();
+  });
+
   it("Insert SELECT in the ⋯ menu reports the qualified name", async () => {
     const user = userEvent.setup();
     const onInsertSelect = vi.fn();

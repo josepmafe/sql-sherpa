@@ -2,6 +2,7 @@ import { Box, Button, Drawer, Group, ScrollArea, Stack, Tabs } from "@mantine/co
 import { useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useHealth } from "../../api/queries";
 import { CatalogTree } from "./CatalogTree";
 import { Inspector } from "./Inspector";
 import { QueryHistory } from "./QueryHistory";
@@ -40,11 +41,16 @@ const VISUALLY_HIDDEN_STYLE = {
   border: 0,
 } as const;
 const SKIP_SHOWN_STYLE = { position: "fixed", top: 8, left: 8, zIndex: 1000 } as const;
+const DATABASE_DOWN = "Database unavailable: queries run again once it is back";
 
 export function ExplorerScreen() {
   const [selected, setSelected] = useState<string>();
   const [inspecting, setInspecting] = useState(false);
   const wide = useMediaQuery(WIDE_QUERY, undefined, { getInitialValueInEffect: false });
+  // UI spec §3: a database that is down disables only what needs it (Run, Run selection, Preview). Health is polled,
+  // so they come back on their own.
+  const health = useHealth();
+  const blockedReason = health.data?.database === "down" ? DATABASE_DOWN : undefined;
   const [state, setState] = useState(() => loadExplorerState());
   useEffect(() => saveExplorerState(state), [state]);
   // Another tab of the Explorer saved: take in its new worksheets and runs instead of overwriting them.
@@ -93,6 +99,7 @@ export function ExplorerScreen() {
           onSelect={inspect}
           onPreview={(name) => setState((previous) => openPreview(previous, name))}
           onInsertSelect={(name) => setState((previous) => insertSelect(previous, name))}
+          previewBlocked={blockedReason}
         />
       </ScrollArea>
       <Box ref={centre} style={{ flex: 1, minWidth: 0 }}>
@@ -126,6 +133,7 @@ export function ExplorerScreen() {
                 <WorksheetPanel
                   worksheet={worksheet}
                   activeTable={selected}
+                  blockedReason={blockedReason}
                   onSqlChange={changeSql}
                   onSettled={record}
                   onRunStarted={markRunStarted}

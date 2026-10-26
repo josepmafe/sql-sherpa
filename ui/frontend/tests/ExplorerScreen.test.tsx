@@ -24,7 +24,9 @@ vi.mock("../src/api/client", async (importOriginal) => ({
 vi.mock("../src/api/queries", () => ({
   useCatalog: () => ({ data: CATALOG }),
   useTableDetails: () => ({ data: undefined }),
+  useHealth: () => useHealth(),
 }));
+const useHealth = vi.fn();
 // Pass-through spies: every WorksheetPanel render calls useWorksheetRun once, every grid cell render calls cellText.
 vi.mock("../src/screens/explorer/useWorksheetRun", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/screens/explorer/useWorksheetRun")>();
@@ -56,6 +58,8 @@ function renderScreen() {
   );
 }
 
+const health = (database: "ok" | "down") => ({ database, artifacts: { status: "ok", generated_at: null } });
+
 // A screen at least 1280 px wide; the setup's stub matches no query.
 const wideScreen = (query: string) =>
   ({
@@ -77,6 +81,7 @@ const editors = () =>
 describe("ExplorerScreen", () => {
   beforeEach(() => {
     localStorage.clear();
+    useHealth.mockReset().mockReturnValue({ data: health("ok") });
     post.mockReset();
     post.mockImplementation((path: string) =>
       path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
@@ -221,6 +226,31 @@ describe("ExplorerScreen", () => {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ExplorerState;
     expect(saved.worksheets.map((w) => w.id)).toEqual([mine.worksheets[0]!.id, "theirs"]);
     warn.mockRestore();
+  });
+
+  it("while the database is down Run and Preview are disabled with the reason, and they come back with it", async () => {
+    const user = userEvent.setup();
+    const seeded = freshState();
+    saveExplorerState(updateWorksheet(seeded, seeded.activeId, { sql: "select 1" }));
+    useHealth.mockReturnValue({ data: health("down") });
+    const view = renderScreen();
+
+    const run = screen.getByRole("button", { name: "Run" });
+    expect(run).toBeDisabled();
+    expect(run).toHaveAccessibleDescription("Database unavailable: queries run again once it is back");
+    await user.click(screen.getByRole("button", { name: "Actions for fct_orders" }));
+    expect(await screen.findByRole("menuitem", { name: "Preview 100 rows" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+
+    useHealth.mockReturnValue({ data: health("ok") });
+    view.rerender(
+      <MantineProvider env="test">
+        <ExplorerScreen />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run" })).toHaveAccessibleDescription("Ctrl/Cmd+Enter runs");
   });
 
   it("below 1280 px the Inspector opens as a drawer when a table is clicked", async () => {

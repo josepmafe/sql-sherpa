@@ -118,11 +118,19 @@ describe("errorHighlight", () => {
   });
 });
 
-function Harness({ initial, onSettled = () => {} }: { initial: string; onSettled?: () => void }) {
+type HarnessProps = { initial: string; onSettled?: () => void; blockedReason?: string };
+
+function Harness({ initial, onSettled = () => {}, blockedReason }: HarnessProps) {
   const [sql, setSql] = useState(initial);
   return (
     <MantineProvider env="test">
-      <WorksheetPanel worksheet={{ id: "w1", name: "Worksheet 1", sql }} onSqlChange={(_, next) => setSql(next)} onSettled={onSettled} onRunStarted={() => {}} />
+      <WorksheetPanel
+        worksheet={{ id: "w1", name: "Worksheet 1", sql }}
+        blockedReason={blockedReason}
+        onSqlChange={(_, next) => setSql(next)}
+        onSettled={onSettled}
+        onRunStarted={() => {}}
+      />
     </MantineProvider>
   );
 }
@@ -248,10 +256,30 @@ describe("WorksheetPanel", () => {
     expect(runs()).toHaveLength(2);
   });
 
-  it("Run is disabled for an empty worksheet", () => {
+  it("Run is disabled for an empty worksheet, and says why", () => {
     render(<Harness initial="  " />);
 
-    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    const run = screen.getByRole("button", { name: "Run" });
+    expect(run).toBeDisabled();
+    expect(run).toHaveAccessibleDescription("Write a query to run it");
+    expect(screen.getByText("Write a query to run it")).toBeVisible();
     expect(screen.getByRole("button", { name: "Run selection" })).toBeDisabled();
+  });
+
+  it("a blocked worksheet disables Run, Run selection and Ctrl+Enter, says why, and still formats", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={"select 1"} blockedReason="Database unavailable" />);
+    act(() => editorView().dispatch({ selection: { anchor: 0, head: 6 } }));
+
+    fireEvent.keyDown(document.querySelector(".cm-content") as HTMLElement, { key: "Enter", ctrlKey: true });
+
+    const run = screen.getByRole("button", { name: "Run" });
+    expect(run).toBeDisabled();
+    expect(run).toHaveAccessibleDescription("Database unavailable");
+    expect(screen.getByRole("button", { name: "Run selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Format" })).toBeEnabled();
+    expect(post).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Format" }));
+    expect(post).toHaveBeenCalledWith("/api/queries/format", { body: { sql: "select 1" } });
   });
 });

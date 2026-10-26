@@ -19,6 +19,8 @@ import type { Worksheet } from "./worksheetStore";
 type PanelProps = {
   worksheet: Worksheet;
   activeTable?: string;
+  // Why no query can run now (the database is down).
+  blockedReason?: string;
   onSqlChange: (worksheetId: string, sql: string) => void;
   onSettled: (outcome: RunOutcome) => void;
   onRunStarted: (worksheetId: string) => void;
@@ -46,6 +48,7 @@ const ERROR_TITLES: Record<string, string> = {
 export const WorksheetPanel = memo(function WorksheetPanel({
   worksheet,
   activeTable,
+  blockedReason,
   onSqlChange,
   onSettled,
   onRunStarted,
@@ -114,6 +117,7 @@ export const WorksheetPanel = memo(function WorksheetPanel({
         value={worksheet.sql}
         onChange={(sql) => onSqlChange(id, sql)}
         running={running}
+        blockedReason={blockedReason}
         highlight={highlight}
         activeTable={activeTable}
         onRun={(sql, offset) => {

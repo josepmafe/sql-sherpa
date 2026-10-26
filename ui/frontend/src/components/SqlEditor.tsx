@@ -4,7 +4,7 @@ import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, type ViewUpdate } from "@codemirror/view";
 import { Box, Button, Group, Stack, Text, useComputedColorScheme } from "@mantine/core";
 import CodeMirror from "@uiw/react-codemirror";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { api } from "../api/client";
 import { useCatalog } from "../api/queries";
@@ -18,6 +18,8 @@ type EditorProps = {
   value: string;
   onChange: (value: string) => void;
   running: boolean;
+  // Why no query can run now (the database is down): Run and Run selection are disabled and the reason shows.
+  blockedReason?: string;
   // Where the last error points, in editor offsets; it clears as soon as the text changes.
   highlight?: Highlight;
   // The table selected in the catalog tree: its columns complete without a prefix.
@@ -29,11 +31,14 @@ type EditorProps = {
 
 const EDITOR_HEIGHT = "220px";
 const FORMAT_FAILED = "Could not format the query.";
+const RUN_HINT = "Ctrl/Cmd+Enter runs";
+const EMPTY_HINT = "Write a query to run it";
 
 export function SqlEditor({
   value,
   onChange,
   running,
+  blockedReason,
   highlight,
   activeTable,
   onRun,
@@ -44,7 +49,11 @@ export function SqlEditor({
   const [hasSelection, setHasSelection] = useState(false);
   const [formatError, setFormatError] = useState<string>();
   const colorScheme = useComputedColorScheme("light");
+  const hintId = useId();
   const empty = value.trim() === "";
+  const blocked = blockedReason !== undefined;
+  // Next to Run, and its description: why it is disabled, or its shortcut.
+  const hint = blockedReason ?? (empty ? EMPTY_HINT : RUN_HINT);
 
   const extensions = useMemo(
     () => [sqlExtension(catalog.data, activeTable), errorHighlightField, focusOutline],
@@ -68,7 +77,7 @@ export function SqlEditor({
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!running && !empty) onRun(value, 0);
+    if (!running && !empty && !blocked) onRun(value, 0);
   };
 
   const format = async () => {
@@ -96,18 +105,24 @@ export function SqlEditor({
             Cancel
           </Button>
         ) : (
-          <Button size="xs" disabled={empty} onClick={() => onRun(value, 0)}>
+          <Button size="xs" disabled={empty || blocked} aria-describedby={hintId} onClick={() => onRun(value, 0)}>
             Run
           </Button>
         )}
-        <Button size="xs" variant="default" disabled={running || !hasSelection} onClick={runSelection}>
+        <Button
+          size="xs"
+          variant="default"
+          disabled={running || !hasSelection || blocked}
+          aria-describedby={blocked ? hintId : undefined}
+          onClick={runSelection}
+        >
           Run selection
         </Button>
         <Button size="xs" variant="default" disabled={running || empty} onClick={() => void format()}>
           Format
         </Button>
-        <Text size="xs" c="dimmed" ml="auto">
-          Ctrl/Cmd+Enter runs
+        <Text id={hintId} size="xs" c="dimmed" ml="auto">
+          {hint}
         </Text>
       </Group>
       {formatError && (

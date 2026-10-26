@@ -30,6 +30,7 @@ const CATALOG = {
 vi.mock("../src/api/queries", () => ({
   useCatalog: () => ({ data: CATALOG }),
   useTableDetails: () => ({ data: undefined }),
+  useHealth: () => ({ data: undefined }),
 }));
 
 const RESPONSE = {
