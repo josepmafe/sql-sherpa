@@ -15,6 +15,7 @@ import {
   applyView,
   type Cell,
   cellText,
+  type ColumnType,
   hasDuplicateColumns,
   isServerSide,
   type Operator,
@@ -194,8 +195,8 @@ function StatusLine({ response, shown, filtered }: { response: QueryResponse; sh
   );
 }
 
-function GridCell({ value, type }: { value: Cell; type: string | undefined }) {
-  const text = cellText(value);
+function GridCell({ value, type }: { value: Cell; type: ColumnType | undefined }) {
+  const text = cellText(value, type);
   if (text === null) {
     return (
       <Table.Td c="dimmed" fs="italic" ta={type === "number" ? "right" : "left"}>

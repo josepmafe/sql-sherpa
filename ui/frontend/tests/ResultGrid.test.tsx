@@ -71,6 +71,22 @@ describe("ResultGrid", () => {
     expect(screen.getByText("2 rows in 12 ms")).toBeInTheDocument();
   });
 
+  it("shows timestamps and JSON as Postgres's text form, which contains matches", () => {
+    render(
+      <Harness
+        data={response({
+          columns: ["at", "doc"],
+          column_types: ["timestamp", "other"],
+          rows: [["2025-01-15T08:30:00.120000+00:00", { a: 1 }]],
+          returned_rows: 1,
+        })}
+      />,
+    );
+
+    expect(screen.getByText("2025-01-15 08:30:00.12+00")).toBeInTheDocument();
+    expect(screen.getByText('{"a": 1}')).toBeInTheDocument();
+  });
+
   it("renders zero rows and zero columns without crashing", () => {
     const { unmount } = render(<Harness data={response({ rows: [], returned_rows: 0 })} />);
     expect(screen.getByText("No rows.")).toBeInTheDocument();

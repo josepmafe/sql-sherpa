@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyView, cellText, hasDuplicateColumns, isServerSide, toServerOptions } from "../src/components/resultView";
 
@@ -61,6 +61,26 @@ describe("applyView timestamps", () => {
     expect(ids(kept)).toEqual(["in"]);
   });
 
+  describe("in a browser that is not on UTC", () => {
+    beforeEach(() => vi.stubEnv("TZ", "America/New_York"));
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("reads a typed timestamp with a space and no offset as UTC, like the server's session", () => {
+      const rows = [
+        ["bare", "2025-01-15T10:30:00"],
+        ["tz", "2025-01-15T10:30:00+00:00"],
+        ["other", "2025-01-15T09:30:00+00:00"],
+      ];
+      const equal = (value: string) =>
+        ids(applyView(rows, ["text", "timestamp"], { filters: [{ index: 1, operator: "=", value }] }));
+
+      expect(equal("2025-01-15 10:30:00")).toEqual(["bare", "tz"]);
+      expect(equal("2025-01-15 10:30")).toEqual(["bare", "tz"]);
+      expect(equal("2025-01-15 10:30:00+00")).toEqual(["bare", "tz"]);
+      expect(equal("2025-01-15 11:30:00+01:00")).toEqual(["bare", "tz"]);
+    });
+  });
+
   it("sorts unparseable values after valid ones instead of leaving the order undefined", () => {
     const rows = [
       ["bad", "garbage"],
@@ -70,6 +90,74 @@ describe("applyView timestamps", () => {
     const sorted = applyView(rows, ["text", "date"], { sort: { index: 1, direction: "asc" }, filters: [] });
 
     expect(ids(sorted)).toEqual(["ok", "bad"]);
+  });
+});
+
+describe("applyView booleans", () => {
+  // The API sends JSON booleans; string cells are read like typed values.
+  const rows = [
+    ["a", true],
+    ["b", false],
+    ["c", null],
+    ["d", "t"],
+    ["e", "f"],
+  ];
+  const equal = (value: string) =>
+    ids(applyView(rows, ["text", "boolean"], { filters: [{ index: 1, operator: "=", value }] }));
+
+  it("reads filter values like Postgres's boolean input", () => {
+    for (const value of ["t", "TRUE", "1", "yes", "On", " true "]) expect(equal(value)).toEqual(["a", "d"]);
+    for (const value of ["f", "False", "0", "no", "OFF"]) expect(equal(value)).toEqual(["b", "e"]);
+  });
+
+  it("matches nothing for a value Postgres would not read as a boolean", () => {
+    for (const value of ["maybe", "o", "2"]) expect(equal(value)).toEqual([]);
+  });
+
+  it("sorts false before true, NULL last", () => {
+    const sorted = applyView(rows, ["text", "boolean"], { sort: { index: 1, direction: "asc" }, filters: [] });
+
+    expect(ids(sorted)).toEqual(["b", "e", "a", "d", "c"]);
+  });
+});
+
+describe("applyView text", () => {
+  const rows = [["a"], ["B"], ["é"], ["Z"], ["😀"], ["～"]];
+
+  it("orders by code point, like the deployed Postgres (musl, bytewise), not by locale", () => {
+    const sorted = applyView(rows, ["text"], { sort: { index: 0, direction: "asc" }, filters: [] });
+
+    expect(ids(sorted)).toEqual(["B", "Z", "a", "é", "～", "😀"]);
+  });
+
+  it("compares filter values by code point too", () => {
+    const kept = applyView(rows, ["text"], { filters: [{ index: 0, operator: "<", value: "a" }] });
+
+    expect(ids(kept)).toEqual(["B", "Z"]);
+  });
+});
+
+describe("applyView contains", () => {
+  const contains = (rows: unknown[][], type: "other" | "timestamp", value: string) =>
+    ids(applyView(rows, ["text", type], { filters: [{ index: 1, operator: "contains", value }] }));
+
+  it("matches jsonb in Postgres's text form, as the server's ::text does", () => {
+    const rows = [["j", { a: 1, b: [1, 2] }]];
+
+    expect(contains(rows, "other", '"a": 1, "b": [1, 2]')).toEqual(["j"]);
+    expect(contains(rows, "other", '"a":1')).toEqual([]);
+  });
+
+  it("matches timestamps in Postgres's text form, with a space and no trailing zeros", () => {
+    const rows = [
+      ["t", "2025-01-15T08:30:00.120000+00:00"],
+      ["u", "2025-01-15T10:30:00"],
+    ];
+
+    expect(contains(rows, "timestamp", "2025-01-15 08:30:00.12+00")).toEqual(["t"]);
+    expect(contains(rows, "timestamp", "15 10:30")).toEqual(["u"]);
+    expect(contains(rows, "timestamp", "T08")).toEqual([]);
+    expect(contains(rows, "timestamp", "120000")).toEqual([]);
   });
 });
 
@@ -99,6 +187,16 @@ describe("applyView filtering", () => {
     expect(kept).toEqual([]);
   });
 
+  it("matches a whitespace-only value on a number column to nothing, not to 0", () => {
+    const zeros = [
+      ["zero", "0"],
+      ["ten", "10"],
+    ];
+
+    expect(applyView(zeros, types, { filters: [{ index: 1, operator: "=", value: " " }] })).toEqual([]);
+    expect(applyView(zeros, types, { filters: [{ index: 1, operator: "<=", value: "   " }] })).toEqual([]);
+  });
+
   it("contains is a case-insensitive substring and skips NULL", () => {
     const kept = applyView(rows, types, { filters: [{ index: 2, operator: "contains", value: "ALP" }] });
 
@@ -119,11 +217,21 @@ describe("applyView filtering", () => {
 });
 
 describe("helpers", () => {
-  it("cellText renders NULL as null and objects as JSON", () => {
+  it("cellText renders NULL as null and JSON in Postgres's jsonb text form", () => {
     expect(cellText(null)).toBeNull();
     expect(cellText(undefined)).toBeNull();
     expect(cellText(12)).toBe("12");
-    expect(cellText({ a: 1 })).toBe('{"a":1}');
+    expect(cellText(true)).toBe("true");
+    expect(cellText({ a: 1 })).toBe('{"a": 1}');
+    expect(cellText([1, { b: "x" }, null])).toBe('[1, {"b": "x"}, null]');
+  });
+
+  it("cellText renders timestamps in Postgres's text form, and leaves text alone", () => {
+    expect(cellText("2025-01-15T08:30:00.120000+00:00", "timestamp")).toBe("2025-01-15 08:30:00.12+00");
+    expect(cellText("2025-01-15T10:30:00", "timestamp")).toBe("2025-01-15 10:30:00");
+    expect(cellText("2025-01-15T10:30:00+05:30", "timestamp")).toBe("2025-01-15 10:30:00+05:30");
+    expect(cellText("2025-01-15", "date")).toBe("2025-01-15");
+    expect(cellText("2025-01-15T10:30:00", "text")).toBe("2025-01-15T10:30:00");
   });
 
   it("detects duplicate column names", () => {

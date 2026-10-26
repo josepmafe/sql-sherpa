@@ -89,6 +89,15 @@ Where it runs depends on the result:
 - **Masked columns** (`email`, `first_name`, `last_name`, see below): on a truncated result the server would sort and filter by the real values, and the order or the rows that match would give them away (a `contains` filter on `email` would test addresses one guess at a time). So the server refuses: sorting or filtering a truncated result by a masked column fails with `column 'email' holds personal data, shown as ***; the server does not sort or filter by it, since the order or the matching rows would reveal the hidden values`. On a result that is not truncated the browser sorts and filters the `***` it has, which reveals nothing.
 - **Duplicate column names** (for example `select o.order_id, i.order_id ...`): the server cannot wrap a result with two columns of one name, so sorting and filtering stay in the browser, over the rows shown, and a yellow "Duplicate column names" banner says so. Alias the columns (`i.order_id as item_order_id`) to get server-side sorting back.
 
+The browser compares values the way Postgres does, so a result gives the same rows and order in either mode:
+
+- **Numbers** compare numerically. A value that is not a number (`abc`, or only spaces) matches nothing, as Postgres would refuse it.
+- **Booleans** read a filter value like Postgres: `t`, `true`, `yes`, `on`, `1` and `f`, `false`, `no`, `off`, `0`, in any case. `false` sorts before `true`.
+- **Dates and timestamps** take `2025-01-15`, `2025-01-15 10:30` or `2025-01-15T10:30:00`, with an optional offset (`+02`, `+02:00`, `Z`). Without an offset the time is UTC, the server's zone, not your browser's.
+- **Text** sorts by code point, as the warehouse's Postgres does: `B` and `Z` come before `a`, and `é` after `z`.
+- **`contains`** matches the text the grid shows, which is Postgres's text form: a timestamp reads `2025-01-15 08:30:00.12+00` (not `2025-01-15T08:30:00.120000+00:00`) and a JSON value `{"a": 1}`. Two forms still differ between the modes: a Postgres array shows as `[1, 2]`, where the server matches `{1,2}`, and a JSON number such as `2.0` shows as `2`.
+- **NULLs** come last ascending and first descending, and match no comparison (not even `!=`).
+
 ## What you can't do, and why
 
 - **Write anything.** Only one `SELECT` or `WITH ... SELECT` statement passes the SQL guard, the same one the agent uses (`sherpa_mcp.sql_guard`). `INSERT`, `UPDATE`, `DELETE`, DDL, `SET` and several statements in one go are rejected with the guard's reason. Behind the guard, the `sherpa_ui` login is read-only at the database too (`default_transaction_read_only = on`), so the guard is not the only line.
