@@ -47,7 +47,7 @@ export function SqlEditor({
   const empty = value.trim() === "";
 
   const extensions = useMemo(
-    () => [sqlExtension(catalog.data, activeTable), errorHighlightField],
+    () => [sqlExtension(catalog.data, activeTable), errorHighlightField, focusOutline],
     [catalog.data, activeTable],
   );
 
@@ -164,6 +164,11 @@ export function sqlExtension(catalog: CatalogTree | undefined, activeTable: stri
     }),
   ];
 }
+
+// CodeMirror's own focus outline is dotted #212121, invisible on the dark theme; Mantine's focus colour shows in both.
+const focusOutline = EditorView.theme({
+  "&.cm-focused": { outline: "2px solid var(--mantine-primary-color-filled)" },
+});
 
 const setErrorHighlight = StateEffect.define<Highlight | null>();
 // Mantine's red "light" variant colour follows the colour scheme, so the mark keeps its contrast in dark mode.

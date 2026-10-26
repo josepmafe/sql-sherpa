@@ -1,6 +1,6 @@
 import { EditorView } from "@codemirror/view";
 import { MantineProvider } from "@mantine/core";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -132,11 +132,69 @@ describe("ExplorerScreen", () => {
     await user.click(screen.getByRole("button", { name: "New worksheet" }));
     expect(screen.getByRole("tab", { name: "Worksheet 2" })).toHaveAttribute("aria-selected", "true");
 
-    await user.click(screen.getByRole("button", { name: "Close Worksheet 2" }));
+    await user.click(screen.getByTitle("Close Worksheet 2"));
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Worksheet 1"]);
     expect(screen.getByRole("tab", { name: "Worksheet 1" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByRole("button", { name: /^Close / })).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/^Close /)).not.toBeInTheDocument();
+  });
+
+  it("the worksheet tabs are a tablist: each controls its panel, and the arrow keys move between them", async () => {
+    const user = userEvent.setup();
+    saveExplorerState(addWorksheet(freshState()));
+    renderScreen();
+    const [one, two] = screen.getAllByRole("tab") as [HTMLElement, HTMLElement];
+    const panel = document.getElementById(two.getAttribute("aria-controls")!);
+    expect(panel).toHaveAttribute("role", "tabpanel");
+    expect(panel).toHaveAttribute("aria-labelledby", two.id);
+    expect([one.tabIndex, two.tabIndex]).toEqual([-1, 0]);
+    // Only tabs inside the tablist: the close marks and the new-worksheet button are not in it.
+    expect(within(screen.getByRole("tablist")).queryAllByRole("button")).toEqual([]);
+
+    act(() => two.focus());
+    await user.keyboard("{ArrowLeft}");
+
+    expect(one).toHaveFocus();
+    expect(one).toHaveAttribute("aria-selected", "true");
+    expect(isShown(document.getElementById(one.getAttribute("aria-controls")!)!)).toBe(true);
+  });
+
+  it("F2 renames the focused tab, and Enter gives the focus back to it", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    act(() => screen.getByRole("tab", { name: "Worksheet 1" }).focus());
+
+    await user.keyboard("{F2}");
+    await user.keyboard("Orders{Enter}");
+
+    expect(screen.getByRole("tab", { name: "Orders" })).toHaveFocus();
+  });
+
+  it("Delete closes the focused tab, and the focus moves to the tab that becomes active", async () => {
+    const user = userEvent.setup();
+    saveExplorerState(addWorksheet(freshState()));
+    renderScreen();
+    act(() => screen.getByRole("tab", { name: "Worksheet 2" }).focus());
+
+    await user.keyboard("{Delete}");
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Worksheet 1"]);
+    expect(screen.getByRole("tab", { name: "Worksheet 1" })).toHaveFocus();
+    await user.keyboard("{Delete}");
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+  });
+
+  it("the first Tab stop skips the tree to the active worksheet's editor", async () => {
+    const user = userEvent.setup();
+    saveExplorerState(addWorksheet(freshState()));
+    renderScreen();
+
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Skip to the SQL editor" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    expect(document.activeElement).toHaveClass("cm-content");
+    expect(isShown(document.activeElement as HTMLElement)).toBe(true);
   });
 
   it("takes in the worksheets and history another tab saves, and ignores other keys and bad values", () => {
