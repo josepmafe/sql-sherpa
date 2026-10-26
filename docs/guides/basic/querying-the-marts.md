@@ -19,6 +19,7 @@ docker compose exec postgres psql -U sherpa_admin -d sherpa
 | `dim_products` | product variant (size and colour) |
 | `dim_promotions` | promotion |
 | `dim_date` | calendar day |
+| `fct_sessions` | web session (a device's events with no gap over 30 minutes) |
 
 ## Which revenue to use
 
@@ -46,16 +47,12 @@ where not i.is_cancelled
 group by 1 order by 2 desc limit 10;
 ```
 
-Net revenue of orders that used one promotion. An order uses a promotion at most once, so this join does not repeat orders; `d.amount` is this promotion's discount, `o.discount_amount` the whole order's:
+Conversion rate by channel (the share of web sessions that ended in a purchase, defined in the spec's section 6.6):
 
 ```sql
-select p.promotion_name, count(*) as orders,
-       round(sum(o.net_revenue), 2) as net_revenue, round(sum(d.amount), 2) as promotion_discount
-from marts.fct_order_discounts as d
-inner join marts.fct_orders as o using (order_id)
-inner join marts.dim_promotions as p using (promotion_id)
-where not o.is_cancelled and p.promotion_name = 'Save 5 EUR over 50 EUR (H1)'
-group by 1;
+select marketing_channel, count(*) as sessions,
+       round(avg(purchased::int), 4) as conversion_rate
+from marts.fct_sessions group by 1 order by 2 desc;
 ```
 
 New against returning customers (`is_first_order` marks a customer's first non-cancelled order), and customers by segment (`prospect`, `new`, `active`, `at_risk`, `churned`; rules in the `customer_segment` column description):
@@ -95,6 +92,10 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 ### `as_of_date`, not today
 
 `days_since_last_order` and the segments are measured to `as_of_date`, never `now()`. Use the same anchor in your own queries: `select max(order_date) from marts.fct_orders;`.
+
+### Sessions are web only
+
+A session is one device's events with no gap over 30 minutes. App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders; a session whose order was later cancelled still counts as purchased) leave them out. Compare orders per channel with `fct_orders`, and join `fct_orders` to `fct_sessions` on `session_id`. Anonymous visitors never return (every session of a non-customer is a first session). `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise.
 
 ### Line grain against order grain
 

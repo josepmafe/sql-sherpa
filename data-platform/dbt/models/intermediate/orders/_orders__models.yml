@@ -2,6 +2,7 @@ version: 2
 
 # Intermediate models prepare order data for the sales marts. Ephemeral models are inlined into the
 # models that use them, so they cannot be tested on their own; fct_orders tests their columns.
+# int_order_items__costed is a view, so it is tested here.
 models:
   - name: int_order_items__discount_allocated
     description: >
@@ -39,13 +40,20 @@ models:
 
   - name: int_order_items__costed
     description: >
-      One row per order line with the unit cost at the time of sale. For now this is the variant's
-      current cost_price; data-platform-3 switches it to the product variants snapshot.
+      One row per order line with the unit cost at the time of sale: the cost_price of the variant's
+      snapshot version that was valid when the order was placed. An order placed before the variant's
+      first captured version uses that earliest version's cost.
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: ref('stg_shop__order_items')
     columns:
       - name: order_item_id
         description: Primary key.
+        data_tests: [unique, not_null]
       - name: unit_cost_at_sale
-        description: Cost per unit in EUR.
+        description: Cost per unit in EUR when the order was placed, from the product variants snapshot.
+        data_tests: [not_null]
 
   - name: int_orders__status_pivoted
     description: One row per order with the first time it reached each status, taken from the status history.
@@ -106,3 +114,95 @@ models:
         description: Returned units that can be resold.
       - name: refunded_revenue
         description: Revenue refunded for the returned units in EUR, excluding tax (the line's net amount pro-rated by quantity).
+
+unit_tests:
+  - name: int_order_items__costed_uses_cost_valid_at_placement
+    model: int_order_items__costed
+    given:
+      - input: ref('stg_shop__order_items')
+        rows:
+          - {order_item_id: 1, order_id: 1, variant_id: 1}
+          - {order_item_id: 2, order_id: 2, variant_id: 1}
+          - {order_item_id: 3, order_id: 3, variant_id: 1}
+          - {order_item_id: 4, order_id: 4, variant_id: 1}
+          - {order_item_id: 5, order_id: 5, variant_id: 2}
+      - input: ref('stg_shop__orders')
+        rows:
+          - {order_id: 1, placed_at: "2025-03-05 00:00:00+00"}
+          - {order_id: 2, placed_at: "2025-03-10 12:00:00+00"}
+          - {order_id: 3, placed_at: "2025-03-10 11:59:59+00"}
+          - {order_id: 4, placed_at: "2025-02-20 00:00:00+00"}
+          - {order_id: 5, placed_at: "2025-03-01 00:00:00+00"}
+      # In SQL, so the test needs no snapshot relation in the database.
+      - input: ref('snap_product_variants')
+        format: sql
+        rows: |
+          select 1 as id, 10.00::numeric(12, 2) as cost_price,
+            '2025-03-01 00:00:00+00'::timestamptz as dbt_valid_from, '2025-03-10 12:00:00+00'::timestamptz as dbt_valid_to
+          union all
+          select 1, 12.00::numeric(12, 2), '2025-03-10 12:00:00+00'::timestamptz, null::timestamptz
+          union all
+          select 2, 7.00::numeric(12, 2), '2025-03-05 00:00:00+00'::timestamptz, null::timestamptz
+    expect:
+      rows:
+        # The start of a version is inclusive and its end is exclusive.
+        - {order_item_id: 1, unit_cost_at_sale: "10.00"}
+        - {order_item_id: 2, unit_cost_at_sale: "12.00"}
+        - {order_item_id: 3, unit_cost_at_sale: "10.00"}
+        # Before the first captured version, the earliest version's cost applies.
+        - {order_item_id: 4, unit_cost_at_sale: "10.00"}
+        - {order_item_id: 5, unit_cost_at_sale: "7.00"}
+
+  - name: int_order_items__discount_allocated_remainder_to_largest
+    model: int_order_items__discount_allocated
+    given:
+      - input: ref('stg_shop__order_items')
+        rows:
+          - {order_item_id: 11, order_id: 1, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 12, order_id: 1, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 13, order_id: 1, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 21, order_id: 2, quantity: 1, unit_price: "50.00"}
+          - {order_item_id: 22, order_id: 2, quantity: 1, unit_price: "25.00"}
+          - {order_item_id: 31, order_id: 3, quantity: 2, unit_price: "20.00"}
+          - {order_item_id: 41, order_id: 4, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 42, order_id: 4, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 43, order_id: 4, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 44, order_id: 4, quantity: 1, unit_price: "30.00"}
+      - input: ref('stg_shop__order_discounts')
+        rows:
+          - {order_id: 1, amount: "10.00"}
+          - {order_id: 2, amount: "5.00"}
+          - {order_id: 2, amount: "2.50"}
+          - {order_id: 4, amount: "0.10"}
+    expect:
+      rows:
+        # A tie on gross amount goes to the lowest id.
+        - {order_item_id: 11, allocated_discount: "3.34", net_amount: "6.66"}
+        - {order_item_id: 12, allocated_discount: "3.33", net_amount: "6.67"}
+        - {order_item_id: 13, allocated_discount: "3.33", net_amount: "6.67"}
+        - {order_item_id: 21, allocated_discount: "5.00", net_amount: "45.00"}
+        - {order_item_id: 22, allocated_discount: "2.50", net_amount: "22.50"}
+        - {order_item_id: 31, allocated_discount: "0.00", net_amount: "40.00"}
+        # The shares round up, so the remainder is negative and the largest line absorbs it.
+        - {order_item_id: 41, allocated_discount: "0.02", net_amount: "9.98"}
+        - {order_item_id: 42, allocated_discount: "0.02", net_amount: "9.98"}
+        - {order_item_id: 43, allocated_discount: "0.02", net_amount: "9.98"}
+        - {order_item_id: 44, allocated_discount: "0.04", net_amount: "29.96"}
+
+  - name: int_orders__refunds_summarized_untaxes_returns_and_goodwill
+    model: int_orders__refunds_summarized
+    given:
+      - input: ref('stg_shop__refunds')
+        rows:
+          - {order_id: 1, refund_reason: return, amount: "120.00"}
+          - {order_id: 1, refund_reason: goodwill, amount: "64.80"}
+          - {order_id: 2, refund_reason: cancellation, amount: "50.00"}
+          - {order_id: 3, refund_reason: return, amount: "1.00"}
+          - {order_id: 4, refund_reason: goodwill, amount: "0.01"}
+    expect:
+      rows:
+        - {order_id: 1, refunded_amount: "184.80", refunded_revenue: "154.00"}
+        # The unit test compares text: the model coalesces to an integer 0, which has no decimals.
+        - {order_id: 2, refunded_amount: "50.00", refunded_revenue: 0}
+        - {order_id: 3, refunded_amount: "1.00", refunded_revenue: "0.83"}
+        - {order_id: 4, refunded_amount: "0.01", refunded_revenue: "0.01"}

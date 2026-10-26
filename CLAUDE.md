@@ -8,7 +8,7 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
 - **UI spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`. The web app (Home, Ask, Explorer, Lineage). Relies on the data platform spec §11 and the agent spec's `plan`/`answer` contract (§5.1).
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-5` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`), agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`) and ui-1 (`2026-10-24-ui-1-shell-and-explorer.md`) are done. Current plan: agent-design-2 (gold set and evals), to be planned; data-platform-3 runs alongside.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-5` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`), data-platform-3 (`2026-10-25-data-platform-3-time.md`), agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`) and ui-1 (`2026-10-24-ui-1-shell-and-explorer.md`) are done. Current plan: agent-design-2 (gold set and evals), to be planned.
 - **Sequencing:**
   1. data-platform-1 → data-platform-2 (defines the agent-facing interface).
   2. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-3 once agent-design-1 exists; ui-4 after agent-design-3; ui-5 (one-command demo) after ui-4.
@@ -65,12 +65,12 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
   - `make up` / `make down` start / stop every compose service (Postgres, `mcp`, `ui` at `http://127.0.0.1:8090`). `make up` builds the images, waits until all are healthy, then brings the database roles up to date with `data-platform/postgres/roles.sql` (idempotent: it creates missing roles and resets passwords and settings from `.env`).
   - For the database alone: `docker compose up -d --wait postgres`.
 - **Data:**
-  - `make generate DAYS=<n>` simulates `n` more days (`DAYS` is required).
-  - `make backfill` simulates `DAYS` days (default 365) ending yesterday.
-  - `make reset` drops the dbt schemas and the raw schemas, then recreates the raw schemas empty.
+  - `make advance DAYS=<n>` simulates `n` more days (`DAYS` is required), then snapshots the catalog.
+  - `make backfill` simulates `DAYS` days (default 365) ending yesterday, in weekly chunks with a snapshot after each; it refuses to run on top of an existing simulation.
+  - `make reset` drops the dbt schemas (`dev_*`, the prod ones, `snapshots`, `test_failures`, `dev_test_failures`, `ops`) and the raw schemas, then recreates the raw schemas empty.
   - The simulated range and row counts: `uv run sherpa-generate status`.
 - **dbt:**
-  - `make build` checks source freshness, then runs `dbt build` (seeds included) on dev.
+  - `make build` checks source freshness, then runs `dbt build` (seeds, unit tests and the incremental models included) on dev. It reads the simulation's first day (`uv run sherpa-generate start-date`) into `SHERPA_SIMULATION_START_DATE`, the `begin` of the event model. When a simulated day older than 7 days before today that no earlier build loaded exists (for example after `make advance DAYS=n` with `n` above 7), `assert_every_source_event_is_staged` fails the build until you run `dbt build --select stg_events__events --event-time-start <first missing day> --event-time-end <day after the last missing day>` (the end is exclusive) from `data-platform/dbt/` (the building guide shows it).
   - `make build-prod` does the same on prod, then `dbt docs generate`, with artifacts in `target-prod`.
   - Both install the dbt packages first whenever `packages.yml` or `package-lock.yml` changed.
   - `make docs` generates and serves the dev docs.
@@ -88,7 +88,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 ## Conventions
 
 - **Repository layout, grouped by spec:**
-  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
+  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt.
   - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
@@ -98,6 +98,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
 - Time-relative columns use `as_of_date`, never `now()`.
+- dbt tests: singular tests are plain `SELECT`s of failing rows in `data-platform/dbt/tests/singular/`; unit tests sit in the model's YAML, with test names of at most 63 characters (Postgres' identifier limit). Every incremental model sets `on_schema_change: fail`.
 - Money is `numeric(12,2)` EUR (Python `Decimal`, `ROUND_HALF_UP`). Timestamps are UTC.
 - Secrets live only in `.env` (gitignored). `profiles.yml` reads everything via `env_var()`.
 

@@ -4,6 +4,7 @@
     group missing on one side count as 0.
 #}
 {% test column_sums_match(model, column_name, compare_model, compare_column, group_by) %}
+{{ config(store_failures=true) }}
 
 with
 

@@ -86,10 +86,10 @@ A metric is defined in four places that must agree. Change them in this order:
 
 1. **The doc block** in `models/marts/_metrics.md` (`{% docs metric_refunded_revenue %} ... {% enddocs %}`). Columns reuse it with `{{ doc(...) }}`, so one edit changes the docs, the Postgres comments and the manifest the agent reads.
 2. **The calculation.** A macro change reaches every caller: `revenue_excluding_tax` (`macros/revenue_excluding_tax.sql`; `fct_refunds`, `int_orders__refunds_summarized`) and `customer_segment` (`macros/customer_segment.sql`; `dim_customers`). A rule in a model's SQL (net revenue in `fct_orders`) is changed there. Variables such as `tax_rate` live in `dbt_project.yml`.
-3. **The tests that pin it**, singular tests in `data-platform/dbt/tests/` with fixed inputs, which fail until you update them on purpose: `assert_revenue_excluding_tax`, `assert_customer_segment_boundaries` (0 orders; 90/91 and 180/181 days), `assert_cancelled_orders_have_no_outcomes`, `assert_line_refunds_within_order_refunds`, `assert_captured_payments_equal_order_total`, plus the `column_sums_match` tests in the YAML.
+3. **The tests that pin it**, which fail until you update them on purpose: the unit tests in the model's YAML (`dim_customers_segments_at_the_90_and_180_day_boundaries`: 0 orders; 90/91 and 180/181 days; `int_orders__refunds_summarized_untaxes_returns_and_goodwill`) and the singular tests in `data-platform/dbt/tests/singular/`: `assert_cancelled_orders_have_no_outcomes`, `assert_line_refunds_within_order_refunds`, `assert_captured_payments_equal_order_total`, plus the `column_sums_match` tests in the YAML.
 4. **The spec** (§6.5, §6.6).
 
-To see the pinning work, override the variable: `dbt test --select assert_revenue_excluding_tax --vars '{tax_rate: 0.25}'` fails with rows returned. After the change run `make build`, then `make build-prod`; the agent sees the new definition only after the prod build.
+To see the pinning work, override the variable: `dbt test --select test_type:unit --vars '{tax_rate: 0.25}'` fails the refunds unit test with an actual-versus-expected diff. After the change run `make build`, then `make build-prod`; the agent sees the new definition only after the prod build.
 
 ## 4. Add a trigram index
 
@@ -126,7 +126,7 @@ A generic test is a Jinja `{% test %}` block under `data-platform/dbt/tests/gene
               group_by: order_id
   ```
 
-Run every use with `dbt test --select "test_name:column_sums_match" --target prod --target-path target-prod`; [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows a failure. Write a generic test when the rule applies to several models; a rule about one model with fixed cases is a singular test, a plain `SELECT` of failing rows in `data-platform/dbt/tests/<name>.sql`. Comment what a returned row means.
+Run every use with `dbt test --select "test_name:column_sums_match" --target prod --target-path target-prod`; [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows a failure. Write a generic test when the rule applies to several models; a rule about one model with fixed cases is a singular test, a plain `SELECT` of failing rows in `data-platform/dbt/tests/singular/<name>.sql`. Comment what a returned row means.
 
 ## 6. Ephemeral, view or table for an intermediate model
 
@@ -138,13 +138,44 @@ Intermediate models (`models/intermediate/`) default to `ephemeral`. Override wi
 | `view` | A view in the `intermediate` schema | You need to query it, test it or unit-test it |
 | `table` | A table, rebuilt each run | The query is expensive and several models read it |
 
-Current choices: `int_events__sessionized` is a table (window functions over every event, read by `fct_orders` and `dim_customers`); `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` are views because they carry their own tests; the rest are ephemeral. List them with:
+Current choices: `int_events__sessionized` (`delete+insert`) and `int_identity__anonymous_to_customer` (`merge`) are incremental tables, so a build recomputes only what the new events touch; `int_order_items__costed`, `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` are views because they carry their own tests; the rest are ephemeral. List them with:
 
 ```bash
 dbt --quiet ls --select intermediate --resource-type model --output json --output-keys name config.materialized
 ```
 
 The agent role cannot read the `intermediate` schema, so these models can be renamed or restructured freely as long as the marts keep their shape.
+
+## 7. Change an incremental model
+
+Three models build incrementally, each with the strategy its job needs ([spec §6.2 to §6.4](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). All three set `on_schema_change: fail`.
+
+| Model | Strategy | Why | Watermark |
+|---|---|---|---|
+| `stg_events__events` | `microbatch` on `received_at` | Events arrive late and are the biggest table; a run reprocesses today and the 7 days before | None stored: the run date, `lookback=7`, and `begin` from `SHERPA_SIMULATION_START_DATE` |
+| `int_identity__anonymous_to_customer` | `merge` on `anonymous_id` | One row per device whose values change when it is identified again | `max(last_received_at)` of the table itself |
+| `int_events__sessionized` | `delete+insert` on `session_date` | A late event rewrites a whole session, sometimes across midnight, so whole days are replaced | `max(max_received_at)` of the table itself |
+
+The two table watermarks make a run independent of the date it runs: a missed day is caught up by the next run.
+
+**Change the logic.**
+
+1. Edit the `.sql`. Keep the `{% if is_incremental() %}` branch and the full-build branch equal in meaning.
+2. Unit-test the incremental branch with `overrides: macros: {is_incremental: true}`. Give `this` (the table's current content) and any ephemeral input as `format: sql` (dbt can only give an ephemeral model as SQL; see `int_events__sessionized_puts_late_event_in_existing_session` in `models/intermediate/events/_events__models.yml`). Also test the empty-table case (`int_identity__anon_to_customer_reads_all_when_table_empty`): `is_incremental()` is true on the first run after the table exists but is empty.
+3. Rebuild with `dbt build --select stg_events__events+` (the staging guard test rides with it; never build downstream alone). A change to the model SQL, `channel_mapping` or `session_timeout_minutes` (or to the map's logic, for `int_identity__anonymous_to_customer+`) needs `--full-refresh --select int_events__sessionized+` on each target, run only after the guard passes (or select `stg_events__events int_events__sessionized+`); only changes affecting new rows alone build incrementally. The unit tests run first.
+4. Prove the incremental result equals a full rebuild: run a full refresh in prod, then the analysis (below).
+
+**When the columns change.** `on_schema_change: fail` stops an incremental run whose columns differ from the table's, so a new column needs `dbt build --full-refresh --select <model>+`. Do not use `append_new_columns`: it leaves the old rows null and the incremental result differs from a full rebuild. `--full-refresh` on `stg_events__events` rebuilds every daily batch from `begin`, about two minutes on a year of data.
+
+**Add a column to a snapshot.** `snap_product_variants` (`snapshots/_snapshots.yml`) captures `raw_shop.product_variants` each time `dbt snapshot` runs, and `--full-refresh` does not touch it. A new raw column means `make reset && make backfill` ([Extending the source data model](extending-the-source-data-model.md)), which fills it for every version. Add it to the YAML description too.
+
+**The proof.** After a full refresh in prod:
+
+```bash
+dbt show --select fct_sessions_incremental_vs_full_refresh --vars '{compare_schema: marts}'
+```
+
+Run on the dev target (the default), it compares `dev_marts.fct_sessions`, which `make build` has updated incrementally, with the prod table that the full refresh rebuilt; zero rows means identical. The analysis requires `compare_schema` only when it is the selected node; selecting it by `--selector` or resource type skips that check and fails on a placeholder schema.
 
 ## Common errors
 
@@ -157,6 +188,7 @@ The agent role cannot read the `intermediate` schema, so these models can be ren
 | Agent cannot see the new table | Run `make build-prod`; the grant hook runs with every build |
 | Trigram index missing after a rebuild | Use `create_trigram_index` in `post_hook`, not a hand-written `create index if not exists` |
 | Singular test fails after a metric change | Update its expected values on purpose, then the spec |
+| `The source and target schemas on this incremental model are out of sync!` | Columns changed, or another checkout built the model with other code: `dbt build --full-refresh --select <model>+` on that target (section 7) |
 
 ## Next
 

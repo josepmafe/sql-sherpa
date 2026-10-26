@@ -28,6 +28,8 @@ The generator writes four raw schemas, one per system the shop would run:
   the mapping of UTM source/medium to marketing channels.
 - **Staging** (`staging`): one view per source table. Renames columns, casts types and
   cleans values; no business logic and no joins except to seeds.
+- **Snapshots** (`snapshots`): `snap_product_variants` keeps every version of a product variant's
+  prices, because the raw table only holds the current ones. Dev and prod share it.
 - **Intermediate** (`intermediate`): joins and calculations that several marts share, such
   as spreading an order's discount over its lines or numbering web sessions. Most are
   ephemeral (inlined into the models that use them, so they build nothing). Not for consumers.
@@ -36,6 +38,7 @@ The generator writes four raw schemas, one per system the shop would run:
       `dim_promotions`
     - **customers**: `dim_customers`
     - **products**: `dim_products`
+    - **marketing_web**: `fct_sessions`
     - **shared**: `dim_date`
 
   Metric definitions (net revenue, refund rate, ...) are written once in the `metric_<name>` doc

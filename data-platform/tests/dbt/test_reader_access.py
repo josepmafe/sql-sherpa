@@ -29,12 +29,15 @@ MARTS = (
     "fct_orders",
     "fct_refunds",
     "fct_returns",
+    "fct_sessions",
 )
 NOT_EXPOSED = (
     ("staging", "stg_shop__orders"),
     ("intermediate", "int_order_items__discount_allocated"),
     ("seeds", "countries"),
     ("raw_shop", "orders"),
+    ("snapshots", "snap_product_variants"),
+    ("test_failures", "assert_buyer_revenue_pareto"),
 )
 TRIGRAM_INDEXES = [
     "dim_products_brand_trgm",
@@ -123,7 +126,7 @@ class TestReaderAccess:
         assert row[0] > 0
 
     @pytest.mark.parametrize(("schema", "table"), NOT_EXPOSED)
-    def test_cannot_read_staging_intermediate_seeds_or_raw(
+    def test_cannot_read_non_mart_schemas(
         self, admin: psycopg.Connection, reader: psycopg.Connection, schema: str, table: str
     ) -> None:
         assert _exists(admin, schema, table)

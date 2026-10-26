@@ -16,6 +16,7 @@ sources:
             warn_after: {count: 36, period: hour}
             error_after: {count: 72, period: hour}
           loaded_at_field: received_at
+          event_time: received_at
         columns:
           - name: event_id
             description: UUID of the event as text; duplicated rows share it.

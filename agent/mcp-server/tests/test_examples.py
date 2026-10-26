@@ -16,6 +16,7 @@ MARTS = frozenset(
     {
         *("dim_customers", "dim_products", "dim_promotions", "dim_date"),
         *("fct_orders", "fct_order_items", "fct_order_discounts", "fct_returns", "fct_refunds"),
+        "fct_sessions",
     }
 )
 

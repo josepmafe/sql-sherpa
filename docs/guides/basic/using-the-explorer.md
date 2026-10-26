@@ -17,7 +17,7 @@ Open <http://127.0.0.1:8090>; the root redirects to `/explorer`.
 
 ## The catalog tree
 
-The tree is `sherpa > marts > <domain> > table > column`: descriptions from dbt's `manifest.json`, column types from `catalog.json`. It lists the nine marts.
+The tree is `sherpa > marts > <domain> > table > column`: descriptions from dbt's `manifest.json`, column types from `catalog.json`. It lists every mart.
 
 - **Search** filters tables and columns by name.
 - **Columns** show their type, a PK badge and a PII badge (masked values).

@@ -69,6 +69,16 @@ def status() -> None:
         typer.echo(f"{table}: {count}")
 
 
+@app.command(name="start-date")
+def start_date() -> None:
+    """Print the first simulated day (YYYY-MM-DD), or nothing when no simulation exists yet."""
+    with _exit_on_error(), _connection_errors(), _database().connect() as conn:
+        state = SimulationStateStore(conn).load()
+
+    if state is not None:
+        typer.echo(state.start_date.isoformat())
+
+
 @app.command()
 def reset() -> None:
     """Drop and recreate the raw schemas, deleting all generated data and the simulation state."""

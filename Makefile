@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill reset build build-prod docs eval-db mcp-dev ui-client ui-dev e2e lint test
+.PHONY: up down advance backfill reset build build-prod docs eval-db mcp-dev ui-client ui-dev e2e lint test
 # Private targets, called by the ones above and not commands of their own; their names start with _.
 .PHONY: _roles _docs-check _lockfile-check _ui-api-dev _ui-web-dev
 
@@ -11,16 +11,23 @@ PROD = --target prod --target-path target-prod
 # but [a-z0-9_] (so they need no quoting in sh or SQL) or equal the main database name.
 # Eval artifacts and database: a frozen warehouse (separate database) built by `make eval-db`.
 EVAL = --target eval --target-path target-eval
+EVAL_START = 2025-01-01
+# The frozen year needs a frozen microbatch range (end exclusive).
+EVAL_END = 2026-01-01
 SHERPA_EVAL_DB_NAME ?= sherpa_eval
 export SHERPA_EVAL_DB_NAME
 SHERPA_DB_NAME ?= sherpa
 DB_NAME_CHARS = a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 _
 # $(call strip-chars,text,chars): text with every character in the word list chars removed.
 strip-chars = $(if $(2),$(call strip-chars,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,$(words $(2)),$(2))),$(1))
-DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit, ops
+DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_test_failures, seeds, staging, intermediate, marts, test_failures, snapshots, ops
 # The dbt packages, installed again whenever packages.yml or package-lock.yml changes; every target that runs dbt
 # depends on them.
 DBT_PACKAGES = data-platform/dbt/dbt_packages/.installed
+# The simulation's first day is the `begin` of the microbatch model (spec 6.2). Recursive, so only the targets that
+# use it run the command (make up does not).
+SIMULATION_START = $(shell uv run sherpa-generate start-date 2>/dev/null)
+build build-prod: export SHERPA_SIMULATION_START_DATE = $(SIMULATION_START)
 
 # After the services are healthy, the roles are brought up to date (_roles), so an existing volume never lags behind.
 up:
@@ -30,13 +37,16 @@ up:
 down:
 	docker compose down
 
-generate:
-	$(if $(DAYS),,$(error DAYS is required, e.g. make generate DAYS=3))
+# More days after the last simulated one, then a snapshot of the catalog (about a second).
+advance: $(DBT_PACKAGES)
+	$(if $(DAYS),,$(error DAYS is required, e.g. make advance DAYS=3))
 	uv run sherpa-generate generate --days $(DAYS)
+	$(DBT) snapshot $(PROD)
 
+# A new simulation ending yesterday, in weekly chunks with a snapshot after each (the script runs dbt snapshot).
 backfill: DAYS ?= 365
-backfill:
-	uv run sherpa-generate generate --days $(DAYS)
+backfill: $(DBT_PACKAGES)
+	uv run --env-file .env python data-platform/scripts/backfill.py --days $(DAYS)
 
 # The dbt schemas go first: their views read from the raw schemas.
 reset:
@@ -70,8 +80,8 @@ eval-db: $(DBT_PACKAGES)
 		'test "$$POSTGRES_DB" != $(SHERPA_EVAL_DB_NAME) || { echo "refusing to drop the main database $$POSTGRES_DB" >&2; exit 1; }; \
 		psql -U "$$SHERPA_ADMIN_USER" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $(SHERPA_EVAL_DB_NAME) WITH (FORCE)" -c "CREATE DATABASE $(SHERPA_EVAL_DB_NAME)" && \
 		psql -U "$$SHERPA_ADMIN_USER" -d $(SHERPA_EVAL_DB_NAME) -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC" -c "REVOKE TEMPORARY ON DATABASE $(SHERPA_EVAL_DB_NAME) FROM PUBLIC"'
-	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run sherpa-generate generate --seed 42 --start-date 2025-01-01 --days 365
-	$(DBT) build $(EVAL)
+	SHERPA_DB_NAME=$(SHERPA_EVAL_DB_NAME) uv run --env-file .env python data-platform/scripts/backfill.py --days 365 --start-date $(EVAL_START) --seed 42 --target eval
+	$(DBT) build $(EVAL) --event-time-start $(EVAL_START) --event-time-end $(EVAL_END)
 	$(DBT) docs generate $(EVAL)
 
 # The MCP server on the host over Streamable HTTP (http://127.0.0.1:8765/mcp), e.g. for MCP Inspector.

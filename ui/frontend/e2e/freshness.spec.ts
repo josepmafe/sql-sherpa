@@ -20,7 +20,7 @@ test("a new build shows after a reload without restarting ui", async ({ page }) 
   await runQuery(page, "select count(*) from marts.fct_orders");
   await expect(page.getByRole("cell", { name: before, exact: true })).toBeVisible();
 
-  make("generate", "DAYS=1");
+  make("advance", "DAYS=1");
   make("build-prod");
   const after = adminScalar("select count(*) from marts.fct_orders");
   expect(after).not.toBe(before);

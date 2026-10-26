@@ -10,7 +10,7 @@ import pytest
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import QueryResult, WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
-from sherpa_mcp.tools import DOES_NOT_COVER, NO_MATCH_HINT, NOTES, SHORT_HISTORY, WarehouseTools
+from sherpa_mcp.tools import DOES_NOT_COVER, DOMAIN_SUBJECTS, NO_MATCH_HINT, NOTES, SHORT_HISTORY, WarehouseTools
 
 if TYPE_CHECKING:
     import psycopg
@@ -22,7 +22,7 @@ EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "exa
 MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_reader_access.py"
 METRICS = (
     *("gross_revenue", "discount_amount", "refunded_revenue", "net_revenue"),
-    *("cogs", "gross_margin", "aov", "refund_rate"),
+    *("cogs", "gross_margin", "aov", "refund_rate", "conversion_rate"),
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 PII_LITERAL = "leak@example.com"
@@ -30,7 +30,7 @@ HOSTILE_SQL = f"select email from marts.dim_customers where email = '{PII_LITERA
 
 
 def _expected_marts() -> tuple[str, ...]:
-    """The data platform's own list of the nine marts, loaded from its test module."""
+    """The data platform's own list of the marts, loaded from its test module."""
     spec = importlib.util.spec_from_file_location("data_platform_agent_access", MARTS_SPEC)
     assert spec is not None
     assert spec.loader is not None
@@ -38,6 +38,28 @@ def _expected_marts() -> tuple[str, ...]:
     spec.loader.exec_module(module)
     marts: tuple[str, ...] = module.MARTS
     return marts
+
+
+def test_does_not_cover_names_on_site_browsing_below_the_session() -> None:
+    entry = next(item for item in DOES_NOT_COVER if "app visits" in item)
+
+    assert "which products or pages were viewed or carted" in entry
+    assert "fct_sessions has one row per web session with funnel flags" in entry
+
+
+def test_does_not_cover_campaign_entry_says_sessions_carry_the_utm_slug() -> None:
+    entry = next(item for item in DOES_NOT_COVER if item.startswith("campaign names"))
+
+    assert "customers and promotions carry only a campaign id" in entry
+    assert "sessions also carry the utm_campaign slug" in entry
+
+
+def test_cancelled_order_filter_note_is_limited_to_order_metrics() -> None:
+    assert "cancelled orders are kept and flagged: order metrics filter on not is_cancelled" in NOTES
+
+
+def test_marketing_web_subject_does_not_promise_landing_pages() -> None:
+    assert "landing page" not in DOMAIN_SUBJECTS["marketing_web"]
 
 
 @pytest.mark.warehouse
@@ -53,16 +75,16 @@ class TestWarehouseTools:
         # The built warehouse holds a year of history (make backfill), shorter than two years.
         assert context.does_not_cover == (*DOES_NOT_COVER, SHORT_HISTORY)
         assert context.notes == NOTES
-        assert set(context.domains) == {"customers", "products", "sales", "shared"}
+        assert set(context.domains) == {"customers", "marketing_web", "products", "sales", "shared"}
         assert context.covers[0] == (
             "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history "
             "(dim_customers)"
         )
-        assert context.covers[2].endswith(
+        assert context.covers[3].endswith(
             "(dim_promotions, fct_order_discounts, fct_order_items, fct_orders, fct_refunds, fct_returns)"
         )
 
-    def test_list_tables_are_the_nine_marts(self, tools: WarehouseTools) -> None:
+    def test_list_tables_are_the_marts(self, tools: WarehouseTools) -> None:
         names = [table.name for table in tools.list_tables().tables]
 
         assert sorted(names) == sorted(_expected_marts())

@@ -8,6 +8,7 @@ model-paths: ["models"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
 
 clean-targets: ["target", "target-prod", "target-eval", "target-sqlfluff", "target-scratch", "dbt_packages"]
 
@@ -56,6 +57,14 @@ models:
         select:
           - "{{ env_var('SHERPA_AGENT_USER', 'sherpa_agent') }}"
           - "{{ env_var('SHERPA_UI_USER', 'sherpa_ui') }}"
+
+# Failing rows of the singular tests and of column_sums_match are kept in test_failures (dev_test_failures on dev),
+# so a failure can be read with a select. Other generic tests only report a count.
+data_tests:
+  sherpa:
+    +schema: test_failures
+    singular:
+      +store_failures: true
 
 seeds:
   sherpa:

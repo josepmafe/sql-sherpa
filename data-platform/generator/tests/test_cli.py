@@ -59,7 +59,7 @@ def no_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
 
 
-COMMANDS = [["generate", "--days", "1"], ["status"], ["reset"]]
+COMMANDS = [["generate", "--days", "1"], ["status"], ["start-date"], ["reset"]]
 
 
 class TestCli:
@@ -166,6 +166,23 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert "no days simulated yet" in result.stdout
         assert "raw_shop.orders: 0\n" in result.stdout
+
+    @pytest.mark.integration
+    def test_start_date_before_any_run_prints_nothing(self, cli_database: Database) -> None:
+        result = runner.invoke(app, ["start-date"])
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout == ""
+
+    @pytest.mark.integration
+    def test_start_date_prints_the_first_simulated_day(self, cli_database: Database) -> None:
+        first = runner.invoke(app, ["generate", "--days", "1", "--start-date", "2025-03-01", "--scale", "0.1"])
+
+        result = runner.invoke(app, ["start-date"])
+
+        assert first.exit_code == 0, first.output
+        assert result.exit_code == 0, result.output
+        assert result.stdout == "2025-03-01\n"
 
     @pytest.mark.integration
     def test_reset_drops_and_recreates_raw_schemas(self, cli_database: Database) -> None:

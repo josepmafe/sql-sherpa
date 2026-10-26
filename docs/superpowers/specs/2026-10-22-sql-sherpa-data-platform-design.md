@@ -69,7 +69,7 @@ sql-sherpa/
 │   │   ├── dbt_project.yml  profiles.yml  packages.yml  selectors.yml
 │   │   ├── models/{staging,intermediate,marts}/
 │   │   └── snapshots/  seeds/  macros/  tests/  analyses/
-│   ├── scripts/                     #   helper scripts (the dbt docs-coverage check)
+│   ├── scripts/                     #   helper scripts (the dbt docs-coverage check, the chunked backfill)
 │   └── tests/                       #   tests across generator and dbt (seeds, agent access to the marts, scripts)
 ├── agent/                           # the agent spec
 ├── ui/                              # the UI spec
@@ -107,7 +107,12 @@ Passwords come from `.env`.
 **Artifacts:** prod commands use `--target-path target-prod`, so `data-platform/dbt/target-prod/` always holds the prod `manifest.json` / `catalog.json` (the agent interface and `--state` for slim builds) and dev runs never overwrite it. Dev runs use the default `data-platform/dbt/target/`.
 
 **Additional targets:**
-- `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly: it creates the database and revokes all privileges on its `public` schema and `TEMPORARY` on the database from `PUBLIC` (as the init script does for the main database; the large-object revokes come from `template1`), runs the generator with `--seed 42 --start-date 2025-01-01 --days 365`, then runs `dbt build` and `dbt docs generate`. This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
+- `eval` (data-platform-2): like `prod`, but on database `SHERPA_EVAL_DB_NAME` (default `sherpa_eval`) with `--target-path target-eval`. `make eval-db` builds it reproducibly:
+  1. It creates the database and revokes all privileges on its `public` schema and `TEMPORARY` on the database from `PUBLIC`, as the init script does for the main database. The large-object revokes come from `template1`.
+  2. It runs the generator with seed 42 from 2025-01-01 for 365 days. From data-platform-3 this is the chunked backfill (§6.3), so the eval snapshot holds a year of price history.
+  3. It runs `dbt build` (from data-platform-3, microbatch over exactly 2025-01-01 to 2026-01-01) and `dbt docs generate`.
+
+  This gives the agent's evals a frozen dataset with `as_of_date` = 2025-12-31.
 - `agent` (agent-design-9): like `prod`, but with `sherpa_agent` credentials. It is used only for read-only compilation, namely MetricFlow's `--explain`, so it is added to `profiles.yml` by the milestone that first runs it.
 
 **Dates and time zones:** every timestamp is converted to UTC in staging; every `*_date` column (`order_date`, `session_date`, `refund_date`, `spend_date`, `as_of_date`) is a UTC calendar date.
@@ -187,7 +192,7 @@ sherpa-generate generate --days N [--start-date YYYY-MM-DD] [--scale S] [--seed 
 
 - **First run** (empty `raw_meta.simulation_state`): runs setup (catalog, campaigns, promotions) then simulates `N` days ending yesterday, unless `--start-date` is given. Output depends only on seed, scale and start date (for the range the catalog covers, §5.2 Setup).
 - **Later runs:** continue from the day after `last_simulated_date` for `N` days, **never beyond yesterday** (wall clock), so source freshness behaves realistically. If there is nothing left to simulate, exit 0 with a message.
-- `sherpa-generate reset` drops and recreates the `raw_*` schemas. `sherpa-generate status` prints the simulated range and row counts.
+- `sherpa-generate reset` drops and recreates the `raw_*` schemas. `sherpa-generate status` prints the simulated range and row counts. `sherpa-generate start-date` (data-platform-3) prints only the simulation's first day, or nothing before the first run, for the Makefile and the backfill script (§6.2, §6.3).
 - Each simulated day is written in **one transaction** (all-or-nothing); `simulation_state` updates in the same transaction. A crash mid-day leaves the database at the end of the previous day.
 - **Determinism:** the RNG for day *d* is `random.Random` / `numpy.random.default_rng` seeded with a stable integer derived from `hashlib.sha256(f"{seed}:{d.isoformat()}")` — never Python's built-in `hash()`, which varies per process. **The generator assigns all primary keys itself** from counters stored in `simulation_state` (not Postgres sequences, which would leak values on rolled-back days). Given the same seed, start date and scale, two fresh runs produce identical data. Lifecycle progression for open orders/returns is derived by querying the database, so resumed runs equal one long run.
 - **Late events (R2):** an event is written in the batch of the simulated day that contains its `received_at`. Events generated on day *d* with a later `received_at` go to `raw_meta.pending_events` (same transaction) and are flushed when that day is simulated. Events pending past yesterday stay pending — no row ever has a `received_at` in the future.
@@ -199,7 +204,7 @@ Per simulated day (before seasonality multipliers):
 
 1. **Catalog drift:** apply R10 price changes; activate/deactivate ~0.1% of products.
 2. **Leads:** ~16 new leads; email sends for active campaigns and a weekly newsletter (Tuesdays) to all `subscriber`+ leads; open 25%, click 3% of sends.
-3. **Sessions:** ~400 sessions, channel mix: direct 25%, organic 25%, paid_search 18%, paid_social 12%, email 10%, affiliate 5%, referral 5%. Each anonymous visitor has 1–3 devices (anonymous_ids). Funnel per session: `page_view` → 0–6 `product_view` (70% view ≥1) → `add_to_cart` of one viewed variant (30% of viewing sessions) → `begin_checkout` (45% of carts) → `purchase` (70% of a returning customer's checkouts; new visitors see step 4). ~38% of sessions come from existing customers, chosen by propensity. Overall web session conversion ≈ 3.1%.
+3. **Sessions:** ~400 sessions, channel mix: direct 25%, organic 25%, paid_search 18%, paid_social 12%, email 10%, affiliate 5%, referral 5%. Each customer has 1–3 devices (anonymous_ids). Funnel per session: `page_view` → 0–6 `product_view` (70% view ≥1) → `add_to_cart` of one viewed variant (30% of viewing sessions) → `begin_checkout` (45% of carts) → `purchase` (70% of a returning customer's checkouts; new visitors see step 4). ~38% of sessions come from existing customers, chosen by propensity. Overall web session conversion ≈ 3.1%.
 4. **Signups:** ~12/day, by new visitors at checkout; only 20% of them buy in that session, so many accounts never order and most orders are existing customers' repeat purchases. ~35% of signups match an existing lead's email (with R3 noise); events after `signup`/`login` carry `user_id`.
 5. **Orders:** every `purchase` event creates a `web` order and carries its `order_id` and subtotal (as `cart_value`); `app` orders are added so they make up 35% of orders (R12). Repeat purchases follow each customer's propensity. 1–4 distinct lines per order (50% one line, 30% two, 15% three, 5% four): a web order's first line is the variant its session carted and the other lines are drawn by popularity; app order lines are all drawn by popularity. Discounts per active promotions (25% of orders discounted). Shipping €4.95, free above €75 or with `free_shipping`. Tax 20% on `subtotal − discount_total`.
 6. **Lifecycle progression of open orders:** `placed → paid` same day (R7 failures retried; 2% never paid → `cancelled` next day); `paid → shipped` after 1–3 days; `shipped → delivered` after 2–5 days; 3% of paid orders cancelled before shipping (refund reason `cancellation`).
@@ -226,6 +231,7 @@ Changing `seed` or `scale` against existing state is an error (use `reset`).
 - Ad spend is budget-driven, so cost per click is not realistic; ROAS and CAC (data-platform-4) reflect the budgets, not click prices.
 - `remove_from_cart` events are never generated.
 - All coupon codes are unlimited: none is single-use.
+- A visitor who is not a customer gets a fresh `anonymous_id` every session, so anonymous visitors never return: every such session is a first session and `fct_sessions.is_first_session` counts them as new visitors. Only customers (whose devices are stitched through logins) have returning sessions.
 
 ---
 
@@ -239,26 +245,33 @@ Naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML 
 - `channel_mapping` (utm_source, utm_medium, marketing_channel) — maps raw UTMs to the 8 channels: `direct`, `organic`, `paid_search`, `paid_social`, `email`, `affiliate`, `referral`, `app`.
 
 ### 6.2 Staging (views, 1:1 with source)
-Rename to consistent `<entity>_id`, cast types, normalize (R3, R4), parse JSON/text timestamps (events), no joins except to seeds. Exception: **`stg_events__events` is incremental using the `microbatch` strategy** (`event_time: received_at`, `batch_size: day`, `lookback: 3`, `begin` = simulation start date via var), deduping R1 with `row_number()` over `event_id` inside each batch. This is correct because the generator guarantees duplicates share the original's `received_at` day (R1). Microbatch has no `unique_key`; the `unique` test on `event_id` guards the assumption.
+Rename to consistent `<entity>_id`, cast types, normalize (R3, R4), parse JSON/text timestamps (events), no joins except to seeds. Exception: **`stg_events__events` is incremental using the `microbatch` strategy** (from data-platform-3; a view before).
+- **Config:** `event_time: received_at` on the model and on the `raw_events.events` source (so each batch reads only its day), `batch_size: day`, `lookback: 7`, matching the 7-day backfill chunk. It is a catch-up window, not a late-data guard: the generator writes each event in the batch of the day containing its `received_at` (§5.1).
+- **Merge key:** `unique_key: event_id`. dbt-postgres requires it and runs each batch as a MERGE on it, served by a unique index.
+- **Dedupe:** R1 duplicates are removed with `row_number()` over `event_id` inside each batch. This is correct because the generator guarantees duplicates share the original's `received_at` day (R1).
+- **`begin`:** the simulation's first day, from the environment variable `SHERPA_SIMULATION_START_DATE`, which `make build` and `make build-prod` read from `sherpa-generate start-date` (§5.1). Without it, `begin` falls back to `date_spine_start`. Postgres runs batches one after another, so an early fixed `begin` would cost a batch per empty day on every fresh build. The eval build passes the frozen year as `--event-time-start/--event-time-end` instead.
+- **Skipped days:** microbatch picks the batches of an incremental run from the wall clock (today and the 7 days before), not from the data. A build therefore leaves unloaded every simulated day older than 7 days before today that no earlier build loaded (for example after advancing the simulation by more days than that between two builds). The singular test `assert_every_source_event_is_staged` fails that build before sessionization moves its watermark. A targeted `dbt build --select stg_events__events --event-time-start … --event-time-end …` loads the missing days, and the next build continues normally.
 
 ### 6.3 Snapshot
-`snap_product_variants` (YAML-defined), `timestamp` strategy on `updated_at`, `hard_deletes: invalidate`. Because the timestamp strategy uses `updated_at` as `dbt_valid_from`, simulated time is preserved. **From data-platform-3, `make backfill` runs the generator in 7-day chunks and `dbt snapshot` after each chunk**, so price history during backfill is captured. In data-platform-1 and data-platform-2, `make backfill` runs the generator once and takes no snapshot: list-price and cost history exists only as the current values in raw `product_variants`, so a data-platform-2 mart that needs the cost at time of sale uses the current cost until the snapshot exists. Two changes to the same variant within one 7-day chunk are rare (~25 variant-weeks per year at scale 1.0); the intermediate one is lost, which is harmless. Known limitations, documented: an order placed before the first captured version uses the earliest version's cost. Backfill and advance always snapshot with `--target prod` (snapshots live in the single `snapshots` schema, §3).
+`snap_product_variants` (YAML-defined), `timestamp` strategy on `updated_at`, `hard_deletes: invalidate`. Because the timestamp strategy uses `updated_at` as `dbt_valid_from`, simulated time is preserved. **From data-platform-3, `make backfill` runs the generator in 7-day chunks and `dbt snapshot` after each chunk**, so price history during backfill is captured. It is `data-platform/scripts/backfill.py`, which only starts a new simulation: it refuses one that has started (`make advance` continues it). `make eval-db` uses it too, so the eval database has a year of price history. In data-platform-1 and data-platform-2, `make backfill` runs the generator once and takes no snapshot: list-price and cost history exists only as the current values in raw `product_variants`, so a data-platform-2 mart that needs the cost at time of sale uses the current cost until the snapshot exists. `make backfill` and `make advance` snapshot with `--target prod` (snapshots live in the single `snapshots` schema, §3); `make eval-db` passes `--target eval`, with `SHERPA_DB_NAME` naming the eval database. When a variant changes twice between two snapshots (within one 7-day backfill chunk, ~25 variant-weeks per year at scale 1.0, or within one `make advance` run), the intermediate version is lost and a cost change is dated to the later change, which is harmless. Known limitation, documented: an order placed before the first captured version uses the earliest version's cost. The project macro `postgres__snapshot_get_time` makes dbt's wall-clock value for a closed version `timestamptz` like every other time column (dbt-postgres' default is a naive `timestamp`, which dbt warns about on every run).
 
 ### 6.4 Intermediate (not exposed to consumers)
 
 | Model | Materialization | Logic |
 |---|---|---|
-| `int_identity__anonymous_to_customer` | **incremental, `merge`** on `anonymous_id` | anonymous_id → customer_id (most recent identifying event wins; new identifying events update the mapping) |
+| `int_identity__anonymous_to_customer` | **incremental, `merge`** on `anonymous_id` (data-platform-3) | anonymous_id → customer_id, one row per device that has ever been identified (an event with a customer id). The most recent identifying event wins (latest `occurred_at`, tie → highest `event_id`). Columns: `anonymous_id, customer_id, identified_at, identifying_event_id, last_received_at`. **On incremental runs:** new events are those with `received_at` after the table's `max(last_received_at)`. Each device's latest new identification is compared with its existing row, and the later `identified_at` wins, so a late but older event never overrides a newer mapping. Test accounts stay in the map; `fct_sessions` drops their sessions. |
 | `int_identity__lead_to_customer` | ephemeral (data-platform-2) | lead ↔ customer on normalized email, earliest lead wins |
-| `int_events__sessionized` | **table** in data-platform-2; **incremental, `delete+insert`** on `session_date` from data-platform-3 | One row per event, carrying its session's columns. 30-minute inactivity rule (var `session_timeout_minutes`): a gap **greater than** the timeout starts a new session, per anonymous_id. `session_id = md5(anonymous_id || '|' || epoch microseconds of session_start_at)`, so it does not depend on the connection's time zone. Sessions containing an event of a test account (R5) are excluded. The session's first event decides `marketing_channel`: a UTM source/medium pair in the `channel_mapping` seed maps through it; a UTM pair missing from the seed is `unknown`; with no UTMs, a search-engine referrer (google, bing, duckduckgo) is `organic`, any other referrer `referral`, and no referrer `direct`. Each row stores its session's `max_received_at`. **On incremental runs (data-platform-3):** watermark = `max(max_received_at)` from `{{ this }}`; cutoff day = `date_trunc('day', min(occurred_at) of events with received_at > watermark) − 1 day`; recompute every session with `session_date ≥ cutoff day` from all events with `occurred_at ≥ cutoff day − 1 day` (so sessions spanning midnight into the cutoff are seen whole) |
+| `int_events__sessionized` | **table** in data-platform-2; **incremental, `delete+insert`** on `session_date` from data-platform-3 | One row per event, carrying its session's columns. 30-minute inactivity rule (var `session_timeout_minutes`): a gap **greater than** the timeout starts a new session, per anonymous_id. `session_id = md5(anonymous_id || '|' || epoch microseconds of session_start_at)`, so it does not depend on the connection's time zone. Sessions containing an event of a test account (R5) are excluded. The session's first event decides `marketing_channel`: a UTM source/medium pair in the `channel_mapping` seed maps through it; a UTM pair missing from the seed is `unknown`; with no UTMs, a search-engine referrer (google, bing, duckduckgo) is `organic`, any other referrer `referral`, and no referrer `direct`. Each row stores its session's `max_received_at` and, from data-platform-3, the event's `device_type` and `page_path` (for `fct_sessions`). **On incremental runs (data-platform-3):** watermark = `max(max_received_at)` from `{{ this }}` (`-infinity` when the table is empty); cutoff day = `date_trunc('day', min(occurred_at) of events with received_at > watermark) − 1 day`; recompute every session with `session_date ≥ cutoff day` from all events with `occurred_at ≥ cutoff day − 1 day` (so sessions spanning midnight into the cutoff are seen whole) and emit only those sessions; with no new event the run emits nothing |
 | `int_order_items__discount_allocated` | view | Allocate `Σ order_discounts.amount` pro-rata to lines by gross amount; round to cents; put the rounding remainder on the largest line so lines sum exactly to the order discount |
-| `int_order_items__costed` | ephemeral | Unit cost at sale. In data-platform-2 this is the variant's current `cost_price`; from data-platform-3 it comes from `snap_product_variants` where `placed_at` ∈ [valid_from, valid_to) |
+| `int_order_items__costed` | ephemeral in data-platform-2; view (unit-tested) from data-platform-3 | Unit cost at sale. In data-platform-2 this is the variant's current `cost_price`. From data-platform-3 it comes from the `snap_product_variants` version where `placed_at` ∈ [`dbt_valid_from`, `dbt_valid_to`); an order placed before the variant's first captured version uses that earliest version (§6.3) |
 | `int_orders__status_pivoted` | ephemeral | first `paid_at`, `shipped_at`, `delivered_at`, `cancelled_at` from status history |
 | `int_orders__payments_summarized` | ephemeral | per order: captured amount, payment count, failed attempts, primary method |
 | `int_orders__refunds_summarized` | view | per order: refunded amount, refunded revenue (per §6.6 rules) |
 | `int_order_items__returns_summarized` | view | per order line with a received return: returned quantity, restockable returned quantity, line refunded revenue |
 
 Models with unit tests (§7) are views, not ephemeral, so they can be unit-tested directly.
+
+Known limitations of the incremental sessionization: it assumes no session that gains a new event lasts longer than a day, and a day whose every session moves away or becomes a test session keeps stale rows (unreachable at hundreds of sessions a day).
 
 ### 6.5 Marts (tables, contracts enforced, fully documented)
 
@@ -272,7 +285,7 @@ Models with unit tests (§7) are views, not ephemeral, so they can be unit-teste
 
 **Mart metadata:**
 - Every mart carries `meta: {domain, grain, primary_key}` (data-platform-1 on `dim_date`, data-platform-2 on the other marts). `primary_key` is a column name or a list of column names.
-- Columns holding PII carry `meta.pii: true`.
+- Columns holding PII carry `meta.pii: true`. `anonymous_id` is a pseudonymous device identifier, not PII by itself, and is deliberately not masked: masking it would only hide per-device rows and samples while it carries no real identity.
 - Columns and models that carry business terms carry `meta.synonyms`, a list of the words people use for them, e.g. `net_revenue: ["revenue", "net sales"]`, `customer_segment: ["lifecycle stage"]`.
 
 #### Dimensions
@@ -323,6 +336,12 @@ refund_id, order_id, customer_id, return_id, refund_reason, refunded_at, refund_
 
 **`fct_sessions`** — 1 row per session · PK `session_id` · domain `marketing_web`
 session_id, anonymous_id, customer_id (stitched, nullable), session_date, session_start_at, session_end_at, duration_seconds, event_count, page_view_count, landing_page_path, device_type, utm_source, utm_medium, utm_campaign, marketing_channel, campaign_id, is_first_session, viewed_product, added_to_cart, began_checkout, purchased, order_id
+- Web sessions only: app orders have no session (R12).
+- `customer_id` is stitched through `int_identity__anonymous_to_customer`, so a device's sessions from before its login carry the customer too. Sessions stitched to a test account are excluded (R5), because their events from before the login carry no customer.
+- `session_end_at` is the last event's `occurred_at`. `landing_page_path` and `device_type` come from the first event.
+- `campaign_id` is the campaign whose `utm_campaign` equals the session's (null if none). `order_id` is the order of the session's first purchase event.
+- `is_first_session`: the visitor's first session, where the visitor is the stitched customer when there is one, otherwise the device. A customer's device that never logged in counts as its own visitor.
+- Every web order with a `session_id` sits in a `purchased` session of `fct_sessions` that contains the order's purchase event, and every `fct_sessions.order_id` is an order with that `session_id` (singular test `assert_sessions_and_orders_agree`). A session with several purchases holds its first order: the sessionizer merges purchases within a 30-minute gap on one device into one session, so the later orders carry the `session_id` but not the `order_id`.
 
 **`fct_ad_spend_daily`** — 1 row per campaign × day · PK (`campaign_id`, `spend_date`) · domain `marketing_web`
 spend_date, campaign_id, channel, spend, impressions, clicks, sessions, orders, attributed_net_revenue, new_customers
@@ -361,11 +380,11 @@ Precision: amounts `numeric(12,2)`; rates computed as `numeric` and rounded only
 | `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily; `order_id` × `promotion_id` in fct_order_discounts), `expression_is_true`, `accepted_range` |
 | `dbt_expectations` | `expect_column_pair_values_A_to_be_greater_than_B` (gross ≥ net), `expect_column_values_to_match_regex` (email in staging), `expect_row_values_to_have_recent_data` (events, severity warn), `expect_table_row_count_to_be_between` and `expect_column_mean_to_be_between` (generator distributions, severity warn) |
 | Custom generic | `column_sums_match(compare_model, compare_column, group_by)` — e.g. allocated line discounts sum to order discounts |
-| Singular | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise); line margins, order discounts and first orders reconcile with `fct_orders`, `dim_promotions` and `dim_customers` (§6.5) |
-| Unit tests | discount allocation rounding remainder; sessionization (29 vs 31 min gap; session across midnight; late event inserted into an existing session); `customer_segment` boundaries (90/91/180/181 days); refunded revenue tax removal |
+| Singular (in `tests/singular/`) | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise); line margins, order discounts and first orders reconcile with `fct_orders`, `dim_promotions` and `dim_customers` (§6.5); from data-platform-3: every source event is staged (§6.2), sessions and orders agree, and sessions with an unmapped channel (`warn_if: >0`, `error_if: >100`: a few mean the `channel_mapping` seed lacks a new UTM pair, many mean broken tracking) |
+| Unit tests (data-platform-3) | discount allocation rounding remainder; sessionization (29 vs 31 min gap; session across midnight; late event inserted into an existing session; no new events; empty table); `customer_segment` boundaries (90/91/180/181 days); refunded revenue tax removal; cost at sale at version boundaries; the device map keeping the latest identification; `fct_sessions` aggregation and test-account stitching. They run in every build (dev, prod, eval and CI): their mocked `this` and ephemeral inputs use `format: sql`, so they need no built relation, and excluding them would mark a prod build as not full for the UI (`is_full_run`, §8 "Added by ui-1") |
 | Freshness | `raw_events.events` (`received_at`), `raw_shop.orders` (`updated_at`), `raw_crm.leads` (`updated_at`): warn 36h, error 72h; `ad_spend_daily` on `spend_date::timestamp`: warn 48h. `dbt build` does not check freshness, so `make build` runs `dbt source freshness` first. |
 
-Severity: key/integrity tests `error`; distribution and freshness tests `warn`. `store_failures` enabled for singular and custom tests, into the `test_failures` schema.
+Severity: key/integrity tests `error`; distribution and freshness tests `warn`. `store_failures` enabled for singular and custom tests, into the `test_failures` schema (`dev_test_failures` on dev).
 
 ---
 
@@ -385,18 +404,28 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 **Acceptance:** all mart tests pass; `sherpa_agent` can `SELECT` from marts and no other application schema (system catalogs are readable by every role; the agent's SQL guard blocks them); contracts reject a deliberately wrong column type (verified once, manually).
 
 ### data-platform-3 — Time
-**Builds:** `advance` workflow, snapshot (and `int_order_items__costed` switching to it), `int_events__sessionized` converted from a table to incremental, `fct_sessions`.
-**dbt features:** **snapshot** (YAML), all three **incremental strategies** with a purpose each — `microbatch` (`stg_events__events`, incl. `--event-time-start/--event-time-end` for targeted backfills), `delete+insert` (`int_events__sessionized`), `merge` (`int_identity__anonymous_to_customer`) — `is_incremental()`, `{{ this }}`, `--full-refresh`, **unit tests**, `store_failures`, warn/error severity, **`dbt retry`** (resume a failed build from the failure point), `fct_sessions`.
+**Builds:** `advance` workflow and the chunked backfill script, snapshot (and `int_order_items__costed` switching to it), `stg_events__events` converted from a view to microbatch, `int_events__sessionized` converted from a table to incremental, `int_identity__anonymous_to_customer` (which `fct_sessions` stitches customers through), `fct_sessions`, and the incremental vs full-refresh analysis.
+**dbt features:**
+- **snapshot** (YAML, `hard_deletes: invalidate`)
+- all three **incremental strategies**, each with a purpose:
+  - `microbatch` (`stg_events__events`, incl. `--event-time-start/--event-time-end` for targeted backfills, which repair the days a catch-up skips, §6.2)
+  - `delete+insert` (`int_events__sessionized`)
+  - `merge` (`int_identity__anonymous_to_customer`)
+- `is_incremental()`, `{{ this }}`, `on_schema_change: fail`, `--full-refresh`
+- **unit tests** (incl. incremental logic with `is_incremental` overridden and a mocked `this`)
+- `store_failures`; warn/error severity, with `warn_if`/`error_if` thresholds
+- **analyses** (the incremental vs full-refresh diff, run with `dbt show`)
+- **`dbt retry`** (resume a failed build from the failure point)
 **Acceptance:** after `make advance DAYS=3 && make build`, an incremental run gives the same `fct_sessions` as `--full-refresh` (verified by an `analyses/` comparison query returning zero diff rows); late events from R2 end up in the correct sessions.
 
 ### data-platform-4 — Marketing, governance, CI
-**Builds:** `int_identity__anonymous_to_customer`, `fct_leads`, `fct_ad_spend_daily`, `dim_campaigns`, GitHub Actions.
+**Builds:** `fct_leads`, `fct_ad_spend_daily`, `dim_campaigns`, GitHub Actions.
 **dbt features:**
 - **Groups & access.** Groups mirror the domains: `sales`, `customers`, `products`, `marketing_web`, `shared` (each with an owner). Marts are `public`. Staging is `protected`. Intermediate models used by only one group are `private` to it (`int_order_items__*`, `int_orders__*` → `sales`; `int_identity__lead_to_customer` → `customers`). Intermediate models used across groups (`int_events__sessionized`, `int_identity__anonymous_to_customer`) are `protected` in `marketing_web`. This is possible because `dim_customers` aggregates from `fct_orders`, not from `int_orders__*`.
 - **Exposures** for the real consumers of the marts, so lineage ends where the data is used (in the dbt docs and the UI's Lineage screen):
   - `sherpa_home` (type `dashboard`): the UI's Home screen, depending on exactly the marts its curated queries read (`fct_orders`, `fct_refunds`, `dim_date`)
   - `sherpa_agent` (type `application`): the text-to-SQL agent, used by the CLI and the UI's Ask screen, depending on every public mart
-- **Analyses:** revenue reconciliation raw vs marts; incremental vs full-refresh diff.
+- **Analyses:** revenue reconciliation raw vs marts, next to data-platform-3's incremental vs full-refresh diff.
 - **A tag and a YAML selector, for CI:** the generator-distribution tests (`dbt_expectations` row-count and mean checks, the Pareto check) are tagged `distribution`. The `ci` selector builds everything except them, because CI's 30-day, scale-0.05 data can't meet distribution targets meant for a full year.
 - **State and environment commands.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`. `make clone` runs **`dbt clone`** of prod relations into dev schemas, so dev can query full data without rebuilding. **`--empty`** is used in CI as a first schema-only build that catches SQL and contract errors in seconds.
 
@@ -444,10 +473,10 @@ A target exists only for a multi-step workflow, a command with non-obvious flags
 | Target | Does |
 |---|---|
 | `make up` / `make down` | Start/stop Docker Compose. `make up` then re-applies the idempotent roles script (`data-platform/postgres/roles.sql`) as the `postgres` superuser, so a role added later (e.g. `sherpa_ui`, ui-1) reaches an existing volume without wiping it |
-| `make generate DAYS=N` | Generator for N more days (`DAYS` required), capped at yesterday |
-| `make backfill [DAYS=365]` | Generator for `DAYS` days (default 365); from data-platform-3, in 7-day chunks with `dbt snapshot --target prod` after each chunk |
+| `make advance DAYS=N` | Generator for N more days (`DAYS` required, capped at yesterday), then `dbt snapshot --target prod` |
+| `make backfill [DAYS=365]` | Generator for `DAYS` days (default 365), ending yesterday; from data-platform-3, in 7-day chunks with `dbt snapshot --target prod` after each chunk (`data-platform/scripts/backfill.py`), for a new simulation only |
 | `make reset` | Drop the dbt schemas (including the dbt test-failure audit schemas), then drop and recreate the raw schemas empty |
-| `make build` / `make build-prod` | Install the dbt packages when `packages.yml` or `package-lock.yml` changed, then `dbt source freshness` and `dbt build` (seeds included) on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then also runs `dbt docs generate` on prod, so `catalog.json` is current for the UI |
+| `make build` / `make build-prod` | Install the dbt packages when `packages.yml` or `package-lock.yml` changed, then `dbt source freshness` and `dbt build` (seeds included) on `dev` / on `prod` with `--target-path target-prod`. From ui-1, `make build-prod` then also runs `dbt docs generate` on prod, so `catalog.json` is current for the UI. From data-platform-3, both pass the simulation's first day to the microbatch model (§6.2) |
 | `make docs` | `dbt docs generate && dbt docs serve` on dev |
 | `make lint` | `ruff check`, `ruff format --check`, `mypy`, `sqlfluff lint dbt`, and the docs coverage check (`dbt docs generate`, then every model's YAML columns against the real columns); from ui-1 also the frontend's checks |
 | `make test` | `pytest` with `.env` loaded; integration tests need Postgres |
@@ -457,7 +486,6 @@ Targets added by later milestones:
 | Target | Milestone | Does |
 |---|---|---|
 | `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
-| `make advance DAYS=3` | data-platform-3 | Generator for N more days (capped at yesterday) + `dbt snapshot --target prod` |
 | `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
 
 ---
@@ -498,5 +526,8 @@ Agent and UI work can start once data-platform-2 is done; data-platform-3–data
 - `new_customers` / CAC are campaign-level (via `acquisition_campaign_id`), so they sum correctly.
 - Late events are held in `raw_meta.pending_events` until their `received_at` day; the generator assigns its own PKs.
 - `stg_events__events` uses microbatch; merge and delete+insert each have their own model.
+- Microbatch on Postgres merges on `event_id`, starts at the simulation's first day, and relies on a guard test plus a targeted backfill when a catch-up exceeds the 7-day lookback.
+- `make backfill` only starts a new simulation; `make advance` continues one.
+- Unit tests run in every build, so prod builds stay full for the UI's build status.
 - Unit-tested intermediate models are views, not ephemeral.
 - `dim_date` range is static via vars.
