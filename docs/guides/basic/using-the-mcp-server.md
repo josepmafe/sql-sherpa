@@ -383,7 +383,7 @@ run_sql {"sql": "select count(*) from marts.fct_order_items a cross join marts.f
 Error executing tool run_sql: [timeout] the query took longer than 5 s; aggregate or filter more narrowly
 ```
 
-**Missing artifacts.** Without `manifest.json` and `catalog.json` in `SHERPA_DBT_TARGET_PATH`, every tool that needs the catalog fails with ``[unavailable] dbt artifacts not found (manifest.json, catalog.json): run `make build-prod` (it writes both files)``. Run it and call again: the server notices the new files by their modification time, so it needs no restart. The same happens after any rebuild of the marts.
+**Missing artifacts.** Without `manifest.json` and `catalog.json` in `SHERPA_DBT_TARGET_PATH`, every tool that needs the catalog fails with ``[unavailable] dbt artifacts not found (manifest.json, catalog.json): run `make build-prod` (it writes both files)``. Run it and call again: the server notices the new files by their modification time, so it needs no restart. The same happens after any rebuild of the marts. Once a catalog has loaded, a reload that fails (a call that reads `manifest.json` while `make build-prod` is still writing it, or after the files were removed) keeps the last catalog and logs a warning on stderr; the next call tries again.
 
 **An unexpected error.** Anything else (a bug) reaches the model only as `Error executing tool <name>`; the traceback goes to the server's stderr and, with Logfire on, to the trace.
 

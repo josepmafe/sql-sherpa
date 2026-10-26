@@ -111,7 +111,7 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
   - Nothing credential-related is baked into the image or committed. `make ui-dev` runs the backend on the host instead, using the host's credentials directly.
 - **dbt artifacts:** `data-platform/dbt/target-prod/` is mounted read-only. The UI reads `manifest.json` and `catalog.json` from it (`make build-prod` regenerates `catalog.json` after every build), and `sources.json` for freshness (only `dbt source freshness` writes it).
   - **Build status comes from the database, not the files:** the `ops.dbt_run_results` audit table (data platform spec §8, "Added by ui-1"). The UI reads the latest invocation with `target_name = 'prod'`, `command = 'build'` and `is_full_run`. The table is needed because dbt rewrites `target-prod/run_results.json` on every compiling command, so the file can't say what the last full build did.
-  - The backend reloads a file when its mtime changes, checked on each request that uses it.
+  - The backend reloads a file when its mtime changes, checked on each request that uses it. A failed reload of `manifest.json`/`catalog.json` (a file half-written by a running `make build-prod`) keeps the catalog that last loaded, with a warning in the log (`sherpa_mcp`'s `MartCatalogLoader`); only a backend that never loaded one answers `catalog_unavailable`.
   - A node with no row in that invocation shows "not in the last build".
 - **Health:** `GET /api/health` reports each dependency separately:
   - the **database**, which Explorer, Home and history re-runs need
