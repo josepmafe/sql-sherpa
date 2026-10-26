@@ -36,7 +36,8 @@ TIMEOUT_MESSAGE = "[timeout] the query took longer than 5 s; aggregate or filter
 UNREACHABLE_MESSAGE = "[unreachable] the warehouse is unreachable; is `make up` running?"
 CONNECTION_EXCEPTION_CLASS = "08"  # SQLSTATE class: connection exception
 # Data exceptions (SQLSTATE class 22) quote the offending value (`invalid input syntax for type integer: "a@b.com"`),
-# which can be PII, so the model gets the exception's name and a remedy instead of Postgres's message.
+# which can be PII, so the model (and the UI, through `data_error_message`) gets the exception's name and a remedy
+# instead of Postgres's message.
 DATA_ERROR_HINTS = {
     "22012": "wrap the denominator in nullif(x, 0)",  # division_by_zero
     "22P02": "check the literal format",  # invalid_text_representation
@@ -136,8 +137,7 @@ def to_tool_error(error: psycopg.Error, prefix_chars: int = 0) -> WarehouseToolE
     if isinstance(error, psycopg.OperationalError) and not sqlstate:  # the connection failed or broke: no SQLSTATE
         return WarehouseToolError(UNREACHABLE_MESSAGE)
     if isinstance(error, errors.DataError):
-        hint = DATA_ERROR_HINTS.get(sqlstate, DATA_ERROR_HINT)
-        return WarehouseToolError(f"[sql] a value could not be converted or computed ({type(error).__name__}); {hint}")
+        return WarehouseToolError(f"[sql] {data_error_message(error)}")
 
     message = f"[sql] {error.diag.message_primary or str(error)}"
     position = int(error.diag.statement_position or 0) - prefix_chars
@@ -146,6 +146,12 @@ def to_tool_error(error: psycopg.Error, prefix_chars: int = 0) -> WarehouseToolE
     if error.diag.message_hint:
         message += f"; {error.diag.message_hint}"
     return WarehouseToolError(message)
+
+
+def data_error_message(error: errors.DataError) -> str:
+    """A data exception without Postgres's text, which can quote the offending value: its name and a remedy."""
+    hint = DATA_ERROR_HINTS.get(error.sqlstate or "", DATA_ERROR_HINT)
+    return f"a value could not be converted or computed ({type(error).__name__}); {hint}"
 
 
 class AgentDatabase:

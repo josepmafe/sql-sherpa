@@ -16,6 +16,7 @@ from psycopg import errors, sql
 from psycopg.postgres import types as postgres_types
 from pydantic import BaseModel, ConfigDict, JsonValue
 from sherpa_mcp.catalog import CatalogUnavailable
+from sherpa_mcp.database import data_error_message
 from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import DIALECT, SqlGuard
 from sqlglot.errors import SqlglotError
@@ -397,6 +398,9 @@ class QueryRunner:
 
         if _is_connection_failure(error):
             return UiQueryError("database_unavailable", UNREACHABLE_MESSAGE.format(reason=_first_line(error)))
+
+        if isinstance(error, errors.DataError):  # Postgres's text can quote the value, a masked one too (UI spec §5)
+            return UiQueryError("sql_error", data_error_message(error), position)
 
         message = error.diag.message_primary or str(error)
         if error.diag.message_hint:

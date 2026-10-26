@@ -198,6 +198,7 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
   - Operators: `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `is null`, `is not null`.
 - **Cancel:** the runner keeps `query_id → connection` for running queries. Cancel calls psycopg's `cancel_safe()` on that connection; a role may cancel its own queries, so no extra privilege is needed. A query is also cancelled when the client disconnects (§4), or when the same worksheet starts a new run (the frontend sends cancel for the previous `query_id`).
 - **Errors:** Postgres errors return `code = "sql_error"` with the message and, when Postgres gives one, the character `position`. Positions are counted in what was actually sent, so the backend subtracts the prefix it added (the cursor declaration and, in server mode, the wrapper) before returning. For "Run selection" the editor adds the selection's offset back before highlighting.
+  - **Data exceptions** (SQLSTATE class 22: a failed cast, a division by zero, a value out of range) quote the offending value, which can be a masked one (`invalid input syntax for type integer: "<an email>"` for `select email::int …`). Their message is replaced by the exception's name and a remedy, the MCP server's own (`sherpa_mcp.database.data_error_message`, agent spec §4.2): `a value could not be converted or computed (InvalidTextRepresentation); check the literal format`. The position is kept.
 
 ---
 

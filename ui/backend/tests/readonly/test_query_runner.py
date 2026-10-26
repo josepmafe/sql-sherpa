@@ -386,6 +386,38 @@ class TestQueryRunnerOffline:
         assert error.value.position is None
         connection.close.assert_called_once_with()
 
+    @pytest.mark.parametrize(
+        ("error", "message"),
+        [
+            (
+                psycopg.errors.InvalidTextRepresentation('invalid input syntax for type integer: "jurre931@x.com"'),
+                "a value could not be converted or computed (InvalidTextRepresentation); check the literal format",
+            ),
+            (
+                psycopg.errors.NumericValueOutOfRange('value "jurre931@hotmail.com" is out of range for type integer'),
+                "a value could not be converted or computed (NumericValueOutOfRange); "
+                "check the column types and use explicit, safe casts",
+            ),
+            (
+                psycopg.errors.DivisionByZero("division by zero"),
+                "a value could not be converted or computed (DivisionByZero); wrap the denominator in nullif(x, 0)",
+            ),
+        ],
+        ids=["invalid_text", "out_of_range", "division_by_zero"],
+    )
+    def test_a_data_error_never_quotes_the_value(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, error: psycopg.Error, message: str
+    ) -> None:
+        connection = _fake_connection()
+        connection.cursor.return_value.__enter__.return_value.execute.side_effect = error
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with pytest.raises(UiQueryError) as raised:
+            offline_runner.run("q1", "select 1 as a")
+
+        assert raised.value.code == "sql_error"
+        assert raised.value.message == message
+
     def test_rows_are_fetched_in_batches_and_one_past_the_cap(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -541,6 +573,32 @@ class TestQueryRunner:
         assert error.value.code == "sql_error"
         assert error.value.message == 'column "nope" does not exist'
         assert error.value.position == sql_text.index("nope")
+
+    @pytest.mark.parametrize("sort", [(), (SortSpec(column="n", direction="asc"),)], ids=["client", "server"])
+    def test_a_data_error_keeps_its_position_but_not_the_value(
+        self, runner: QueryRunner, sort: tuple[SortSpec, ...]
+    ) -> None:
+        sql_text = "select 'jurre931@hotmail.com'::int as n"
+
+        with pytest.raises(UiQueryError) as error:
+            runner.run("q1", sql_text, sort=sort)
+
+        assert error.value.code == "sql_error"
+        assert error.value.message == (
+            "a value could not be converted or computed (InvalidTextRepresentation); check the literal format"
+        )
+        assert error.value.position == sql_text.index("'jurre931")
+
+    @pytest.mark.parametrize("sort", [(), (SortSpec(column="n", direction="asc"),)], ids=["client", "server"])
+    def test_a_data_error_on_a_stored_value_does_not_quote_it(
+        self, runner: QueryRunner, sort: tuple[SortSpec, ...]
+    ) -> None:
+        with pytest.raises(UiQueryError) as error:
+            runner.run("q1", "select email::int as n from marts.dim_customers where email is not null", sort=sort)
+
+        assert error.value.message == (
+            "a value could not be converted or computed (InvalidTextRepresentation); check the literal format"
+        )
 
     def test_error_in_the_wrapper_has_no_position(self, runner: QueryRunner) -> None:
         with pytest.raises(UiQueryError) as error:

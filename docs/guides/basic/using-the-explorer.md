@@ -69,11 +69,14 @@ When a query fails, the red box under the editor shows what Postgres or the guar
 |---|---|
 | `delete from marts.dim_customers` | Query not allowed: `[guard:not_select] the statement must be a SELECT query, not DELETE; write one SELECT` |
 | `select * from public.x` | Query not allowed: `[guard:table] table public.x is outside marts; query only the marts that list_tables returns` |
-| `select 1/0 from marts.dim_customers` | Query failed: `division by zero` |
+| `select 1/0 from marts.dim_customers` | Query failed: `a value could not be converted or computed (DivisionByZero); wrap the denominator in nullif(x, 0)` |
+| `select email::int from marts.dim_customers` | Query failed: `a value could not be converted or computed (InvalidTextRepresentation); check the literal format` |
 | a query slower than the timeout | Query timed out: `the query ran longer than 30 s and was stopped; filter or aggregate more narrowly`, plus a hint to add a `WHERE` or `LIMIT` |
 | a 9th query while 8 others still run (in any tab or browser) | `too many queries are running (at most 8 at once); wait for one to finish or cancel one` |
 
 For Postgres errors that name a position (a syntax error, say), the editor highlights that spot in your SQL. With "Run selection" the highlight is placed inside the selection.
+
+A failed cast or computation (a Postgres data exception) never shows the value Postgres complained about: its message would quote it (`invalid input syntax for type integer: "<the email>"`), and the value can be one the masking hides. You get the kind of error and a remedy instead, as in the last two rows above, and the highlight still points at the spot when Postgres names one (`select 'abc'::int` highlights `'abc'`).
 
 ## Sorting and filtering
 
