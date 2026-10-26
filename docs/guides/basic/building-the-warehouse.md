@@ -101,7 +101,7 @@ A data test is a query that returns the rows breaking a rule; zero rows passes, 
 12:53:50    compiled code at target\compiled\sherpa\models\staging\shop\_shop__models.yml\relationships_stg_shop__custom_6c188ed7d4b2e24f094ea0def18037b4.sql
 ```
 
-That is `relationships` from `stg_shop__customers.country_code` to `countries.code`, with 162 unmatched rows. The compiled file is a plain query for psql. With `--store-failures`, dbt keeps the failing rows in a table in `dev_dbt_test__audit` (dropped by `make reset`) and prints the `select` to read it.
+That is `relationships` from `stg_shop__customers.country_code` to `countries.code`, with 162 unmatched rows. The compiled file is a plain query for psql. With `--store-failures`, dbt keeps the failing rows in a table in `dev_test_failures` (dropped by `make reset`) and prints the `select` to read it. Singular tests and `column_sums_match` always store theirs there.
 
 ### Reading a contract failure
 

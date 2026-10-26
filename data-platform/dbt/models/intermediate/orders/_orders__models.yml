@@ -106,3 +106,58 @@ models:
         description: Returned units that can be resold.
       - name: refunded_revenue
         description: Revenue refunded for the returned units in EUR, excluding tax (the line's net amount pro-rated by quantity).
+
+unit_tests:
+  - name: int_order_items__discount_allocated_remainder_to_largest
+    model: int_order_items__discount_allocated
+    given:
+      - input: ref('stg_shop__order_items')
+        rows:
+          - {order_item_id: 11, order_id: 1, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 12, order_id: 1, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 13, order_id: 1, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 21, order_id: 2, quantity: 1, unit_price: "50.00"}
+          - {order_item_id: 22, order_id: 2, quantity: 1, unit_price: "25.00"}
+          - {order_item_id: 31, order_id: 3, quantity: 2, unit_price: "20.00"}
+          - {order_item_id: 41, order_id: 4, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 42, order_id: 4, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 43, order_id: 4, quantity: 1, unit_price: "10.00"}
+          - {order_item_id: 44, order_id: 4, quantity: 1, unit_price: "30.00"}
+      - input: ref('stg_shop__order_discounts')
+        rows:
+          - {order_id: 1, amount: "10.00"}
+          - {order_id: 2, amount: "5.00"}
+          - {order_id: 2, amount: "2.50"}
+          - {order_id: 4, amount: "0.10"}
+    expect:
+      rows:
+        # A tie on gross amount goes to the lowest id.
+        - {order_item_id: 11, allocated_discount: "3.34", net_amount: "6.66"}
+        - {order_item_id: 12, allocated_discount: "3.33", net_amount: "6.67"}
+        - {order_item_id: 13, allocated_discount: "3.33", net_amount: "6.67"}
+        - {order_item_id: 21, allocated_discount: "5.00", net_amount: "45.00"}
+        - {order_item_id: 22, allocated_discount: "2.50", net_amount: "22.50"}
+        - {order_item_id: 31, allocated_discount: "0.00", net_amount: "40.00"}
+        # The shares round up, so the remainder is negative and the largest line absorbs it.
+        - {order_item_id: 41, allocated_discount: "0.02", net_amount: "9.98"}
+        - {order_item_id: 42, allocated_discount: "0.02", net_amount: "9.98"}
+        - {order_item_id: 43, allocated_discount: "0.02", net_amount: "9.98"}
+        - {order_item_id: 44, allocated_discount: "0.04", net_amount: "29.96"}
+
+  - name: int_orders__refunds_summarized_untaxes_returns_and_goodwill
+    model: int_orders__refunds_summarized
+    given:
+      - input: ref('stg_shop__refunds')
+        rows:
+          - {order_id: 1, refund_reason: return, amount: "120.00"}
+          - {order_id: 1, refund_reason: goodwill, amount: "64.80"}
+          - {order_id: 2, refund_reason: cancellation, amount: "50.00"}
+          - {order_id: 3, refund_reason: return, amount: "1.00"}
+          - {order_id: 4, refund_reason: goodwill, amount: "0.01"}
+    expect:
+      rows:
+        - {order_id: 1, refunded_amount: "184.80", refunded_revenue: "154.00"}
+        # The unit test compares text: the model coalesces to an integer 0, which has no decimals.
+        - {order_id: 2, refunded_amount: "50.00", refunded_revenue: 0}
+        - {order_id: 3, refunded_amount: "1.00", refunded_revenue: "0.83"}
+        - {order_id: 4, refunded_amount: "0.01", refunded_revenue: "0.01"}

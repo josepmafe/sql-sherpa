@@ -86,10 +86,10 @@ A metric is defined in four places that must agree. Change them in this order:
 
 1. **The doc block** in `models/marts/_metrics.md` (`{% docs metric_refunded_revenue %} ... {% enddocs %}`). Columns reuse it with `{{ doc(...) }}`, so one edit changes the docs, the Postgres comments and the manifest the agent reads.
 2. **The calculation.** A macro change reaches every caller: `revenue_excluding_tax` (`macros/revenue_excluding_tax.sql`; `fct_refunds`, `int_orders__refunds_summarized`) and `customer_segment` (`macros/customer_segment.sql`; `dim_customers`). A rule in a model's SQL (net revenue in `fct_orders`) is changed there. Variables such as `tax_rate` live in `dbt_project.yml`.
-3. **The tests that pin it**, singular tests in `data-platform/dbt/tests/` with fixed inputs, which fail until you update them on purpose: `assert_revenue_excluding_tax`, `assert_customer_segment_boundaries` (0 orders; 90/91 and 180/181 days), `assert_cancelled_orders_have_no_outcomes`, `assert_line_refunds_within_order_refunds`, `assert_captured_payments_equal_order_total`, plus the `column_sums_match` tests in the YAML.
+3. **The tests that pin it**, which fail until you update them on purpose: the unit tests in the model's YAML (`dim_customers_segments_at_the_90_and_180_day_boundaries`: 0 orders; 90/91 and 180/181 days; `int_orders__refunds_summarized_untaxes_returns_and_goodwill`) and the singular tests in `data-platform/dbt/tests/singular/`: `assert_cancelled_orders_have_no_outcomes`, `assert_line_refunds_within_order_refunds`, `assert_captured_payments_equal_order_total`, plus the `column_sums_match` tests in the YAML.
 4. **The spec** (§6.5, §6.6).
 
-To see the pinning work, override the variable: `dbt test --select assert_revenue_excluding_tax --vars '{tax_rate: 0.25}'` fails with rows returned. After the change run `make build`, then `make build-prod`; the agent sees the new definition only after the prod build.
+To see the pinning work, override the variable: `dbt test --select test_type:unit --vars '{tax_rate: 0.25}'` fails the refunds unit test with an actual-versus-expected diff. After the change run `make build`, then `make build-prod`; the agent sees the new definition only after the prod build.
 
 ## 4. Add a trigram index
 
@@ -126,7 +126,7 @@ A generic test is a Jinja `{% test %}` block under `data-platform/dbt/tests/gene
               group_by: order_id
   ```
 
-Run every use with `dbt test --select "test_name:column_sums_match" --target prod --target-path target-prod`; [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows a failure. Write a generic test when the rule applies to several models; a rule about one model with fixed cases is a singular test, a plain `SELECT` of failing rows in `data-platform/dbt/tests/<name>.sql`. Comment what a returned row means.
+Run every use with `dbt test --select "test_name:column_sums_match" --target prod --target-path target-prod`; [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows a failure. Write a generic test when the rule applies to several models; a rule about one model with fixed cases is a singular test, a plain `SELECT` of failing rows in `data-platform/dbt/tests/singular/<name>.sql`. Comment what a returned row means.
 
 ## 6. Ephemeral, view or table for an intermediate model
 

@@ -35,6 +35,7 @@ NOT_EXPOSED = (
     ("intermediate", "int_order_items__discount_allocated"),
     ("seeds", "countries"),
     ("raw_shop", "orders"),
+    ("test_failures", "assert_buyer_revenue_pareto"),
 )
 TRIGRAM_INDEXES = [
     "dim_products_brand_trgm",
