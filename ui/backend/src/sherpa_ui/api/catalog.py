@@ -3,10 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 
-from sherpa_ui.api.errors import ApiException
+from sherpa_ui.api.errors import ApiException, error_responses
 from sherpa_ui.catalog.catalog_service import CatalogService, CatalogTree, TableDetails
 
-router = APIRouter(prefix="/catalog", tags=["catalog"])
+router = APIRouter(prefix="/catalog", tags=["catalog"], responses=error_responses(503))
 
 
 @router.get("")
@@ -15,7 +15,7 @@ async def get_catalog(request: Request) -> CatalogTree:
     return await run_in_threadpool(service.tree)
 
 
-@router.get("/tables/{name}")
+@router.get("/tables/{name}", responses=error_responses(404, 422))
 async def get_table(name: str, request: Request) -> TableDetails:
     service: CatalogService = request.app.state.catalog_service
     details = await run_in_threadpool(service.table, name)

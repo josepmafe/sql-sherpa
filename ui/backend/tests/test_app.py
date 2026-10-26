@@ -5,6 +5,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
+from sherpa_ui.api.errors import (
+    INTERNAL_ERROR_CODE,
+    INVALID_REQUEST_CODE,
+    PII_COLUMN_CODE,
+    QUERY_ERROR_STATUS,
+    UNKNOWN_COLUMN_CODE,
+)
 from sherpa_ui.app import create_app
 from sherpa_ui.openapi_export import main as export_openapi
 
@@ -14,6 +21,7 @@ if TYPE_CHECKING:
     from sherpa_ui.settings import UiSettings
 
 INDEX_HTML = "<html><body>sherpa</body></html>"
+API_ERROR = "#/components/schemas/ApiError"
 
 
 @pytest.fixture
@@ -96,6 +104,56 @@ class TestOpenapiExport:
 
     def test_wrong_argument_count_is_a_usage_error(self) -> None:
         assert export_openapi([]) == 2
+
+
+class TestOpenapiErrors:
+    """The schema the frontend's client is generated from describes the errors the API really answers."""
+
+    def test_every_error_response_is_an_api_error(self, settings: UiSettings) -> None:
+        schema = create_app(settings, static_dir=None).openapi()
+
+        errors = [
+            response
+            for operations in schema["paths"].values()
+            for operation in operations.values()
+            for status, response in operation["responses"].items()
+            if int(status) >= 400
+        ]
+
+        assert errors
+        assert all(error["content"]["application/json"]["schema"] == {"$ref": API_ERROR} for error in errors)
+        assert {"HTTPValidationError", "ValidationError"}.isdisjoint(schema["components"]["schemas"])
+        assert schema["components"]["schemas"]["ApiError"]["required"] == ["code", "message"]
+
+    @pytest.mark.parametrize(
+        ("path", "method", "statuses"),
+        [
+            ("/api/health", "get", {"200", "500"}),
+            ("/api/catalog", "get", {"200", "500", "503"}),
+            ("/api/catalog/tables/{name}", "get", {"200", "404", "422", "500", "503"}),
+            ("/api/queries", "post", {"200", "409", "422", "429", "500", "503", "504"}),
+            ("/api/queries/format", "post", {"200", "422", "500"}),
+            ("/api/queries/{query_id}/cancel", "post", {"204", "422", "500"}),
+        ],
+    )
+    def test_each_endpoint_declares_the_statuses_it_answers(
+        self, settings: UiSettings, path: str, method: str, statuses: set[str]
+    ) -> None:
+        schema = create_app(settings, static_dir=None).openapi()
+
+        assert set(schema["paths"][path][method]["responses"]) == statuses
+
+    def test_each_error_status_names_its_codes(self, settings: UiSettings) -> None:
+        responses = create_app(settings, static_dir=None).openapi()["paths"]["/api/queries"]["post"]["responses"]
+
+        codes = {
+            **QUERY_ERROR_STATUS,
+            UNKNOWN_COLUMN_CODE: 422,
+            PII_COLUMN_CODE: 422,
+            INVALID_REQUEST_CODE: 422,
+            INTERNAL_ERROR_CODE: 500,
+        }
+        assert all(f"`{code}`" in responses[str(status)]["description"] for code, status in codes.items())
 
 
 class TestDevApp:

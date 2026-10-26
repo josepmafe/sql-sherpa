@@ -26,7 +26,11 @@ Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds the V
 Example: `GET /api/catalog/domains`, the domain names. Five steps, in this order, so each is proved before the next one builds on it.
 
 1. **The model and the service method.** Responses are frozen Pydantic models; no bare dicts cross the boundary. Add the model and the method to the service that owns the data (`catalog/catalog_service.py` for the catalog). Test the method on its own in `ui/backend/tests/` with a catalog built from fixtures, with no HTTP.
-2. **The route** in the resource's router (`api/catalog.py`): read the service from `request.app.state`, run blocking work with `run_in_threadpool` (the services call psycopg and read files), and return the model. Failures raise `ApiException(status, code, message)`; the body is always `{code, message, detail?}`. A new error code from the query runner also needs its HTTP status in `QUERY_ERROR_STATUS` (`api/errors.py`). Test it through `TestClient` in `ui/backend/tests/api/`, including the unhappy path (unknown name, missing artifacts).
+2. **The route** in the resource's router (`api/catalog.py`): read the service from `request.app.state`, run blocking work with `run_in_threadpool` (the services call psycopg and read files), and return the model. Failures raise `ApiException(status, code, message)`; the body is always `{code, message, detail?}`. A new error code from the query runner also needs its HTTP status in `QUERY_ERROR_STATUS` (`api/errors.py`).
+
+   Declare every error status the route answers, so the OpenAPI schema (and the client generated from it) matches what the API sends. `error_responses(*statuses)` (`api/errors.py`) declares each status with the `ApiError` model and its description from `ERROR_STATUS_DESCRIPTIONS`, where a new code is listed under its status. Every route under `/api` gets `500`, and a router passes the statuses all of its routes share: the catalog router declares `503` (missing artifacts), so `/api/catalog/domains` needs nothing more, while `/tables/{name}` adds `responses=error_responses(404, 422)`. A route with a path or body parameter must declare `422`, or FastAPI describes it with its own `HTTPValidationError`, which the API never sends. `TestOpenapiErrors` in `tests/test_app.py` lists every route's statuses: add the new route to its table.
+
+   Test the route through `TestClient` in `ui/backend/tests/api/`, including the unhappy path (unknown name, missing artifacts).
 3. **Regenerate the client types:**
 
    ```bash

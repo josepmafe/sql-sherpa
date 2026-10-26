@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
@@ -39,6 +39,16 @@ INVALID_REQUEST_CODE: Final = "invalid_request"
 DEFAULT_HTTP_CODE: Final = "http_error"
 INTERNAL_ERROR_CODE: Final = "internal_error"
 INTERNAL_ERROR_MESSAGE: Final = "something went wrong on the server; see its log"
+# The OpenAPI schema's description of each error status, with the codes it carries; every error body is an ApiError.
+ERROR_STATUS_DESCRIPTIONS: Final[dict[int, str]] = {
+    404: "Not found: `table_not_found`",
+    409: "Conflict with a query of the same id: `duplicate_query_id`, `cancelled`",
+    422: "Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`",
+    429: "Too many queries are running: `busy`",
+    500: "Unexpected server error: `internal_error`",
+    503: "A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections`",
+    504: "The query ran past the statement timeout: `timeout`",
+}
 
 
 class ErrorDetail(BaseModel):
@@ -71,6 +81,15 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _invalid_request)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, _http_error)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, _internal_error)
+
+
+def error_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
+    """The OpenAPI `responses` of a route that answers `statuses` with an `ApiError`. Declaring 422 also keeps FastAPI
+    from describing it as its own HTTPValidationError, which `_invalid_request` never sends."""
+    responses: dict[int | str, dict[str, Any]] = {
+        status: {"model": ApiError, "description": ERROR_STATUS_DESCRIPTIONS[status]} for status in statuses
+    }
+    return responses
 
 
 def _respond(status_code: int, error: ApiError) -> JSONResponse:

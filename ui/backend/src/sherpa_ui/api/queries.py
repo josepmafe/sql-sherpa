@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
-from sherpa_ui.api.errors import PII_COLUMN_CODE, UNKNOWN_COLUMN_CODE, ApiException
+from sherpa_ui.api.errors import PII_COLUMN_CODE, UNKNOWN_COLUMN_CODE, ApiException, error_responses
 from sherpa_ui.readonly.query_runner import QueryOutcome
 from sherpa_ui.readonly.sort_filter import (
     DuplicateColumnsError,
@@ -28,7 +28,7 @@ MAX_QUERY_ID_CHARS: Final = 100  # the client sends a UUID
 DISCONNECT_POLL_SECONDS: Final = 0.5  # UI spec §4
 DUPLICATE_COLUMNS_WARNING: Final = "duplicate column names: sorting and filtering apply only to the rows shown"
 
-router = APIRouter(prefix="/queries", tags=["queries"])
+router = APIRouter(prefix="/queries", tags=["queries"], responses=error_responses(422))
 
 
 class QueryRequest(BaseModel):
@@ -100,7 +100,7 @@ class QueryService:
                 return
 
 
-@router.post("")
+@router.post("", responses=error_responses(409, 429, 503, 504))
 async def run_query(body: QueryRequest, request: Request) -> QueryResponse:
     service: QueryService = request.app.state.query_service
     return await service.run(request, body)

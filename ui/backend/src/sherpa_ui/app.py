@@ -10,7 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response  # noqa: TC002  (FastAPI reads the route's return annotation)
 
 from sherpa_ui.api import catalog, health, queries
-from sherpa_ui.api.errors import install_error_handlers
+from sherpa_ui.api.errors import error_responses, install_error_handlers
 from sherpa_ui.api.queries import QueryService
 from sherpa_ui.catalog.catalog_service import CatalogService
 from sherpa_ui.health.health_service import HealthService
@@ -42,7 +42,7 @@ def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
     app.state.catalog_service = CatalogService(loader, settings.db_name)
     app.state.health_service = HealthService(settings, loader)
 
-    api = APIRouter(prefix=API_PREFIX)
+    api = APIRouter(prefix=API_PREFIX, responses=error_responses(500))  # the catch-all handler's internal_error
     api.include_router(health.router)
     api.include_router(catalog.router)
     api.include_router(queries.router)

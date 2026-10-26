@@ -110,6 +110,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApiError */
+        ApiError: {
+            /** Code */
+            code: string;
+            detail?: components["schemas"]["ErrorDetail"] | null;
+            /** Message */
+            message: string;
+        };
         /** ArtifactsHealth */
         ArtifactsHealth: {
             /** Generated At */
@@ -171,6 +179,11 @@ export interface components {
             /** Tables */
             tables: components["schemas"]["TableSummary"][];
         };
+        /** ErrorDetail */
+        ErrorDetail: {
+            /** Position */
+            position?: number | null;
+        };
         /** FilterSpec */
         FilterSpec: {
             /** Column */
@@ -192,11 +205,6 @@ export interface components {
         FormatResponse: {
             /** Sql */
             sql: string;
-        };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
         };
         /**
          * Health
@@ -303,19 +311,6 @@ export interface components {
             /** Primary Key */
             primary_key: string[];
         };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -343,6 +338,24 @@ export interface operations {
                     "application/json": components["schemas"]["CatalogTree"];
                 };
             };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
         };
     };
     get_table_api_catalog_tables__name__get: {
@@ -365,13 +378,40 @@ export interface operations {
                     "application/json": components["schemas"]["TableDetails"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Not found: `table_not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };
@@ -392,6 +432,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };
@@ -418,13 +467,58 @@ export interface operations {
                     "application/json": components["schemas"]["QueryResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Conflict with a query of the same id: `duplicate_query_id`, `cancelled` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Too many queries are running: `busy` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description The query ran past the statement timeout: `timeout` */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };
@@ -451,13 +545,22 @@ export interface operations {
                     "application/json": components["schemas"]["FormatResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };
@@ -480,13 +583,22 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Validation Error */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
         };
