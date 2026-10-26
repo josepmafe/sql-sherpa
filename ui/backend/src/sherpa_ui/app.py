@@ -10,6 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response  # noqa: TC002  (FastAPI reads the route's return annotation)
 
 from sherpa_ui.api import catalog, health, queries
+from sherpa_ui.api.body_limit import BodySizeLimit
 from sherpa_ui.api.errors import error_responses, install_error_handlers
 from sherpa_ui.api.queries import QueryService
 from sherpa_ui.catalog.catalog_service import CatalogService
@@ -38,6 +39,7 @@ def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
     # criterion 1). The schema itself stays at /openapi.json.
     app = FastAPI(title="SQL Sherpa UI", docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(ALLOWED_HOSTS))
+    app.add_middleware(BodySizeLimit)
     install_error_handlers(app)
 
     loader = MartCatalogLoader(settings.ui_dbt_target_path)

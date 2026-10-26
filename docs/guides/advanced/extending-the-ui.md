@@ -9,7 +9,7 @@ The backend is the Python package `sherpa_ui` in `ui/backend/src/sherpa_ui/`; th
 | Where | Holds |
 |---|---|
 | `ui/backend/src/sherpa_ui/app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`, serves the frontend. The only place the pieces are wired |
-| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`), the request/response models and the error shape (`errors.py`). Routers are thin: they call a service |
+| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`), the request/response models, the error shape (`errors.py`) and the request-body cap (`body_limit.py`, 1 MiB, refused as `422 invalid_request` before the body is read). Routers are thin: they call a service |
 | `catalog/`, `health/` | `CatalogService` and `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` (the dbt artifacts) |
 | `readonly/` | `QueryRunner` (guard, role, timeout, cancel, error positions, the batched fetch), `bounded_result.py` (row cap, masking, cell cut and result budget) and `sort_filter.py` (the server-side wrapper). Pure logic and I/O are kept apart |
 | `settings.py` | `UiSettings`, the only place that reads configuration (`SHERPA_UI_*`, `SHERPA_DB_*`) |

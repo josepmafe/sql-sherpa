@@ -32,7 +32,8 @@ QUERY_ERROR_STATUS: Final[dict[str, int]] = {
     "database_unavailable": 503,
     "too_many_connections": 503,
 }
-HTTP_STATUS_CODES: Final[dict[int, str]] = {404: "not_found", 405: "method_not_allowed"}
+# 422: a request body over the cap, found while it was read (`api/body_limit.py`).
+HTTP_STATUS_CODES: Final[dict[int, str]] = {404: "not_found", 405: "method_not_allowed", 422: "invalid_request"}
 UNKNOWN_COLUMN_CODE: Final = "unknown_column"  # a sort or filter column that is not in the result
 PII_COLUMN_CODE: Final = "pii_column"  # a sort or filter column whose values the masking hides
 INVALID_REQUEST_CODE: Final = "invalid_request"

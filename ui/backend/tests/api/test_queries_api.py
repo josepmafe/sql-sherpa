@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 from sherpa_ui.api import queries
+from sherpa_ui.api.body_limit import MAX_BODY_BYTES
 from sherpa_ui.api.queries import MAX_SQL_CHARS, QueryRequest, QueryService
 from sherpa_ui.app import create_app
 from sherpa_ui.readonly.query_runner import QueryOutcome, QueryRunner, UiQueryError
@@ -192,6 +194,35 @@ class TestQueriesApi:
         assert response.json()["code"] == "invalid_request"
         runner.run.assert_not_called()
 
+    def test_a_body_over_the_cap_is_refused_before_it_is_read(self, client: TestClient, runner: MagicMock) -> None:
+        response = client.post(
+            "/api/queries", content=_padded_body(MAX_BODY_BYTES + 1), headers={"content-type": "application/json"}
+        )
+
+        assert response.status_code == 422
+        assert response.json() == {"code": "invalid_request", "message": "the request body is over 1,048,576 bytes"}
+        runner.run.assert_not_called()
+
+    def test_a_streamed_body_over_the_cap_is_refused(self, client: TestClient, runner: MagicMock) -> None:
+        def chunks() -> Iterator[bytes]:  # no Content-Length: the body is sent chunked
+            yield _padded_body(MAX_BODY_BYTES + 1)
+
+        response = client.post("/api/queries", content=chunks(), headers={"content-type": "application/json"})
+
+        assert response.status_code == 422
+        assert response.json() == {"code": "invalid_request", "message": "the request body is over 1,048,576 bytes"}
+        runner.run.assert_not_called()
+
+    def test_a_body_at_the_cap_is_read(self, client: TestClient, runner: MagicMock) -> None:
+        runner.run.return_value = outcome()
+
+        response = client.post(
+            "/api/queries", content=_padded_body(MAX_BODY_BYTES), headers={"content-type": "application/json"}
+        )
+
+        assert response.status_code == 200
+        runner.run.assert_called_once()
+
     @pytest.mark.parametrize("sql", ["select 1 as n\x00; delete from marts.fct_orders", "\x00"])
     def test_sql_with_a_nul_character_is_rejected(self, client: TestClient, runner: MagicMock, sql: str) -> None:
         # libpq ends the query text at a NUL, so Postgres would run less than the guard checked.
@@ -350,3 +381,9 @@ class TestQueriesApiWarehouse:
         stop.set()
         assert seen_running.is_set()  # the query really was running when the client left
         assert runner.running_query_ids() == frozenset()
+
+
+def _padded_body(size: int) -> bytes:
+    """A valid query request of exactly `size` bytes: JSON padded with trailing whitespace."""
+    content = json.dumps(body()).encode()
+    return content + b" " * (size - len(content))
