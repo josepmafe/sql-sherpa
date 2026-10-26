@@ -192,7 +192,7 @@ models:
       - name: session_id
         description: >
           Web session containing the order's purchase event; null for app orders and for web orders whose
-          purchase event has not arrived yet.
+          purchase event has not arrived yet. Join to fct_sessions on session_id.
         data_type: text
       - name: ship_country_code
         description: >

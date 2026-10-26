@@ -72,11 +72,19 @@ unit_tests:
             '2025-03-10 12:00:05'::timestamptz as last_received_at
           union all
           select 'a5', 105, '2025-03-09 10:00:00'::timestamptz, 'e1', '2025-03-09 10:00:02'::timestamptz
+          union all
+          select 'a6', 107, '2025-03-09 15:00:00'::timestamptz, 'e20', '2025-03-09 15:00:01'::timestamptz
+          union all
+          select 'a7', 108, '2025-03-09 15:00:00'::timestamptz, 'e30', '2025-03-09 15:00:01'::timestamptz
       - input: ref('stg_events__events')
         format: sql
         rows: |
-          select 'e6'::text as event_id, 'a1'::text as anonymous_id, 102::bigint as customer_id,
-            '2025-03-10 11:00:00'::timestamptz as occurred_at, '2025-03-12 09:00:00'::timestamptz as received_at
+          select 'e21'::text as event_id, 'a6'::text as anonymous_id, 109::bigint as customer_id,
+            '2025-03-09 15:00:00'::timestamptz as occurred_at, '2025-03-12 10:00:00'::timestamptz as received_at
+          union all
+          select 'e29', 'a7', 110, '2025-03-09 15:00:00'::timestamptz, '2025-03-12 10:00:00'::timestamptz
+          union all
+          select 'e6', 'a1', 102, '2025-03-10 11:00:00'::timestamptz, '2025-03-12 09:00:00'::timestamptz
           union all
           select 'e7', 'a2', 103, '2025-03-11 10:00:00'::timestamptz, '2025-03-11 10:00:03'::timestamptz
           union all
@@ -91,6 +99,9 @@ unit_tests:
         - {anonymous_id: a1, customer_id: 101, identified_at: "2025-03-10 12:00:00", identifying_event_id: e5, last_received_at: "2025-03-12 09:00:00"}
         - {anonymous_id: a2, customer_id: 103, identified_at: "2025-03-11 10:00:00", identifying_event_id: e7, last_received_at: "2025-03-11 10:00:03"}
         - {anonymous_id: a5, customer_id: 106, identified_at: "2025-03-11 09:00:00", identifying_event_id: e11, last_received_at: "2025-03-11 09:00:02"}
+        # Same occurred_at: the higher event_id wins, whether the new event is higher (a6) or the existing one is (a7).
+        - {anonymous_id: a6, customer_id: 109, identified_at: "2025-03-09 15:00:00", identifying_event_id: e21, last_received_at: "2025-03-12 10:00:00"}
+        - {anonymous_id: a7, customer_id: 108, identified_at: "2025-03-09 15:00:00", identifying_event_id: e30, last_received_at: "2025-03-12 10:00:00"}
 
   - name: int_identity__anon_to_customer_reads_all_when_table_empty
     model: int_identity__anonymous_to_customer

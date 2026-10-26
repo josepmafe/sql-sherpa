@@ -19,7 +19,7 @@ docker compose exec postgres psql -U sherpa_admin -d sherpa
 | `dim_products` | product variant (size and colour) |
 | `dim_promotions` | promotion |
 | `dim_date` | calendar day |
-| `fct_sessions` | web session (a visitor's events with no gap over 30 minutes) |
+| `fct_sessions` | web session (a device's events with no gap over 30 minutes) |
 
 ## Which revenue to use
 

@@ -63,5 +63,5 @@ Metrics over non-cancelled orders filter on `not is_cancelled`.
 Conversion rate: sessions with `purchased` / all sessions, as a fraction. It counts sessions, not
 orders: a session with a purchase counts even if its order was cancelled later. Sessions are web only:
 app orders (35% of orders) have no session, so they are in neither the numerator nor the denominator.
-To count web orders, use fct_orders (`session_id is not null`), not fct_sessions.
+To count web orders, use fct_orders (`sales_channel = 'web'`), not fct_sessions.
 {% enddocs %}
