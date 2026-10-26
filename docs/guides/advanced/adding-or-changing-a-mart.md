@@ -165,7 +165,7 @@ A model that needs lookups or joins starts with one CTE per input (`with custome
   `fct_orders` indexes `order_date` and `customer_id`; `fct_order_items` indexes `order_id` and `variant_id`; `fct_order_discounts` indexes `order_id` and `promotion_id`.
 - Text columns people search by name get a trigram index (section 4).
 
-**3. Grants.** Nothing to do. The `+grants` setting in `dbt_project.yml` gives `sherpa_agent` `SELECT` on every mart table, and the `on-run-end` hook `grant_agent_access` grants `USAGE` on the `marts` schema and `SELECT` on all of its tables on prod and eval. The agent can read the new table after the next `make build-prod`.
+**3. Grants.** Nothing to do. The `+grants` setting in `dbt_project.yml` gives `sherpa_agent` and `sherpa_ui` `SELECT` on every mart table, and the `on-run-end` hook `grant_read_access` grants `USAGE` on the `marts` schema and `SELECT` on all of its tables to both roles on prod and eval. The agent can read the new table after the next `make build-prod`.
 
 **4. Build, then check the docs.**
 
@@ -191,7 +191,7 @@ Missing descriptions:
 
 It also catches a column that exists in Postgres but not in the YAML. With the description added it prints nothing and exits 0.
 
-Finally add the mart to the list in `data-platform/dbt/models/overview.md`, add its row to the spec's §6.5, and add a test for any rule you rely on. The agent access test (`data-platform/tests/dbt/test_agent_access.py`) lists every mart in its `MARTS` tuple: add the new table there.
+Finally add the mart to the list in `data-platform/dbt/models/overview.md`, add its row to the spec's §6.5, and add a test for any rule you rely on. The agent access test (`data-platform/tests/dbt/test_reader_access.py`) lists every mart in its `MARTS` tuple: add the new table there.
 
 ## 3. Change a metric definition
 
@@ -217,7 +217,7 @@ dbt test --select assert_revenue_excluding_tax --vars '{tax_rate: 0.25}'
 21:11:35    Got 3 results, configured to fail if != 0
 ```
 
-Three of the five pinned cases do not match the new rate, so the change cannot go unnoticed. After changing a definition, run `make build` (all tests), then `make build-prod` and `make docs-prod` so the prod artifacts carry the new text. The marts the agent reads change with the next prod build, not before.
+Three of the five pinned cases do not match the new rate, so the change cannot go unnoticed. After changing a definition, run `make build` (all tests), then `make build-prod` so the prod artifacts carry the new text. The marts the agent reads change with the next prod build, not before.
 
 ## 4. Add a trigram index
 

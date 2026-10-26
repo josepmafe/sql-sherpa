@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "examples.yaml"
-MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_agent_access.py"
+MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_reader_access.py"
 METRICS = (
     *("gross_revenue", "discount_amount", "refunded_revenue", "net_revenue"),
     *("cogs", "gross_margin", "aov", "refund_rate"),

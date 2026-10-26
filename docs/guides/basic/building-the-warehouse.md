@@ -11,9 +11,9 @@ A few dbt terms first:
 - A **contract** is a promise in the YAML that a model has exactly the listed columns with the listed types. dbt checks it before it builds the table. The marts enforce one.
 - A **hook** is SQL dbt runs around a build: `on-run-start` and `on-run-end` once per invocation, `post-hook` after one model.
 - A **target** is one named connection in `data-platform/dbt/profiles.yml`: `dev` (the default), `prod` and `eval`. Credentials come from `.env` through `env_var()`.
-- `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-agent` uses it).
+- `dbt run-operation <macro>` runs one macro on its own, outside a build (`make grant-read` uses it).
 - **`persist_docs`** is a config that copies the YAML descriptions into Postgres comments on the tables and columns, so a database client can read them.
-- **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` on the marts).
+- **`grants`** is a config that makes dbt `GRANT` privileges on each table it builds (here `SELECT` to `sherpa_agent` and `sherpa_ui` on the marts).
 
 The project has the seeds, one staging view per raw table, an intermediate layer and the nine marts. Outputs below are real and come from the 365-day dataset unless stated; timings vary by machine.
 
@@ -27,7 +27,7 @@ The same project builds into different schemas depending on the target (the `gen
 | Staging views | `dev_staging` | `staging` |
 | Intermediate | `dev_intermediate` | `intermediate` |
 | Marts | `dev_marts` | `marts` |
-| Agent access | none | `sherpa_agent` reads `marts` |
+| Reader access | none | `sherpa_agent` and `sherpa_ui` read `marts` |
 | Artifacts (`manifest.json`, `catalog.json`, ...) | `data-platform/dbt/target/` | `data-platform/dbt/target-prod/` |
 | Make targets | `make build`, `make docs` | `make build-prod`, `make docs-prod` |
 
@@ -64,28 +64,88 @@ Data flows through three layers, each in its own schema:
 - **Intermediate** (`models/intermediate/`, `int_<entity>__<verb>`): joins and calculations that several marts need, such as allocating an order's discount over its lines (`int_order_items__discount_allocated`) or numbering web sessions (`int_events__sessionized`). Consumers never read them. Most are *ephemeral*: dbt pastes the SQL into the models that use them as a CTE (a `WITH` block) and creates nothing in Postgres. The exceptions are `int_events__sessionized` (a table) and `int_order_items__discount_allocated`, `int_order_items__returns_summarized` and `int_orders__refunds_summarized` (views).
 - **Marts** (`models/marts/`): the nine tables consumers query, with enforced contracts ([Querying the marts](querying-the-marts.md)).
 
-### Hooks and `make grant-agent`
+### Hooks and `make grant-read`
 
 Three hooks in `data-platform/dbt/dbt_project.yml` do work outside the models:
 
-- `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name and `SHERPA_AGENT_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
+- `on-run-start` runs the `ensure_extensions` macro: it creates the `extensions` schema, installs `pg_trgm` there and puts the schema on the database's search path. It first checks that the database name, `SHERPA_AGENT_USER` and `SHERPA_UI_USER` match `^[a-z_][a-z0-9_]*$` (the `validate_identifier` macro), because they are spliced into SQL unquoted; any other value stops the run with, for example, `SHERPA_AGENT_USER must match ^[a-z_][a-z0-9_]*$, got '...'`.
 - A `post-hook: analyze {{ this }}` on every mart, and on the `int_events__sessionized` table, refreshes its table statistics after it is built, so Postgres plans queries well.
-- `on-run-end` runs the `grant_agent_access` macro. On `prod` and `eval` it gives the `sherpa_agent` role `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables; on `dev` it does nothing (`grant_agent_access: skipped on dev`).
+- `on-run-end` runs two macros, in this order. `record_run_results` appends one row per executed node to `ops.dbt_run_results` (it creates the `ops` schema and the table if missing), on every target; `is_full_run` is false when the invocation used `--select`, `--exclude`, `--selector`, `--resource-type`, `--exclude-resource-type`, `--empty` or `--sample`. `grant_read_access` then gives the `sherpa_agent` and `sherpa_ui` roles `USAGE` on the `marts` and `extensions` schemas and `SELECT` on the mart tables, and the UI role `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results`; it does this on `prod` and `eval` only (on `dev`: `grant_read_access: skipped on dev`).
 
-`make grant-agent` runs the same macro on prod without a build, which re-applies the grants if they were lost:
+`make grant-read` runs `grant_read_access` on prod without a build, which re-applies the grants if they were lost (`run-operation` runs no hooks, so it records no run results):
 
 ```
-grant_agent_access: granted usage on marts, extensions and select on marts tables to "sherpa_agent" on prod
+grant_read_access: granted usage on marts, extensions and select on marts tables to "sherpa_agent" on prod
 ```
 
 `dbt build` and `dbt source freshness` also run the hooks, so on a fresh database the grants step prints `skipped ... schema marts not built yet` until the marts exist.
+
+### The database roles and `make roles`
+
+Postgres has three logins, created from `.env` by `data-platform/postgres/roles.sql`:
+
+| Login | Used by | Can |
+|---|---|---|
+| `sherpa_admin` | the generator and dbt | everything in the `sherpa` database; owns the schemas |
+| `sherpa_agent` | the MCP server | read the marts; read-only transactions, `statement_timeout = 5s` |
+| `sherpa_ui` | the web app | read the marts and `ops.dbt_run_results`; read-only transactions, `statement_timeout = 30s` |
+
+On a new volume the init script runs `roles.sql` once. An existing volume keeps the roles it has, because init scripts only run on an empty data directory, and `sherpa_admin` cannot create roles. `make roles` runs the same SQL again as the `postgres` superuser inside the container, so no data is lost. It is idempotent: it creates what is missing and resets passwords and role settings. It reads the variables of the *running* Postgres container, not `.env` directly. So to change a password, or to add the UI login to a volume that has none, put `SHERPA_UI_USER` and `SHERPA_UI_PASSWORD` (copy them from `.env.example`) or the new password in `.env`, then run `make up` (it recreates Postgres with the new environment), `make roles` and `make build-prod` (which re-applies the read grants).
+
+```bash
+make roles
+```
+
+```
+ALTER ROLE
+ALTER DATABASE
+ALTER ROLE
+...
+REVOKE
+REVOKE
+```
+
+Until the role exists, a prod build fails at the grants with Postgres's `role "sherpa_ui" does not exist`; run `make roles` and build again.
+
+### The audit table `ops.dbt_run_results`
+
+The `record_run_results` hook appends to `ops.dbt_run_results` after every dbt command that runs the hooks, on every target (the table lives in the `ops` schema of the database dbt ran against). It has one row per node of the invocation:
+
+| Column | Holds |
+|---|---|
+| `invocation_id`, `run_started_at` | which dbt invocation, and when it started |
+| `target_name`, `command` | `dev`, `prod` or `eval`; `build`, `freshness`, ... |
+| `is_full_run` | true when the invocation ran every node of its command on the real data: no `--select`, `--exclude`, `--selector`, `--resource-type` or `--exclude-resource-type`, and no `--empty` or `--sample` (the `audit_is_full_run` macro) |
+| `unique_id`, `resource_type` | the node (`model.sherpa.fct_orders`, `test.sherpa...`, `source.sherpa...`) and its kind |
+| `status` | `success`, `pass`, `warn`, `error`, `fail`, `skipped`, ... |
+| `failures`, `execution_time_s`, `message` | test failure count, seconds, dbt's message (cut at 2,000 characters) |
+
+dbt rewrites `run_results.json` on every command that compiles, so the file cannot say what the last full build did; the table keeps every run. `make build-prod` runs `dbt source freshness` first, and that command records its own rows with `command = 'freshness'`, so to find the last full build filter on `command = 'build'`:
+
+```sql
+select run_started_at, count(*) as nodes,
+       count(*) filter (where status in ('error', 'fail')) as failed
+from ops.dbt_run_results
+where target_name = 'prod' and command = 'build' and is_full_run
+group by invocation_id, run_started_at
+order by run_started_at desc
+limit 1;
+```
+
+```
+        run_started_at         | nodes | failed
+-------------------------------+-------+--------
+ 2026-10-25 21:11:48.020087+00 |   318 |      0
+```
+
+Run it with `docker compose exec postgres psql -U sherpa_admin -d sherpa`; `sherpa_ui` can read the table too. `make grant-read` is a `run-operation`, which runs no hooks, so it adds no rows. `make reset` drops the `ops` schema with the other dbt schemas.
 
 ## Building
 
 ```bash
 make deps        # install the dbt packages (dbt_utils, dbt_expectations) into data-platform/dbt/dbt_packages/
 make build       # source freshness, then dbt build on dev
-make build-prod  # the same on prod
+make build-prod  # the same on prod, then dbt docs generate (target-prod/catalog.json, which the MCP server and the UI read)
 ```
 
 `make deps` downloads the versions pinned in `data-platform/dbt/package-lock.yml`: `dbt_utils`, `dbt_expectations` and `dbt_date`, which `dbt_expectations` needs:
@@ -501,7 +561,7 @@ uv run --env-file .env pytest -m warehouse
 ```
 collected 325 items / 288 deselected / 37 selected
 
-tests\dbt\test_agent_access.py .....................................     [100%]
+tests\dbt\test_reader_access.py .....................................     [100%]
 
 ===================== 37 passed, 288 deselected in 3.36s ======================
 ```

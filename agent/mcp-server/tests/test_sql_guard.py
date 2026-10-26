@@ -15,6 +15,7 @@ MART_COLUMNS = {
 }
 MARTS_HINT = "query only the marts that list_tables returns"
 FUNCTION_HINT = "rewrite it with the common aggregate, window, string, date and math functions"
+PARAMETER_ERROR = "[guard:parameter] query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
 # sqlglot node names that are not the Postgres spelling of a function
 SQLGLOT_NODE_NAME = re.compile(
     r"\b(j_s_o_n\w*|unix_to_time|rand|exploding_generate_series|json_extract_scalar|array_contains_all|array_size"
@@ -454,6 +455,22 @@ class TestSqlGuard:
             ("select * from (with pg_roles as (select 1) select * from pg_roles) s, pg_roles", "marts.pg_roles"),
             ("select 1 where 1 in (with x as (select 1) select * from x) and 1 in (select * from x)", "marts.x"),
             ("(with x as (select 1) select * from x) union select * from x", "qualify it as marts.x"),
+            # OPERATOR(schema.op) names any operator, past the rules for the operators written out
+            (
+                "select 1 from marts.dim_customers where email OPERATOR(pg_catalog.~) '^a'",
+                "operator call `email OPERATOR(pg_catalog.~) '^a'` is not allowed",
+            ),
+            ("select 1 from marts.fct_orders where order_id operator(=) 1", "operator call"),
+            ("select 1 from marts.dim_customers where (email) operator(pg_catalog.~~) 'a%'", "operator call"),
+            ("select order_id operator(pg_catalog.+) 1 from marts.fct_orders", "operator call"),
+            # parameters nobody binds: Postgres refuses `$1`, and sqlglot reads Postgres's prefix `@` as one
+            ("select $1 from marts.fct_orders", PARAMETER_ERROR),
+            ("select 1 from marts.fct_orders where order_id = $1", PARAMETER_ERROR),
+            ("select $1::int", PARAMETER_ERROR),
+            ("select @order_id from marts.fct_orders", PARAMETER_ERROR),
+            ("select ? from marts.fct_orders", PARAMETER_ERROR),
+            ("select 1 from marts.fct_orders where order_id = :id", PARAMETER_ERROR),
+            ("select %s from marts.fct_orders", PARAMETER_ERROR),
             # parser differentials and malformed input
             ("select 1 from marts.fct_orders # 1", "could not parse"),
             ('select * from U&"pg_\\0072oles"', "could not parse"),
@@ -515,6 +532,8 @@ class TestSqlGuard:
             ("select * from marts.fct_orders for update", "locking"),
             ("select 1::regclass from marts.fct_orders", "cast"),
             ("select pg_sleep(1)", "function"),
+            ("select 1 from marts.fct_orders where order_id operator(pg_catalog.=) 1", "operator"),
+            ("select $1 from marts.fct_orders", "parameter"),
             ("select (c.email).x from marts.dim_customers c", "field"),
             ("select c from marts.dim_customers c", "whole_row"),
             ("select c.nope from marts.dim_customers c", "column"),
@@ -543,6 +562,8 @@ class TestSqlGuard:
             ("select grouping(channel) from marts.fct_orders group by channel", "one query per grouping level"),
             ("select random() from marts.fct_orders", FUNCTION_HINT),
             ("select channel @> 'x' from marts.fct_orders", "use comparison operators, LIKE/ILIKE or IN (...)"),
+            ("select 1 from marts.fct_orders where order_id operator(=) 1", "use comparison operators, LIKE/ILIKE"),
+            ("select $1 from marts.fct_orders", "write the values into the query, and abs(x) for an absolute value"),
         ],
     )
     def test_rejection_carries_a_remedy_hint(self, guard: SqlGuard, sql: str, hint: str) -> None:

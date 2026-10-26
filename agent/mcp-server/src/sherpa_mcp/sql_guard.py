@@ -70,6 +70,8 @@ JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_jso
 JSON_HINT: Final = "aggregate with string_agg, or select the columns"
 DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
 DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
+PARAMETER_MESSAGE: Final = "query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
+PARAMETER_HINT: Final = "write the values into the query, and abs(x) for an absolute value"
 NUMBER_HINT: Final = "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix"
 _MARTS_HINT: Final = "query only the marts that list_tables returns"
 _ALIAS_LIST_HINT: Final = (
@@ -222,6 +224,19 @@ class SqlGuard:
                         f"use lengths up to {MAX_PAD_LENGTH:,}, or cast to text",
                     )
                 ]
+            case exp.Operator():
+                # `a OPERATOR(pg_catalog.~) b` names any operator by its schema, past the rules for written ones.
+                return [
+                    _error(
+                        "operator",
+                        f"operator call `{_cut(node.sql(dialect=DIALECT))}` is not allowed",
+                        DEFAULT_OPERATOR_HINT,
+                    )
+                ]
+            case exp.Parameter() | exp.Placeholder():
+                # Nothing binds a parameter, and sqlglot also reads Postgres's prefix `@` (absolute value) as one. Not
+                # quoted: sqlglot renders `@x` as `$x` and `:x` as `%(x)s`.
+                return [_error("parameter", PARAMETER_MESSAGE, PARAMETER_HINT)]
             case exp.Dot(expression=exp.Func() as func):
                 return [
                     _error(

@@ -54,7 +54,7 @@ There are no accounts: everyone uses the same anonymous, read-only access (§5).
 | Lineage graph | **React Flow** (`@xyflow/react`) with **ELK** (`elkjs`) for layered auto-layout |
 | SQL editor | **CodeMirror 6** (`@uiw/react-codemirror` + `@codemirror/lang-sql`), autocomplete fed from the catalog endpoint |
 | Result grid | **Mantine React Table** (TanStack Table underneath), with virtual scrolling, if its release supports the pinned Mantine major. Otherwise, TanStack Table with Mantine's `Table` and TanStack Virtual. Checked when pinning in ui-1 |
-| Data fetching | **TanStack Query**: short `staleTime` (≤ 30 s) and refetch on window focus, so data is never stale for long (criterion 2). Ask's streams bypass it (below) |
+| Data fetching | **TanStack Query**: short `staleTime` (≤ 30 s) and refetch on window focus, so data is never stale for long (criterion 2); health is also polled every 30 s. Only a request that got no answer is retried, once: an API error (4xx, a 503 for missing artifacts) is shown, with its code and message, not repeated. Ask's streams bypass it (below) |
 | API types | Types generated from the backend's OpenAPI schema with `openapi-typescript`, called through `openapi-fetch`. Both are **committed** under `ui/frontend/src/api/` (the Node build stage has no Python to produce the schema). `make ui-client` regenerates them, and a check in `make lint` fails when the committed files differ from a fresh generation. The SSE event models are part of the schema, so streamed events are typed too |
 | Backend | **FastAPI** (Python 3.12, same root `pyproject.toml`, dependency group `ui`), Pydantic models for every request and response. **One uvicorn worker**, because Ask drafts live in process memory |
 | Streaming | **Server-Sent Events over `POST`**, read with `fetch` and a stream reader (the browser's `EventSource` only does `GET`) |
@@ -111,10 +111,10 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
   - Nothing credential-related is baked into the image or committed. `make ui-dev` runs the backend on the host instead, using the host's credentials directly.
 - **dbt artifacts:** `data-platform/dbt/target-prod/` is mounted read-only. The UI reads `manifest.json` and `catalog.json` from it (`make build-prod` regenerates `catalog.json` after every build), and `sources.json` for freshness (only `dbt source freshness` writes it).
   - **Build status comes from the database, not the files:** the `ops.dbt_run_results` audit table (data platform spec §8, "Added by ui-1"). The UI reads the latest invocation with `target_name = 'prod'`, `command = 'build'` and `is_full_run`. The table is needed because dbt rewrites `target-prod/run_results.json` on every compiling command, so the file can't say what the last full build did.
-  - The backend reloads a file when its mtime changes, checked on each request that uses it.
+  - The backend reloads a file when its mtime changes, checked on each request that uses it. A failed reload of `manifest.json`/`catalog.json` (a file half-written by a running `make build-prod`) keeps the catalog that last loaded, with a warning in the log (`sherpa_mcp`'s `MartCatalogLoader`); only a backend that never loaded one answers `catalog_unavailable`.
   - A node with no row in that invocation shows "not in the last build".
 - **Health:** `GET /api/health` reports each dependency separately:
-  - the **database**, which Explorer, Home and history re-runs need
+  - the **database**, which Explorer, Home and history re-runs need: `down` when it cannot be reached, `ok` when it answers, also with a refusal for the UI login's connection limit (another client of that login holds every connection; a query then answers `too_many_connections`, §5)
   - the **artifacts**, present and when they were generated, which Lineage and the catalog tree need
   - the **tool server** (`mcp`), which Ask needs
   - the **model**: `unknown` until the first Ask call, then `ok` or `unavailable` from the last call's result, kept for 60 seconds. There is no extra Bedrock call just to check it.
@@ -146,14 +146,14 @@ docker compose --profile demo up -d
 
 ## 4. Backend API
 
-All responses are Pydantic models. All errors are `{code, message, detail?}` with a stable `code`.
+All responses are Pydantic models. All errors are `{code, message, detail?}` with a stable `code`. Clients branch on the `code`; the status only groups the codes: `422` for a refused request (`invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`), `404` for `table_not_found`, `409` for `duplicate_query_id` and `cancelled`, `429` for `busy`, `503` for `catalog_unavailable`, `database_unavailable` and `too_many_connections`, `504` for `timeout`, and `500` for `internal_error`. A timeout is `504`, not `408`: Chromium silently re-sends a POST answered `408` on a reused keep-alive connection, which would run the query twice. The OpenAPI schema declares every endpoint's error statuses with the `ApiError` model, and none with FastAPI's own validation-error shape, so the generated client types the errors the API really sends. A POST body over 1,048,576 bytes is refused before it is read (by its `Content-Length`, or counted as it arrives when it is sent chunked) with `422 invalid_request`: the largest valid query request is about 600,000 bytes. The schema is served at `/openapi.json`; FastAPI's Swagger UI and ReDoc pages (`/docs`, `/redoc`) are off, because they load their scripts from a CDN (§1, criterion 1).
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/health` | §3 |
 | `GET /api/catalog` | The Explorer tree: database → `marts` → domain → table → columns. Each table has name, description, grain, primary key and domain; each column has name, data type, description, `is_pii`, `is_primary_key`. From `manifest.json` (YAML) plus `catalog.json` (real types) |
 | `GET /api/catalog/tables/{name}` | The Inspector: everything above plus `accepted_values`, `synonyms`, the metric doc blocks a column's description uses, and the table's tests |
-| `POST /api/queries` | `{query_id, sql, sort?: [{column, direction}], filters?: [{column, operator, value}]}` → `{query_id, columns, rows, returned_rows, truncated, elapsed_ms, mode: "client"\|"server"}`; §5. The **client generates `query_id`** (a UUID), so it can cancel while the request is still running. A duplicate `query_id` returns `409` |
+| `POST /api/queries` | `{query_id, sql, sort?: [{column, direction}], filters?: [{column, operator, value}]}` → `{query_id, columns, rows, returned_rows, truncated, elapsed_ms, mode: "client"\|"server", warning?}`; §5. The **client generates `query_id`** (a UUID), so it can cancel while the request is still running. A duplicate `query_id` returns `409`. `sql` holds at most 100,000 characters and no NUL character (libpq would end the query text there, so Postgres would run less than the guard checked); either is `422 invalid_request` |
 | `POST /api/queries/{query_id}/cancel` | Cancels a running query; idempotent, and a no-op for an unknown or finished id |
 | `POST /api/queries/format` | `{sql}` → `{sql}` formatted with sqlglot (Postgres dialect); never executes |
 | `GET /api/lineage?select=<selector>&layers=…&failing_only=<bool>` | Nodes and edges for the selection; §6.5 |
@@ -175,19 +175,31 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
 - **Role `sherpa_ui`:** read-only, `SELECT` on `marts` and `USAGE` on `marts` and `extensions`, exactly like `sherpa_agent`, plus `USAGE` on `ops` and `SELECT` on `ops.dbt_run_results` for the build status. The build-status query is fixed backend SQL, not user SQL; user queries still go through the guard, which only allows `marts`. It has its own role so its timeout and audit trail are separate from the agent's. Its role defaults are `default_transaction_read_only = on` and `statement_timeout = 30s`, and it gets the same `PUBLIC` revokes.
   - **On a fresh volume,** the data platform's Postgres init script creates it.
   - **On an existing volume** (the init script only runs on an empty one, and `sherpa_admin` can't create roles), ui-1 makes the role SQL idempotent. It moves into `data-platform/postgres/roles.sql`, which the init script runs, and **`make roles`** runs it again as the `postgres` superuser inside the container, so no volume has to be wiped.
-  - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with "role does not exist" until `make roles` has run, and the error says so.
-- **Connection options:** `default_transaction_read_only=on`, `statement_timeout=30s` (`SHERPA_UI_STATEMENT_TIMEOUT`), set on the connection like the MCP server's.
-- **Guard:** `sherpa_mcp.sql_guard` (agent spec §4.2), imported as a library: one statement, `SELECT`/`WITH` only, the function allow-list, every table `marts.<visible mart>`, every qualified column a real column, no `SET`/`RESET`/`ALTER`. The runner builds `SqlGuard(catalog.mart_columns(), allowed_functions=...)` with its own allow-list (the agent's is the default). A rejection returns `code = "guard_rejected"` with the guard's reason, which the UI shows verbatim.
-- **Executor:** the runner's own (this section's timeout, row cap, cancel and error positions); the MCP server's `AgentDatabase` is shaped for the model (5 s, 100 rows, a 50,000-character budget) and is not reused.
-- **Row cap:** 1,000 rows (`SHERPA_UI_ROW_CAP`), fetched from a server-side cursor (1,001 fetched means `truncated`).
-- **PII masking:** the same name-based masking as the agent (agent spec §4.2). ui-1 decides whether `sherpa_ui` and `sherpa_agent` get column-level `SELECT` grants without the PII columns, which would make the masking real (name-based masking misses aliases and expressions, and `pg_stats` shows the PII columns' stored values to a role that can read them).
+  - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with Postgres's `role "sherpa_ui" does not exist` until `make roles` has run.
+- **Connection options:** `default_transaction_read_only=on`, `statement_timeout=30s` (`SHERPA_UI_STATEMENT_TIMEOUT_S`, integer seconds, default 30, at least 1), set on the connection like the MCP server's.
+- **Guard:** `sherpa_mcp.sql_guard` (agent spec §4.2), imported as a library: one statement, `SELECT`/`WITH` only, the function allow-list, every table `marts.<visible mart>`, every qualified column a real column, no `SET`/`RESET`/`ALTER`. The runner builds `SqlGuard(catalog.mart_columns(), allowed_functions=...)` with its own allow-list (the agent's is the default). A rejection returns `code = "guard_rejected"` with the guard's reason, which the UI shows without its `[guard:<rule>]` code, followed by what may run (one read-only `SELECT` over the marts).
+- **Executor:** the runner's own (this section's timeout, row cap, result size, cancel and error positions); the MCP server's `AgentDatabase` is shaped for the model (5 s, 100 rows, a 50,000-character budget) and is not reused. The runner reuses only its value conversion, cell cut and data-error message (`json_safe`, `cap_cell`, `data_error_message`). On top of `json_safe`, a cell's integer beyond ±(2⁵³ − 1) (an `int8` the browser would round to the nearest double) is sent as a string, like a `numeric`, and its column stays `number`; integers inside a JSON or array cell are left as they are.
+- **Row cap and result size:** 1,000 rows (`SHERPA_UI_ROW_CAP`), fetched from a server-side cursor in batches of 100 rows, fewer for a wide result (at most 10,000 cells a batch) and one at a time after a row over 1,000,000 characters.
+  - **Cells:** a text, bytes (hex), array or JSON cell longer than 10,000 characters is cut and ends with ` …[cut at 10000 chars]`, as in the MCP server (10,000 is also the longest `lpad` the guard allows).
+  - **Budget:** the whole result stops at 2,000,000 characters, after cutting and masking (about eight times the widest mart's 1,000 rows).
+  - A 1,001st row, or a row that would pass the budget, means `truncated`: that row and the rest are left out.
+  - Postgres times each FETCH on its own, so fetching also stops at the statement timeout, checked before each batch.
+  - As for the agent (agent spec §4.2, known limits), a cell is cut only after Postgres built it and psycopg loaded it, so a huge `string_agg` still costs its memory while it is fetched; the `ui` container's 1 GB limit and restart policy bound it.
+- **Concurrency:** `sherpa_ui` has `CONNECTION LIMIT 10`. At most 8 queries hold a connection at once (`MAX_CONCURRENT_QUERIES`), so the health check still gets one while the runner is full.
+  - A 9th query returns `code = "busy"` (`429`) at once, without opening a connection: "too many queries are running (at most 8 at once); wait for one to finish or cancel one".
+  - A run takes its slot just before connecting (after the guard and a last cancel check) and gives it back however it ends.
+  - A connection that Postgres refuses for a connection limit (SQLSTATE 53300, for instance while another client of the same login holds connections) returns `too_many_connections` (`503`), not `database_unavailable`. libpq reports no SQLSTATE for a refused connection, so the runner recognises it by Postgres's messages for it.
+- **PII masking:** the same name-based masking as the agent (agent spec §4.2). Neither `sherpa_ui` nor `sherpa_agent` has column-level `SELECT` grants, so the masking is by result-column name only: a PII column under an alias or inside an expression is not masked, and `pg_stats` shows the PII columns' stored values to a role that can read them.
 - **Sort and filter:**
   - When the first run was **not** truncated, the frontend sorts and filters the rows it has (`mode = "client"`).
-  - When it **was** truncated, the frontend re-sends the SQL with `sort`/`filters`, and the backend runs `select * from (<sql>\n) as q where … order by …` (`mode = "server"`). The newline before the closing parenthesis keeps a trailing `--` comment from swallowing it, and trailing `;` and whitespace are stripped first. The wrapper is built from validated column names (they must be result columns) and bound parameters; the user's SQL is still guard-checked as written.
-  - **Duplicate column names** in the result make server mode impossible (`q` would have ambiguous columns). Sorting and filtering then stay in the browser, with a banner saying they only apply to the rows shown and suggesting to alias the columns.
+  - When it **was** truncated, the frontend re-sends the SQL with `sort`/`filters`, and the backend runs `select * from (<sql>\n) as q where … order by …` (`mode = "server"`). The newline before the closing parenthesis keeps a trailing `--` comment from swallowing it, and trailing `;` and whitespace are stripped first. The wrapper is built from validated column names (they must be result columns, and not masked ones) and bound parameters; the user's SQL is still guard-checked as written.
+  - **Duplicate column names** in the result make server mode impossible (`q` would have ambiguous columns). The runner then runs the SQL as written within the same run (one connection, one `query_id`, so a cancel still reaches it) and answers `mode = "client"` with a `warning`. Sorting and filtering stay in the browser, with a banner saying they only apply to the rows shown and suggesting to alias the columns.
+  - **Masked columns** are never sorted or filtered on the server: a sort or filter column that the masking hides (by result-column name, exactly like the masking, through `PiiMasker.masks`) returns `code = "pii_column"` (`422`). The real values would still decide the order and which rows match, so a `contains` filter on `email` would be an oracle for the addresses. The Explorer offers neither on a masked column in either mode (in the browser they would only see `***`): it takes the names from the catalog's `is_pii` columns and matches result columns like the masking, by name in any case.
   - Operators: `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `is null`, `is not null`.
-- **Cancel:** the runner keeps `query_id → connection` for running queries. Cancel calls psycopg's `cancel_safe()` on that connection; a role may cancel its own queries, so no extra privilege is needed. A query is also cancelled when the client disconnects (§4), or when the same worksheet starts a new run (the frontend sends cancel for the previous `query_id`).
+- **Cancel:** the runner keeps `query_id → connection` for running queries. Cancel calls psycopg's `cancel_safe()` on that connection; a role may cancel its own queries, so no extra privilege is needed. Postgres ignores a cancel request that finds nothing running (between the probe and the wrapped query, or between two FETCHes), so the runner also checks for a cancel before each statement and each FETCH, and a cancelled run never sends another one. A query is also cancelled when the client disconnects (§4), or when the same worksheet starts a new run (the frontend sends cancel for the previous `query_id`).
 - **Errors:** Postgres errors return `code = "sql_error"` with the message and, when Postgres gives one, the character `position`. Positions are counted in what was actually sent, so the backend subtracts the prefix it added (the cursor declaration and, in server mode, the wrapper) before returning. For "Run selection" the editor adds the selection's offset back before highlighting.
+  - **Data exceptions** (SQLSTATE class 22: a failed cast, a division by zero, a value out of range) quote the offending value, which can be a masked one (`invalid input syntax for type integer: "<an email>"` for `select email::int …`). Their message is replaced by the exception's name and a remedy, the MCP server's own (`sherpa_mcp.database.data_error_message`, agent spec §4.2): `a value could not be converted or computed (InvalidTextRepresentation); check the literal format`. The position is kept.
+- **Logging:** every run is logged with its `query_id`, outcome and duration, and the SQL only by its length and a short sha256, never its text (it can hold personal values). A failure that the warehouse or the server caused (`timeout`, `busy`, `catalog_unavailable`, `database_unavailable`, `too_many_connections`) is a warning with its message; any other is logged at info by its code alone, because the guard's and Postgres's messages can quote the query or a stored value.
 
 ---
 
@@ -195,7 +207,7 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
 
 ### 6.1 Shell
 - A left navigation rail: **Home**, **Ask**, **Explorer**, **Lineage**. The active screen is part of the URL (`/`, `/ask`, `/explorer`, `/lineage`), so reload and back/forward work.
-- A health banner (§3). Light and dark theme following the OS.
+- A health banner (§3): red for a dependency whose loss stops a screen's queries (the server, the database), yellow for missing dbt artifacts. Light and dark theme following the OS, with text contrast at WCAG AA in both.
 
 ### 6.2 Home
 - **Ask box** at the top: typing and pressing Enter opens Ask with the question and starts planning.
@@ -278,19 +290,20 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
 **Catalog tree (left):**
 - `sherpa › marts › <domain> › table › column`, only what the read-only path can query, with search over table and column names.
 - Columns show their type plus PK and PII badges.
-- **Hover:** a tooltip with the description, grain and PK.
-- **Click:** the **Inspector** (right panel) with everything from `GET /api/catalog/tables/{name}`, plus "Open in Lineage".
+- **Hover:** a tooltip with the description's first sentence (at most 200 characters), the grain and the PK; the full description is the Inspector's.
+- **Click:** the **Inspector** (right panel) with everything from `GET /api/catalog/tables/{name}`, plus "Open in Lineage". Below 1280 px wide the Inspector is a drawer over the editor instead, so the editor keeps a usable width on a 1024 px screen.
 - **Table menu** (right-click and a "⋯" button): Preview 100 rows (`select * from marts.<t> limit 100`), Insert SELECT into the editor, Copy name, Open in Lineage.
 
 **Editor (centre top):**
-- **Worksheet tabs** and per-browser **history**.
+- **Worksheet tabs** (a keyboard tab list: the arrow keys move, F2 renames, Delete closes) and per-browser **history**.
 - Schema-aware autocomplete.
-- **Run** (Ctrl+Enter), **Run selection**, **Format** (`POST /api/queries/format`, sqlglot, Postgres dialect).
+- **Run** (Ctrl+Enter), **Run selection**, **Format** (`POST /api/queries/format`, sqlglot, Postgres dialect). Run says why it is disabled (an empty worksheet); while the database is down, Run, Run selection and the tree's Preview are disabled with the reason (§3).
 - While a query runs, Run becomes **Cancel**.
 
 **Results (centre bottom):**
 - The grid, with row count, duration, a read-only badge and a truncated flag.
 - Column sort and filter, client-side or server-side as in §5, with a banner naming the mode when the result is truncated.
+- While a query runs, the last result stays, dimmed, until the answer replaces it.
 - Errors: guard rejections are explained, and Postgres errors highlight their position in the editor. A cancelled query shows "Cancelled after N s".
 
 ### 6.5 Lineage
@@ -316,7 +329,7 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
 ## 7. Browser Storage
 
 No accounts, so state that belongs to "the user" lives in the browser's `localStorage`, versioned (`sherpa.v1.*`) so a schema change can migrate or reset it:
-- Explorer: worksheet tabs (name, SQL), query history (last 200: SQL, time, row count, status).
+- Explorer: worksheet tabs (name, SQL), query history (last 200: SQL, time, row count, status). Two browser tabs merge on the `storage` event instead of overwriting each other: a tab takes in the worksheets it lacks (by id; where both have one, its own copy wins) and the history entries it lacks (by time and SQL, last 200). Closing a worksheet does not propagate.
 - Ask: questions and their runs (last 100 questions).
 
 Browser storage never holds result rows; results are always re-fetched (criteria 2 and 3). It does hold SQL, interpretations and row counts, which can contain values from the warehouse such as a grounded product name in a `where` clause.
@@ -340,9 +353,9 @@ Browser storage never holds result rows; results are always re-fetched (criteria
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SHERPA_UI_PORT` | `8090` | Port on 127.0.0.1 |
+| `SHERPA_UI_PORT` | `8090` | Port on 127.0.0.1: compose publishes `ui` on it, and `make ui-dev` (the API and the Vite proxy) and `make e2e` use it too |
 | `SHERPA_UI_USER`, `SHERPA_UI_PASSWORD` | `sherpa_ui`, — | The UI's read-only role |
-| `SHERPA_UI_STATEMENT_TIMEOUT` | `30s` | Per-query timeout |
+| `SHERPA_UI_STATEMENT_TIMEOUT_S` | `30` | Per-query timeout, in whole seconds (at least 1) |
 | `SHERPA_UI_ROW_CAP` | `1000` | Rows returned per query |
 | `SHERPA_UI_DRAFT_TTL_MINUTES` | `60` | How long Ask drafts are kept |
 | `SHERPA_UI_TRACE_URL_TEMPLATE` | — | e.g. a Logfire or Phoenix URL with `{trace_id}` |
@@ -359,9 +372,9 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 
 | Milestone | Builds | Needs | Acceptance |
 |---|---|---|---|
-| **ui-1 — Shell and Explorer** | `sherpa_ui` backend skeleton with health; the `sherpa_ui` role with idempotent `data-platform/postgres/roles.sql`, `make roles` and its dbt grants; the `ops.dbt_run_results` audit hook and `make build-prod` regenerating `catalog.json` (data platform spec §8, "Added by ui-1"); `QueryRunner` (§5); catalog endpoints; the frontend shell; Explorer (§6.4); the `ui` image and compose service; Make targets `ui-dev` (backend with reload + Vite dev server), `ui-client` and `e2e` | data-platform-2, agent-design-1 (`sql_guard`) | Explorer e2e flows pass; guard rejection, truncation banner, both sort modes and cancel work against the real stack; the browser offline check passes for Explorer; `make roles` on an existing volume creates `sherpa_ui` without data loss; the build status shown matches the latest full prod build in `ops.dbt_run_results` |
+| **ui-1 — Shell and Explorer** | `sherpa_ui` backend skeleton with health; the `sherpa_ui` role with idempotent `data-platform/postgres/roles.sql`, `make roles` and its dbt grants; the `ops.dbt_run_results` audit hook and `make build-prod` regenerating `catalog.json` (data platform spec §8, "Added by ui-1"); `QueryRunner` (§5); catalog endpoints; the frontend shell; Explorer (§6.4); the `ui` image and compose service; Make targets `ui-dev` (backend with reload + Vite dev server), `ui-client`, `e2e` and `e2e-freshness` (the one e2e check that changes the shared warehouse, run only on request) | data-platform-2, agent-design-1 (`sql_guard`) | Explorer e2e flows pass; guard rejection, truncation banner, both sort modes and cancel work against the real stack; the browser offline check passes for Explorer; `make roles` on an existing volume creates `sherpa_ui` without data loss |
 | **ui-2 — Lineage** | Lineage endpoints and selector subset, the graph, node panel, run-status overlay, "Failing only" | ui-1 | Table-path and domain e2e flows; the selector subset matches `dbt ls` and rejects an unsupported form; a failing test in the prod build shows its node red and appears under "Failing only" |
-| **ui-3 — Home** | `home_queries.yaml`, `HomeService`, the data-status strip, Home screen | ui-2 (the failing-tests link) | Every tile equals a direct SQL check in the e2e test; after `make generate DAYS=1 && make build-prod`, a refresh changes `as_of_date` and the tiles (criterion 2) |
+| **ui-3 — Home** | `home_queries.yaml`, `HomeService`, the data-status strip, Home screen | ui-2 (the failing-tests link) | Every tile equals a direct SQL check in the e2e test; after `make generate DAYS=1 && make build-prod`, a refresh changes `as_of_date` and the tiles (criterion 2); the build time and node count in the data-status strip match the latest full prod build in `ops.dbt_run_results` |
 | **ui-4 — Ask** | Ask endpoints with SSE, chart rules, draft/corrections/answer screens, history with re-runs, trace links, model-health tracking and the offline compose override | ui-1, agent-design-3 | The Ask backend tests pass with agent fakes; the `live` e2e flow (question → draft → one correction → re-plan → Show results) passes once against Bedrock; the offline compose check shows "model unavailable" within seconds while the other screens work |
 | **ui-5 — One-command demo** | `data-platform/bootstrap/` (Dockerfile + entrypoint), the compose `demo` profile, the health banner's "warehouse being built" state, the README "Try it" section | ui-4 | On a clean clone with only Docker: `cp .env.example .env && docker compose --profile demo up -d` brings up a working product (Home shows numbers, Explorer runs a query, Lineage shows the graph, Ask shows "model unavailable" without credentials); a second `up` finishes `bootstrap` in seconds; with a host-built warehouse, `bootstrap` changes nothing (`ops.dbt_run_results` gains no rows) |
 
@@ -384,7 +397,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 
 ## 12. Decisions Made by the Spec Author
 
-- One `ui` container: FastAPI serves the API and the built SPA. No separate web server.
+- One `ui` container: FastAPI serves the API and the built SPA. No separate web server. Every path outside `/api` and `/assets` answers `index.html` with `Cache-Control: no-cache` (it names the build's hashed assets, so a reload after a new image gets the new ones); a missing file under `/assets` is a 404, not the page.
 - The agent runs in-process in the UI backend and reaches `mcp` over HTTP.
 - A separate read-only role `sherpa_ui` with a 30 s timeout and a 1,000-row cap; the agent keeps its 5 s and 100 rows.
 - Sorting and filtering run in the browser when the result is complete, and as a server-side wrapper when it was truncated.

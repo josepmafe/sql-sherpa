@@ -443,7 +443,7 @@ Without the `limit` the query returns all 15 dumbbell products. `product_name % 
 
 ## Connecting as `sherpa_agent`
 
-The agent connects as the `sherpa_agent` role, which can read **only the `marts` schema** (and use the functions in `extensions`) on prod and on the frozen eval database. It cannot read staging, intermediate, seeds, the raw schemas or the `dev_` schemas, cannot create temporary tables or large objects, and its queries stop after 5 seconds. dbt grants this access at the end of every run on those targets (`make grant-agent` re-applies it without a build).
+The agent connects as the `sherpa_agent` role, which can read **only the `marts` schema** (and use the functions in `extensions`) on prod and on the frozen eval database. It cannot read staging, intermediate, seeds, the raw schemas or the `dev_` schemas, cannot create temporary tables or large objects, and its queries stop after 5 seconds. dbt grants this access at the end of every run on those targets (`make grant-read` re-applies it without a build).
 
 Inside the container, Postgres trusts every connection over the local socket and over `127.0.0.1`: a `docker compose exec ... psql -U sherpa_agent` there logs in without checking any password. Connections from any other address must pass a `scram-sha-256` password check, including the container's own network address, which is how the function below connects. The container already has the variables from `.env` in its environment, so the password is read there, inside the container: it never appears on a command line or in the host's process list, and nothing from `.env` is loaded into your shell:
 

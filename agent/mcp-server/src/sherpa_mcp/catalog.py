@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel, ConfigDict
 if TYPE_CHECKING:
     from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 MANIFEST_FILE = "manifest.json"
 CATALOG_FILE = "catalog.json"
 # Visible marts are the models in this schema (data platform spec §11).
@@ -16,7 +19,7 @@ MARTS_SCHEMA = "marts"
 PUBLIC_ACCESS = "public"
 METRIC_PREFIX = "metric_"
 ACCEPTED_VALUES_TEST = "accepted_values"
-_MISSING_HINT = "run `make build-prod` and `make docs-prod` (catalog.json is written by `make docs-prod`)"
+_MISSING_HINT = "run `make build-prod` (it writes both files)"
 
 
 class CatalogUnavailable(Exception):
@@ -86,7 +89,12 @@ class MartCatalog(BaseModel):
 
 
 class MartCatalogLoader:
-    """Builds the MartCatalog from dbt's artifacts and rebuilds it when either file changes."""
+    """Builds the MartCatalog from dbt's artifacts and rebuilds it when either file changes.
+
+    A rebuild that fails (a file half-written by a running `make build-prod`, or gone) keeps the last catalog that
+    loaded, with a warning, and is tried again on the next call; only a loader that never loaded one raises
+    `CatalogUnavailable`.
+    """
 
     def __init__(self, target_path: Path) -> None:
         self._target_path = target_path
@@ -94,17 +102,31 @@ class MartCatalogLoader:
         self._catalog: MartCatalog | None = None
 
     def load(self) -> MartCatalog:
-        stamp = self._mtimes()
-        if self._catalog is None or stamp != self._stamp:
-            manifest, catalog = self._read(MANIFEST_FILE), self._read(CATALOG_FILE)
-            try:
-                self._catalog = _build_catalog(manifest, catalog)
-            except (KeyError, TypeError, AttributeError, ValueError) as exc:
-                raise CatalogUnavailable(
-                    f"unexpected layout in {MANIFEST_FILE} or {CATALOG_FILE}: {_MISSING_HINT}"
-                ) from exc
-            self._stamp = stamp
-        return self._catalog
+        try:
+            stamp = self._mtimes()
+            if self._catalog is None or stamp != self._stamp:
+                self._catalog = self._read_catalog()
+                self._stamp = stamp
+            return self._catalog
+        except CatalogUnavailable as exc:
+            if self._catalog is None:
+                raise
+
+            logger.warning(
+                "could not reload the dbt artifacts, so the catalog generated at %s stays in use: %s",
+                self._catalog.generated_at.isoformat(),
+                exc,
+            )
+            return self._catalog
+
+    def _read_catalog(self) -> MartCatalog:
+        manifest, catalog = self._read(MANIFEST_FILE), self._read(CATALOG_FILE)
+        try:
+            return _build_catalog(manifest, catalog)
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise CatalogUnavailable(
+                f"unexpected layout in {MANIFEST_FILE} or {CATALOG_FILE}: {_MISSING_HINT}"
+            ) from exc
 
     def _mtimes(self) -> tuple[int, int]:
         try:

@@ -4,7 +4,7 @@
 
 It is a learning project, built to production standards: a realistic synthetic e-commerce business, a dbt project that uses dbt Core's features the way practitioners do, and a text-to-SQL agent where observability and evaluation come first.
 
-> **Status:** design complete for both the data platform and the agent; data-platform-1 (Foundation), data-platform-2 (Core marts) and agent-design-1 (MCP server) are done; agent-design-2 (gold set and evals) and data-platform-3 (Time) are next.
+> **Status:** design complete for the data platform, the agent and the web app (UI); data-platform-1 (Foundation), data-platform-2 (Core marts), agent-design-1 (MCP server) and ui-1 (shell and Explorer) are done; agent-design-2 (gold set and evals) and data-platform-3 (Time) are next.
 
 ---
 
@@ -21,14 +21,14 @@ It is a learning project, built to production standards: a realistic synthetic e
 
 ## Stack
 
-The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the tools of the finished milestones (data-platform-1, data-platform-2 and agent-design-1) are installed today.
+The target stack. Each tool is introduced in the milestone where it first does a job (see the roadmap); only the tools of the finished milestones (data-platform-1, data-platform-2, agent-design-1 and ui-1) are installed today.
 
 | Layer | Tools |
 |---|---|
 | Data | PostgreSQL 16 (Docker), Python 3.12 + Faker (data-platform-1) |
 | Transformation | dbt Core + dbt-postgres and dbt_utils (data-platform-1), dbt_expectations (data-platform-2), MetricFlow (data-platform-5) |
 | Agent | PydanticAI, the MCP Python SDK (`MCPServer`, agent-design-1), Claude on Amazon Bedrock (agent milestones) |
-| UI | React + TypeScript + Vite, Mantine, React Flow, CodeMirror; FastAPI backend (ui milestones) |
+| UI | React + TypeScript + Vite, Mantine, CodeMirror, TanStack Query and Table; FastAPI backend (ui-1); React Flow (ui-2) |
 | Observability & evals | Pydantic Logfire (OpenTelemetry; the MCP server, agent-design-1) and a small execution-accuracy eval runner (agent milestones) |
 | Tooling | uv, ruff, sqlfluff, pre-commit (data-platform-1), GitHub Actions (data-platform-4) |
 
@@ -46,26 +46,28 @@ The target stack. Each tool is introduced in the milestone where it first does a
 
 ## Quickstart
 
-Prerequisites: Docker, [uv](https://docs.astral.sh/uv/) and GNU Make.
+Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), GNU Make and, for working on the web app's frontend (`make ui-dev`, `make lint`, `make e2e`), Node 22+.
 
 ```bash
 uv run pre-commit install  # hooks enforce lint and format locally; there is no CI yet
 cp .env.example .env     # then replace the change-me passwords with real values
-make up                  # start Postgres and the MCP server (both wait until healthy)
+make up                  # start Postgres, the MCP server and the web app (all wait until healthy)
 make backfill DAYS=365   # simulate a year of data into the raw schemas (about 3.5 minutes)
 make deps                # install the dbt packages
+(cd ui/frontend && npm ci)  # once, only for frontend work: make ui-dev, make lint, make e2e
 make build               # dbt: seeds, staging, intermediate and mart models, and tests
-make build-prod          # the same into the prod schemas, which the agent reads
-make docs-prod           # write catalog.json, which the MCP server needs, then serve the prod docs: Ctrl+C once it serves
+make build-prod          # the same into the prod schemas, which the agent and the web app read; also writes catalog.json
 make eval-db             # optional: the frozen evaluation database sherpa_eval (about 5 minutes or more)
 make docs                # generate and serve the dev dbt docs until you press Ctrl+C
 ```
 
 `make docs` and `make docs-prod` serve on the same port (8080), so stop one before starting the other.
 
-`make mcp-dev` runs the MCP server on the host instead of the container ([Using the MCP server](docs/guides/basic/using-the-mcp-server.md)). `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy and sqlfluff.
+Open <http://127.0.0.1:8090> for the web app's Explorer ([Using the Explorer](docs/guides/basic/using-the-explorer.md)); if something else holds port 8090, set `SHERPA_UI_PORT` (for example `SHERPA_UI_PORT=8091 make up`). `make ui-dev` runs it for development.
 
-The database lives in one Docker volume, `sherpa_pgdata`, shared by every checkout and git worktree of the repository (the compose project is pinned to `sql-sherpa`). `make up` in a new worktree reuses the existing warehouse instead of starting an empty one (it also builds and starts the `mcp` service). The flip side is that `make down` (which stops Postgres and `mcp`) or `make reset` from any of them affects that one database.
+`make mcp-dev` runs the MCP server on the host instead of the container ([Using the MCP server](docs/guides/basic/using-the-mcp-server.md)). `make test` runs the tests except the `slow` and `warehouse` ones (markers in `CLAUDE.md`), and `make lint` runs ruff, mypy, sqlfluff, ESLint and `tsc`.
+
+The database lives in one Docker volume, `sherpa_pgdata`, shared by every checkout and git worktree of the repository (the compose project is pinned to `sql-sherpa`). `make up` in a new worktree reuses the existing warehouse instead of starting an empty one (it also builds and starts the `mcp` and `ui` services). The flip side is that `make down` (which stops Postgres, `mcp` and `ui`) or `make reset` from any of them affects that one database.
 
 To add days later, run `make generate DAYS=<n>`. Days added after the first run have no paid campaigns, promotions or ad spend, because the catalog is built once, on the first run.
 
@@ -78,7 +80,7 @@ To add days later, run `make generate DAYS=<n>`. Days added after the first run 
 
 ## Repository layout
 
-Code is grouped by spec. The rest of `agent/` and `ui/` appear with their first milestones.
+Code is grouped by spec. The rest of `agent/` appears with its first milestones.
 
 ```
 data-platform/
@@ -89,6 +91,10 @@ data-platform/
   tests/           tests spanning the generator and dbt (seeds, agent access to the marts, scripts)
 agent/
   mcp-server/      the read-only MCP server (Python package `sherpa_mcp`, its tests and Dockerfile)
+ui/
+  backend/         the web app's API (Python package `sherpa_ui`, its tests)
+  frontend/        the web app (React + TypeScript + Vite, with Vitest and Playwright tests)
+  Dockerfile       the `ui` image (builds the frontend, serves it with the API)
 docs/              design specs, implementation plans and how-to guides
 ```
 
@@ -100,6 +106,7 @@ docs/              design specs, implementation plans and how-to guides
 - [Plan — data-platform-1 Foundation](docs/superpowers/plans/2026-10-22-data-platform-1-foundation.md)
 - [Plan — data-platform-2 Core marts](docs/superpowers/plans/2026-10-23-data-platform-2-core-marts.md)
 - [Plan — agent-design-1 MCP server](docs/superpowers/plans/2026-10-24-agent-design-1-mcp-server.md)
+- [Plan — ui-1 Shell and Explorer](docs/superpowers/plans/2026-10-24-ui-1-shell-and-explorer.md)
 
 ## Guides
 
@@ -107,8 +114,10 @@ docs/              design specs, implementation plans and how-to guides
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dbt on dev, prod and eval, the layers, hooks, selecting, previewing, docs and failing tests
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers, revenue definitions, copy-paste queries, traps, fuzzy search and the agent role
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools with real calls, error codes and hints, result limits, masking, known limitations and tracing
+- [Using the Explorer](docs/guides/basic/using-the-explorer.md): starting the web app, the catalog tree, worksheets, running, sorting and filtering, and what it will not let you do
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, end to end
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns, marts, metrics, trigram indexes, custom tests and intermediate models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and what to update when marts are added
+- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, where the read-only rules live, and the three test layers
 
 All data is synthetic.

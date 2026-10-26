@@ -12,12 +12,17 @@ services:
       SHERPA_ADMIN_PASSWORD: ${SHERPA_ADMIN_PASSWORD:?set it in .env}
       SHERPA_AGENT_USER: ${SHERPA_AGENT_USER:-sherpa_agent}
       SHERPA_AGENT_PASSWORD: ${SHERPA_AGENT_PASSWORD:?set it in .env}
+      SHERPA_UI_USER: ${SHERPA_UI_USER:-sherpa_ui}
+      SHERPA_UI_PASSWORD: ${SHERPA_UI_PASSWORD:?set it in .env}
     ports:
       # Localhost only: the .env passwords are dev placeholders, so the database must not be reachable from the LAN.
       - "127.0.0.1:${SHERPA_DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./data-platform/postgres/init:/docker-entrypoint-initdb.d:ro
+      # The role SQL as a folder (Docker would create a missing single file as a directory). Not in initdb.d, where
+      # its files would run on their own without their variables.
+      - ./data-platform/postgres:/sherpa:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
       interval: 5s
@@ -59,6 +64,39 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8765), timeout=3).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    # No env_file, for the same reason as mcp: the web-facing container gets only the read-only sherpa_ui login,
+    # never the admin login or POSTGRES_PASSWORD.
+    environment:
+      SHERPA_DB_HOST: postgres
+      SHERPA_DB_PORT: "5432"
+      SHERPA_DB_NAME: ${SHERPA_DB_NAME:-sherpa}
+      SHERPA_UI_USER: ${SHERPA_UI_USER:-sherpa_ui}
+      SHERPA_UI_PASSWORD: ${SHERPA_UI_PASSWORD:?set it in .env}
+      SHERPA_UI_DBT_TARGET_PATH: /app/dbt/target-prod
+      SHERPA_UI_STATEMENT_TIMEOUT_S: ${SHERPA_UI_STATEMENT_TIMEOUT_S:-30}
+      SHERPA_UI_ROW_CAP: ${SHERPA_UI_ROW_CAP:-1000}
+    volumes:
+      # The dbt folder, not target-prod itself (see mcp): a rebuilt target-prod must not leave a stale mount.
+      - ./data-platform/dbt:/app/dbt:ro
+    mem_limit: 1g
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SHERPA_UI_PORT:-8090}:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Any 200 is healthy: a missing dbt artifact is a banner in the UI, so `make up` works before `make build-prod`.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/health', timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 10

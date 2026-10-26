@@ -1,0 +1,174 @@
+// Explorer state kept in the browser (UI spec §7). The key is versioned so a schema change can reset it.
+export const STORAGE_KEY = "sherpa.v1.explorer";
+export const HISTORY_LIMIT = 200;
+
+// `runOnOpen` asks the worksheet's panel to run its SQL once when it mounts (Preview); the panel clears it.
+export type Worksheet = { id: string; name: string; sql: string; runOnOpen?: boolean };
+export type HistoryStatus = "done" | "error" | "cancelled";
+export type HistoryEntry = {
+  sql: string;
+  ranAt: string;
+  returnedRows: number | null;
+  status: HistoryStatus;
+};
+export type ExplorerState = {
+  worksheets: Worksheet[];
+  activeId: string;
+  history: HistoryEntry[];
+};
+
+const HISTORY_STATUSES: readonly string[] = ["done", "error", "cancelled"];
+
+// `localStorage` is read inside the try: with site data blocked, reading it throws (SecurityError).
+export function loadExplorerState(): ExplorerState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return freshState();
+    const parsed = parseExplorerState(raw);
+    if (parsed) return parsed;
+    console.warn(`${STORAGE_KEY} is not a valid Explorer state; starting with an empty worksheet`);
+  } catch (error) {
+    console.warn(`${STORAGE_KEY} could not be read; starting with an empty worksheet`, error);
+  }
+  return freshState();
+}
+
+export function saveExplorerState(state: ExplorerState): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    // The quota or blocked site data: the session carries on, it just won't survive a reload.
+    console.warn(`could not save ${STORAGE_KEY}`, error);
+  }
+}
+
+// A stored value (this tab's at load, another tab's in a `storage` event), or undefined when it is not valid.
+export function parseExplorerState(raw: string): ExplorerState | undefined {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isExplorerState(parsed) ? parsed : undefined;
+  } catch {
+    return undefined; // not JSON
+  }
+}
+
+// Another tab saved its state (UI spec §7). Its new worksheets join after this tab's, this tab's copy wins where both
+// have one, and the two histories are united by run (time and SQL). Closing a worksheet does not reach the other tab.
+// When the other tab brings nothing new, `local` itself comes back, so the two tabs stop saving to each other.
+export function mergeExplorerState(local: ExplorerState, other: ExplorerState): ExplorerState {
+  const known = new Set(local.worksheets.map((w) => w.id));
+  // A Preview from the other tab already ran there.
+  const arrived = other.worksheets.filter((w) => !known.has(w.id)).map((w) => ({ ...w, runOnOpen: false }));
+  const seen = new Set(local.history.map(historyKey));
+  const runs = other.history.filter((entry) => !seen.has(historyKey(entry)));
+  if (arrived.length === 0 && runs.length === 0) return local;
+  const history = [...local.history, ...runs].sort((a, b) => (a.ranAt < b.ranAt ? -1 : a.ranAt > b.ranAt ? 1 : 0));
+  return { ...local, worksheets: [...local.worksheets, ...arrived], history: history.slice(-HISTORY_LIMIT) };
+}
+
+export function freshState(): ExplorerState {
+  const worksheet = newWorksheet([]);
+  return { worksheets: [worksheet], activeId: worksheet.id, history: [] };
+}
+
+export function addWorksheet(state: ExplorerState): ExplorerState {
+  const worksheet = newWorksheet(state.worksheets);
+  return {
+    ...state,
+    worksheets: [...state.worksheets, worksheet],
+    activeId: worksheet.id,
+  };
+}
+
+// The last worksheet stays: there is always one to type into.
+export function closeWorksheet(state: ExplorerState, id: string): ExplorerState {
+  if (state.worksheets.length <= 1) return state;
+  const index = state.worksheets.findIndex((w) => w.id === id);
+  if (index < 0) return state;
+  const worksheets = state.worksheets.filter((w) => w.id !== id);
+  const activeId =
+    state.activeId === id ? (worksheets[Math.min(index, worksheets.length - 1)]?.id ?? state.activeId) : state.activeId;
+  return { ...state, worksheets, activeId };
+}
+
+export function updateWorksheet(
+  state: ExplorerState,
+  id: string,
+  change: Partial<Omit<Worksheet, "id">>,
+): ExplorerState {
+  return {
+    ...state,
+    worksheets: state.worksheets.map((w) => (w.id === id ? { ...w, ...change } : w)),
+  };
+}
+
+export function selectWorksheet(state: ExplorerState, id: string): ExplorerState {
+  return state.worksheets.some((w) => w.id === id) ? { ...state, activeId: id } : state;
+}
+
+export function appendHistory(state: ExplorerState, entry: HistoryEntry): ExplorerState {
+  return { ...state, history: [...state.history, entry].slice(-HISTORY_LIMIT) };
+}
+
+// "Insert SELECT" adds a statement after whatever is already typed.
+export function insertSelect(state: ExplorerState, qualifiedName: string): ExplorerState {
+  const active = state.worksheets.find((w) => w.id === state.activeId);
+  if (!active) return state;
+  const statement = `select *\nfrom ${qualifiedName}\nlimit 100`;
+  const sql = active.sql.trim() === "" ? statement : `${active.sql.trimEnd()}\n\n${statement}`;
+  return updateWorksheet(state, active.id, { sql });
+}
+
+// "Preview 100 rows" opens a new worksheet that runs the statement as soon as its panel mounts.
+export function openPreview(state: ExplorerState, qualifiedName: string): ExplorerState {
+  const added = addWorksheet(state);
+  const sql = `select * from ${qualifiedName} limit 100`;
+  const name = qualifiedName.split(".").pop() ?? qualifiedName;
+  return updateWorksheet(added, added.activeId, { name, sql, runOnOpen: true });
+}
+
+function newWorksheet(existing: readonly Worksheet[]): Worksheet {
+  const names = new Set(existing.map((w) => w.name));
+  let n = 1;
+  while (names.has(`Worksheet ${n}`)) n += 1;
+  return { id: crypto.randomUUID(), name: `Worksheet ${n}`, sql: "" };
+}
+
+function historyKey(entry: HistoryEntry): string {
+  return JSON.stringify([entry.ranAt, entry.sql]);
+}
+
+function isExplorerState(value: unknown): value is ExplorerState {
+  if (!isRecord(value)) return false;
+  const { worksheets, activeId, history } = value;
+  return (
+    Array.isArray(worksheets) &&
+    worksheets.length > 0 &&
+    worksheets.every(isWorksheet) &&
+    typeof activeId === "string" &&
+    worksheets.some((w) => w.id === activeId) &&
+    Array.isArray(history) &&
+    history.every(isHistoryEntry)
+  );
+}
+
+function isWorksheet(value: unknown): value is Worksheet {
+  return (
+    isRecord(value) && typeof value.id === "string" && typeof value.name === "string" && typeof value.sql === "string"
+  );
+}
+
+function isHistoryEntry(value: unknown): value is HistoryEntry {
+  return (
+    isRecord(value) &&
+    typeof value.sql === "string" &&
+    typeof value.ranAt === "string" &&
+    (value.returnedRows === null || typeof value.returnedRows === "number") &&
+    typeof value.status === "string" &&
+    HISTORY_STATUSES.includes(value.status)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

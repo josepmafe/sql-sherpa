@@ -1,4 +1,4 @@
-.PHONY: up down generate backfill status reset deps seed build build-prod docs docs-prod grant-agent docs-check eval-db mcp-dev lint test
+.PHONY: lockfile-check up down generate backfill status reset deps seed build build-prod docs docs-prod grant-read roles docs-check eval-db mcp-dev ui-client ui-dev ui-api-dev ui-web-dev e2e e2e-freshness lint test
 
 # dbt runs from data-platform/dbt/ with the profile in the same folder; --env-file supplies the SHERPA_* variables profiles.yml reads.
 DBT = cd data-platform/dbt && DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt
@@ -15,7 +15,7 @@ SHERPA_DB_NAME ?= sherpa
 DB_NAME_CHARS = a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9 _
 # $(call strip-chars,text,chars): text with every character in the word list chars removed.
 strip-chars = $(if $(2),$(call strip-chars,$(subst $(firstword $(2)),,$(1)),$(wordlist 2,$(words $(2)),$(2))),$(1))
-DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit
+DBT_SCHEMAS = dev_seeds, dev_staging, dev_intermediate, dev_marts, dev_dbt_test__audit, seeds, staging, intermediate, marts, dbt_test__audit, ops
 
 up:
 	docker compose up -d --build --wait
@@ -54,10 +54,24 @@ build:
 build-prod:
 	$(DBT) source freshness $(PROD)
 	$(DBT) build $(PROD)
+	$(DBT) docs generate $(PROD)
 
-# Re-applies the agent's prod grants without a build (same macro as the on-run-end hook).
-grant-agent:
-	$(DBT) run-operation grant_agent_access $(PROD)
+# Re-applies the agent and UI read grants on prod without a build (same macro as the on-run-end hook).
+grant-read:
+	$(DBT) run-operation grant_read_access $(PROD)
+
+# Brings the roles of an existing volume up to date (creates sherpa_ui, resets passwords and settings) with the
+# same SQL the init script runs on a new one.
+roles:
+	docker compose exec -T postgres sh -c \
+		'psql -U "$${POSTGRES_USER:-postgres}" -d "$$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+		-v admin_user="$$SHERPA_ADMIN_USER" -v admin_password="$$SHERPA_ADMIN_PASSWORD" \
+		-v agent_user="$$SHERPA_AGENT_USER" -v agent_password="$$SHERPA_AGENT_PASSWORD" \
+		-v ui_user="$$SHERPA_UI_USER" -v ui_password="$$SHERPA_UI_PASSWORD" \
+		-v db_name="$$POSTGRES_DB" -f /sherpa/roles.sql'
+	docker compose exec -T postgres sh -c \
+		'for d in "$$POSTGRES_DB" template1; do \
+		psql -U "$${POSTGRES_USER:-postgres}" -d "$$d" -v ON_ERROR_STOP=1 -f /sherpa/large_objects.sql; done'
 
 docs:
 	$(DBT) docs generate
@@ -91,11 +105,55 @@ eval-db:
 mcp-dev:
 	MCP_TRANSPORT=http uv run --env-file .env sherpa-mcp
 
+# The OpenAPI schema goes through a temp file (inside the gitignored node_modules, so Python and Node see the same
+# path on every OS); the committed client types are generated from it.
+UI_SCHEMA = ui/frontend/src/api/schema.d.ts
+UI_TMP = ui/frontend/node_modules/.cache/sherpa
+UI_OPENAPI = $(UI_TMP)/openapi.json
+
+ui-client:
+	uv run python -m sherpa_ui.openapi_export $(UI_OPENAPI)
+	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o src/api/schema.d.ts
+
+# The UI's port and login as compose reads them: from the environment or the make command line, else from .env, else
+# the default. make reads only these from .env, for the Node tools; uv loads the rest for the Python ones.
+dotenv-value = $(shell sed -n 's/^$(1)=//p' .env 2>/dev/null | tail -n 1 | tr -d '\r"')
+UI_PORT = $(or $(SHERPA_UI_PORT),$(call dotenv-value,SHERPA_UI_PORT),8090)
+UI_USER = $(or $(SHERPA_UI_USER),$(call dotenv-value,SHERPA_UI_USER),sherpa_ui)
+
+# The API (reloading, on SHERPA_UI_PORT) and the Vite dev server, which proxies /api to it.
+ui-dev:
+	$(MAKE) -j2 ui-api-dev ui-web-dev
+
+ui-api-dev:
+	uv run --env-file .env uvicorn sherpa_ui.app:dev_app --reload --port $(UI_PORT)
+
+ui-web-dev:
+	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) npm run dev
+
+# Playwright against the compose stack (`make up`, `make build-prod`) on SHERPA_UI_PORT. The freshness spec skips
+# itself here: it adds a simulated day and rebuilds prod, so it runs only with e2e-freshness.
+e2e:
+	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) SHERPA_UI_USER=$(UI_USER) npx playwright test
+
+e2e-freshness:
+	cd ui/frontend && SHERPA_UI_PORT=$(UI_PORT) SHERPA_E2E_FRESHNESS=1 npx playwright test freshness
+
+# The lockfile must resolve packages from the public registry only (entries without a `resolved` field are fine).
+lockfile-check:
+	@if grep '"resolved"' ui/frontend/package-lock.json | grep -qv '"resolved": "https://registry.npmjs.org/'; then \
+		echo "ui/frontend/package-lock.json has a package resolved outside https://registry.npmjs.org/" >&2; exit 1; fi
+
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy
 	uv run --env-file .env sqlfluff lint data-platform/dbt
+	cd ui/frontend && npm run lint && npm run typecheck
+	$(MAKE) lockfile-check
+	uv run python -m sherpa_ui.openapi_export $(UI_OPENAPI)
+	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o ../../$(UI_TMP)/schema.d.ts
+	diff $(UI_SCHEMA) $(UI_TMP)/schema.d.ts
 
 test:
 	uv run --env-file .env pytest

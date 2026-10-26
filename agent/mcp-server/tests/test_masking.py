@@ -20,6 +20,11 @@ class TestPiiMasker:
 
         assert rows == [[None, "ES"], [MASK, None]]
 
+    def test_masks_names_the_columns_it_masks_case_insensitive(self) -> None:
+        masker = PiiMasker(PII)
+
+        assert [masker.masks(name) for name in ("email", "EMAIL", "e", "order_id")] == [True, True, False, False]
+
     def test_empty_result(self) -> None:
         masker = PiiMasker(PII)
 

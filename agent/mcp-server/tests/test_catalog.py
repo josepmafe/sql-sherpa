@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -29,6 +30,12 @@ def _edit_manifest(target: Path, edit: Any) -> None:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     edit(manifest)
     path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _bump_mtime(path: Path, seconds: int) -> None:
+    """A modification time `seconds` later, so the loader sees a change even on a coarse file-system clock."""
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + seconds * 1_000_000_000))
 
 
 class TestMartCatalogLoader:
@@ -134,7 +141,7 @@ class TestMartCatalogLoader:
         with pytest.raises(CatalogUnavailable, match="make build-prod") as no_catalog:
             MartCatalogLoader(target).load()
 
-        assert "make docs-prod" in str(no_folder.value)
+        assert "make docs-prod" not in str(no_folder.value)
         assert "catalog.json" in str(no_catalog.value)
 
     def test_unparsable_artifact_raises_catalog_unavailable(self, target: Path) -> None:
@@ -143,13 +150,42 @@ class TestMartCatalogLoader:
         with pytest.raises(CatalogUnavailable, match="make build-prod"):
             MartCatalogLoader(target).load()
 
-    def test_artifacts_removed_after_a_load_raise_catalog_unavailable(self, target: Path) -> None:
+    @pytest.mark.parametrize(
+        ("broken", "reason"),
+        [
+            ('{"metadata": {"generated_at": "2026-', "cannot read manifest.json"),  # half-written by a build
+            ("{}", "unexpected layout in manifest.json or catalog.json"),
+            (None, "dbt artifacts not found (manifest.json, catalog.json)"),  # removed
+        ],
+        ids=["half_written", "wrong_layout", "removed"],
+    )
+    def test_a_failed_reload_keeps_the_last_catalog(
+        self, target: Path, caplog: pytest.LogCaptureFixture, broken: str | None, reason: str
+    ) -> None:
+        manifest = target / "manifest.json"
         loader = MartCatalogLoader(target)
-        loader.load()
-        (target / "manifest.json").unlink()
+        first = loader.load()
+        good_manifest = manifest.read_text(encoding="utf-8")
+        if broken is None:
+            manifest.unlink()
+        else:
+            manifest.write_text(broken, encoding="utf-8")
+            _bump_mtime(manifest, seconds=5)
 
-        with pytest.raises(CatalogUnavailable, match="make build-prod"):
-            loader.load()
+        with caplog.at_level(logging.WARNING, logger="sherpa_mcp.catalog"):
+            kept = loader.load()
+
+        manifest.write_text(good_manifest, encoding="utf-8")
+        _bump_mtime(manifest, seconds=10)
+        repaired = loader.load()
+
+        assert kept is first
+        assert [record.getMessage() for record in caplog.records] == [
+            "could not reload the dbt artifacts, so the catalog generated at 2026-10-24T12:36:42.863017+00:00 "
+            f"stays in use: {reason}: run `make build-prod` (it writes both files)"
+        ]
+        assert repaired is not first
+        assert repaired == first
 
 
 class TestMartCatalog:
