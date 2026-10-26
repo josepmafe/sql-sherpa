@@ -55,18 +55,6 @@ select marketing_channel, count(*) as sessions,
 from marts.fct_sessions group by 1 order by 2 desc;
 ```
 
-Net revenue of orders that used one promotion. An order uses a promotion at most once, so this join does not repeat orders; `d.amount` is this promotion's discount, `o.discount_amount` the whole order's:
-
-```sql
-select p.promotion_name, count(*) as orders,
-       round(sum(o.net_revenue), 2) as net_revenue, round(sum(d.amount), 2) as promotion_discount
-from marts.fct_order_discounts as d
-inner join marts.fct_orders as o using (order_id)
-inner join marts.dim_promotions as p using (promotion_id)
-where not o.is_cancelled and p.promotion_name = 'Save 5 EUR over 50 EUR (H1)'
-group by 1;
-```
-
 New against returning customers (`is_first_order` marks a customer's first non-cancelled order), and customers by segment (`prospect`, `new`, `active`, `at_risk`, `churned`; rules in the `customer_segment` column description):
 
 ```sql
@@ -107,7 +95,7 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 
 ### Sessions are web only
 
-App orders (R12) have no session, so session counts and `conversion_rate` leave them out; compare orders per channel with `fct_orders`, not with sessions. `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise; it is not "the session of the first order".
+App orders (R12) have no session, so session counts and `conversion_rate` leave them out; compare orders per channel with `fct_orders`, not with sessions. `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise.
 
 ### Line grain against order grain
 

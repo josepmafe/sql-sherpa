@@ -20,7 +20,7 @@ make build       # source freshness, then dbt build on dev (installs dbt package
 make build-prod  # the same on prod, then dbt docs generate
 ```
 
-`dbt build` runs seeds (CSVs in `data-platform/dbt/seeds/`), the snapshot, models, unit tests and data tests in DAG order and skips whatever depends on a failure. A unit test runs on fixed rows before its model builds, and a failing one prints the differing cells as `actual differs from expected`. The first build takes about two minutes on a year of data, later ones under a minute. The `snapshots.sherpa` unused-path warning is expected. `make build-prod` also writes `target-prod/catalog.json`, which the MCP server and the UI read.
+`dbt build` runs seeds (CSVs in `data-platform/dbt/seeds/`), the snapshot, models, unit tests and data tests in DAG order and skips whatever depends on a failure. A unit test runs on fixed rows before its model builds; a failing one prints the differing cells as `actual differs from expected`. The first build takes about two minutes on a year of data, later ones under a minute. The `snapshots.sherpa` unused-path warning is expected. `make build-prod` also writes `target-prod/catalog.json`, which the MCP server and the UI read.
 
 ### Keeping it current
 
@@ -69,9 +69,7 @@ Three hooks in `dbt_project.yml` work outside the models:
 
 Re-apply the grants without a build with `dbt run-operation grant_read_access --target prod --target-path target-prod` (the prefix is explained under "Running dbt directly").
 
-### The audit table `ops.dbt_run_results`
-
-`record_run_results` appends one row per node of every invocation (`invocation_id`, `target_name`, `command`, `is_full_run`, `unique_id`, `status`, `failures`, ...); `run_results.json` is overwritten each command, the table is the history. Filter on `command = 'build'` and `is_full_run` for the last full build.
+The table `ops.dbt_run_results` keeps one row per node of every invocation (`target_name`, `command`, `is_full_run`, `unique_id`, `status`, ...), the history that `run_results.json` overwrites.
 
 ## Running dbt directly
 
@@ -87,7 +85,6 @@ Below, that prefix is shortened to `dbt`. Add `--target prod --target-path targe
 **Selecting.** `--select` takes names, folders, sources and graph operators (`+model` upstream, `source:events+` downstream). `dbt ls` previews a selection, `dbt build` runs it with its tests:
 
 ```bash
-dbt ls --select +stg_shop__customers
 dbt build --select stg_shop__payments
 ```
 
@@ -95,14 +92,11 @@ dbt build --select stg_shop__payments
 
 ```bash
 dbt show --select stg_shop__customers --limit 3
-dbt show --inline "select country_code, count(*) from {{ ref('stg_shop__customers') }} group by 1 order by 2 desc" --limit 10
 ```
-
-`dbt compile --select stg_shop__payments` prints the rendered SQL (also in `target/compiled/sherpa/...`).
 
 ## Documentation and the lineage graph
 
-`make docs` generates and serves the dev docs at `http://localhost:8080` (Ctrl+C to stop). A model page shows its columns with their tests, SQL and dependencies; the lineage graph button draws the DAG. `make lint` includes the check that every model and column has a description.
+`make docs` generates and serves the dev docs at `http://localhost:8080` (Ctrl+C to stop). A model page shows its columns with their tests, SQL and dependencies; the lineage graph button draws the DAG.
 
 ## When a test fails
 
@@ -113,7 +107,7 @@ A data test is a query that returns the rows breaking a rule; zero rows passes, 
 12:53:50    Got 162 results, configured to fail if != 0
 ```
 
-That is `relationships` from `stg_shop__customers.country_code` to `countries.code`, with 162 unmatched rows. The compiled file is a plain query for psql. With `--store-failures`, dbt keeps the failing rows in a table in `dev_test_failures` (dropped by `make reset`) and prints the `select` to read it. Singular tests and `column_sums_match` always store theirs there.
+That is `relationships` from `stg_shop__customers.country_code` to `countries.code`, with 162 unmatched rows. The compiled file named in the failure output is a plain query you can run in psql. With `--store-failures`, dbt keeps the failing rows in a table in `dev_test_failures` (dropped by `make reset`) and prints the `select` to read it. Singular tests and `column_sums_match` always store theirs there.
 
 ### Reading a contract failure
 
@@ -137,7 +131,7 @@ dbt compares each mart's YAML columns and `data_type`s with the model's real col
 | Symptom | Fix |
 |---|---|
 | `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>` |
-| `assert_every_source_event_is_staged` fails after `make advance` of more than 3 days | The microbatch skipped the oldest days; the failing rows list them. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (first missing day, and the day after today's batch range) |
+| `assert_every_source_event_is_staged` fails after `make advance` of more than 3 days | The microbatch skipped the oldest days; the failing rows list them. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; here 19 to 22 October are missing) |
 | `--- Logging error ---` and a `UnicodeEncodeError` instead of a unit-test diff (Windows) | `export PYTHONUTF8=1` |
 | `role "sherpa_ui" does not exist` at the grants | `make up` re-applies the roles, then build again |
 | `enforced contract that failed` | Make the mart's YAML columns and `data_type`s match the SQL |
