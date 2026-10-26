@@ -173,9 +173,10 @@ export function sqlExtension(catalog: CatalogTree | undefined, activeTable: stri
 }
 
 const setErrorHighlight = StateEffect.define<Highlight | null>();
+// Mantine's red "light" variant colour follows the colour scheme, so the mark keeps its contrast in dark mode.
 const errorMark = Decoration.mark({
   class: "cm-error-position",
-  attributes: { style: "background: #ffc9c9" },
+  attributes: { style: "background: var(--mantine-color-red-light)" },
 });
 
 const errorHighlightField = StateField.define({

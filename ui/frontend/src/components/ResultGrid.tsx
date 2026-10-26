@@ -94,6 +94,7 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
     columns: defs,
     state: { sorting },
     manualSorting: true,
+    enableMultiSort: false, // the view holds one sort; shift-click sorts by the new column alone
     sortDescFirst: false,
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: (updater: Updater<SortingState>) => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "../../api/client";
+import { api, type ApiError, apiError } from "../../api/client";
 import type { components } from "../../api/schema";
 
 export type QueryResponse = components["schemas"]["QueryResponse"];
@@ -8,8 +8,6 @@ type SortSpec = components["schemas"]["SortSpec"];
 type FilterSpec = components["schemas"]["FilterSpec"];
 
 export type RunStatus = "idle" | "running" | "done" | "error" | "cancelled";
-// The API's one error shape (UI spec §4); `position` is a 0-based code point offset into the SQL that was sent.
-export type RunError = { code: string; message: string; position?: number };
 // A re-run of the last SQL with a server-side sort and filters; `onApplied` is called when its answer is shown.
 export type Rerun = { sort: SortSpec[]; filters: FilterSpec[]; onApplied: () => void };
 export type RunOutcome = {
@@ -21,14 +19,15 @@ export type RunOutcome = {
 type RunState = {
   status: RunStatus;
   response?: QueryResponse;
-  error?: RunError;
+  // `detail.position` is a 0-based code point offset into the SQL that was sent.
+  error?: ApiError;
   elapsedSeconds: number;
 };
 
 const IDLE: RunState = { status: "idle", elapsedSeconds: 0 };
 const TICK_MS = 1000;
 const MS_PER_SECOND = 1000;
-const NETWORK_ERROR: RunError = {
+const NETWORK_ERROR: ApiError = {
   code: "network_error",
   message: "Could not reach the server.",
 };
@@ -115,7 +114,7 @@ export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOu
         finish({ status: "done", response: data, elapsedSeconds }, data.returned_rows);
         return;
       }
-      const runError = toRunError(error, response.status);
+      const runError = apiError(error, response.status);
       const status = runError.code === "cancelled" ? "cancelled" : "error";
       finish({ status, error: runError, elapsedSeconds }, null);
     } catch {
@@ -166,22 +165,4 @@ function abandon(inFlight: InFlightRef): void {
 
 function secondsSince(startedAt: number): number {
   return Math.floor((Date.now() - startedAt) / MS_PER_SECOND);
-}
-
-function toRunError(body: unknown, status: number): RunError {
-  if (typeof body === "object" && body !== null && "code" in body && "message" in body) {
-    const { code, message } = body;
-    if (typeof code === "string" && typeof message === "string") {
-      return { code, message, position: positionOf(body) };
-    }
-  }
-  return {
-    code: "http_error",
-    message: `The request failed (HTTP ${status}).`,
-  };
-}
-
-function positionOf(body: object): number | undefined {
-  if (!("detail" in body) || typeof body.detail !== "object" || body.detail === null) return undefined;
-  return "position" in body.detail && typeof body.detail.position === "number" ? body.detail.position : undefined;
 }

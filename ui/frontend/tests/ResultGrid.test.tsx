@@ -52,6 +52,19 @@ describe("ResultGrid", () => {
     expect(firstColumn()).toEqual(["a", "b", "c"]);
   });
 
+  it("sorts by one column at a time, also on shift-click", async () => {
+    const user = userEvent.setup();
+    render(<Harness data={response()} />);
+    await user.click(screen.getByRole("button", { name: "amount" }));
+
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByRole("button", { name: "name" }));
+
+    expect(screen.getByRole("columnheader", { name: "name" })).toHaveAttribute("aria-sort", "ascending");
+    expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "none");
+    expect(firstColumn()).toEqual(["a", "b", "c"]);
+  });
+
   it("sorts from the keyboard: each header holds a button", async () => {
     const user = userEvent.setup();
     render(<Harness data={response()} />);

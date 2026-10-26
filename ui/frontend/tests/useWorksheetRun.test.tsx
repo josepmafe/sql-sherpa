@@ -21,7 +21,8 @@ function deferred(): Deferred {
 }
 
 const post = vi.fn();
-vi.mock("../src/api/client", () => ({
+vi.mock("../src/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/api/client")>()),
   api: { POST: (...args: unknown[]) => post(...args) },
 }));
 
@@ -170,7 +171,7 @@ describe("useWorksheetRun", () => {
     expect(result.current.error).toEqual({
       code: "sql_error",
       message: 'syntax error at or near "selec"',
-      position: 0,
+      detail: { position: 0 },
     });
     expect(settled).toHaveBeenCalledWith({
       sql: "selec 1",

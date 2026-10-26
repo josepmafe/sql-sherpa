@@ -9,7 +9,10 @@ import { ExplorerScreen } from "../src/screens/explorer/ExplorerScreen";
 import { freshState, saveExplorerState, updateWorksheet } from "../src/screens/explorer/worksheetStore";
 
 const post = vi.fn();
-vi.mock("../src/api/client", () => ({ api: { POST: (...args: unknown[]) => post(...args) } }));
+vi.mock("../src/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/api/client")>()),
+  api: { POST: (...args: unknown[]) => post(...args) },
+}));
 const EMAIL = { name: "email", data_type: "text", description: "", is_primary_key: false, is_pii: true };
 const CATALOG = {
   database: "sherpa",
@@ -89,7 +92,7 @@ describe("Explorer results", () => {
     const user = userEvent.setup();
     post.mockResolvedValue({
       error: { code: "timeout", message: "Query exceeded 30 s." },
-      response: { status: 408 },
+      response: { status: 504 },
     });
     renderScreen("select 1");
 
@@ -97,6 +100,21 @@ describe("Explorer results", () => {
 
     expect(await screen.findByText("Query timed out")).toBeInTheDocument();
     expect(screen.getByText(/Narrow it with a WHERE clause or a LIMIT/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["busy", 429, "Too many queries running"],
+    ["too_many_connections", 503, "Warehouse connections full"],
+    ["pii_column", 422, "Masked column"],
+  ])("a %s error has its own title", async (code, status, title) => {
+    const user = userEvent.setup();
+    post.mockResolvedValue({ error: { code, message: "the server's reason" }, response: { status } });
+    renderScreen("select 1");
+
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.getByText("the server's reason")).toBeInTheDocument();
   });
 
   it("truncated results sort on the server", async () => {

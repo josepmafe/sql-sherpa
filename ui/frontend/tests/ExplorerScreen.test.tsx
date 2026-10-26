@@ -17,7 +17,10 @@ import {
 } from "../src/screens/explorer/worksheetStore";
 
 const post = vi.fn();
-vi.mock("../src/api/client", () => ({ api: { POST: (...args: unknown[]) => post(...args) } }));
+vi.mock("../src/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/api/client")>()),
+  api: { POST: (...args: unknown[]) => post(...args) },
+}));
 vi.mock("../src/api/queries", () => ({
   useCatalog: () => ({ data: CATALOG }),
   useTableDetails: () => ({ data: undefined }),

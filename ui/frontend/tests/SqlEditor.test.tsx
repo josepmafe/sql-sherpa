@@ -62,7 +62,8 @@ const CATALOG = {
 };
 
 const post = vi.fn();
-vi.mock("../src/api/client", () => ({
+vi.mock("../src/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/api/client")>()),
   api: { POST: (...args: unknown[]) => post(...args) },
 }));
 vi.mock("../src/api/queries", () => ({

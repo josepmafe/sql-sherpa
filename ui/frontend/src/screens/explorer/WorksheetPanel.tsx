@@ -29,7 +29,13 @@ type Origin = { sql: string; offset: number };
 
 const TIMEOUT_HINT = "The query hit the time limit. Narrow it with a WHERE clause or a LIMIT.";
 const RERUN_OPACITY = 0.5;
-const ERROR_TITLES: Record<string, string> = { guard_rejected: "Query not allowed", timeout: "Query timed out" };
+const ERROR_TITLES: Record<string, string> = {
+  guard_rejected: "Query not allowed",
+  timeout: "Query timed out",
+  busy: "Too many queries running",
+  too_many_connections: "Warehouse connections full",
+  pii_column: "Masked column",
+};
 
 // One panel per worksheet, all kept mounted: each has its own editor history and its own run.
 export const WorksheetPanel = memo(function WorksheetPanel({
@@ -77,8 +83,8 @@ export const WorksheetPanel = memo(function WorksheetPanel({
 
   const highlight = useMemo(
     () =>
-      status === "error" && error?.position !== undefined
-        ? errorHighlight(origin.sql, error.position, origin.offset)
+      status === "error" && error?.detail?.position != null
+        ? errorHighlight(origin.sql, error.detail.position, origin.offset)
         : undefined,
     [status, error, origin],
   );
