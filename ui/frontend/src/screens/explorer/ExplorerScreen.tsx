@@ -59,7 +59,8 @@ export function ExplorerScreen() {
 
   return (
     <Group align="stretch" wrap="nowrap" gap="md" h="calc(100vh - 100px)">
-      <ScrollArea style={SIDE_STYLE}>
+      {/* The vertical scrollbar gets its own gutter, so it never covers the right-aligned "⋯" buttons. */}
+      <ScrollArea style={SIDE_STYLE} offsetScrollbars="y">
         <CatalogTree
           selected={selected}
           onSelect={setSelected}
@@ -97,7 +98,7 @@ export function ExplorerScreen() {
           ))}
         </Stack>
       </Box>
-      <ScrollArea style={SIDE_STYLE}>
+      <ScrollArea style={SIDE_STYLE} offsetScrollbars="y">
         <Inspector table={selected} />
       </ScrollArea>
     </Group>
