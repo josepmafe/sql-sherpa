@@ -1,5 +1,5 @@
-"""The read-only path for the SQL people write in the UI (UI spec §5): guard, `sherpa_ui` role, row cap, masking,
-server-side sort and filter, cancel, and error positions in the SQL as written."""
+"""The read-only path for the SQL people write in the UI (UI spec §5): guard, `sherpa_ui` role, row cap and result
+size, masking, server-side sort and filter, cancel, and error positions in the SQL as written."""
 
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ from psycopg import errors, sql
 from psycopg.postgres import types as postgres_types
 from pydantic import BaseModel, ConfigDict, JsonValue
 from sherpa_mcp.catalog import CatalogUnavailable
-from sherpa_mcp.database import json_safe
 from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import DIALECT, SqlGuard
 from sqlglot.errors import SqlglotError
 
+from sherpa_ui.readonly.bounded_result import BoundedResult
 from sherpa_ui.readonly.sort_filter import (
     DuplicateColumnsError,
     UnknownColumnError,
@@ -72,6 +72,11 @@ COLUMN_TYPES: Final[dict[str, ColumnType]] = {
 CURSOR_NAME: Final = "sherpa_ui"
 DECLARE_PREFIX: Final = f'DECLARE "{CURSOR_NAME}" CURSOR FOR '
 PROBE_SUFFIX: Final = " limit 0"  # server mode learns the result's column names without running the query
+# Rows a FETCH asks for: 1,000 fct_orders rows take ~20 ms in batches of 100, against ~10 ms in a single FETCH.
+FETCH_BATCH_ROWS: Final = 100
+# Cells a FETCH asks for, so a wide result comes in fewer rows at a time: a batch of 10,000-character cells (lpad's
+# longest) stays near 100 MB however many columns the query has.
+FETCH_BATCH_CELLS: Final = 10_000
 CANCEL_TIMEOUT_SECONDS: Final = 5.0
 CONNECTION_EXCEPTION_CLASS: Final = "08"  # SQLSTATE class: connection exception
 CANCELLED_MESSAGE: Final = "the query was cancelled"
@@ -100,7 +105,7 @@ class QueryOutcome(BaseModel):
     query_id: str
     columns: tuple[str, ...]
     column_types: tuple[ColumnType, ...]
-    rows: tuple[tuple[JsonValue, ...], ...]  # JSON-safe and PII-masked
+    rows: tuple[tuple[JsonValue, ...], ...]  # JSON-safe, PII-masked, and each cell cut to 10,000 characters
     returned_rows: int
     truncated: bool
     elapsed_ms: int
@@ -140,11 +145,12 @@ class QueryRunner:
         conn: psycopg.Connection | None = None
         try:
             catalog = self._load_catalog()
+            masker = PiiMasker(catalog.pii_columns())
             self._check_guard(catalog, sql_text)
             self._raise_if_cancelled(query_id)  # before opening a connection the run would not use
             conn = self._connect()
             self._attach(query_id, conn)
-            fetched = self._execute(conn, strip_terminators(sql_text), sort, filters)
+            fetched = self._execute(conn, strip_terminators(sql_text), sort, filters, masker)
         except (UiQueryError, DuplicateColumnsError, UnknownColumnError) as error:
             if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
                 raise
@@ -158,14 +164,12 @@ class QueryRunner:
         if cancelled:
             raise UiQueryError("cancelled", CANCELLED_MESSAGE)
 
-        converted = [[json_safe(value) for value in row] for row in fetched.rows]
-        rows = PiiMasker(catalog.pii_columns()).mask(fetched.columns, converted)
         outcome = QueryOutcome(
             query_id=query_id,
             columns=fetched.columns,
             column_types=fetched.column_types,
-            rows=tuple(tuple(row) for row in rows),
-            returned_rows=len(rows),
+            rows=fetched.rows,
+            returned_rows=len(fetched.rows),
             truncated=fetched.truncated,
             elapsed_ms=round((time.monotonic() - started) * 1000),
             mode=mode,
@@ -260,7 +264,12 @@ class QueryRunner:
         return cancelled
 
     def _execute(
-        self, conn: psycopg.Connection, statement: str, sort: Sequence[SortSpec], filters: Sequence[FilterSpec]
+        self,
+        conn: psycopg.Connection,
+        statement: str,
+        sort: Sequence[SortSpec],
+        filters: Sequence[FilterSpec],
+        masker: PiiMasker,
     ) -> _Fetched:
         try:
             with conn.transaction():
@@ -268,7 +277,7 @@ class QueryRunner:
                 conn.execute(sql.SQL("set local statement_timeout = {}").format(sql.Literal(timeout)))
                 if not sort and not filters:
                     # No parameters, so psycopg leaves every `%` of the user's SQL alone.
-                    return self._fetch(conn, statement, None, len(DECLARE_PREFIX), len(statement))
+                    return self._fetch(conn, statement, None, len(DECLARE_PREFIX), len(statement), masker)
 
                 probe = build_wrapped_query(statement, ())
                 with self._declared(
@@ -282,7 +291,12 @@ class QueryRunner:
 
                 wrapped = build_wrapped_query(statement, columns, sort, filters)
                 return self._fetch(
-                    conn, wrapped.query, wrapped.params, len(DECLARE_PREFIX) + wrapped.prefix_length, len(statement)
+                    conn,
+                    wrapped.query,
+                    wrapped.params,
+                    len(DECLARE_PREFIX) + wrapped.prefix_length,
+                    len(statement),
+                    masker,
                 )
         except psycopg.Error as error:  # outside a cursor (the timeout, the commit): no position in the user's SQL
             raise self._query_error(error, position=None) from error
@@ -294,17 +308,30 @@ class QueryRunner:
         params: Sequence[object] | None,
         offset: int,
         length: int,
+        masker: PiiMasker,
     ) -> _Fetched:
-        cap = self._settings.ui_row_cap
+        """The rows in batches, until the result is complete or `BoundedResult` says it is full. Postgres times each
+        FETCH on its own, so fetching stops at the statement timeout too, checked before each FETCH."""
+        timeout = self._settings.ui_statement_timeout_s
         with self._declared(conn, query, params, offset, length) as cursor:
             description = cursor.description or ()
-            rows = cursor.fetchmany(cap + 1)  # one row past the cap only tells whether there were more
+            columns = tuple(column.name for column in description)
+            result = BoundedResult(columns, masker, self._settings.ui_row_cap)
+            batch_rows = max(1, min(FETCH_BATCH_ROWS, FETCH_BATCH_CELLS // max(len(columns), 1)))
+            deadline = time.monotonic() + timeout
+            while True:
+                if time.monotonic() > deadline:
+                    raise UiQueryError("timeout", TIMEOUT_MESSAGE.format(seconds=timeout))
+
+                batch = cursor.fetchmany(result.fetch_size(batch_rows))
+                if not batch or not result.extend(batch):
+                    break
 
         return _Fetched(
-            columns=tuple(column.name for column in description),
+            columns=columns,
             column_types=tuple(_TYPE_BY_OID.get(column.type_code, "other") for column in description),
-            rows=rows[:cap],
-            truncated=len(rows) > cap,
+            rows=result.rows,
+            truncated=result.truncated,
         )
 
     @contextmanager
@@ -356,7 +383,7 @@ def user_position(statement_position: str | None, offset: int, length: int) -> i
 class _Fetched:
     columns: tuple[str, ...]
     column_types: tuple[ColumnType, ...]
-    rows: list[Any]
+    rows: tuple[tuple[object, ...], ...]  # JSON-safe, PII-masked and cut
     truncated: bool
 
 

@@ -178,8 +178,13 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
   - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with Postgres's `role "sherpa_ui" does not exist` until `make roles` has run.
 - **Connection options:** `default_transaction_read_only=on`, `statement_timeout=30s` (`SHERPA_UI_STATEMENT_TIMEOUT_S`, integer seconds, default 30, at least 1), set on the connection like the MCP server's.
 - **Guard:** `sherpa_mcp.sql_guard` (agent spec §4.2), imported as a library: one statement, `SELECT`/`WITH` only, the function allow-list, every table `marts.<visible mart>`, every qualified column a real column, no `SET`/`RESET`/`ALTER`. The runner builds `SqlGuard(catalog.mart_columns(), allowed_functions=...)` with its own allow-list (the agent's is the default). A rejection returns `code = "guard_rejected"` with the guard's reason, which the UI shows verbatim.
-- **Executor:** the runner's own (this section's timeout, row cap, cancel and error positions); the MCP server's `AgentDatabase` is shaped for the model (5 s, 100 rows, a 50,000-character budget) and is not reused.
-- **Row cap:** 1,000 rows (`SHERPA_UI_ROW_CAP`), fetched from a server-side cursor (1,001 fetched means `truncated`).
+- **Executor:** the runner's own (this section's timeout, row cap, result size, cancel and error positions); the MCP server's `AgentDatabase` is shaped for the model (5 s, 100 rows, a 50,000-character budget) and is not reused. The runner reuses only its value conversion and cell cut (`json_safe`, `cap_cell`).
+- **Row cap and result size:** 1,000 rows (`SHERPA_UI_ROW_CAP`), fetched from a server-side cursor in batches of 100 rows, fewer for a wide result (at most 10,000 cells a batch) and one at a time after a row over 1,000,000 characters.
+  - **Cells:** a text, bytes (hex), array or JSON cell longer than 10,000 characters is cut and ends with ` …[cut at 10000 chars]`, as in the MCP server (10,000 is also the longest `lpad` the guard allows).
+  - **Budget:** the whole result stops at 2,000,000 characters, after cutting and masking (about eight times the widest mart's 1,000 rows).
+  - A 1,001st row, or a row that would pass the budget, means `truncated`: that row and the rest are left out.
+  - Postgres times each FETCH on its own, so fetching also stops at the statement timeout, checked before each batch.
+  - As for the agent (agent spec §4.2, known limits), a cell is cut only after Postgres built it and psycopg loaded it, so a huge `string_agg` still costs its memory while it is fetched; the `ui` container's 1 GB limit and restart policy bound it.
 - **PII masking:** the same name-based masking as the agent (agent spec §4.2). Neither `sherpa_ui` nor `sherpa_agent` has column-level `SELECT` grants, so the masking is by result-column name only: a PII column under an alias or inside an expression is not masked, and `pg_stats` shows the PII columns' stored values to a role that can read them.
 - **Sort and filter:**
   - When the first run was **not** truncated, the frontend sorts and filters the rows it has (`mode = "client"`).

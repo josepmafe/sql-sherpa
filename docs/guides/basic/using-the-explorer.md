@@ -52,11 +52,16 @@ While a query runs, "Running… N s" counts the seconds. Starting a new run in a
 
 ### Reading the result
 
-Above the grid, the status line reads `2 rows in 19 ms` and carries a `read-only` badge. If the result hit the row cap it also carries an orange `truncated` badge. The API's answer behind that line, for `select email from marts.dim_customers limit 2`:
+Above the grid, the status line reads `2 rows in 19 ms` and carries a `read-only` badge. If rows were left out, because the result hit the 1,000-row cap or its size budget (below), it also carries an orange `truncated` badge. The API's answer behind that line, for `select email from marts.dim_customers limit 2`:
 
 ```
 {"columns":["email"],"column_types":["text"],"rows":[["***"],["***"]],"returned_rows":2,"truncated":false,"elapsed_ms":19,"mode":"client",...}
 ```
+
+A result is bounded in size as well as in rows:
+
+- **10,000 characters per cell.** A longer text, bytes (shown as hex), array or JSON cell is cut, and the cut shows at its end. `select string_agg(order_number, ',') as numbers from marts.fct_orders` returns one cell of 10,022 characters ending in ` …[cut at 10000 chars]`, and the result is not `truncated` (no row was left out).
+- **2,000,000 characters in all.** Rows past the budget are left out, and the result is `truncated`. Ten columns of `lpad('a', 10000, 'b')` over `marts.fct_order_items` (100,000 characters a row) return 20 rows. A full 1,000-row result of the widest mart, `select * from marts.fct_orders`, is about 250,000 characters, well inside it.
 
 When a query fails, the red box under the editor shows what Postgres or the guard said, verbatim:
 
@@ -76,14 +81,14 @@ Click a column header to sort (click again to reverse). The filter bar above the
 Where it runs depends on the result:
 
 - **Not truncated** (fewer rows than the cap): the browser sorts and filters the rows it already has. Nothing is sent to the server, and the status line shows `12 of 340 rows` while a filter is on.
-- **Truncated** (the cap was hit): the rows in the grid are only the first 1,000, so sorting them would mislead. The Explorer re-sends the SQL of the last run with the sort and filters, and the server applies them over all rows (`select * from (<your sql>) as q where ... order by ...`). A blue note says "Truncated at 1,000 rows: sorting and filtering run on the server over all rows". The wrapped statement goes through the same guarded, read-only path.
+- **Truncated** (the row cap or the size budget was hit): the rows in the grid are only the first ones, so sorting them would mislead. The Explorer re-sends the SQL of the last run with the sort and filters, and the server applies them over all rows (`select * from (<your sql>) as q where ... order by ...`). A blue note says "Truncated at 1,000 rows: sorting and filtering run on the server over all rows". The wrapped statement goes through the same guarded, read-only path.
 - **Duplicate column names** (for example `select o.order_id, i.order_id ...`): the server cannot wrap a result with two columns of one name, so sorting and filtering stay in the browser, over the rows shown, and a yellow "Duplicate column names" banner says so. Alias the columns (`i.order_id as item_order_id`) to get server-side sorting back.
 
 ## What you can't do, and why
 
 - **Write anything.** Only one `SELECT` or `WITH ... SELECT` statement passes the SQL guard, the same one the agent uses (`sherpa_mcp.sql_guard`). `INSERT`, `UPDATE`, `DELETE`, DDL, `SET` and several statements in one go are rejected with the guard's reason. Behind the guard, the `sherpa_ui` login is read-only at the database too (`default_transaction_read_only = on`), so the guard is not the only line.
 - **Read anything but the marts.** Only `marts.<table>` for the nine marts, with real columns. Staging, intermediate, seeds, raw and the `ops` audit table are rejected by the guard (the `sherpa_ui` role can read `ops.dbt_run_results`, but the guard keeps your queries out of it).
-- **Get more than 1,000 rows.** The row cap is 1,000 (a 1,001st row marks the result `truncated`). Aggregate, add `LIMIT` or `WHERE`, or use server-side sort and filter to find the rows you need.
+- **Get more than 1,000 rows, or more than 2,000,000 characters.** The row cap is 1,000 (a 1,001st row marks the result `truncated`), each cell is cut at 10,000 characters, and rows past 2,000,000 characters in all are left out. Aggregate, select fewer or shorter columns, add `LIMIT` or `WHERE`, or use server-side sort and filter to find the rows you need.
 - **Run longer than 30 seconds.** The timeout is `SHERPA_UI_STATEMENT_TIMEOUT_S` (whole seconds, default 30, at least 1), set on every connection. Set it in `.env` (`SHERPA_UI_STATEMENT_TIMEOUT_S=60`); `make up` passes it to the `ui` container and `make ui-dev` reads it. The row cap works the same way (`SHERPA_UI_ROW_CAP`).
 - **See personal data.** Result columns named `email`, `first_name` or `last_name` (the columns flagged `meta.pii` in the marts) show `***`. The masking is by the result column's name, as for the agent (agent spec section 4.2): `select email as e ...` returns the real address under the name `e`, and so does `lower(email)`. It stops accidents, not a determined reader; the data is synthetic.
 - **Keep work on the server.** Nothing you write is saved server-side, and the UI has no accounts. Worksheets and history are per browser.

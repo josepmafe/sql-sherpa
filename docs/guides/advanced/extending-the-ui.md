@@ -11,7 +11,7 @@ The backend is the Python package `sherpa_ui` in `ui/backend/src/sherpa_ui/`; th
 | `ui/backend/src/sherpa_ui/app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`, serves the frontend. The only place the pieces are wired |
 | `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`), the request/response models and the error shape (`errors.py`). Routers are thin: they call a service |
 | `catalog/`, `health/` | `CatalogService` and `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` (the dbt artifacts) |
-| `readonly/` | `QueryRunner` (guard, role, row cap, timeout, masking, cancel, error positions) and `sort_filter.py` (the server-side wrapper). Pure logic and I/O are kept apart |
+| `readonly/` | `QueryRunner` (guard, role, timeout, cancel, error positions, the batched fetch), `bounded_result.py` (row cap, masking, cell cut and result budget) and `sort_filter.py` (the server-side wrapper). Pure logic and I/O are kept apart |
 | `settings.py` | `UiSettings`, the only place that reads configuration (`SHERPA_UI_*`, `SHERPA_DB_*`) |
 | `openapi_export.py` | Writes the OpenAPI schema the frontend's types are generated from |
 | `ui/frontend/src/api/` | `client.ts` (typed `openapi-fetch` client), `queries.ts` (TanStack Query hooks), `schema.d.ts` (generated, committed) |
@@ -61,7 +61,10 @@ Three layers, none of which trusts the one before it:
 
 The guard and the masking (`sherpa_mcp.masking.PiiMasker`) are imported from `sherpa_mcp`, the agent's tool server, not copied. The Explorer and the agent must agree on what a read-only query is and on what is masked, and one implementation guarantees it. A change to the guard is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md) (and its sqlglot rules), then rerun the UI's tests (below). The runner builds its `SqlGuard` with the default function allow-list, the agent's.
 
-What belongs only to the UI is in `readonly/query_runner.py`: the 1,000-row cap (`SHERPA_UI_ROW_CAP`), the timeout from `SHERPA_UI_STATEMENT_TIMEOUT_S`, cancel (a registry from `query_id` to connection), and the mapping of Postgres error positions back to the user's SQL. The server-side sort/filter wrapper is built in `readonly/sort_filter.py` from validated result-column names and bound parameters; the user's SQL itself is still guard-checked as written.
+What belongs only to the UI is in `readonly/`:
+
+- `query_runner.py`: the timeout from `SHERPA_UI_STATEMENT_TIMEOUT_S` (also checked between FETCHes), the batched fetch (`FETCH_BATCH_ROWS`, `FETCH_BATCH_CELLS`), cancel (a registry from `query_id` to connection), and the mapping of Postgres error positions back to the user's SQL.
+- `bounded_result.py`: what a result may hold. `BoundedResult` converts and masks each batch, cuts every cell with `sherpa_mcp.database.cap_cell` (10,000 characters, the MCP server's cut), and stops at the 1,000-row cap (`SHERPA_UI_ROW_CAP`) or at `MAX_RESULT_CHARS` (2,000,000), marking the result `truncated`. It is pure, so its rules are tested in `tests/readonly/test_bounded_result.py` without a database. The cell cut is shared with the MCP server on purpose: the guard's `MAX_PAD_LENGTH` assumes it. The server-side sort/filter wrapper is built in `readonly/sort_filter.py` from validated result-column names and bound parameters; the user's SQL itself is still guard-checked as written.
 
 To loosen or tighten a rule:
 

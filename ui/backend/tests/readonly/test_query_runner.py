@@ -30,6 +30,7 @@ LONG_AGGREGATE = (
 REGISTER_WAIT_SECONDS = 10.0
 DECLARE_OFFSET = len('DECLARE "sherpa_ui" CURSOR FOR ')
 INT4_OID = postgres_types["int4"].oid
+CUT = " …[cut at 10000 chars]"
 
 
 @pytest.fixture
@@ -280,6 +281,49 @@ class TestQueryRunnerOffline:
         assert error.value.position is None
         connection.close.assert_called_once_with()
 
+    def test_rows_are_fetched_in_batches_and_one_past_the_cap(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connection = _fake_connection()
+        fetch_sizes: list[int] = []
+        _endless_rows(connection, width=1, fetch_sizes=fetch_sizes)
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        outcome = offline_runner.run("q1", "select 1 as a")
+
+        assert fetch_sizes == [100] * 10 + [1]
+        assert (outcome.returned_rows, outcome.truncated) == (1000, True)
+
+    def test_a_wide_result_is_fetched_in_smaller_batches(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connection = _fake_connection()
+        fetch_sizes: list[int] = []
+        _endless_rows(connection, width=1000, fetch_sizes=fetch_sizes)
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        offline_runner.run("q1", "select 1 as a")
+
+        assert fetch_sizes[0] == 10  # at most 10,000 cells a FETCH
+
+    def test_fetching_stops_at_the_statement_timeout(
+        self, offline_settings: UiSettings, empty_catalog_loader: MartCatalogLoader, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Postgres times each FETCH on its own, so a slow FETCH after slow FETCH would never reach its timeout.
+        runner = QueryRunner(offline_settings.model_copy(update={"ui_statement_timeout_s": 1}), empty_catalog_loader)
+        connection = _fake_connection()
+        _endless_rows(connection, width=1, fetch_sizes=[], delay=0.4)
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+        started = time.monotonic()
+
+        with pytest.raises(UiQueryError) as error:
+            runner.run("q1", "select 1 as a")
+
+        assert error.value.code == "timeout"
+        assert error.value.message == "the query ran longer than 1 s and was stopped; filter or aggregate more narrowly"
+        assert time.monotonic() - started < 2
+        connection.close.assert_called_once_with()
+
     def test_format_pretty_prints_postgres(self, offline_runner: QueryRunner) -> None:
         formatted = offline_runner.format("select order_id, count(*) from marts.fct_orders -- all\ngroup by 1")
 
@@ -326,6 +370,27 @@ class TestQueryRunner:
 
         assert (at_cap.returned_rows, at_cap.truncated) == (1000, False)
         assert (over_cap.returned_rows, over_cap.truncated) == (1000, True)
+
+    @pytest.mark.parametrize("sort", [(), (SortSpec(column="c0", direction="asc"),)], ids=["client", "server"])
+    def test_a_wide_padded_result_stops_at_its_character_budget(
+        self, runner: QueryRunner, sort: tuple[SortSpec, ...]
+    ) -> None:
+        columns = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(10))
+
+        outcome = runner.run("q1", f"select {columns} from marts.fct_order_items", sort=sort)
+
+        # 100,000 characters a row: 20 rows fill the 2,000,000-character budget.
+        assert (outcome.returned_rows, outcome.truncated) == (20, True)
+        assert set(outcome.rows) == {("b" * 9_999 + "a",) * 10}
+
+    def test_a_huge_aggregated_cell_is_cut(self, runner: QueryRunner) -> None:
+        outcome = runner.run("q1", "select string_agg(order_number, ',') as numbers from marts.fct_orders")
+
+        [[cell]] = outcome.rows
+        assert isinstance(cell, str)
+        assert len(cell) == 10_000 + len(CUT)
+        assert cell.endswith(CUT)
+        assert not outcome.truncated  # no row was left out
 
     def test_row_cap_comes_from_the_settings(self, ui_settings: UiSettings, prod_loader: MartCatalogLoader) -> None:
         runner = QueryRunner(ui_settings.model_copy(update={"ui_row_cap": 5}), prod_loader)
@@ -671,12 +736,36 @@ class TestQueryRunner:
 
 
 def _fake_connection(rows: list[tuple[object, ...]] | None = None, columns: tuple[str, ...] = ("a",)) -> MagicMock:
-    """A connection whose server-side cursor returns `rows` of int4 `columns`."""
+    """A connection whose server-side cursor returns `rows` of int4 `columns`, afresh for every query declared."""
     connection: MagicMock = create_autospec(psycopg.Connection, instance=True)
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.description = [SimpleNamespace(name=name, type_code=INT4_OID) for name in columns]
-    cursor.fetchmany.return_value = rows or []
+    pending: list[tuple[object, ...]] = []
+
+    def declare(*args: object, **kwargs: object) -> None:
+        pending[:] = rows or []
+
+    def fetchmany(size: int) -> list[tuple[object, ...]]:
+        batch = pending[:size]
+        del pending[:size]
+        return batch
+
+    cursor.execute.side_effect = declare
+    cursor.fetchmany.side_effect = fetchmany
     return connection
+
+
+def _endless_rows(connection: MagicMock, width: int, fetch_sizes: list[int], delay: float = 0.0) -> None:
+    """Make the cursor of `connection` return as many rows of `width` int4 columns as each FETCH asks for."""
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.description = [SimpleNamespace(name=f"c{index}", type_code=INT4_OID) for index in range(width)]
+
+    def fetchmany(size: int) -> list[tuple[object, ...]]:
+        fetch_sizes.append(size)
+        time.sleep(delay)
+        return [(0,) * width] * size
+
+    cursor.fetchmany.side_effect = fetchmany
 
 
 def _describe(cause: BaseException | None) -> str:
