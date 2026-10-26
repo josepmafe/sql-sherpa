@@ -44,8 +44,9 @@ type InFlightRef = { current: InFlight | undefined };
 // One worksheet runs one query at a time. A new run, `cancel()` and unmounting all abandon the in-flight one:
 // they clear `inFlight` first, and every response is applied only while its query_id is still the in-flight one,
 // so a late answer for a superseded query can never overwrite a newer result.
-// A Run clears the result and reports its outcome to `onSettled` (the history). A re-run (`run(sql, rerun)`) keeps
-// the last result until its answer replaces it, also when it fails or is cancelled, and is not reported.
+// Both keep the last result while they run, until their answer replaces it. A Run reports its outcome to `onSettled`
+// (the history), and clears the result when it fails or is cancelled. A re-run (`run(sql, rerun)`) keeps the last
+// result also when it fails or is cancelled, and is not reported.
 export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOutcome) => void) {
   const [state, setState] = useState<RunState>(IDLE);
   const inFlight = useRef<InFlight | undefined>(undefined);
@@ -87,12 +88,12 @@ export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOu
       rerun: rerun !== undefined,
     };
     inFlight.current = current;
-    setState((previous) => ({ status: "running", elapsedSeconds: 0, response: rerun ? previous.response : undefined }));
+    setState((previous) => ({ status: "running", elapsedSeconds: 0, response: previous.response }));
 
     const finish = (next: RunState, returnedRows: number | null) => {
       if (inFlight.current?.queryId !== current.queryId) return; // superseded, cancelled or unmounted
       inFlight.current = undefined;
-      setState((previous) => ({ ...next, response: next.response ?? previous.response }));
+      setState((previous) => ({ ...next, response: next.response ?? (rerun ? previous.response : undefined) }));
       if (rerun && next.status === "done") rerun.onApplied();
       if (!rerun && (next.status === "done" || next.status === "error" || next.status === "cancelled")) {
         settled.current?.({ sql, status: next.status, returnedRows });
@@ -137,7 +138,7 @@ export function useWorksheetRun(worksheetId: string, onSettled?: (outcome: RunOu
     setState((previous) => ({
       status: "cancelled",
       elapsedSeconds: secondsSince(current.startedAt),
-      response: previous.response,
+      response: current.rerun ? previous.response : undefined,
     }));
     if (current.rerun) return;
     settled.current?.({

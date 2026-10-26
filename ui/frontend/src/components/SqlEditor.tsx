@@ -18,7 +18,6 @@ type EditorProps = {
   value: string;
   onChange: (value: string) => void;
   running: boolean;
-  elapsedSeconds: number;
   // Where the last error points, in editor offsets; it clears as soon as the text changes.
   highlight?: Highlight;
   // The table selected in the catalog tree: its columns complete without a prefix.
@@ -35,7 +34,6 @@ export function SqlEditor({
   value,
   onChange,
   running,
-  elapsedSeconds,
   highlight,
   activeTable,
   onRun,
@@ -108,11 +106,6 @@ export function SqlEditor({
         <Button size="xs" variant="default" disabled={running || empty} onClick={() => void format()}>
           Format
         </Button>
-        {running && (
-          <Text size="sm" c="dimmed">
-            Running… {elapsedSeconds} s
-          </Text>
-        )}
         <Text size="xs" c="dimmed" ml="auto">
           Ctrl/Cmd+Enter runs
         </Text>

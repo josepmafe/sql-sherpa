@@ -1,4 +1,4 @@
-import { Alert, Box, Stack, Text } from "@mantine/core";
+import { Alert, Box, Group, Loader, Stack, Text } from "@mantine/core";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { useCatalog } from "../../api/queries";
@@ -32,7 +32,8 @@ const GUARD_HINT = "Only one read-only SELECT (or WITH … SELECT) over the mart
 const POSITION_HINT = "Postgres stopped at the highlighted spot in the editor.";
 // The guard's reasons start with their rule's code (`[guard:not_select] …`), which is for logs, not people.
 const GUARD_RULE_PREFIX = /^\[guard:[^\]]*\]\s*/;
-const RERUN_OPACITY = 0.5;
+const BUSY_OPACITY = 0.5;
+const CANCELLED_TEXT = "The query was stopped in the warehouse.";
 const ERROR_TITLES: Record<string, string> = {
   guard_rejected: "Query not allowed",
   timeout: "Query timed out",
@@ -50,13 +51,27 @@ export const WorksheetPanel = memo(function WorksheetPanel({
   onRunStarted,
 }: PanelProps) {
   const { id, sql: initialSql, runOnOpen } = worksheet;
-  const { status, response, error, elapsedSeconds, run, cancel } = useWorksheetRun(id, onSettled);
-  const [origin, setOrigin] = useState<Origin>({ sql: "", offset: 0 });
   // `view` is what the rows shown have; a server re-run's view shows only while it runs, so a failed or cancelled
   // one falls back to the last applied view.
   const [view, setView] = useState<ResultView>(EMPTY_VIEW);
   const [requested, setRequested] = useState<ResultView>();
-  const shownView = status === "running" && requested ? requested : view;
+  // A Run's answer gets a fresh grid (its filter bar, its scroll) with no sort or filter.
+  const [generation, setGeneration] = useState(0);
+  const settle = useCallback(
+    (outcome: RunOutcome) => {
+      if (outcome.status === "done") {
+        setView(EMPTY_VIEW);
+        setGeneration((previous) => previous + 1);
+      }
+      onSettled(outcome);
+    },
+    [onSettled],
+  );
+  const { status, response, error, elapsedSeconds, run, cancel } = useWorksheetRun(id, settle);
+  const [origin, setOrigin] = useState<Origin>({ sql: "", offset: 0 });
+  const running = status === "running";
+  const rerunning = running && requested !== undefined;
+  const shownView = rerunning ? requested : view;
   const catalog = useCatalog();
   const masked = useMemo(() => maskedColumnNames(catalog.data), [catalog.data]);
 
@@ -98,22 +113,26 @@ export const WorksheetPanel = memo(function WorksheetPanel({
       <SqlEditor
         value={worksheet.sql}
         onChange={(sql) => onSqlChange(id, sql)}
-        running={status === "running"}
-        elapsedSeconds={elapsedSeconds}
+        running={running}
         highlight={highlight}
         activeTable={activeTable}
         onRun={(sql, offset) => {
           setOrigin({ sql, offset });
-          setView(EMPTY_VIEW);
           setRequested(undefined);
           void run(sql);
         }}
         onCancel={cancel}
       />
+      {running && (
+        <Group gap="xs" role="status">
+          <Loader size="xs" />
+          <Text size="sm">Running… {elapsedSeconds} s</Text>
+        </Group>
+      )}
       {status === "cancelled" && (
-        <Text size="sm" c="dimmed">
-          Cancelled after {elapsedSeconds} s
-        </Text>
+        <Alert color="gray" role="status" title={`Cancelled after ${elapsedSeconds} s`}>
+          {CANCELLED_TEXT}
+        </Alert>
       )}
       {status === "error" && error && (
         <Alert color="red" title={ERROR_TITLES[error.code] ?? "Query failed"}>
@@ -125,10 +144,17 @@ export const WorksheetPanel = memo(function WorksheetPanel({
           {highlight && <Text size="sm">{POSITION_HINT}</Text>}
         </Alert>
       )}
-      {/* A Run clears the result; a server re-run keeps it, dimmed, so the grid (its scroll, the filter bar) stays. */}
+      {/* While anything runs the last rows stay, dimmed. A Run's are inert (they belong to the SQL before); a server
+          re-run's grid stays usable, so its scroll and filter bar survive. */}
       {response && (
-        <Box aria-busy={status === "running"} style={{ opacity: status === "running" ? RERUN_OPACITY : 1 }}>
-          <ResultGrid response={response} view={shownView} onViewChange={changeView} masked={masked} />
+        <Box aria-busy={running} inert={running && !rerunning} style={{ opacity: running ? BUSY_OPACITY : 1 }}>
+          <ResultGrid
+            key={generation}
+            response={response}
+            view={shownView}
+            onViewChange={changeView}
+            masked={masked}
+          />
         </Box>
       )}
     </Stack>

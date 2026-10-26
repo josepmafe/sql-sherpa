@@ -273,12 +273,34 @@ describe("useWorksheetRun", () => {
       expect(settled).not.toHaveBeenCalled();
     });
 
-    it("a Run after it clears the result while it runs", async () => {
+    it("a Run after it keeps the last result while it runs", async () => {
       const { result } = await finishedRun(() => {});
 
       act(() => void result.current.run("select 2"));
 
       expect(result.current.status).toBe("running");
+      expect(result.current.response?.returned_rows).toBe(1);
+    });
+
+    it("a Run after it clears the last result when it fails", async () => {
+      const { result } = await finishedRun(() => {});
+
+      act(() => void result.current.run("select 2"));
+      await act(async () =>
+        pending[1]!.resolve({ error: { code: "sql_error", message: "bad value" }, response: { status: 422 } }),
+      );
+
+      expect(result.current.status).toBe("error");
+      expect(result.current.response).toBeUndefined();
+    });
+
+    it("a Run after it clears the last result when it is cancelled", async () => {
+      const { result } = await finishedRun(() => {});
+
+      act(() => void result.current.run("select 2"));
+      act(() => result.current.cancel());
+
+      expect(result.current.status).toBe("cancelled");
       expect(result.current.response).toBeUndefined();
     });
   });

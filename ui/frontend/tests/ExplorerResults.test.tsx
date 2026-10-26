@@ -232,6 +232,59 @@ describe("Explorer results", () => {
     });
   });
 
+  describe("a Run after a result", () => {
+    const OTHER = { ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] };
+
+    beforeEach(() =>
+      post.mockImplementation((path: string) =>
+        path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
+      ),
+    );
+
+    async function runTwice(user: ReturnType<typeof userEvent.setup>, second: Promise<unknown> = new Promise(() => {})) {
+      post.mockResolvedValueOnce({ data: RESPONSE, response: { status: 200 } });
+      post.mockReturnValueOnce(second);
+      renderScreen("select 1");
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await screen.findByText("2 rows in 5 ms");
+      await user.click(screen.getByRole("button", { name: "name" }));
+      await user.click(screen.getByRole("button", { name: "Run" }));
+    }
+
+    it("keeps the last rows, dimmed, inert and in their order, and says it is running", async () => {
+      const user = userEvent.setup();
+
+      await runTwice(user);
+
+      const grid = screen.getByRole("table", { hidden: true }).closest<HTMLElement>("[aria-busy]")!;
+      expect(grid).toHaveAttribute("aria-busy", "true");
+      expect(grid).toHaveAttribute("inert");
+      expect(firstColumn()).toEqual(["a", "b"]);
+      expect(screen.getByRole("status")).toHaveTextContent("Running… 0 s");
+    });
+
+    it("shows its answer with no sort, in a fresh grid", async () => {
+      const user = userEvent.setup();
+
+      await runTwice(user, Promise.resolve({ data: OTHER, response: { status: 200 } }));
+
+      expect(await screen.findByRole("columnheader", { name: "code" })).toHaveAttribute("aria-sort", "none");
+      expect(screen.getByRole("table").closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
+      expect(screen.getByRole("table").closest("[inert]")).toBeNull();
+    });
+
+    it("that is cancelled shows a neutral notice and clears the rows", async () => {
+      const user = userEvent.setup();
+      await runTwice(user);
+
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.getByRole("status")).toHaveTextContent("Cancelled after 0 s");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    });
+  });
+
   it("a new Run starts with no sort or filter, which point at columns by position", async () => {
     const user = userEvent.setup();
     const other = { ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] };
