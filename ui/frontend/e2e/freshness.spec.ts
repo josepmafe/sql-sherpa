@@ -7,9 +7,9 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Criterion 2: a rebuilt warehouse shows up on reload without restarting `ui`. It simulates one more day and rebuilds
 // prod in the warehouse every checkout shares, which only `make reset` undoes, so it runs only when asked for
-// (`make e2e-freshness`), and only while the data ends before yesterday (UTC).
+// (`SHERPA_E2E_FRESHNESS=1 npx playwright test freshness`), and only while the data ends before yesterday (UTC).
 test("a new build shows after a reload without restarting ui", async ({ page }) => {
-  test.skip(!process.env.SHERPA_E2E_FRESHNESS, "changes the shared warehouse: run it with make e2e-freshness");
+  test.skip(!process.env.SHERPA_E2E_FRESHNESS, "changes the shared warehouse: run it with SHERPA_E2E_FRESHNESS=1");
   test.setTimeout(BUILD_TIMEOUT_MS);
   const lastDay = /\.\. (\d{4}-\d{2}-\d{2})/.exec(make("status"))?.[1] ?? "";
   const yesterday = new Date(Date.now() - MS_PER_DAY).toISOString().slice(0, 10);

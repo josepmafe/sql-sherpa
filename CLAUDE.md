@@ -20,6 +20,12 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
     - `advanced/`: how to *extend or modify* it, i.e. which files to touch, in which order, and which tests prove the change.
 
     Every milestone that adds something a person runs or extends gets at least one guide of each kind, or updates existing guides. Guides follow the current-state rule like every other doc.
+  - **Guides stay short:**
+    - Length: a basic guide under about 150 lines and an advanced one under about 250.
+    - Output: show it only where reading it is the point (a failure to diagnose, a result to compare), cut to about 10 lines.
+    - Links: link the README Quickstart, the spec section or another guide instead of repeating setup, rules or definitions.
+    - Errors: each guide has one symptom → fix table.
+    - New guides: a milestone extends the guide for the thing it changes; a new guide is only for a new thing a person runs or extends.
 - **The last task, after the documentation task, is a panel review** of the whole branch. The plan names the panel for what the milestone builds and gives each reviewer a focus:
   - a data engineer for dbt and the generator
   - a software engineer for Python and the Makefile
@@ -53,32 +59,36 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 
 ## Commands
 
-- `make up` / `make down`: start / stop every compose service: Postgres, the `mcp` server and the `ui` web app (`make up` builds their images and waits until all are healthy; the app is at `http://127.0.0.1:8090`, port from `SHERPA_UI_PORT`). To work on the database alone, `docker compose up -d --wait postgres`.
-- `make roles`: bring the database roles of an existing volume up to date (creates `sherpa_ui`, resets passwords and role settings) with the SQL the init script runs on a new one (`data-platform/postgres/roles.sql`); idempotent. It uses the variables of the *running* postgres container, so after changing a password or adding `SHERPA_UI_USER`/`SHERPA_UI_PASSWORD` to `.env`: `make up` (recreates postgres with the new environment), `make roles`, `make build-prod`.
-- `make mcp-dev`: run the MCP server on the host over HTTP (`http://127.0.0.1:8765/mcp`, port from `SHERPA_MCP_PORT`).
-- `make generate DAYS=<n>`: simulate `n` days into the raw schemas (`DAYS` is required).
-- `make backfill`: simulate `DAYS` days (default 365) into the raw schemas.
-- `make status`: print the simulated date range and the row count of every raw table.
-- `make reset`: drop the dbt schemas (including the `--store-failures` audit schema) and the raw schemas, then recreate the raw schemas empty.
-- `make deps`: install the dbt packages.
-- `make seed`: load the dbt seeds.
-- `make build`: check source freshness, then `dbt build` on the dev target.
-- `make build-prod`: the same on the prod target, then `dbt docs generate`, with artifacts in `target-prod`.
-- `make grant-read`: re-apply the `sherpa_agent` and `sherpa_ui` read grants on `marts` (and the UI's on `ops.dbt_run_results`) on prod without a build; the build runs the same macro as its `on-run-end` hook, after `record_run_results` has written the run's rows to `ops.dbt_run_results`.
-- `make eval-db`: drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days) on the `eval` target, artifacts in `target-eval`.
-- `make docs` / `make docs-prod`: generate and serve the dbt docs (dev / prod).
-- `make docs-check`: fail if a model or column under `data-platform/dbt/models` has no description.
-- `make ui-dev`: the UI for development (like `make lint` and `make e2e`, it needs the frontend's packages: `cd ui/frontend && npm ci` once, Node 22+): the API with reload on `127.0.0.1:$SHERPA_UI_PORT` (`ui-api-dev`) and the Vite dev server (`ui-web-dev`), which proxies `/api` to it. make takes `SHERPA_UI_PORT` (default 8090) and, for `make e2e`, `SHERPA_UI_USER` from the environment or the command line, else from `.env`, as compose does. The compose `ui` service uses the same port: stop it first, or run `make ui-dev SHERPA_UI_PORT=8092`.
-- `make ui-client`: regenerate `ui/frontend/src/api/schema.d.ts` (the typed API client) from the backend's OpenAPI schema; commit the result after any API change.
-- `make e2e`: Playwright against the compose stack (`make up`, `make build-prod`; base URL from `SHERPA_UI_PORT`). Needs `npx playwright install chromium` once in `ui/frontend`. It leaves the warehouse as it is: its freshness spec skips itself.
-- `make e2e-freshness`: the freshness spec alone. It simulates one extra day and rebuilds prod in the shared warehouse, so it can run at most once per day (it skips itself while the data already reaches yesterday), and only `make reset` undoes it. Run it only when you mean to.
-- `make lint`: ruff check, ruff format check, mypy, sqlfluff, then in `ui/frontend` ESLint and `tsc`, and a check that the committed API client matches the backend's schema.
-- `make test`: pytest with `.env` loaded (`slow` and `warehouse` tests excluded); the integration tests need Postgres (`docker compose up -d --wait postgres`). The frontend's tests are separate: `cd ui/frontend && npm test` (Vitest).
+A Make target exists only for a multi-step workflow, a command with non-obvious flags, or a daily dev loop; anything else is a documented plain command. Don't add aliases or one-off repair targets.
+
+- **Stack:**
+  - `make up` / `make down` start / stop every compose service (Postgres, `mcp`, `ui` at `http://127.0.0.1:8090`). `make up` builds the images, waits until all are healthy, then brings the database roles up to date with `data-platform/postgres/roles.sql` (idempotent: it creates missing roles and resets passwords and settings from `.env`).
+  - For the database alone: `docker compose up -d --wait postgres`.
+- **Data:**
+  - `make generate DAYS=<n>` simulates `n` more days (`DAYS` is required).
+  - `make backfill` simulates `DAYS` days (default 365) ending yesterday.
+  - `make reset` drops the dbt schemas and the raw schemas, then recreates the raw schemas empty.
+  - The simulated range and row counts: `uv run sherpa-generate status`.
+- **dbt:**
+  - `make build` checks source freshness, then runs `dbt build` (seeds included) on dev.
+  - `make build-prod` does the same on prod, then `dbt docs generate`, with artifacts in `target-prod`.
+  - Both install the dbt packages first whenever `packages.yml` or `package-lock.yml` changed.
+  - `make docs` generates and serves the dev docs.
+  - `make eval-db` drops and rebuilds the frozen `sherpa_eval` database (seed 42, 2025-01-01, 365 days; artifacts in `target-eval`).
+  - The read grants are re-applied by every build's `on-run-end` hook. Re-apply them without a build with `dbt run-operation grant_read_access --target prod --target-path target-prod`.
+- **Checks:**
+  - `make lint` runs ruff (check and format), mypy, sqlfluff, the docs-coverage check (every model and column under `data-platform/dbt/models` described), ESLint and `tsc` in `ui/frontend`, the npm lockfile's registry check, and a diff of the committed API client against the backend's schema.
+  - `make test` runs pytest with `.env` loaded (`slow` and `warehouse` excluded; the integration tests need Postgres). The frontend's unit tests: `cd ui/frontend && npm test` (Vitest).
+  - `make e2e` runs Playwright against the compose stack (`make up`, `make build-prod`; `npx playwright install chromium` once). Its freshness spec skips itself because it adds a simulated day and rebuilds prod in the shared warehouse. Run it on purpose with `cd ui/frontend && SHERPA_E2E_FRESHNESS=1 npx playwright test freshness`.
+- **Dev loops:**
+  - `make mcp-dev` runs the MCP server on the host over HTTP (`http://127.0.0.1:8765/mcp`).
+  - `make ui-dev` runs the API with reload plus the Vite dev server, which proxies `/api` to it, on `SHERPA_UI_PORT` (default 8090). Stop the compose `ui` service first, or pass `SHERPA_UI_PORT=8092`. It needs `cd ui/frontend && npm ci` once (Node 22+), like `make lint` and `make e2e`.
+  - `make ui-client` regenerates `ui/frontend/src/api/schema.d.ts` from the backend's OpenAPI schema; commit it after any API change.
 
 ## Conventions
 
 - **Repository layout, grouped by spec:**
-  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make roles` share), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
+  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/`, and `tests/` for tests that span the generator and dbt.
   - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.

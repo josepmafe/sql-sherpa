@@ -1,5 +1,5 @@
 -- Creates the three roles and the PUBLIC revokes, or brings an existing database up to date: a re-run resets
--- passwords and role settings and never fails. Run by 00_roles.sh on first initialisation and by `make roles`.
+-- passwords and role settings and never fails. Run by 00_roles.sh on first initialisation and by `make up`.
 -- Needs the psql variables admin_user, admin_password, agent_user, agent_password, ui_user, ui_password, db_name.
 
 -- CREATE ROLE has no IF NOT EXISTS, so each role is created or has its password reset by a generated statement.
