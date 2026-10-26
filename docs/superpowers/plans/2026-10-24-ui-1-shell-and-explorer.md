@@ -224,7 +224,7 @@ ui/
 - **`POST /api/queries`:** `{query_id, sql, sort, filters}` → `QueryOutcome`.
   - On `DuplicateColumnsError` in server mode: re-run in client mode and set `warning = "duplicate column names: sorting and filtering apply only to the rows shown"`.
   - The endpoint watches `request.is_disconnected()` (poll every 0.5 s in a task) and cancels on disconnect.
-  - Status codes: `422` for `guard_rejected`/`sql_error`, `408` for `timeout`, `409` for `duplicate_query_id` and for `cancelled`, `503` for `catalog_unavailable` (also what the catalog endpoints answer when the dbt artifacts are missing). Clients branch on the body's `code`, never on the status alone.
+  - Status codes: `422` for `guard_rejected`/`sql_error`, `504` for `timeout` (not `408`, which Chromium silently re-sends on a reused connection), `409` for `duplicate_query_id` and for `cancelled`, `503` for `catalog_unavailable` (also what the catalog endpoints answer when the dbt artifacts are missing). Clients branch on the body's `code`, never on the status alone.
 - **`POST /api/queries/{query_id}/cancel`:** `204` always.
 - **`POST /api/queries/format`:** `{sql}` → `{sql}`.
 - **`python -m sherpa_ui.openapi_export <path>`** writes the app's OpenAPI JSON.

@@ -85,7 +85,7 @@ class TestQueriesApi:
         [
             ("guard_rejected", 422),
             ("sql_error", 422),
-            ("timeout", 408),
+            ("timeout", 504),
             ("duplicate_query_id", 409),
             ("cancelled", 409),
             ("catalog_unavailable", 503),

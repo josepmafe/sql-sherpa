@@ -19,11 +19,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# UI spec §4. Clients branch on the body's `code`; several codes share a status.
+# UI spec §4. Clients branch on the body's `code`; several codes share a status. A timeout is 504, not 408: Chromium
+# silently re-sends a POST answered 408 on a reused keep-alive connection, which would run the query twice.
 QUERY_ERROR_STATUS: Final[dict[str, int]] = {
     "guard_rejected": 422,
     "sql_error": 422,
-    "timeout": 408,
+    "timeout": 504,
     "duplicate_query_id": 409,
     "cancelled": 409,
     "catalog_unavailable": 503,
