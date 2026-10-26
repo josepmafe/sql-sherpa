@@ -177,7 +177,7 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
   - **On an existing volume** (the init script only runs on an empty one, and `sherpa_admin` can't create roles), ui-1 makes the role SQL idempotent. It moves into `data-platform/postgres/roles.sql`, which the init script runs, and **`make roles`** runs it again as the `postgres` superuser inside the container, so no volume has to be wiped.
   - dbt's `grants` and `on-run-end` hook cover the role from ui-1 on (data platform spec §3). A build fails with Postgres's `role "sherpa_ui" does not exist` until `make roles` has run.
 - **Connection options:** `default_transaction_read_only=on`, `statement_timeout=30s` (`SHERPA_UI_STATEMENT_TIMEOUT_S`, integer seconds, default 30, at least 1), set on the connection like the MCP server's.
-- **Guard:** `sherpa_mcp.sql_guard` (agent spec §4.2), imported as a library: one statement, `SELECT`/`WITH` only, the function allow-list, every table `marts.<visible mart>`, every qualified column a real column, no `SET`/`RESET`/`ALTER`. The runner builds `SqlGuard(catalog.mart_columns(), allowed_functions=...)` with its own allow-list (the agent's is the default). A rejection returns `code = "guard_rejected"` with the guard's reason, which the UI shows verbatim.
+- **Guard:** `sherpa_mcp.sql_guard` (agent spec §4.2), imported as a library: one statement, `SELECT`/`WITH` only, the function allow-list, every table `marts.<visible mart>`, every qualified column a real column, no `SET`/`RESET`/`ALTER`. The runner builds `SqlGuard(catalog.mart_columns(), allowed_functions=...)` with its own allow-list (the agent's is the default). A rejection returns `code = "guard_rejected"` with the guard's reason, which the UI shows without its `[guard:<rule>]` code, followed by what may run (one read-only `SELECT` over the marts).
 - **Executor:** the runner's own (this section's timeout, row cap, result size, cancel and error positions); the MCP server's `AgentDatabase` is shaped for the model (5 s, 100 rows, a 50,000-character budget) and is not reused. The runner reuses only its value conversion, cell cut and data-error message (`json_safe`, `cap_cell`, `data_error_message`). On top of `json_safe`, a cell's integer beyond ±(2⁵³ − 1) (an `int8` the browser would round to the nearest double) is sent as a string, like a `numeric`, and its column stays `number`; integers inside a JSON or array cell are left as they are.
 - **Row cap and result size:** 1,000 rows (`SHERPA_UI_ROW_CAP`), fetched from a server-side cursor in batches of 100 rows, fewer for a wide result (at most 10,000 cells a batch) and one at a time after a row over 1,000,000 characters.
   - **Cells:** a text, bytes (hex), array or JSON cell longer than 10,000 characters is cut and ends with ` …[cut at 10000 chars]`, as in the MCP server (10,000 is also the longest `lpad` the guard allows).
@@ -207,7 +207,7 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
 
 ### 6.1 Shell
 - A left navigation rail: **Home**, **Ask**, **Explorer**, **Lineage**. The active screen is part of the URL (`/`, `/ask`, `/explorer`, `/lineage`), so reload and back/forward work.
-- A health banner (§3). Light and dark theme following the OS.
+- A health banner (§3): red for a dependency whose loss stops a screen's queries (the server, the database), yellow for missing dbt artifacts. Light and dark theme following the OS, with text contrast at WCAG AA in both.
 
 ### 6.2 Home
 - **Ask box** at the top: typing and pressing Enter opens Ask with the question and starts planning.
@@ -290,19 +290,20 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
 **Catalog tree (left):**
 - `sherpa › marts › <domain> › table › column`, only what the read-only path can query, with search over table and column names.
 - Columns show their type plus PK and PII badges.
-- **Hover:** a tooltip with the description, grain and PK.
-- **Click:** the **Inspector** (right panel) with everything from `GET /api/catalog/tables/{name}`, plus "Open in Lineage".
+- **Hover:** a tooltip with the description's first sentence (at most 200 characters), the grain and the PK; the full description is the Inspector's.
+- **Click:** the **Inspector** (right panel) with everything from `GET /api/catalog/tables/{name}`, plus "Open in Lineage". Below 1280 px wide the Inspector is a drawer over the editor instead, so the editor keeps a usable width on a 1024 px screen.
 - **Table menu** (right-click and a "⋯" button): Preview 100 rows (`select * from marts.<t> limit 100`), Insert SELECT into the editor, Copy name, Open in Lineage.
 
 **Editor (centre top):**
-- **Worksheet tabs** and per-browser **history**.
+- **Worksheet tabs** (a keyboard tab list: the arrow keys move, F2 renames, Delete closes) and per-browser **history**.
 - Schema-aware autocomplete.
-- **Run** (Ctrl+Enter), **Run selection**, **Format** (`POST /api/queries/format`, sqlglot, Postgres dialect).
+- **Run** (Ctrl+Enter), **Run selection**, **Format** (`POST /api/queries/format`, sqlglot, Postgres dialect). Run says why it is disabled (an empty worksheet); while the database is down, Run, Run selection and the tree's Preview are disabled with the reason (§3).
 - While a query runs, Run becomes **Cancel**.
 
 **Results (centre bottom):**
 - The grid, with row count, duration, a read-only badge and a truncated flag.
 - Column sort and filter, client-side or server-side as in §5, with a banner naming the mode when the result is truncated.
+- While a query runs, the last result stays, dimmed, until the answer replaces it.
 - Errors: guard rejections are explained, and Postgres errors highlight their position in the editor. A cancelled query shows "Cancelled after N s".
 
 ### 6.5 Lineage
