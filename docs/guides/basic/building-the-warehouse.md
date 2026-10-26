@@ -20,7 +20,7 @@ make build       # source freshness, then dbt build on dev (installs dbt package
 make build-prod  # the same on prod, then dbt docs generate
 ```
 
-`dbt build` runs seeds (CSVs in `data-platform/dbt/seeds/`), the snapshot, models, unit tests and data tests in DAG order and skips whatever depends on a failure. A unit test runs on fixed rows before its model builds; a failing one prints the differing cells as `actual differs from expected`. The first build takes about two minutes on a year of data, later ones under a minute. The `snapshots.sherpa` unused-path warning is expected. `make build-prod` also writes `target-prod/catalog.json`, which the MCP server and the UI read.
+`dbt build` runs seeds (CSVs in `data-platform/dbt/seeds/`), the snapshot, models, unit tests and data tests in DAG order and skips whatever depends on a failure. A unit test runs on fixed rows before its model builds; a failing one prints the differing cells as `actual differs from expected`. The first build takes about two minutes on a year of data, later ones under a minute. `make build-prod` also writes `target-prod/catalog.json`, which the MCP server and the UI read.
 
 ### Keeping it current
 
@@ -40,16 +40,9 @@ The other two (`int_identity__anonymous_to_customer`, `int_events__sessionized`)
   from snapshots.snap_product_variants where id = 810 order by dbt_valid_from;
   ```
 
-  ```
-   id  | cost_price | list_price | dbt_valid_from | dbt_valid_to
-  -----+------------+------------+----------------+--------------
-   810 |       5.51 |      10.99 | 2025-10-26     | 2025-12-27
-   810 |       5.51 |       9.82 | 2025-12-27     | 2026-02-28
-  ```
-
 - **`--full-refresh`.** `dbt build --full-refresh` drops and rebuilds the incremental models from scratch (for `stg_events__events`, a batch per simulated day, about two minutes on a year), and all other models as usual. Snapshots ignore it: the old versions exist nowhere else.
 - **`dbt retry`.** After a failed build, `dbt retry` (same target) reruns only the failed and skipped nodes. A failing unit test stops its model from building, so a typo in `fct_sessions.sql` fails `fct_sessions_aggregates_a_session` first; after the fix, retry runs that unit test, `fct_sessions`, its tests and the skipped nodes, and ends `Completed successfully`.
-- **Incremental equals full refresh.** After `dbt build --full-refresh --target prod --target-path target-prod`, compare it with the dev table (zero rows means identical):
+- **Incremental equals full refresh.** Build dev and prod from the same raw state (no `make advance` between), with at least one incremental build over new data first (`make advance DAYS=1 && make build`), or it compares full with full. Then `dbt build --full-refresh --target prod --target-path target-prod` and compare with the dev table (zero rows means identical):
 
   ```bash
   dbt show --select fct_sessions_incremental_vs_full_refresh --vars '{compare_schema: marts}'
@@ -80,7 +73,7 @@ cd data-platform/dbt
 DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt <command>
 ```
 
-Below, that prefix is shortened to `dbt`. Add `--target prod --target-path target-prod` for prod; `dbt debug` checks the connection.
+Also `export SHERPA_SIMULATION_START_DATE=$(uv run --env-file ../../.env sherpa-generate start-date)` (without it `begin` falls back to 2024-01-01: slower, not wrong). Below, that prefix is shortened to `dbt`. Add `--target prod --target-path target-prod` for prod; `dbt debug` checks the connection.
 
 **Selecting.** `--select` takes names, folders, sources and graph operators (`+model` upstream, `source:events+` downstream). `dbt ls` previews a selection, `dbt build` runs it with its tests:
 
@@ -130,8 +123,11 @@ dbt compares each mart's YAML columns and `data_type`s with the model's real col
 
 | Symptom | Fix |
 |---|---|
-| `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>` |
-| `assert_every_source_event_is_staged` fails after `make advance` of more than 3 days | The microbatch skipped the oldest days; the failing rows list them. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; here 19 to 22 October are missing) |
+| `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>`. After a break of more than 3 days the next build then fails the guard test below; that is the normal path |
+| `assert_every_source_event_is_staged` fails: a simulated day older than 3 days before today was not loaded by the last build | The failing rows list the days. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; for prod add `--target prod --target-path target-prod`). `lookback` in the model config is the knob ([spec §6.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Never build the downstream models alone after this failure; if you did, `--full-refresh --select int_events__sessionized+` and the map |
+| `on_schema_change` fail on `int_events__sessionized` or `stg_events__events`, `fct_sessions` missing, or every variant has one snapshot version (after merging or switching checkouts) | `dbt build --full-refresh --select <model>+` on that target, or the one-time sequence on the shared warehouse: `make reset && make backfill && make build && make build-prod` |
+| An incremental model is out of sync because another checkout built it with other code, or `session_date` has duplicates after concurrent builds | `dbt build --full-refresh --select <model>+` on that target. Rebase every worktree before touching the warehouse; one build per target at a time |
+| `make advance` fails at its snapshot / `make backfill` fails midway | `dbt snapshot --target prod --target-path target-prod` / `make reset && make backfill` |
 | `--- Logging error ---` and a `UnicodeEncodeError` instead of a unit-test diff (Windows) | `export PYTHONUTF8=1` |
 | `role "sherpa_ui" does not exist` at the grants | `make up` re-applies the roles, then build again |
 | `enforced contract that failed` | Make the mart's YAML columns and `data_type`s match the SQL |

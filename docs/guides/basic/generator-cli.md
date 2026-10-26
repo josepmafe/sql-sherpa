@@ -30,7 +30,7 @@ raw_shop.orders: 8090
 | `generate --days N` | Simulate `N` more days. The first run sets up the catalog; later runs continue after the last simulated day. Never goes beyond yesterday (UTC). |
 | `start-date` | Print the first simulated day (nothing on an empty database). `make build` reads it as the `begin` of the event model. |
 | `status` | Print the simulated range, seed, scale and the row count of every raw table. |
-| `reset` | Drop and recreate the raw schemas: all generated data and the simulation state are gone. |
+| `reset` | Drop and recreate the raw schemas only. The dbt schemas and the price history in `snapshots` stay, so the old simulation's costs would persist: use `make reset` to start over. |
 
 | `generate` option | Default | Meaning |
 |---|---|---|
@@ -64,7 +64,7 @@ diff run1.txt run2.txt && echo identical
 
 Campaigns and promotions cover at most the first 365 days from the start date, or end at yesterday of the first run if that is sooner. Runs therefore match on any later day only when the start date is at least a year back (for example `--start-date 2025-09-01`); with a recent start date they match only if both use the same yesterday.
 
-**Topping up to yesterday.** Rerun `generate` with the same `--scale` and `--seed` and enough days; it stops at yesterday on its own (`make advance DAYS=7` does the same with defaults):
+**Topping up to yesterday.** Rerun `generate` with the same `--scale` and `--seed` and enough days; it stops at yesterday on its own. A direct run takes no snapshot; only `make advance DAYS=7` (defaults, then a snapshot) and `make backfill` do:
 
 ```bash
 uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
@@ -72,7 +72,7 @@ uv run sherpa-generate generate --days 30 --scale 0.1 --seed 7
 
 Topping up keeps the freshness checks on orders, events and leads green (see [Building the warehouse](building-the-warehouse.md)). Top-up days have no paid campaigns, promotions or ad spend, so once the newest `ad_spend_daily` row is over 48 hours old its freshness check warns. For a full catalog again, start over.
 
-**Starting over.** Then rebuild the dbt layers with `make build`:
+**Starting over.** Use `make reset`, not `sherpa-generate reset`. Then rebuild the dbt layers with `make build`:
 
 ```bash
 make reset

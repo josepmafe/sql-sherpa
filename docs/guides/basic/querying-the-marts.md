@@ -95,7 +95,7 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 
 ### Sessions are web only
 
-App orders (R12) have no session, so session counts and `conversion_rate` leave them out; compare orders per channel with `fct_orders`, not with sessions. `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise.
+A session is one device's events with no gap over 30 minutes. App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders; a session whose order was later cancelled still counts as purchased) leave them out. Compare orders per channel with `fct_orders`, and join `fct_orders` to `fct_sessions` on `session_id`. Anonymous visitors never return (every session of a non-customer is a first session). `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise.
 
 ### Line grain against order grain
 
