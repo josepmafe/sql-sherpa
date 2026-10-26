@@ -93,6 +93,8 @@ TOO_MANY_CONNECTIONS_MARKERS: Final = (
     "remaining connection slots are reserved",
 )
 CONNECTION_EXCEPTION_CLASS: Final = "08"  # SQLSTATE class: connection exception
+# In that class, but Postgres answers it for a statement it cannot bind (`$1` without a value) on a working connection.
+PROTOCOL_VIOLATION: Final = "08P01"
 CANCELLED_MESSAGE: Final = "the query was cancelled"
 TIMEOUT_MESSAGE: Final = "the query ran longer than {seconds} s and was stopped; filter or aggregate more narrowly"
 DUPLICATE_MESSAGE: Final = "a query with id {query_id} is already running"
@@ -429,9 +431,10 @@ class _Fetched:
 
 
 def _is_connection_failure(error: psycopg.Error) -> bool:
-    """The connection broke: SQLSTATE class 08, or an OperationalError without any SQLSTATE (psycopg's own)."""
+    """The connection broke: SQLSTATE class 08 but a protocol violation, or an OperationalError without any SQLSTATE
+    (psycopg's own)."""
     sqlstate = error.sqlstate or ""
-    return sqlstate.startswith(CONNECTION_EXCEPTION_CLASS) or (
+    return (sqlstate.startswith(CONNECTION_EXCEPTION_CLASS) and sqlstate != PROTOCOL_VIOLATION) or (
         isinstance(error, psycopg.OperationalError) and not sqlstate
     )
 

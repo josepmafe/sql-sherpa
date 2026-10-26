@@ -108,6 +108,34 @@ class TestQueryRunnerOffline:
         assert error.value.message == "[guard:statement_count] expected exactly one statement, got 0; send one SELECT"
         assert offline_runner.running_query_ids() == frozenset()
 
+    @pytest.mark.parametrize("sql_text", ["select $1 as a", "select 1 as a where 1 operator(pg_catalog.=) 1"])
+    def test_a_parameter_or_operator_call_is_rejected_without_connecting(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, sql_text: str
+    ) -> None:
+        monkeypatch.setattr(psycopg, "connect", _must_not_connect)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", sql_text)
+
+        assert error.value.code == "guard_rejected"
+
+    def test_a_protocol_violation_is_an_sql_error_not_an_unreachable_warehouse(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # SQLSTATE 08P01 is in the connection-exception class, but the connection still works.
+        connection = _fake_connection()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = psycopg.errors.ProtocolViolation(
+            "bind message supplies 0 parameters, but prepared statement requires 1"
+        )
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a")
+
+        assert error.value.code == "sql_error"
+        assert error.value.message == "bind message supplies 0 parameters, but prepared statement requires 1"
+
     def test_unreachable_database_is_database_unavailable(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:

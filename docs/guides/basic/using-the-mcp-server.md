@@ -315,7 +315,7 @@ A failed tool call returns `is_error` with a message written for the model to ac
 
 | Code | Meaning | What to do |
 |---|---|---|
-| `[guard:<rule>]` | The guard rejected the query; the rule is one of `parse`, `statement_count`, `not_select`, `write`, `select_into`, `locking`, `cast`, `function`, `field`, `whole_row`, `column`, `table`, `recursive`, `pad`, `type_length`, `number` | Follow the hint after the `;` and send a new query |
+| `[guard:<rule>]` | The guard rejected the query; the rule is one of `parse`, `statement_count`, `not_select`, `write`, `select_into`, `locking`, `cast`, `function`, `operator`, `parameter`, `field`, `whole_row`, `column`, `table`, `recursive`, `pad`, `type_length`, `number` | Follow the hint after the `;` and send a new query |
 | `[sql]` | Postgres refused or failed the query | Read the message, the position (`at character N`, counted in the query as written) and Postgres's hint, if any |
 | `[timeout]` | The query ran over 5 s, or the server was busy with two other queries for 10 s | Aggregate or filter more narrowly, or retry |
 | `[unreachable]` | No connection to the warehouse | Start Postgres (`make up`) |
