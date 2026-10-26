@@ -126,7 +126,7 @@ class TestReaderAccess:
         assert row[0] > 0
 
     @pytest.mark.parametrize(("schema", "table"), NOT_EXPOSED)
-    def test_cannot_read_staging_intermediate_seeds_or_raw(
+    def test_cannot_read_non_mart_schemas(
         self, admin: psycopg.Connection, reader: psycopg.Connection, schema: str, table: str
     ) -> None:
         assert _exists(admin, schema, table)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sys
 from datetime import date
 from typing import TYPE_CHECKING
 
+import backfill as backfill_module
 import pytest
-from backfill import BackfillError, ChunkedBackfill, chunk_sizes, default_start_date, main
+from backfill import BackfillError, ChunkedBackfill, _run, chunk_sizes, default_start_date, main
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,3 +93,29 @@ class TestChunkedBackfill:
             backfill.backfill(15, START_DATE, seed=42, scale=1.0)
 
         assert calls.count(SNAPSHOT) == 1
+
+
+class TestRun:
+    def test_returns_stdout(self) -> None:
+        assert _run([sys.executable, "-c", "print('hello')"]).strip() == "hello"
+
+    def test_non_zero_exit_raises_with_the_exit_code(self) -> None:
+        with pytest.raises(BackfillError, match=r"failed \(exit 3\)"):
+            _run([sys.executable, "-c", "import sys; sys.exit(3)"])
+
+
+class TestMain:
+    def test_a_backfill_error_becomes_one_line_on_stderr_and_exit_code_2(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def fail(*_: object, **__: object) -> None:
+            msg = "boom"
+            raise BackfillError(msg)
+
+        monkeypatch.setattr(backfill_module, "DbtSnapshot", lambda *_: None)
+        monkeypatch.setattr(ChunkedBackfill, "backfill", fail)
+
+        code = main(["--days", "3"])
+
+        assert code == 2
+        assert capsys.readouterr().err == "error: boom\n"

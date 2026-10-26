@@ -10,7 +10,7 @@ import pytest
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import QueryResult, WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
-from sherpa_mcp.tools import DOES_NOT_COVER, NO_MATCH_HINT, NOTES, SHORT_HISTORY, WarehouseTools
+from sherpa_mcp.tools import DOES_NOT_COVER, DOMAIN_SUBJECTS, NO_MATCH_HINT, NOTES, SHORT_HISTORY, WarehouseTools
 
 if TYPE_CHECKING:
     import psycopg
@@ -38,6 +38,28 @@ def _expected_marts() -> tuple[str, ...]:
     spec.loader.exec_module(module)
     marts: tuple[str, ...] = module.MARTS
     return marts
+
+
+def test_does_not_cover_names_on_site_browsing_below_the_session() -> None:
+    entry = next(item for item in DOES_NOT_COVER if "app visits" in item)
+
+    assert "which products or pages were viewed or carted" in entry
+    assert "fct_sessions has one row per web session with funnel flags" in entry
+
+
+def test_does_not_cover_campaign_entry_says_sessions_carry_the_utm_slug() -> None:
+    entry = next(item for item in DOES_NOT_COVER if item.startswith("campaign names"))
+
+    assert "customers and promotions carry only a campaign id" in entry
+    assert "sessions also carry the utm_campaign slug" in entry
+
+
+def test_cancelled_order_filter_note_is_limited_to_order_metrics() -> None:
+    assert "cancelled orders are kept and flagged: order metrics filter on not is_cancelled" in NOTES
+
+
+def test_marketing_web_subject_does_not_promise_landing_pages() -> None:
+    assert "landing page" not in DOMAIN_SUBJECTS["marketing_web"]
 
 
 @pytest.mark.warehouse

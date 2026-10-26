@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 CHUNK_DAYS = 7  # data platform spec §6.3
 DEFAULT_SEED = 42
 DEFAULT_SCALE = 1.0
-ARGUMENT_ERROR_EXIT_CODE = 2
+BACKFILL_ERROR_EXIT_CODE = 2
 DBT_PROJECT_DIR = Path(__file__).resolve().parents[1] / "dbt"
 GENERATOR = "sherpa-generate"
 
@@ -49,7 +49,7 @@ class ChunkedBackfill:
             if index == 0:
                 args += ["--start-date", start_date.isoformat()]
 
-            self._command(args)
+            sys.stdout.write(self._command(args))
             self._snapshot()
 
 
@@ -98,7 +98,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start-date", type=date.fromisoformat, help="first day (default: ends yesterday)")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--scale", type=float, default=DEFAULT_SCALE)
-    parser.add_argument("--target", choices=["prod", "eval"], default="prod", help="dbt target to snapshot")
+    parser.add_argument(
+        "--target",
+        choices=["prod", "eval"],
+        default="prod",
+        help="dbt target to snapshot; for eval, SHERPA_DB_NAME must name the same database as SHERPA_EVAL_DB_NAME",
+    )
     args = parser.parse_args(argv)
     start_date = args.start_date or default_start_date(args.days, datetime.now(UTC).date())
 
@@ -108,16 +113,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except BackfillError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return ARGUMENT_ERROR_EXIT_CODE
+        return BACKFILL_ERROR_EXIT_CODE
 
     return 0
 
 
 def _run(args: Sequence[str]) -> str:
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
-    sys.stdout.write(result.stdout)
+    # stderr is not captured: the generator's logs stream to the terminal while it runs.
+    result = subprocess.run(args, stdout=subprocess.PIPE, text=True, check=False)
     if result.returncode != 0:
-        msg = f"{' '.join(args)} failed (exit {result.returncode}): {result.stderr.strip()}"
+        msg = f"{' '.join(args)} failed (exit {result.returncode})"
         raise BackfillError(msg)
 
     return result.stdout

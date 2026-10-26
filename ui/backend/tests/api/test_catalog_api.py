@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -9,7 +11,8 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
 
-EXPECTED_MART_COUNT = 10
+REPO_ROOT = Path(__file__).resolve().parents[4]
+MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_reader_access.py"
 
 
 class TestCatalogApi:
@@ -68,5 +71,16 @@ class TestCatalogApi:
         body = warehouse_client.get("/api/catalog").json()
 
         tables = [table for domain in body["domains"] for table in domain["tables"]]
-        assert len(tables) == EXPECTED_MART_COUNT
+        assert sorted(table["name"] for table in tables) == sorted(_expected_marts())
         assert body["domains"][-1]["name"] == "shared"
+
+
+def _expected_marts() -> tuple[str, ...]:
+    """The data platform's own list of the marts, loaded from its test module."""
+    spec = importlib.util.spec_from_file_location("data_platform_reader_access", MARTS_SPEC)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    marts: tuple[str, ...] = module.MARTS
+    return marts

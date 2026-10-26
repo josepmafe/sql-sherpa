@@ -41,9 +41,7 @@ CLOCK_WARNING: Final = (
 # What each domain's marts are about, as the subject of a question; a domain missing here is named as it is.
 DOMAIN_SUBJECTS: Final = {
     "customers": "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history",
-    "marketing_web": (
-        "web sessions: traffic source and channel, campaign, landing page, device and the browse-to-purchase funnel"
-    ),
+    "marketing_web": ("web sessions: traffic source and channel, campaign, device and the browse-to-purchase funnel"),
     "products": "products and their variants: brand, three-level category, current list and cost prices",
     "sales": "orders, order lines, discounts and promotions, returns and refunds: revenue, cost, margin, delivery",
     "shared": "a calendar of days with weeks, months, quarters, weekends and Black Friday week",
@@ -54,7 +52,10 @@ DOES_NOT_COVER: Final = (
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "campaign names, budgets and ad spend (customers, promotions and sessions carry only a campaign id)",
+    "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
+    "the utm_campaign slug)",
+    "app visits and on-site events below the session, such as which products or pages were viewed or carted "
+    "(fct_sessions has one row per web session with funnel flags)",
     "leads that never became customers (customers carry lead_id and lead_source)",
 )
 TWO_YEARS_DAYS: Final = 730
@@ -68,7 +69,7 @@ NOTES: Final = (
     "refunded revenue is understated and net revenue overstated",
     "amounts are EUR; gross and net revenue exclude the 20% tax and the shipping",
     "dates and timestamps are UTC",
-    "cancelled orders are kept and flagged: metrics filter on not is_cancelled",
+    "cancelled orders are kept and flagged: order metrics filter on not is_cancelled",
     "test accounts and their orders are left out of every mart",
     "sessions are web only: app orders have no session, so conversion_rate and session counts leave app orders out",
 )
