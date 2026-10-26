@@ -45,7 +45,7 @@ const RESPONSE = {
 };
 
 function renderScreen() {
-  render(
+  return render(
     <MantineProvider env="test">
       <ExplorerScreen />
     </MantineProvider>,
@@ -79,6 +79,47 @@ describe("ExplorerScreen", () => {
     expect(post.mock.calls.filter(([path]) => path === "/api/queries")).toHaveLength(1);
     expect(post.mock.calls.filter(([path]) => path === "/api/queries/{query_id}/cancel")).toHaveLength(0);
     expect(screen.getAllByRole("button", { name: "Cancel" })[0]).toBeInTheDocument();
+  });
+
+  it("saves the worksheets as they change, and the next page load shows them", () => {
+    const { unmount } = renderScreen();
+
+    act(() => editors()[0]!.dispatch({ changes: { from: 0, insert: "select 42" } }));
+
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as ExplorerState;
+    expect(saved.worksheets.map((w) => w.sql)).toEqual(["select 42"]);
+    unmount();
+    renderScreen();
+    expect(editors()[0]!.state.doc.toString()).toBe("select 42");
+  });
+
+  it("renames a tab on double-click: Enter keeps the name, Escape and an empty name do not", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    const rename = async (from: string, keys: string) => {
+      await user.dblClick(screen.getByRole("tab", { name: from }));
+      await user.keyboard(keys); // the field opens focused, with its text selected
+    };
+
+    await rename("Worksheet 1", "Orders{Enter}");
+    await rename("Orders", "Nope{Escape}");
+    await rename("Orders", "{Backspace}{Enter}");
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Orders"]);
+    expect(screen.queryByRole("textbox", { name: "Worksheet name" })).not.toBeInTheDocument();
+  });
+
+  it("closes a tab with its x, and the last tab has none", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(screen.getByRole("button", { name: "New worksheet" }));
+    expect(screen.getByRole("tab", { name: "Worksheet 2" })).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("button", { name: "Close Worksheet 2" }));
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Worksheet 1"]);
+    expect(screen.getByRole("tab", { name: "Worksheet 1" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: /^Close / })).not.toBeInTheDocument();
   });
 
   it("takes in the worksheets and history another tab saves, and ignores other keys and bad values", () => {

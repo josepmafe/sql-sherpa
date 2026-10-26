@@ -44,6 +44,15 @@ const RESPONSE = {
 };
 
 const queryCalls = () => post.mock.calls.filter(([path]) => path === "/api/queries");
+const firstColumn = () =>
+  screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => row.querySelector("td")?.textContent);
+const shownEditor = () =>
+  Array.from(document.querySelectorAll<HTMLElement>(".cm-editor"))
+    .filter((element) => element.closest('[style*="display: none"]') === null)
+    .map((element) => EditorView.findFromDOM(element)!)[0]!;
 
 function renderScreen(sql: string, strict = false) {
   const seeded = freshState();
@@ -121,11 +130,6 @@ describe("Explorer results", () => {
 
   describe("a server re-run", () => {
     const TRUNCATED = { data: { ...RESPONSE, truncated: true, returned_rows: 1000 }, response: { status: 200 } };
-    const firstColumn = () =>
-      screen
-        .getAllByRole("row")
-        .slice(1)
-        .map((row) => row.querySelector("td")?.textContent);
 
     // Unmounting a worksheet with a query in flight cancels it.
     beforeEach(() => post.mockImplementation(() => Promise.resolve({ response: { status: 204 } })));
@@ -203,6 +207,42 @@ describe("Explorer results", () => {
       await waitFor(() => expect(queryCalls()).toHaveLength(2));
       expect(await screen.findByRole("button", { name: "History (1)" })).toBeInTheDocument();
     });
+  });
+
+  it("a new Run starts with no sort or filter, which point at columns by position", async () => {
+    const user = userEvent.setup();
+    const other = { ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] };
+    post.mockResolvedValueOnce({ data: RESPONSE, response: { status: 200 } });
+    post.mockResolvedValueOnce({ data: other, response: { status: 200 } });
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(await screen.findByRole("combobox", { name: "Filter column" }));
+    await user.click(await screen.findByRole("option", { name: "amount" }));
+    await user.type(screen.getByRole("textbox", { name: "Filter value" }), "10");
+    await user.click(screen.getByRole("button", { name: "Add filter" }));
+    await user.click(screen.getByRole("button", { name: "name" }));
+    expect(firstColumn()).toEqual(["a"]);
+
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByRole("columnheader", { name: "code" })).toHaveAttribute("aria-sort", "none");
+    expect(firstColumn()).toEqual(["x", "y"]);
+    expect(screen.queryByRole("button", { name: /^Remove filter/ })).not.toBeInTheDocument();
+  });
+
+  it("history records a Run, and picking it puts its SQL into the active worksheet", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue({ data: RESPONSE, response: { status: 200 } });
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await screen.findByText("2 rows in 5 ms");
+    await user.click(screen.getByRole("button", { name: "New worksheet" }));
+    await user.click(screen.getByRole("button", { name: "History (1)" }));
+
+    await user.click(await screen.findByRole("button", { name: /select 1.*2 rows/ }));
+
+    expect(screen.getByRole("tab", { name: "Worksheet 2" })).toHaveAttribute("aria-selected", "true");
+    expect(shownEditor().state.doc.toString()).toBe("select 1");
   });
 
   it("an untruncated result sorts in the browser without a request", async () => {

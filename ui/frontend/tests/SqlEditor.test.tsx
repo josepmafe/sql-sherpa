@@ -2,7 +2,7 @@ import { CompletionContext, type CompletionResult, type CompletionSource } from 
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { MantineProvider } from "@mantine/core";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -211,6 +211,28 @@ describe("WorksheetPanel", () => {
     expect(post).toHaveBeenCalledWith("/api/queries/format", {
       body: { sql: "select    1" },
     });
+  });
+
+  it("Ctrl+Enter and Cmd+Enter run the worksheet without adding a line; Enter alone does not run", async () => {
+    const user = userEvent.setup();
+    post.mockImplementation((path: string) =>
+      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
+    );
+    render(<Harness initial="select 1" />);
+    const runs = () => post.mock.calls.filter(([path]) => path === "/api/queries");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+
+    fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
+    expect(runs()).toHaveLength(1);
+    expect(runs()[0]?.[1].body.sql).toBe("select 1");
+    expect(editorView().state.doc.toString()).toBe("select 1");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.keyDown(content, { key: "Enter", metaKey: true });
+    expect(runs()).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.keyDown(content, { key: "Enter" });
+
+    expect(runs()).toHaveLength(2);
   });
 
   it("Run is disabled for an empty worksheet", () => {
