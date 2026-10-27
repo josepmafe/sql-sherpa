@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from sherpa_ui.lineage.manifest_graph import GraphNode, ManifestGraph
     from sherpa_ui.lineage.manifest_loader import ManifestLoader
     from sherpa_ui.lineage.node_sql import NodeSql
+
+logger = logging.getLogger(__name__)
 
 SQL_NOTE: Final = "the compiled SQL is not in the dbt target; run `make build-prod`"
 SQL_RESOURCE_TYPES: Final = frozenset({"model", "snapshot"})
@@ -91,6 +94,7 @@ class NodeDetails(LineageNode):
     tests: list[TestInfo]
     build: NodeBuildInfo | None
     is_mart: bool
+    selector: str  # what `dbt --select` takes to select this node alone
 
 
 class LineageService:
@@ -157,12 +161,14 @@ class LineageService:
             ],
             build=self._node_build(build, unique_id),
             is_mart=node.layer == Layer.MARTS,
+            selector=_selector(node),
         )
 
     def _build(self) -> tuple[BuildInfo, LastFullBuild | None]:
         try:
             build = self._builds.last_full_build()
-        except BuildStatusUnavailable:
+        except BuildStatusUnavailable as exc:
+            logger.warning("lineage: build status unavailable: %s", exc)
             return BuildInfo(state="unavailable", started_at=None, node_count=None), None
 
         if build is None:
@@ -176,7 +182,9 @@ class LineageService:
             return None
 
         return NodeBuildInfo(
-            status=recorded.status, execution_time_s=recorded.execution_time_s, message=recorded.message
+            status=recorded.status,
+            execution_time_s=recorded.execution_time_s,
+            message=_first_line(recorded.message),  # the lines after it carry warehouse values (UI spec §6.5)
         )
 
     def _lineage_node(self, graph: ManifestGraph, deriver: StatusDeriver, node: GraphNode) -> LineageNode:
@@ -191,3 +199,12 @@ class LineageService:
             status=deriver.node_status(node.unique_id),
             failing_tests=failing,
         )
+
+
+def _selector(node: GraphNode) -> str:
+    return f"source:{node.source_name}.{node.name}" if node.resource_type == "source" else node.name
+
+
+def _first_line(message: str | None) -> str | None:
+    lines = message.splitlines() if message else []
+    return lines[0] if lines else None

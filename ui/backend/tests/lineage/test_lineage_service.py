@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import create_autospec
@@ -163,6 +164,16 @@ class TestLineageServiceGraph:
             "source": NodeStatus.NONE,
         }
 
+    def test_unavailable_build_status_is_logged(
+        self, service: LineageService, builds: BuildStatusReader, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        builds.last_full_build.side_effect = BuildStatusUnavailable("no grant on ops")  # type: ignore[attr-defined]
+
+        with caplog.at_level(logging.WARNING, logger="sherpa_ui.lineage.lineage_service"):
+            service.graph("fct_orders", None, failing_only=False)
+
+        assert "build status unavailable: no grant on ops" in caplog.text
+
     def test_unavailable_database_degrades_to_the_graph_alone(
         self, service: LineageService, builds: BuildStatusReader
     ) -> None:
@@ -219,6 +230,39 @@ class TestLineageServiceNode:
             ("assert_orders_match_customers", "singular", "warn", TestOutcome.WARNED),
             ("revenue_is_summed", "unit", "error", TestOutcome.NOT_RUN),
         }
+
+    def test_the_build_message_keeps_only_its_first_line(
+        self, service: LineageService, builds: BuildStatusReader
+    ) -> None:
+        message = (
+            "Database Error in model fct_orders\nDETAIL: Failing row contains (null, ana@example.com, 42)\nCONTEXT: x"
+        )
+        recorded = _result("model.p.fct_orders", "error").model_copy(update={"message": message})
+        builds.last_full_build.return_value = _build(recorded)  # type: ignore[attr-defined]
+
+        details = service.node("model.p.fct_orders")
+
+        assert details is not None
+        assert details.build is not None
+        assert details.build.message == "Database Error in model fct_orders"
+        assert "ana@example.com" not in details.model_dump_json()
+
+    @pytest.mark.parametrize(
+        ("unique_id", "selector"),
+        [
+            ("source.p.shop.orders", "source:shop.orders"),
+            ("model.p.fct_orders", "fct_orders"),
+            ("exposure.p.sales_dashboard", "sales_dashboard"),
+        ],
+    )
+    def test_the_selector_of_a_node_selects_it_alone(
+        self, service: LineageService, unique_id: str, selector: str
+    ) -> None:
+        details = service.node(unique_id)
+
+        assert details is not None
+        assert details.selector == selector
+        assert _ids(service.graph(details.selector, None, failing_only=False)) == {unique_id}
 
     def test_missing_compiled_file_keeps_the_raw_sql_with_a_note(
         self, service: LineageService, node_sql: NodeSql

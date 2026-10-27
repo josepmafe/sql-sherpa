@@ -119,6 +119,17 @@ class TestSelectorEvaluator:
             "source:a.b.c",
             "exposure:",
             "x" * 1001,
+            "marts",
+            "staging",
+            "intermediate",
+            "p",
+            "singular",
+            "+marts",
+            "marts+1",
+            "assert_orders_match_customers",
+            "+assert_orders_match_customers",
+            "revenue_is_summed",
+            "scratch",
         ],
     )
     def test_unsupported_forms_name_what_is_supported(self, evaluator: SelectorEvaluator, selector: str) -> None:
@@ -128,6 +139,17 @@ class TestSelectorEvaluator:
         assert "source:<source>.<table>" in error.value.message
         assert "config.meta.domain:<domain>" in error.value.message
         assert "n+atom+m" in error.value.message
+
+    def test_a_folder_name_points_to_the_layer_filter(self, evaluator: SelectorEvaluator) -> None:
+        with pytest.raises(UnsupportedSelector) as error:
+            evaluator.select("marts")
+
+        assert "layer filter" in error.value.message
+
+    def test_a_folder_name_that_is_also_a_node_name_still_selects_the_node(self, manifest: dict[str, Any]) -> None:
+        manifest["nodes"]["model.p.fct_orders"]["name"] = "intermediate"
+
+        assert SelectorEvaluator(ManifestGraph.from_manifest(manifest)).select("intermediate") == {"model.p.fct_orders"}
 
     def test_a_selector_of_exactly_the_limit_is_evaluated(self, evaluator: SelectorEvaluator) -> None:
         assert evaluator.select("x" * 1000) == frozenset()

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable, KeysView, Mapping
 
 MODEL_FOLDER_INDEX = 1  # a model's fqn is [package, folder under models/, ...]
 DEFAULT_SEVERITY = "error"
@@ -61,6 +61,7 @@ class GraphNode(BaseModel):
     description: str
     file_path: str
     package_name: str
+    source_name: str | None  # the source a source table belongs to
     raw_sql: str | None
     contract_enforced: bool
     columns: tuple[NodeColumn, ...]
@@ -81,9 +82,16 @@ class NodeTest(BaseModel):
 class ManifestGraph:
     """The lineage graph of a dbt manifest (sources, seeds, models, snapshots, exposures) and the tests on it."""
 
-    def __init__(self, nodes: Mapping[str, GraphNode], tests: Iterable[NodeTest], generated_at: datetime) -> None:
+    def __init__(
+        self,
+        nodes: Mapping[str, GraphNode],
+        tests: Iterable[NodeTest],
+        generated_at: datetime,
+        reserved_names: frozenset[str] = frozenset(),
+    ) -> None:
         self.nodes = nodes
         self.generated_at = generated_at
+        self.reserved_names = reserved_names  # package, folder and test names: dbt selects groups with them
         self._children: dict[str, list[str]] = {unique_id: [] for unique_id in nodes}
         for node in nodes.values():
             for parent in node.parents:
@@ -105,7 +113,8 @@ class ManifestGraph:
         nodes = {unique_id: _build_node(raw, raw_nodes.keys()) for unique_id, raw in raw_nodes.items()}
         tests = [_build_test(raw, nodes) for raw in manifest["nodes"].values() if raw["resource_type"] == "test"]
         tests += [_build_unit_test(raw, nodes) for raw in manifest.get("unit_tests", {}).values()]
-        return cls(nodes, tests, datetime.fromisoformat(manifest["metadata"]["generated_at"]))
+        generated_at = datetime.fromisoformat(manifest["metadata"]["generated_at"])
+        return cls(nodes, tests, generated_at, _reserved_names(manifest, {node.name for node in nodes.values()}))
 
     def parents(self, unique_id: str) -> tuple[str, ...]:
         return self.nodes[unique_id].parents
@@ -121,12 +130,11 @@ class ManifestGraph:
         return tuple(layer for layer in Layer if layer in present)
 
 
-def _build_node(raw: dict[str, Any], graph_ids: Iterable[str]) -> GraphNode:
+def _build_node(raw: dict[str, Any], graph_ids: KeysView[str]) -> GraphNode:
     resource_type = raw["resource_type"]
     config = raw.get("config", {})
     meta = {**raw.get("meta", {}), **config.get("meta", {})}
     depends_on = raw.get("depends_on", {}).get("nodes", [])
-    graph_ids = set(graph_ids)
     return GraphNode(
         unique_id=raw["unique_id"],
         name=raw["name"],
@@ -137,6 +145,7 @@ def _build_node(raw: dict[str, Any], graph_ids: Iterable[str]) -> GraphNode:
         description=raw.get("description", ""),
         file_path=raw["original_file_path"].replace("\\", "/"),  # dbt writes the separator of the machine it ran on
         package_name=raw["package_name"],
+        source_name=raw.get("source_name") if resource_type == "source" else None,
         raw_sql=raw.get("raw_code") or None,
         contract_enforced=bool(raw.get("contract", {}).get("enforced", False)),
         columns=tuple(
@@ -145,6 +154,16 @@ def _build_node(raw: dict[str, Any], graph_ids: Iterable[str]) -> GraphNode:
         ),
         parents=tuple(dict.fromkeys(unique_id for unique_id in depends_on if unique_id in graph_ids)),
     )
+
+
+def _reserved_names(manifest: dict[str, Any], graph_names: set[str]) -> frozenset[str]:
+    """What dbt reads as a group or a test in a bare atom: the package and folders of every non-source node (the fqn
+    without the node's own name), and the names of the nodes that are not in the graph (tests, analyses...)."""
+    raws = [*manifest["nodes"].values(), *manifest.get("exposures", {}).values()]
+    groups = {part for raw in raws for part in raw.get("fqn", [])[:-1]}
+    others = {raw["name"] for raw in raws if raw["resource_type"] not in _GRAPH_RESOURCE_TYPES}
+    others |= {raw["name"] for raw in manifest.get("unit_tests", {}).values()}
+    return frozenset(groups | others) - graph_names
 
 
 def _layer(resource_type: str, fqn: list[str]) -> Layer:

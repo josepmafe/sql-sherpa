@@ -84,7 +84,9 @@ FETCH_BATCH_ROWS: Final = 100
 FETCH_BATCH_CELLS: Final = 10_000
 CANCEL_TIMEOUT_SECONDS: Final = 5.0
 # UI spec §5. Runs holding a connection at once, below the sherpa_ui role's CONNECTION LIMIT 10
-# (data-platform/postgres/roles.sql), so the health check still gets one while the runner is full.
+# (data-platform/postgres/roles.sql). The other two slots are for the requests that open a connection of their own
+# while the runner is full: the health check and the lineage build-status read (one per graph or node request, which
+# can be several at once).
 MAX_CONCURRENT_QUERIES: Final = 8
 # SQLSTATE 53300 (too_many_connections). libpq gives no SQLSTATE for a refused connection, so it is recognised by
 # Postgres's messages for it: a role's or database's CONNECTION LIMIT, max_connections, the reserved slots.

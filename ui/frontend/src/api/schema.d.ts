@@ -363,6 +363,8 @@ export interface components {
             raw_sql: string | null;
             /** Resource Type */
             resource_type: string;
+            /** Selector */
+            selector: string;
             /** Sql Note */
             sql_note: string | null;
             status: components["schemas"]["NodeStatus"];

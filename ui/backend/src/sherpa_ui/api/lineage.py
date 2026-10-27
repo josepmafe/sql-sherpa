@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from typing import Annotated
-
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 
 from sherpa_ui.api.errors import INVALID_REQUEST_CODE, ApiException, error_responses
 from sherpa_ui.lineage.lineage_service import LineageGraph, LineageService, NodeDetails
 from sherpa_ui.lineage.manifest_graph import Layer
-from sherpa_ui.lineage.selector import MAX_SELECTOR_LENGTH, UnsupportedSelector
+from sherpa_ui.lineage.selector import UnsupportedSelector
 
 router = APIRouter(prefix="/lineage", tags=["lineage"], responses=error_responses(503))
 
@@ -16,7 +14,7 @@ router = APIRouter(prefix="/lineage", tags=["lineage"], responses=error_response
 @router.get("", responses=error_responses(422))
 async def get_lineage(
     request: Request,
-    select: Annotated[str, Query(max_length=MAX_SELECTOR_LENGTH)] = "",
+    select: str = "",
     layers: str | None = None,
     failing_only: bool = False,
 ) -> LineageGraph:

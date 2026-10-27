@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING
 import psycopg
 import pytest
 from psycopg import errors, sql
-from pydantic import SecretStr
 from sherpa_ui.build.build_status import BuildStatusReader, BuildStatusUnavailable
-from sherpa_ui.settings import UiSettings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from sherpa_ui.settings import UiSettings
     from tests.conftest import AdminSettings
 
 # The columns of the table that record_run_results creates (data-platform/dbt/macros/record_run_results.sql).
@@ -28,8 +27,6 @@ INSERT_ROW = "insert into ops.dbt_run_results values (%s, %s, %s, %s, %s, %s, %s
 NEWEST = "2026-10-27T10:00:00+00"
 OLDER = "2026-10-26T10:00:00+00"
 NEWER_THAN_NEWEST = "2026-10-27T12:00:00+00"
-
-pytestmark = pytest.mark.warehouse
 
 
 def _insert(
@@ -79,7 +76,8 @@ def ops_table(scratch_admin: psycopg.Connection, scratch_settings: UiSettings) -
     return scratch_admin
 
 
-class TestBuildStatusReader:
+@pytest.mark.integration
+class TestBuildStatusReaderOnScratchDatabase:
     def test_returns_the_newest_full_prod_build_only(
         self, ops_table: psycopg.Connection, scratch_settings: UiSettings
     ) -> None:
@@ -122,19 +120,6 @@ class TestBuildStatusReader:
 
         assert BuildStatusReader(scratch_settings).last_full_build() is None
 
-    def test_unavailable_when_the_database_is_down(self, closed_port: int) -> None:
-        settings = UiSettings(
-            _env_file=None,  # type: ignore[call-arg]
-            db_host="127.0.0.1",
-            db_port=closed_port,
-            db_name="sherpa",
-            ui_user="sherpa_ui",
-            ui_password=SecretStr("x"),
-        )
-
-        with pytest.raises(BuildStatusUnavailable):
-            BuildStatusReader(settings).last_full_build()
-
     def test_unavailable_without_the_grant_on_ops(
         self, scratch_admin: psycopg.Connection, scratch_settings: UiSettings
     ) -> None:
@@ -143,8 +128,16 @@ class TestBuildStatusReader:
         with pytest.raises(BuildStatusUnavailable):
             BuildStatusReader(scratch_settings).last_full_build()
 
+
+class TestBuildStatusReaderOffline:
+    def test_unavailable_when_the_database_is_down(self, settings: UiSettings, closed_port: int) -> None:
+        unreachable = settings.model_copy(update={"db_port": closed_port})
+
+        with pytest.raises(BuildStatusUnavailable):
+            BuildStatusReader(unreachable).last_full_build()
+
     def test_unavailable_when_the_statement_timeout_cancels_the_read(
-        self, scratch_settings: UiSettings, monkeypatch: pytest.MonkeyPatch
+        self, settings: UiSettings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def cancelled(*_: object, **__: object) -> None:
             raise errors.QueryCanceled("canceling statement due to statement timeout")
@@ -152,4 +145,4 @@ class TestBuildStatusReader:
         monkeypatch.setattr(psycopg, "connect", cancelled)
 
         with pytest.raises(BuildStatusUnavailable):
-            BuildStatusReader(scratch_settings).last_full_build()
+            BuildStatusReader(settings).last_full_build()

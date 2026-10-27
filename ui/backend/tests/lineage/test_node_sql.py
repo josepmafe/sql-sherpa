@@ -45,6 +45,20 @@ class TestNodeSql:
 
         assert NodeSql(tmp_path).compiled(graph.nodes["model.p.fct_orders"]) is None
 
+    def test_a_file_that_is_not_utf8_is_none(self, manifest: dict[str, Any], tmp_path: Path) -> None:
+        graph = ManifestGraph.from_manifest(manifest)
+        path = tmp_path / "compiled" / "p" / "models" / "marts" / "fct_orders.sql"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"select \xff\xfe")
+
+        assert NodeSql(tmp_path).compiled(graph.nodes["model.p.fct_orders"]) is None
+
+    def test_a_path_with_a_nul_byte_is_none(self, manifest: dict[str, Any], tmp_path: Path) -> None:
+        manifest["nodes"]["model.p.fct_orders"]["original_file_path"] = "models/marts/fct\x00_orders.sql"
+        graph = ManifestGraph.from_manifest(manifest)
+
+        assert NodeSql(tmp_path).compiled(graph.nodes["model.p.fct_orders"]) is None
+
     def test_missing_file_is_none(self, manifest: dict[str, Any], tmp_path: Path) -> None:
         graph = ManifestGraph.from_manifest(manifest)
 

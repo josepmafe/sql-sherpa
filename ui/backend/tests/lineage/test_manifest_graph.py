@@ -26,6 +26,12 @@ class TestManifestGraph:
             Layer.EXPOSURE,
         )
 
+    def test_a_source_node_keeps_its_source_name(self, manifest: dict[str, Any]) -> None:
+        graph = ManifestGraph.from_manifest(manifest)
+
+        assert graph.nodes["source.p.shop.orders"].source_name == "shop"
+        assert graph.nodes["model.p.fct_orders"].source_name is None
+
     def test_a_model_outside_the_known_folders_is_other(self, manifest: dict[str, Any]) -> None:
         manifest["nodes"]["model.p.fct_orders"]["fqn"] = ["p", "adhoc", "fct_orders"]
 

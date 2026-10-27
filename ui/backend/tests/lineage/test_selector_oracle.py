@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
+from dbt.cli.main import dbtRunner
 from sherpa_ui.lineage.manifest_graph import ManifestGraph
 from sherpa_ui.lineage.selector import SelectorEvaluator
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from dbt.contracts.graph.manifest import Manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DBT_PROJECT = REPO_ROOT / "data-platform" / "dbt"
-DBT_TIMEOUT_SECONDS = 300
 GRAPH_RESOURCE_TYPES = ("model", "seed", "snapshot", "source", "exposure")
 SELECTORS = [
     "fct_orders",
@@ -38,40 +36,10 @@ SELECTORS = [
 
 
 @pytest.fixture(scope="session")
-def target_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A fresh `dbt parse` into a temporary target path, so a stale `target-prod` cannot fail the test."""
-    path = tmp_path_factory.mktemp("dbt-target")
-    _dbt("parse", path)
-    return path
-
-
-@pytest.fixture(scope="session")
-def evaluator(target_path: Path) -> SelectorEvaluator:
-    manifest = json.loads((target_path / "manifest.json").read_text(encoding="utf-8"))
-    return SelectorEvaluator(ManifestGraph.from_manifest(manifest))
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize("selector", SELECTORS)
-def test_matches_dbt_ls(evaluator: SelectorEvaluator, target_path: Path, selector: str) -> None:
-    resource_types = [arg for resource_type in GRAPH_RESOURCE_TYPES for arg in ("--resource-type", resource_type)]
-    output = _dbt(
-        "ls", target_path, "--select", selector, *resource_types, "--output", "json", "--output-keys", "unique_id"
-    )
-
-    expected = {
-        json.loads(line)["unique_id"] for line in output.splitlines() if line.startswith("{") and "unique_id" in line
-    }
-
-    assert evaluator.select(selector) == expected
-
-
-def _dbt(command: str, target_path: Path, *args: str) -> str:
-    arguments: Sequence[str] = [
-        sys.executable,
-        "-m",
-        "dbt.cli.main",
-        command,
+def dbt_args(tmp_path_factory: pytest.TempPathFactory) -> list[str]:
+    """The arguments of every dbt call, with a temporary target path so a stale `target-prod` cannot fail the test."""
+    target_path = tmp_path_factory.mktemp("dbt-target")
+    return [
         "--project-dir",
         str(DBT_PROJECT),
         "--profiles-dir",
@@ -80,10 +48,31 @@ def _dbt(command: str, target_path: Path, *args: str) -> str:
         "prod",
         "--target-path",
         str(target_path),
-        *args,
     ]
-    result = subprocess.run(
-        arguments, cwd=REPO_ROOT, capture_output=True, text=True, timeout=DBT_TIMEOUT_SECONDS, check=False
+
+
+@pytest.fixture(scope="session")
+def parsed(dbt_args: list[str]) -> Manifest:
+    """One `dbt parse` for the whole module, in-process: every `dbt ls` reuses its manifest."""
+    result = dbtRunner().invoke(["parse", *dbt_args])
+    assert result.success, f"dbt parse failed: {result.exception}"
+    return cast("Manifest", result.result)
+
+
+@pytest.fixture(scope="session")
+def evaluator(parsed: Manifest) -> SelectorEvaluator:
+    return SelectorEvaluator(ManifestGraph.from_manifest(parsed.writable_manifest().to_dict()))
+
+
+@pytest.mark.warehouse  # needs the dbt packages installed (`make build-prod` does it), like the warehouse tests
+@pytest.mark.parametrize("selector", SELECTORS)
+def test_matches_dbt_ls(evaluator: SelectorEvaluator, parsed: Manifest, dbt_args: list[str], selector: str) -> None:
+    resource_types = [arg for resource_type in GRAPH_RESOURCE_TYPES for arg in ("--resource-type", resource_type)]
+    result = dbtRunner(manifest=parsed).invoke(
+        ["ls", *dbt_args, "--select", selector, *resource_types, "--output", "json", "--output-keys", "unique_id"]
     )
-    assert result.returncode == 0, f"dbt {command} failed:\n{result.stdout}\n{result.stderr}"
-    return result.stdout
+    assert result.success, f"dbt ls failed: {result.exception}"
+
+    expected = {json.loads(line)["unique_id"] for line in cast("list[str]", result.result)}
+
+    assert evaluator.select(selector) == expected

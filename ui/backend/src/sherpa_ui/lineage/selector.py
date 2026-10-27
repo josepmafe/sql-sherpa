@@ -16,6 +16,7 @@ SUPPORTED_FORMS = (
     "config.meta.domain:<domain>; graph operators +atom, atom+, n+atom, atom+n, n+atom+m; "
     "several atoms separated by spaces"
 )
+RESERVED_NAME_HINT = "a folder, package or test name selects a group in dbt; use the layer filter for a folder"
 # `[n]+` before and `+[m]` after one atom; the digits are the depth, none means unlimited.
 _ATOM_WITH_OPERATORS = re.compile(r"^(?P<up>(?P<up_depth>\d*)\+)?(?P<atom>[^+]+?)(?P<down>\+(?P<down_depth>\d*))?$")
 _NAME = r"[\w-]+"
@@ -28,9 +29,10 @@ _NAME_ATOM = re.compile(rf"^{_NAME}$")
 class UnsupportedSelector(Exception):
     """The selector uses dbt syntax outside the supported subset (UI spec §6.5)."""
 
-    def __init__(self, selector: str) -> None:
+    def __init__(self, selector: str, hint: str | None = None) -> None:
         shown = selector if len(selector) <= SHOWN_LENGTH else f"{selector[:SHOWN_LENGTH]}..."
-        self.message = f"unsupported selector {shown!r}; {SUPPORTED_FORMS}"
+        reason = f"{hint}; " if hint else ""
+        self.message = f"unsupported selector {shown!r}; {reason}{SUPPORTED_FORMS}"
         super().__init__(self.message)
 
 
@@ -73,7 +75,7 @@ class SelectorEvaluator:
                 node.unique_id
                 for node in nodes
                 if node.resource_type == "source"
-                and node.unique_id.split(".")[2] == source["source"]
+                and node.source_name == source["source"]
                 and (source["table"] is None or node.name == source["table"])
             }
         if (exposure := _EXPOSURE_ATOM.match(atom)) is not None:
@@ -83,6 +85,9 @@ class SelectorEvaluator:
         if (domain := _DOMAIN_ATOM.match(atom)) is not None:
             return {node.unique_id for node in nodes if node.domain == domain["domain"]}
         if _NAME_ATOM.match(atom) is not None:
+            if atom in self._graph.reserved_names:
+                raise UnsupportedSelector(token, RESERVED_NAME_HINT)
+
             # dbt's bare names reach models, seeds, snapshots and exposures; a source table needs `source:`.
             return {node.unique_id for node in nodes if node.resource_type != "source" and node.name == atom}
         raise UnsupportedSelector(token)

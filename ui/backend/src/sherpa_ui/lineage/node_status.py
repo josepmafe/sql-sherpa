@@ -47,10 +47,10 @@ _TEST_OUTCOMES: Final = {
 }
 _NODE_STATUSES: Final = {
     "success": NodeStatus.OK,
-    "partial success": NodeStatus.OK,
     "no-op": NodeStatus.OK,
     "error": NodeStatus.FAILED,
     "runtime error": NodeStatus.FAILED,
+    "partial success": NodeStatus.FAILED,  # dbt treats it as a failure and skips the dependents
     "skipped": NodeStatus.SKIPPED,
 }
 

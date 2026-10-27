@@ -33,6 +33,7 @@ def _node(
         contract_enforced=False,
         columns=(),
         parents=parents,
+        source_name=None,
     )
 
 
@@ -76,13 +77,6 @@ def _deriver(
     return StatusDeriver(graph, None if statuses is None else _build(statuses))
 
 
-class TestLastFullBuild:
-    def test_node_count_is_the_number_of_rows(self) -> None:
-        build = _build({MODEL: "success", TEST: "pass"})
-
-        assert build.node_count == 2
-
-
 class TestStatusDeriver:
     @pytest.mark.parametrize(
         ("status", "outcome"),
@@ -105,7 +99,7 @@ class TestStatusDeriver:
 
         assert deriver.test_outcome(_test(TEST, (MODEL,))) == TestOutcome.NOT_RUN
 
-    @pytest.mark.parametrize("status", ["error", "runtime error"])
+    @pytest.mark.parametrize("status", ["error", "runtime error", "partial success"])
     def test_own_error_row_fails_the_node(self, status: str) -> None:
         assert _deriver({MODEL: status}).node_status(MODEL) == NodeStatus.FAILED
 
@@ -118,7 +112,7 @@ class TestStatusDeriver:
     def test_a_warned_test_warns_the_node(self) -> None:
         assert _deriver({MODEL: "success", TEST: "warn"}).node_status(MODEL) == NodeStatus.WARNED
 
-    @pytest.mark.parametrize("status", ["success", "partial success", "no-op"])
+    @pytest.mark.parametrize("status", ["success", "no-op"])
     def test_own_success_row_is_ok(self, status: str) -> None:
         assert _deriver({MODEL: status, TEST: "pass"}).node_status(MODEL) == NodeStatus.OK
 

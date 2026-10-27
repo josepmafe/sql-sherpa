@@ -18,7 +18,7 @@ class NodeSql:
         self._root = (target_path / COMPILED_DIR).resolve()
 
     def compiled(self, node: GraphNode) -> str | None:
-        """None when the file is missing or the node's path would leave `compiled/`."""
+        """None when the file is missing, unreadable or the node's path would leave `compiled/`."""
         # `file_path` already uses forward slashes, whatever OS wrote the manifest. A node defined in YAML (a snapshot)
         # is compiled to `<yaml path>/<name>.sql`.
         if node.file_path.endswith(SQL_SUFFIX):
@@ -26,11 +26,11 @@ class NodeSql:
         else:
             relative = f"{node.file_path}/{node.name}{SQL_SUFFIX}"
 
-        path = (self._root / node.package_name / relative).resolve()
-        if not path.is_relative_to(self._root) or not path.is_file():
-            return None
-
         try:
+            path = (self._root / node.package_name / relative).resolve()
+            if not path.is_relative_to(self._root) or not path.is_file():
+                return None
+
             return path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, ValueError):  # unreadable, undecodable, or a NUL in the path
             return None

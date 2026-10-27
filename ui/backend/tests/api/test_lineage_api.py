@@ -79,10 +79,10 @@ class TestLineageApi:
         assert response.json()["code"] == "invalid_request"
         assert "bogus" in response.json()["message"]
 
-    def test_selector_over_the_cap_is_invalid_request(self, lineage_client: TestClient) -> None:
+    def test_selector_over_the_cap_is_an_unsupported_selector(self, lineage_client: TestClient) -> None:
         response = lineage_client.get("/api/lineage", params={"select": "a" * 1001})
 
-        assert (response.status_code, response.json()["code"]) == (422, "invalid_request")
+        assert (response.status_code, response.json()["code"]) == (422, "unsupported_selector")
 
     def test_failing_only_without_a_build_is_empty(self, lineage_client: TestClient) -> None:
         body = lineage_client.get("/api/lineage", params={"failing_only": "true"}).json()
