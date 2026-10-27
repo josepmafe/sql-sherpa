@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
+import type { LineageParams } from "../screens/lineage/url";
 import { api, type ApiError, apiError } from "./client";
 
 // UI spec §2: data is never stale for long, and comes back when the window regains focus.
@@ -63,6 +64,39 @@ export function useTableDetails(name: string | undefined) {
       return data;
     },
     enabled: name !== undefined,
+    ...QUERY_DEFAULTS,
+  });
+}
+
+// The graph for a selector. The node picked in the URL is not part of the key: picking one does not refetch. The
+// previous graph stays while a new selector loads, so the controls do not flicker.
+export function useLineage(params: Pick<LineageParams, "select" | "layers" | "failingOnly">) {
+  const { select, layers, failingOnly } = params;
+  return useQuery({
+    queryKey: ["lineage", select, layers, failingOnly],
+    queryFn: async () => {
+      const { data, error, response } = await api.GET("/api/lineage", {
+        params: { query: { select, layers: layers?.join(","), failing_only: failingOnly } },
+      });
+      if (error !== undefined) throw new ApiRequestError(apiError(error, response.status), response.status);
+      return data;
+    },
+    placeholderData: keepPreviousData,
+    ...QUERY_DEFAULTS,
+  });
+}
+
+export function useLineageNode(uniqueId: string | undefined) {
+  return useQuery({
+    queryKey: ["lineage", "nodes", uniqueId],
+    queryFn: async () => {
+      const { data, error, response } = await api.GET("/api/lineage/nodes/{unique_id}", {
+        params: { path: { unique_id: uniqueId ?? "" } },
+      });
+      if (error !== undefined) throw new ApiRequestError(apiError(error, response.status), response.status);
+      return data;
+    },
+    enabled: uniqueId !== undefined,
     ...QUERY_DEFAULTS,
   });
 }

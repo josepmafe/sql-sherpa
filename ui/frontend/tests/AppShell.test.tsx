@@ -6,10 +6,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { routes } from "../src/app/routes";
 
 const useCatalog = vi.fn();
-vi.mock("../src/api/queries", () => ({
+vi.mock("../src/api/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/api/queries")>()),
   useHealth: () => ({ data: { database: "ok", artifacts: { status: "ok", generated_at: null } } }),
   useCatalog: () => useCatalog(),
   useTableDetails: () => ({ data: undefined }),
+  useLineage: () => ({ error: null, data: { nodes: [], edges: [], layers_available: [], build: { state: "ok" } } }),
 }));
 
 function renderAt(path: string) {
@@ -32,7 +34,14 @@ describe("AppShell", () => {
     const nav = screen.getByRole("navigation");
     const links = within(nav).getAllByRole("link");
 
-    expect(links.map((link) => link.textContent)).toEqual(["Explorer"]);
+    expect(links.map((link) => link.textContent)).toEqual(["Explorer", "Lineage"]);
+  });
+
+  it("shows Lineage", () => {
+    renderAt("/lineage");
+
+    expect(screen.getByRole("link", { name: "Lineage" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByText("0 nodes")).toBeInTheDocument();
   });
 
   it("redirects / to the Explorer", () => {

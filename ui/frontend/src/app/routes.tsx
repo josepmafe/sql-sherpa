@@ -1,6 +1,7 @@
 import { Navigate, type RouteObject } from "react-router-dom";
 
 import { ExplorerScreen } from "../screens/explorer/ExplorerScreen";
+import { LineageScreen } from "../screens/lineage/LineageScreen";
 import { AppShell } from "./AppShell";
 import { RouteError } from "./RouteError";
 
@@ -12,6 +13,7 @@ export const routes: RouteObject[] = [
     children: [
       { path: "/", element: <Navigate to="/explorer" replace /> },
       { path: "/explorer", element: <ExplorerScreen /> },
+      { path: "/lineage", element: <LineageScreen /> },
     ],
   },
 ];
