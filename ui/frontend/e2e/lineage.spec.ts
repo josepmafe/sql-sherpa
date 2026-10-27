@@ -181,6 +181,7 @@ test("an unsupported selector shows the supported forms and keeps the previous g
 }) => {
   await page.goto("/lineage?select=%2Bfct_orders%2B");
   const before = await shownNames(page);
+  expect(before.length).toBeGreaterThan(1);
   const box = page.getByRole("textbox", { name: "dbt selector" });
 
   await box.fill("fct_orders,dim_customers");
@@ -189,7 +190,7 @@ test("an unsupported selector shows the supported forms and keeps the previous g
   await expect(
     page.getByRole("alert").filter({ hasText: "supported selectors:" }),
   ).toBeVisible();
-  expect(await shownNames(page)).toEqual(before);
+  await expect.poll(() => shownNames(page)).toEqual(before);
 });
 
 test("reload and back/forward restore the view, selected node included", async ({
@@ -234,7 +235,10 @@ test("reload and back/forward restore the view, selected node included", async (
 
 // The shared warehouse must not hold a really failing build, so this inserts a synthetic full prod build with the
 // shape of the audit hook's rows (data-platform/dbt/macros/record_run_results.sql), copied from the newest real one,
-// and deletes it afterwards. Run it on purpose: SHERPA_E2E_LINEAGE_FAILING=1.
+// and deletes it afterwards. Run it on purpose: SHERPA_E2E_LINEAGE_FAILING=1. A run that is killed before its cleanup
+// leaves a fake newest build behind; the next run clears it first, or by hand as the admin:
+//   delete from ops.dbt_run_results where invocation_id like 'e2e-lineage-%';
+const LEFTOVERS_SQL = "delete from ops.dbt_run_results where invocation_id like 'e2e-lineage-%'";
 test("a failing test turns its node red and a warning stays out of Failing only", async ({
   page,
 }) => {
@@ -252,14 +256,16 @@ test("a failing test turns its node red and a warning stays out of Failing only"
         `where invocation_id = '${invocation}' and unique_id = ${firstNotNullTestOf(model)}`,
     );
 
+  adminScalar(LEFTOVERS_SQL);
   try {
-    adminScalar(
+    const inserted = adminScalar(
       `insert into ops.dbt_run_results select '${invocation}', target_name, command, is_full_run, unique_id, ` +
         "resource_type, status, failures, execution_time_s, message, now() from ops.dbt_run_results where " +
         "invocation_id = (select invocation_id from ops.dbt_run_results where target_name = 'prod' and " +
         "command = 'build' and is_full_run group by invocation_id order by max(run_started_at) desc, " +
         "invocation_id desc limit 1)",
     );
+    expect(inserted, "no real full prod build to copy: run make build-prod").toMatch(/INSERT 0 [1-9]\d*$/);
     expect(setStatus("fct_orders", "fail")).toBe("UPDATE 1");
     expect(setStatus("dim_customers", "warn")).toBe("UPDATE 1");
 
@@ -274,8 +280,9 @@ test("a failing test turns its node red and a warning stays out of Failing only"
 
     await expect(graphNode(page, "fct_orders")).toBeVisible();
     await expect(graphNode(page, "dim_customers")).toBeHidden();
+    // The status line of a passing node reads exactly "ok"; a node's name never does.
     await expect(
-      page.locator("button[aria-pressed]").filter({ hasText: /\bok\b/ }),
+      page.locator("button[aria-pressed]").filter({ has: page.getByText("ok", { exact: true }) }),
     ).toHaveCount(0);
   } finally {
     adminScalar(
