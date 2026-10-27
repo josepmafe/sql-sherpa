@@ -61,6 +61,11 @@ def runner(ui_settings: UiSettings, prod_loader: MartCatalogLoader) -> QueryRunn
     return QueryRunner(ui_settings, prod_loader)
 
 
+@pytest.fixture(scope="session")
+def admin_settings() -> AdminSettings:
+    return AdminSettings()  # type: ignore[call-arg]
+
+
 @pytest.fixture
 def admin() -> Iterator[psycopg.Connection]:
     with psycopg.connect(AdminSettings().conninfo(), autocommit=True) as conn:  # type: ignore[call-arg]
