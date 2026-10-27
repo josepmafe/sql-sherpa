@@ -34,6 +34,10 @@ type Elk = InstanceType<(typeof import("elkjs/lib/elk.bundled.js"))["default"]>;
 
 let elkLoad: Promise<Elk> | undefined;
 
+export function columnOf(layer: Layer): number {
+  return COLUMN[layer];
+}
+
 export async function layoutGraph(nodes: LayoutNode[], edges: LayoutEdge[]): Promise<Map<string, Point>> {
   if (nodes.length === 0) return new Map();
   const elk = await loadElk();
@@ -43,6 +47,8 @@ export async function layoutGraph(nodes: LayoutNode[], edges: LayoutEdge[]): Pro
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
       "elk.partitioning.activate": "true",
+      // Packing the components side by side would pull a node without edges out of its layer's column.
+      "elk.separateConnectedComponents": "false",
       "elk.layered.spacing.nodeNodeBetweenLayers": String(COLUMN_GAP),
       "elk.spacing.nodeNode": String(ROW_GAP),
     },

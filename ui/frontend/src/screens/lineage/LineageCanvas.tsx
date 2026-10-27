@@ -3,26 +3,30 @@ import "@xyflow/react/dist/style.css";
 import { Alert, Text } from "@mantine/core";
 import {
   type Edge,
+  Controls,
   MarkerType,
   MiniMap,
   type Node,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import { useEffect, useMemo } from "react";
 
 import type { components } from "../../api/schema";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
-import { edgeId, relatedNodes } from "./highlight";
-import { NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { edgeAppearance, edgeId, relatedNodes } from "./highlight";
+import { columnOf, type LayoutEdge, type LayoutNode, NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { useRevealNode } from "./reveal";
 import { useGraphLayout } from "./useGraphLayout";
 
 type ApiNode = components["schemas"]["LineageNode"];
 type ApiEdge = components["schemas"]["LineageEdge"];
 
 const MINIMAP_ABOVE_NODES = 60;
-const DIMMED_EDGE_OPACITY = 0.15;
+// A whole-project fit would zoom a one-node graph to 2x.
+const FIT_MAX_ZOOM = 1;
 const NODE_TYPES = { graph: GraphNode };
 
 interface LineageCanvasProps {
@@ -30,13 +34,16 @@ interface LineageCanvasProps {
   edges: ApiEdge[];
   selected: string | undefined;
   onSelect: (uniqueId: string | undefined) => void;
+  // Why an empty graph is empty.
+  failingOnly: boolean;
+  layersFiltered: boolean;
 }
 
 export function LineageCanvas(props: LineageCanvasProps) {
   if (props.nodes.length === 0) {
     return (
       <Text c="dimmed" ta="center" py="xl">
-        No node matches this selector
+        {emptyText(props.failingOnly, props.layersFiltered)}
       </Text>
     );
   }
@@ -48,22 +55,34 @@ export function LineageCanvas(props: LineageCanvasProps) {
 }
 
 function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
-  const layoutNodes = useMemo(() => nodes.map((node) => ({ id: node.unique_id, layer: node.layer })), [nodes]);
-  const { positions, state } = useGraphLayout(layoutNodes, edges);
+  const { layoutNodes, layoutEdges } = useTopology(nodes, edges);
+  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges);
   const { fitView } = useReactFlow();
+  const reveal = useRevealNode();
+  const canvasWidth = useStore((flow) => flow.width);
+  const canvasHeight = useStore((flow) => flow.height);
   const related = useMemo(() => (selected === undefined ? undefined : relatedNodes(edges, selected)), [edges, selected]);
 
   // Fit after each layout, not after a selection.
   useEffect(() => {
-    if (state === "ready") void fitView();
+    if (state === "ready") void fitView({ maxZoom: FIT_MAX_ZOOM });
   }, [state, positions, fitView]);
 
+  // The panel opening narrows the canvas under the viewport: keep the selected node in sight.
+  useEffect(() => {
+    if (selected !== undefined) reveal(selected);
+  }, [selected, canvasWidth, canvasHeight, reveal]);
+
+  // The DOM order is the Tab order: column by column, top to bottom.
   const flowNodes: Node<GraphNodeData>[] = useMemo(
     () =>
-      nodes.flatMap((node) => {
-        const position = positions?.get(node.unique_id);
-        if (position === undefined) return [];
-        return {
+      nodes
+        .flatMap((node) => {
+          const position = positions?.get(node.unique_id);
+          return position === undefined ? [] : [{ node, position }];
+        })
+        .sort((a, b) => columnOf(a.node.layer) - columnOf(b.node.layer) || a.position.y - b.position.y)
+        .map(({ node, position }) => ({
           id: node.unique_id,
           type: "graph",
           position,
@@ -78,19 +97,22 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
             selected: node.unique_id === selected,
             dimmed: related !== undefined && !related.nodes.has(node.unique_id),
           },
-        };
-      }),
+        })),
     [nodes, positions, selected, related],
   );
   const flowEdges: Edge[] = useMemo(
     () =>
-      edges.map((edge) => ({
-        id: edgeId(edge),
-        source: edge.source,
-        target: edge.target,
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: related !== undefined && !related.edges.has(edgeId(edge)) ? { opacity: DIMMED_EDGE_OPACITY } : undefined,
-      })),
+      edges.map((edge) => {
+        const look = edgeAppearance(related, edgeId(edge));
+        return {
+          id: edgeId(edge),
+          source: edge.source,
+          target: edge.target,
+          markerEnd: { type: MarkerType.ArrowClosed, color: look.stroke },
+          // The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
+          style: { ...look, vectorEffect: "non-scaling-stroke" },
+        };
+      }),
     [edges, related],
   );
 
@@ -120,8 +142,31 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
         onPaneClick={() => onSelect(undefined)}
         proOptions={{ hideAttribution: true }}
       >
-        {nodes.length > MINIMAP_ABOVE_NODES && <MiniMap pannable zoomable />}
+        <Controls showInteractive={false} />
+        {nodes.length > MINIMAP_ABOVE_NODES && selected === undefined && <MiniMap pannable zoomable />}
       </ReactFlow>
     </div>
   );
+}
+
+// The layout depends on the nodes' ids and layers and on the edges, not on their statuses: a refetch that only
+// changes a status keeps the same arrays, so ELK does not run again and the viewport stays.
+function useTopology(nodes: ApiNode[], edges: ApiEdge[]): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
+  const key = JSON.stringify([
+    nodes.map((node) => [node.unique_id, node.layer]),
+    edges.map((edge) => [edge.source, edge.target]),
+  ]);
+  return useMemo(() => {
+    const [ns, es] = JSON.parse(key) as [[string, ApiNode["layer"]][], [string, string][]];
+    return {
+      layoutNodes: ns.map(([id, layer]) => ({ id, layer })),
+      layoutEdges: es.map(([source, target]) => ({ source, target })),
+    };
+  }, [key]);
+}
+
+function emptyText(failingOnly: boolean, layersFiltered: boolean): string {
+  if (failingOnly) return "Nothing failed in the last full build";
+  if (layersFiltered) return "No node in the layers shown";
+  return "No node matches this selector";
 }

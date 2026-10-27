@@ -17,6 +17,7 @@ function renderFilter(props: Partial<Parameters<typeof LayerFilter>[0]> = {}) {
         failingOnly={false}
         onFailingOnly={onFailingOnly}
         buildState="ok"
+        startedAt={null}
         {...props}
       />
     </MantineProvider>,
@@ -60,16 +61,25 @@ describe("LayerFilter", () => {
 
   it.each([
     ["no_build", "No full build recorded: run make build-prod"],
-    ["unavailable", "Build status unavailable: the database is down"],
+    ["unavailable", "Build status unavailable (could not read the build record; see the ui log)"],
   ] as const)("a %s build shows its note", (buildState, note) => {
     renderFilter({ buildState });
 
     expect(screen.getByText(note)).toBeInTheDocument();
   });
 
-  it("a recorded build shows no note", () => {
-    renderFilter();
+  it("a recorded build says which one the status comes from", () => {
+    renderFilter({ startedAt: "2026-10-26T14:05:09Z" });
 
+    expect(screen.getByText("Status from the full build of 2026-10-26 14:05 UTC")).toBeInTheDocument();
     expect(screen.queryByText(/No full build|Build status unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("unticking the last layer shown is ignored", async () => {
+    const { onLayers } = renderFilter({ layers: ["marts"] });
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "marts" }));
+
+    expect(onLayers).not.toHaveBeenCalled();
   });
 });

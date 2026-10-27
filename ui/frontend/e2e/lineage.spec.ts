@@ -226,11 +226,26 @@ test("reload and back/forward restore the view, selected node included", async (
 
   await expect(box).toHaveValue("+fct_orders+");
   await expect(graphNode(page, "fct_orders")).toBeVisible();
+  await expect(page).toHaveURL(withNode);
+  await expect(page.getByRole("complementary", { name: "Node details" })).toBeVisible();
+  await expect(graphNode(page, "fct_orders")).toHaveAttribute("aria-pressed", "true");
 
   await page.goForward();
 
   await expect(box).toHaveValue("dim_customers");
   await expect(graphNode(page, "fct_orders")).toBeHidden();
+});
+
+test("closing the panel with Esc returns the focus to the node", async ({ page }) => {
+  await page.goto("/lineage?select=%2Bfct_orders%2B");
+  await graphNode(page, "fct_orders").click();
+  await expect(page.getByRole("complementary", { name: "Node details" })).toBeVisible();
+  await page.getByRole("button", { name: "Close the node panel" }).focus();
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByRole("complementary", { name: "Node details" })).toBeHidden();
+  await expect(graphNode(page, "fct_orders")).toBeFocused();
 });
 
 // The shared warehouse must not hold a really failing build, so this inserts a synthetic full prod build with the

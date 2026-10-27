@@ -43,9 +43,10 @@ export function useLineageParams(): [LineageParams, (patch: Partial<LineageParam
   const params = parseLineageSearch(search);
   const update = useCallback(
     (patch: Partial<LineageParams>) => {
-      const next = { ...parseLineageSearch(search), ...patch };
+      const next = toSearchParams({ ...parseLineageSearch(search), ...patch });
+      if (next.toString() === search.toString()) return; // Enter on the applied selector is not a new view.
       const onlyNode = Object.keys(patch).every((key) => key === "node");
-      setSearch(toSearchParams(next), { replace: onlyNode });
+      setSearch(next, { replace: onlyNode });
     },
     [search, setSearch],
   );

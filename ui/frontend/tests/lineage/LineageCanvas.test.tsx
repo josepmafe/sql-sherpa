@@ -1,12 +1,18 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { components } from "../../src/api/schema";
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
 import { layoutGraph } from "../../src/screens/lineage/layout";
+
+// The real layout, with its calls counted.
+vi.mock("../../src/screens/lineage/layout", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../src/screens/lineage/layout")>();
+  return { ...original, layoutGraph: vi.fn(original.layoutGraph) };
+});
 
 type Node = components["schemas"]["LineageNode"];
 
@@ -36,11 +42,11 @@ const EDGES = [
   { source: "model.s.b", target: "model.s.c" },
 ];
 
-function Harness({ initial }: { initial?: string }) {
+function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; nodes?: Node[]; edges?: typeof EDGES }) {
   const [selected, setSelected] = useState(initial);
   return (
     <MantineProvider env="test">
-      <LineageCanvas nodes={NODES} edges={EDGES} selected={selected} onSelect={setSelected} />
+      <LineageCanvas nodes={nodes} edges={edges} selected={selected} onSelect={setSelected} failingOnly={false} layersFiltered={false} />
     </MantineProvider>
   );
 }
@@ -72,11 +78,32 @@ describe("LineageCanvas", () => {
   it("shows the empty state", () => {
     render(
       <MantineProvider env="test">
-        <LineageCanvas nodes={[]} edges={[]} selected={undefined} onSelect={() => {}} />
+        <LineageCanvas nodes={[]} edges={[]} selected={undefined} onSelect={() => {}} failingOnly={false} layersFiltered={false} />
       </MantineProvider>,
     );
 
     expect(screen.getByText("No node matches this selector")).toBeInTheDocument();
+  });
+
+  it.each([
+    [true, false, "Nothing failed in the last full build"],
+    [true, true, "Nothing failed in the last full build"],
+    [false, true, "No node in the layers shown"],
+  ])("the empty state names its reason (failing only %s, layers filtered %s)", (failingOnly, layersFiltered, text) => {
+    render(
+      <MantineProvider env="test">
+        <LineageCanvas
+          nodes={[]}
+          edges={[]}
+          selected={undefined}
+          onSelect={() => {}}
+          failingOnly={failingOnly}
+          layersFiltered={layersFiltered}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText(text)).toBeInTheDocument();
   });
 
   it("Enter on a focused node selects it", async () => {
@@ -121,6 +148,49 @@ describe("LineageCanvas", () => {
     fireEvent.click(document.querySelector(".react-flow__pane")!);
     expect(await item("x")).not.toHaveAttribute("data-dimmed");
   });
+
+  it("a dimmed node dims its chrome, not its text", async () => {
+    render(<Harness initial="model.s.b" />);
+
+    const x = await item("x");
+
+    expect(x).toHaveAttribute("data-dimmed");
+    expect(x.style.opacity).toBe("");
+  });
+
+  it("Tab follows the visual order: column by column, not the order of the API", async () => {
+    render(<Harness nodes={[NODES[2]!, NODES[3]!, NODES[1]!, NODES[0]!]} />);
+    await item("a");
+
+    const names = [...document.querySelectorAll("button[aria-pressed]")].map((button) => button.querySelector("span")?.textContent);
+
+    expect(names[0]).toBe("a");
+    expect(names[3]).toBe("c");
+  });
+
+  it("a status-only refetch keeps the layout, so the zoom stays", async () => {
+    const view = render(<Harness />);
+    await item("x");
+    const runs = vi.mocked(layoutGraph).mock.calls.length;
+
+    view.rerender(<Harness nodes={NODES.map((node) => (node.name === "x" ? { ...node, status: "ok" as const } : node))} />);
+
+    expect(await screen.findByText("ok")).toBeInTheDocument();
+    expect(layoutGraph).toHaveBeenCalledTimes(runs);
+  });
+
+  it("the minimap of a large graph is hidden while the panel is open", async () => {
+    const many = Array.from({ length: 61 }, (_, index) => node(`n${index}`));
+    render(<Harness nodes={many} edges={[]} />);
+    const graphNodes = () => document.querySelectorAll("button[aria-pressed]");
+    await waitFor(() => expect(graphNodes()).toHaveLength(61), { timeout: 15_000 });
+    const first = graphNodes()[0]!;
+    expect(document.querySelector(".react-flow__minimap")).not.toBeNull();
+
+    fireEvent.click(first);
+
+    expect(document.querySelector(".react-flow__minimap")).toBeNull();
+  }, 20_000);
 
   it("node= in the URL restores the highlight after a reload", async () => {
     render(<Harness initial="model.s.b" />);

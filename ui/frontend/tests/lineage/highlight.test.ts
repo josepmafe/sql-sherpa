@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { relatedNodes } from "../../src/screens/lineage/highlight";
+import { edgeAppearance, PRIMARY_EDGE_COLOR, relatedNodes } from "../../src/screens/lineage/highlight";
 
 const DIAMOND = [
   { source: "a", target: "b" },
@@ -59,5 +59,27 @@ describe("relatedNodes edges", () => {
     const related = relatedNodes(edges, "b");
 
     expect([...related.edges].sort()).toEqual(["a->b", "a->c", "b->c"]);
+  });
+});
+
+describe("edgeAppearance", () => {
+  const related = relatedNodes(DIAMOND, "b");
+
+  it("with no selection every edge has the default look", () => {
+    const edge = edgeAppearance(undefined, "a->b");
+
+    expect(edge).toEqual(edgeAppearance(undefined, "x->y"));
+    expect(edge.opacity).toBe(1);
+  });
+
+  it("a selected node's chain is drawn in the primary colour and the rest fades", () => {
+    const chain = edgeAppearance(related, "a->b");
+    const rest = edgeAppearance(related, "x->y");
+
+    expect(chain.stroke).toBe(PRIMARY_EDGE_COLOR);
+    expect(chain.stroke).not.toBe(edgeAppearance(undefined, "a->b").stroke);
+    expect(chain.opacity).toBe(1);
+    expect(rest.stroke).toBe(edgeAppearance(undefined, "x->y").stroke);
+    expect(rest.opacity).toBeLessThan(0.3);
   });
 });

@@ -19,6 +19,7 @@ const DETAILS = {
   materialization: "table",
   domain: "sales",
   contract_enforced: true,
+  selector: "fct_orders",
   file_path: "models/marts/fct_orders.sql",
   description: "One row per order.",
   is_mart: true,
@@ -115,13 +116,26 @@ describe("NodePanel", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("Copy dbt selector copies the node's name", async () => {
+  it("Copy dbt selector copies the selector of a model and says so", async () => {
     const user = userEvent.setup();
     mount();
 
     await user.click(screen.getByRole("button", { name: "Copy dbt selector" }));
 
     expect(await navigator.clipboard.readText()).toBe("fct_orders");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("Copy dbt selector copies what selects a source, not its table name", async () => {
+    const user = userEvent.setup();
+    useLineageNode.mockReturnValue({
+      data: { ...DETAILS, name: "orders", resource_type: "source", layer: "source", selector: "source:shop.orders" },
+    });
+    mount();
+
+    await user.click(screen.getByRole("button", { name: "Copy dbt selector" }));
+
+    expect(await navigator.clipboard.readText()).toBe("source:shop.orders");
   });
 
   it("Open in Explorer appears for marts only", () => {

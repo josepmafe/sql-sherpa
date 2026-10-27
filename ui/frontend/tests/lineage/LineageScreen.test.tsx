@@ -2,10 +2,17 @@ import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LineageScreen } from "../../src/screens/lineage/LineageScreen";
+
+// No test here reads a position, and the real ELK layout is slow under load.
+vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
+  layoutGraph: (nodes: { id: string }[]) =>
+    Promise.resolve(new Map(nodes.map((node, index) => [node.id, { x: index * 300, y: 0 }]))),
+}));
 
 const get = vi.fn();
 vi.mock("../../src/api/client", async (importOriginal) => ({
@@ -54,13 +61,19 @@ function Where() {
   return <output aria-label="location">{useLocation().search}</output>;
 }
 
-function mount(path: string) {
+function Go({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button onClick={() => void navigate(to)}>go</button>;
+}
+
+function mount(path: string, extra?: React.ReactNode) {
   render(
     <MantineProvider env="test">
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={[path]}>
           <LineageScreen />
           <Where />
+          {extra}
         </MemoryRouter>
       </QueryClientProvider>
     </MantineProvider>,
@@ -125,6 +138,46 @@ describe("LineageScreen", () => {
 
     await waitFor(() => expect(screen.queryByText("Model a.")).not.toBeInTheDocument());
     expect(screen.getByLabelText("location")).not.toHaveTextContent("node=");
+  });
+
+  it.each([
+    ["Esc", () => userEvent.keyboard("{Escape}")],
+    ["the close button", () => userEvent.click(screen.getByRole("button", { name: "Close the node panel" }))],
+  ])("closing the panel with %s returns the focus to the node", async (_, close) => {
+    get.mockImplementation(answer);
+    mount("/lineage?node=model.s.a");
+    expect(await screen.findByRole("complementary", { name: "Node details" })).toBeInTheDocument();
+
+    await close();
+
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Node details" })).not.toBeInTheDocument());
+    expect(document.querySelector('[data-id="model.s.a"] button')).toHaveFocus();
+  });
+
+  it("a node= that only the next graph holds survives the previous graph standing in", async () => {
+    // The graph for s2 is slow; until it arrives the graph for s1 stays, and it does not hold model.s.b.
+    const slow: { resolve?: (value: unknown) => void } = {};
+    const only = (id: string) => ({
+      ...GRAPH,
+      data: { ...GRAPH.data, nodes: GRAPH.data.nodes.filter((node) => node.unique_id === id) },
+    });
+    get.mockImplementation((path: string, options: { params: { query: { select: string } } }) => {
+      if (path !== "/api/lineage") return Promise.resolve({ data: { ...NODE, unique_id: "model.s.b", name: "b" }, response: { status: 200 } });
+      if (options.params.query.select === "s1") return Promise.resolve(only("model.s.a"));
+      return new Promise((resolve) => (slow.resolve = resolve));
+    });
+    mount("/lineage?select=s1", <Go to="/lineage?select=s2&node=model.s.b" />);
+    expect(await screen.findByText("1 nodes")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "go" }));
+    await waitFor(() => expect(slow.resolve).toBeDefined());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(screen.getByLabelText("location")).toHaveTextContent("node=model.s.b");
+    slow.resolve?.(only("model.s.b"));
+    expect(await screen.findByText("1 nodes")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByLabelText("location")).toHaveTextContent("node=model.s.b");
   });
 
   it("a node_not_found keeps the graph and shows a note", async () => {

@@ -33,6 +33,13 @@ export function LineageScreen() {
     if (staleNode) update({ node: undefined });
   }, [staleNode, update]);
 
+  // The node's button keeps the keyboard where it was before the panel opened.
+  const closePanel = () => {
+    const node = params.node;
+    update({ node: undefined });
+    if (node !== undefined) document.querySelector<HTMLElement>(`[data-id="${CSS.escape(node)}"] button`)?.focus();
+  };
+
   return (
     <Stack gap="md">
       <SelectorBar select={params.select} onSelect={(select) => update({ select })} error={error} />
@@ -43,6 +50,7 @@ export function LineageScreen() {
         failingOnly={params.failingOnly}
         onFailingOnly={(failingOnly) => update({ failingOnly })}
         buildState={graph?.build.state ?? "ok"}
+        startedAt={graph?.build.started_at ?? null}
       />
       {loadError && (
         <LoadError title="Could not load the lineage" error={error} onRetry={() => void lineage.refetch()} />
@@ -59,11 +67,13 @@ export function LineageScreen() {
                 edges={graph.edges}
                 selected={params.node}
                 onSelect={(node) => update({ node })}
+                failingOnly={params.failingOnly}
+                layersFiltered={params.layers !== undefined}
               />
             </Box>
             {params.node !== undefined && (
               <ScrollArea h={PANEL_HEIGHT} w={PANEL_WIDTH} style={{ flexShrink: 0 }} offsetScrollbars="y">
-                <NodePanel uniqueId={params.node} onClose={() => update({ node: undefined })} />
+                <NodePanel uniqueId={params.node} onClose={closePanel} />
               </ScrollArea>
             )}
           </Group>

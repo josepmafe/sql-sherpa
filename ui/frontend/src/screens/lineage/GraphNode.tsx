@@ -12,6 +12,7 @@ import type { ComponentType } from "react";
 
 import type { components } from "../../api/schema";
 import { NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { useRevealNode } from "./reveal";
 import type { Layer } from "./url";
 
 type NodeStatus = components["schemas"]["NodeStatus"];
@@ -59,10 +60,13 @@ export const STATUS: Partial<Record<NodeStatus, StatusView>> = {
   inlined: { label: "inlined", Icon: IconSquareDashed, color: GREY, grey: true },
 };
 
-// Low enough to see the dimming, high enough that a dimmed node's text stays legible.
-const DIMMED_OPACITY = 0.5;
+// A dimmed node fades its stripe, border and background; the text keeps the theme's contrast.
+const DIMMED_STRIPE = "light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4))";
+const DIMMED_BORDER = "light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-5))";
+const DIMMED_BACKGROUND = "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7))";
 
-export function GraphNode({ data }: NodeProps<Node<GraphNodeData>>) {
+export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
+  const reveal = useRevealNode();
   const status = STATUS[data.status];
   const failed = data.status === "failed";
   const stripe = LAYER_COLOR[data.layer];
@@ -73,6 +77,7 @@ export function GraphNode({ data }: NodeProps<Node<GraphNodeData>>) {
         type="button"
         data-dimmed={data.dimmed ? "" : undefined}
         aria-pressed={data.selected}
+        onFocus={() => reveal(id)}
         style={{
           width: NODE_WIDTH,
           height: NODE_HEIGHT,
@@ -83,16 +88,19 @@ export function GraphNode({ data }: NodeProps<Node<GraphNodeData>>) {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          background: "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))",
+          background: data.dimmed
+            ? DIMMED_BACKGROUND
+            : "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))",
           color: "var(--mantine-color-text)",
           // Longhands: a shorthand set after the stripe would reset it when the status changes.
           borderStyle: "solid",
           borderWidth: failed ? 2 : 1,
-          borderColor: failed ? RED : "var(--mantine-color-default-border)",
+          borderColor: data.dimmed ? DIMMED_BORDER : failed ? RED : "var(--mantine-color-default-border)",
           borderLeftWidth: 6,
-          borderLeftColor: `light-dark(var(--mantine-color-${stripe}-8), var(--mantine-color-${stripe}-4))`,
+          borderLeftColor: data.dimmed
+            ? DIMMED_STRIPE
+            : `light-dark(var(--mantine-color-${stripe}-8), var(--mantine-color-${stripe}-4))`,
           borderRadius: 4,
-          opacity: data.dimmed ? DIMMED_OPACITY : 1,
           outline: data.selected ? "3px solid var(--mantine-primary-color-filled)" : undefined,
           outlineOffset: 2,
         }}

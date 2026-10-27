@@ -7,6 +7,7 @@ import {
   IconPlayerSkipForward,
   IconX,
 } from "@tabler/icons-react";
+import { useClipboard } from "@mantine/hooks";
 import { type ComponentType, useEffect } from "react";
 import { Link } from "react-router-dom";
 
@@ -68,6 +69,7 @@ export function NodePanel({ uniqueId, onClose }: NodePanelProps) {
 }
 
 function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
+  const clipboard = useClipboard();
   if (node.isError) {
     // The graph stays: the node is simply not in the project (e.g. a stale link).
     if ("code" in node.error && node.error.code === NODE_NOT_FOUND) {
@@ -100,8 +102,8 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
         <b>File:</b> <Code>{d.file_path}</Code>
       </Text>
       <Group gap="xs">
-        <Button size="xs" variant="default" onClick={() => void navigator.clipboard.writeText(d.name)}>
-          Copy dbt selector
+        <Button size="xs" variant="default" onClick={() => clipboard.copy(d.selector)}>
+          {clipboard.copied ? "Copied" : "Copy dbt selector"}
         </Button>
         {d.is_mart && (
           <Button size="xs" variant="default" component={Link} to={`/explorer?table=${encodeURIComponent(d.name)}`}>

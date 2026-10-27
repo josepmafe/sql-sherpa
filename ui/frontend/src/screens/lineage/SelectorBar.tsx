@@ -39,6 +39,7 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
   const [tableText, setTableText] = useState(path?.name ?? "");
   const [syncedSelect, setSyncedSelect] = useState(select);
   const clipboard = useClipboard();
+  const copyBlocked = copyBlockReason(select, error);
   // The box follows the URL (back/forward, a mode control) unless the user is mid-typing a new selector.
   if (select !== syncedSelect) {
     setSyncedSelect(select);
@@ -113,7 +114,12 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
           error={unsupportedMessage(error)}
           errorProps={{ role: "alert" }}
         />
-        <Button variant="light" onClick={() => clipboard.copy(select)}>
+        <Button
+          variant="light"
+          disabled={copyBlocked !== undefined}
+          title={copyBlocked}
+          onClick={() => clipboard.copy(oneLine(select))}
+        >
           {clipboard.copied ? "Copied" : "Copy dbt selector"}
         </Button>
       </Group>
@@ -143,6 +149,17 @@ function DepthSelect(props: {
       onChange={(value) => value !== null && props.onChange(value === "all" ? "all" : (Number(value) as Depth))}
     />
   );
+}
+
+function copyBlockReason(select: string, error: Error | null): string | undefined {
+  if (unsupportedMessage(error) !== undefined) return "dbt does not run this selector here: nothing to copy";
+  if (select.trim() === "") return "The whole project has no selector to copy";
+  return undefined;
+}
+
+// A selector pasted into a shell must be one line.
+function oneLine(select: string): string {
+  return select.trim().split(/\s+/).join(" ");
 }
 
 function unsupportedMessage(error: Error | null): string | undefined {

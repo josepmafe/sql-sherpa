@@ -32,3 +32,23 @@ export function relatedNodes(edges: LayoutEdge[], id: string): Related {
   const related = edges.filter((edge) => nodes.has(edge.source) && nodes.has(edge.target));
   return { nodes, edges: new Set(related.map(edgeId)) };
 }
+
+// 3:1 against the canvas in both themes (non-text contrast, WCAG 1.4.11).
+const EDGE_COLOR = "light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))";
+export const PRIMARY_EDGE_COLOR = "var(--mantine-primary-color-filled)";
+const EDGE_WIDTH = 1.5;
+const RELATED_EDGE_WIDTH = 2;
+const DIMMED_EDGE_OPACITY = 0.15;
+
+export interface EdgeAppearance {
+  stroke: string;
+  strokeWidth: number;
+  opacity: number;
+}
+
+// With a node selected its chain stands out in the primary colour and the other edges fade.
+export function edgeAppearance(related: Related | undefined, id: string): EdgeAppearance {
+  if (related === undefined) return { stroke: EDGE_COLOR, strokeWidth: EDGE_WIDTH, opacity: 1 };
+  if (related.edges.has(id)) return { stroke: PRIMARY_EDGE_COLOR, strokeWidth: RELATED_EDGE_WIDTH, opacity: 1 };
+  return { stroke: EDGE_COLOR, strokeWidth: EDGE_WIDTH, opacity: DIMMED_EDGE_OPACITY };
+}

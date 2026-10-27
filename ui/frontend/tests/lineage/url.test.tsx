@@ -52,6 +52,16 @@ describe("lineage URL state", () => {
       expect(router.state.location.search).toContain("node=model.sherpa.fct_orders");
     });
 
+    it("applying what the URL already holds adds no history entry", () => {
+      const { router, hook } = renderProbe();
+      const before = router.state.historyAction;
+
+      act(() => hook.current[1]({ select: "fct_orders" }));
+
+      expect(router.state.historyAction).toBe(before);
+      expect(router.state.location.search).toBe("?select=fct_orders");
+    });
+
     it("changing the selector pushes a history entry", () => {
       const { router, hook } = renderProbe();
 

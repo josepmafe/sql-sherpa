@@ -78,6 +78,34 @@ describe("SelectorBar", () => {
     expect(onSelect).toHaveBeenCalledWith("+fct_orders+ +dim_products");
   });
 
+  it("Copy dbt selector copies the applied selector on one line", async () => {
+    const user = userEvent.setup();
+    renderBar("  +fct_orders+\n  +dim_products ");
+
+    await user.click(screen.getByRole("button", { name: "Copy dbt selector" }));
+
+    expect(await navigator.clipboard.readText()).toBe("+fct_orders+ +dim_products");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("Copy dbt selector is disabled for the whole project, with the reason", () => {
+    renderBar("");
+
+    const button = screen.getByRole("button", { name: "Copy dbt selector" });
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "The whole project has no selector to copy");
+  });
+
+  it("Copy dbt selector is disabled for a refused selector, with the reason", () => {
+    renderBar("tag:x", new ApiRequestError({ code: "unsupported_selector", message: "unsupported" }, 422));
+
+    const button = screen.getByRole("button", { name: "Copy dbt selector" });
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "dbt does not run this selector here: nothing to copy");
+  });
+
   it("an unsupported selector shows the supported forms", () => {
     const message = "unsupported selector 'tag:x'; supported selectors: a model name, source:<source>";
     renderBar("tag:x", new ApiRequestError({ code: "unsupported_selector", message }, 422));

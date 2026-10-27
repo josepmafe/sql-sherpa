@@ -6,7 +6,7 @@ type BuildState = "ok" | "no_build" | "unavailable";
 
 const BUILD_NOTES: Record<Exclude<BuildState, "ok">, string> = {
   no_build: "No full build recorded: run make build-prod",
-  unavailable: "Build status unavailable: the database is down",
+  unavailable: "Build status unavailable (could not read the build record; see the ui log)",
 };
 
 interface LayerFilterProps {
@@ -17,9 +17,11 @@ interface LayerFilterProps {
   failingOnly: boolean;
   onFailingOnly: (failingOnly: boolean) => void;
   buildState: BuildState;
+  // When the full build whose statuses the graph shows started (ISO 8601).
+  startedAt: string | null;
 }
 
-export function LayerFilter({ available, layers, onLayers, failingOnly, onFailingOnly, buildState }: LayerFilterProps) {
+export function LayerFilter({ available, layers, onLayers, failingOnly, onFailingOnly, buildState, startedAt }: LayerFilterProps) {
   const shown = layers ?? available;
   return (
     <Group gap="md" align="center">
@@ -28,6 +30,7 @@ export function LayerFilter({ available, layers, onLayers, failingOnly, onFailin
         value={shown}
         onChange={(value) => {
           const next = available.filter((layer) => value.includes(layer));
+          if (next.length === 0) return; // no layer shown is not a view
           onLayers(next.length === available.length ? undefined : next);
         }}
       >
@@ -44,11 +47,20 @@ export function LayerFilter({ available, layers, onLayers, failingOnly, onFailin
         checked={failingOnly}
         onChange={(event) => onFailingOnly(event.currentTarget.checked)}
       />
-      {buildState !== "ok" && (
+      {note(buildState, startedAt) !== undefined && (
         <Text size="sm" c="dimmed">
-          {BUILD_NOTES[buildState]}
+          {note(buildState, startedAt)}
         </Text>
       )}
     </Group>
   );
+}
+
+function note(buildState: BuildState, startedAt: string | null): string | undefined {
+  if (buildState !== "ok") return BUILD_NOTES[buildState];
+  return startedAt === null ? undefined : `Status from the full build of ${formatBuildStart(startedAt)}`;
+}
+
+function formatBuildStart(startedAt: string): string {
+  return `${new Date(startedAt).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }

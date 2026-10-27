@@ -35,6 +35,23 @@ describe("layoutGraph", () => {
     });
   });
 
+  it("keeps a node without edges in its layer's column", async () => {
+    // dim_date has no edges: packed beside the connected components it used to land in the sources' column.
+    const nodes: LayoutNode[] = [
+      { id: "src", layer: "source" },
+      { id: "stg", layer: "staging" },
+      { id: "mart", layer: "marts" },
+      { id: "dim_date", layer: "marts" },
+    ];
+
+    const positions = await layoutGraph(nodes, [{ source: "src", target: "stg" }]);
+
+    const x = (id: string) => positions.get(id)!.x;
+    expect(x("src")).toBeLessThan(x("stg"));
+    expect(x("stg")).toBeLessThan(x("mart"));
+    expect(x("mart")).toBe(x("dim_date"));
+  });
+
   it("lays out a graph with a single node", async () => {
     const positions = await layoutGraph([{ id: "only", layer: "marts" }], []);
 
