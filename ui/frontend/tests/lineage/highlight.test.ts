@@ -47,3 +47,17 @@ describe("relatedNodes", () => {
     expect([...related.nodes].sort()).toEqual(["a", "b"]);
   });
 });
+
+describe("relatedNodes edges", () => {
+  it("highlights a skip edge between two related nodes", () => {
+    const edges = [
+      { source: "a", target: "b" },
+      { source: "b", target: "c" },
+      { source: "a", target: "c" },
+    ];
+
+    const related = relatedNodes(edges, "b");
+
+    expect([...related.edges].sort()).toEqual(["a->b", "a->c", "b->c"]);
+  });
+});

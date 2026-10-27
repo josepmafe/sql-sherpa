@@ -106,7 +106,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
   );
 
   return (
-    <div style={{ height: "70vh", minHeight: 400 }} aria-label="Lineage graph">
+    <div style={{ height: "70vh", minHeight: 400 }}>
       {state === "error" && (
         <Alert color="red" role="alert" mb="xs">
           Could not lay out the graph.
@@ -116,6 +116,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
+        aria-label="Lineage graph"
         colorMode="system"
         nodesDraggable={false}
         nodesConnectable={false}

@@ -97,12 +97,21 @@ describe("LineageScreen", () => {
   });
 
   it("a load error hides the graph instead of showing a stale one", async () => {
-    get.mockResolvedValue({ error: { code: "internal", message: "boom" }, response: { status: 500 } });
-
+    get.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        (args[1] as { params: { query: { layers?: string } } }).params.query.layers === undefined
+          ? GRAPH
+          : { error: { code: "internal", message: "boom" }, response: { status: 500 } },
+      ),
+    );
     mount("/lineage");
+    expect(await screen.findByText("2 nodes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lineage graph")).toBeInTheDocument();
 
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.queryByText(/d+ nodes/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "marts" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(screen.queryByText(/\d+ nodes/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Lineage graph")).not.toBeInTheDocument();
   });
 });

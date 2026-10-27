@@ -1,6 +1,3 @@
-// The bundled build carries ELK's worker code inline: no remote worker or CDN fetch (offline requirement, UI spec §3).
-import ELK from "elkjs/lib/elk.bundled.js";
-
 import type { Layer } from "./url";
 
 export const NODE_WIDTH = 220;
@@ -33,10 +30,13 @@ const COLUMN: Record<Layer, number> = {
   exposure: 4,
 };
 
-const elk = new ELK();
+type Elk = InstanceType<(typeof import("elkjs/lib/elk.bundled.js"))["default"]>;
+
+let elkLoad: Promise<Elk> | undefined;
 
 export async function layoutGraph(nodes: LayoutNode[], edges: LayoutEdge[]): Promise<Map<string, Point>> {
   if (nodes.length === 0) return new Map();
+  const elk = await loadElk();
   const laidOut = await elk.layout({
     id: "root",
     layoutOptions: {
@@ -55,4 +55,17 @@ export async function layoutGraph(nodes: LayoutNode[], edges: LayoutEdge[]): Pro
     edges: edges.map((edge, index) => ({ id: `e${index}`, sources: [edge.source], targets: [edge.target] })),
   });
   return new Map((laidOut.children ?? []).map((child) => [child.id, { x: child.x ?? 0, y: child.y ?? 0 }]));
+}
+
+// Loaded on first use, so the other screens do not pay for it. The bundled build carries ELK's worker code inline: a
+// same-origin chunk, no remote worker or CDN fetch (offline requirement, UI spec §3).
+function loadElk(): Promise<Elk> {
+  elkLoad ??= import("elkjs/lib/elk.bundled.js").then(
+    (module) => new module.default(),
+    (error: unknown) => {
+      elkLoad = undefined; // a failed chunk load can be retried
+      throw error;
+    },
+  );
+  return elkLoad;
 }

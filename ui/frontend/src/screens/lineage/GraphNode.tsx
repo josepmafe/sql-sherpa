@@ -26,7 +26,7 @@ export interface GraphNodeData extends Record<string, unknown> {
   dimmed: boolean;
 }
 
-// Shade 7 for the stripe on white and shade 4 on the dark body keep it above 3:1 (non-text contrast); the text never
+// Shade 8 for the stripe on white and shade 4 on the dark body keep it above 3:1 (non-text contrast); the text never
 // sits on a layer colour, so its contrast is the theme's own.
 const LAYER_COLOR: Record<Layer, string> = {
   source: "gray",
@@ -42,21 +42,25 @@ const LAYER_COLOR: Record<Layer, string> = {
 interface StatusView {
   label: string;
   Icon: ComponentType<{ size?: number; "aria-hidden"?: boolean }>;
-  color?: string;
+  // The icon's colour (3:1 is enough for a graphic); the label stays in the theme's text colour, or its AA dimmed grey.
+  color: string;
+  grey?: boolean;
 }
-// Red 9 / orange 9 on white and red 4 / orange 4 on the dark card are above 4.5:1.
 const RED = "light-dark(var(--mantine-color-red-9), var(--mantine-color-red-4))";
 const ORANGE = "light-dark(var(--mantine-color-orange-9), var(--mantine-color-orange-4))";
+const GREEN = "light-dark(var(--mantine-color-green-9), var(--mantine-color-green-4))";
+const GREY = "var(--mantine-color-dimmed)";
 const STATUS: Partial<Record<NodeStatus, StatusView>> = {
   failed: { label: "failed", Icon: IconCircleX, color: RED },
   warned: { label: "warned", Icon: IconAlertTriangle, color: ORANGE },
-  skipped: { label: "skipped", Icon: IconPlayerSkipForward },
-  ok: { label: "ok", Icon: IconCircleCheck },
-  not_in_build: { label: "not in the last build", Icon: IconCircleDashed },
-  inlined: { label: "inlined", Icon: IconSquareDashed },
+  skipped: { label: "skipped", Icon: IconPlayerSkipForward, color: GREY, grey: true },
+  ok: { label: "ok", Icon: IconCircleCheck, color: GREEN },
+  not_in_build: { label: "not in the last build", Icon: IconCircleDashed, color: GREY, grey: true },
+  inlined: { label: "inlined", Icon: IconSquareDashed, color: GREY, grey: true },
 };
 
-const DIMMED_OPACITY = 0.3;
+// Low enough to see the dimming, high enough that a dimmed node's text stays legible.
+const DIMMED_OPACITY = 0.5;
 
 export function GraphNode({ data }: NodeProps<Node<GraphNodeData>>) {
   const status = STATUS[data.status];
@@ -81,18 +85,22 @@ export function GraphNode({ data }: NodeProps<Node<GraphNodeData>>) {
           justifyContent: "space-between",
           background: "light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))",
           color: "var(--mantine-color-text)",
-          border: failed ? `2px solid ${RED}` : "1px solid var(--mantine-color-default-border)",
-          borderLeft: `6px solid light-dark(var(--mantine-color-${stripe}-7), var(--mantine-color-${stripe}-4))`,
+          // Longhands: a shorthand set after the stripe would reset it when the status changes.
+          borderStyle: "solid",
+          borderWidth: failed ? 2 : 1,
+          borderColor: failed ? RED : "var(--mantine-color-default-border)",
+          borderLeftWidth: 6,
+          borderLeftColor: `light-dark(var(--mantine-color-${stripe}-8), var(--mantine-color-${stripe}-4))`,
           borderRadius: 4,
           opacity: data.dimmed ? DIMMED_OPACITY : 1,
           outline: data.selected ? "3px solid var(--mantine-primary-color-filled)" : undefined,
           outlineOffset: 2,
         }}
       >
-        <Text fw={600} size="sm" truncate>
+        <Text component="span" fw={600} size="sm" truncate style={{ display: "block" }}>
           {data.name}
         </Text>
-        <Text size="xs" c="dimmed">
+        <Text component="span" size="xs" c="dimmed">
           {data.layer}
           {data.materialization !== null && (
             <span style={{ marginLeft: 6, padding: "0 4px", border: "1px solid currentColor", borderRadius: 3 }}>
@@ -101,8 +109,16 @@ export function GraphNode({ data }: NodeProps<Node<GraphNodeData>>) {
           )}
         </Text>
         {status !== undefined && (
-          <Text size="xs" fw={500} style={{ display: "flex", alignItems: "center", gap: 4, color: status.color }}>
-            <status.Icon size={14} aria-hidden />
+          <Text
+            component="span"
+            size="xs"
+            fw={500}
+            c={status.grey ? "dimmed" : undefined}
+            style={{ display: "flex", alignItems: "center", gap: 4 }}
+          >
+            <span style={{ display: "flex", color: status.color }}>
+              <status.Icon size={14} aria-hidden />
+            </span>
             {status.label}
             {failed && data.failingTests > 0 && ` · ${data.failingTests} failing ${data.failingTests === 1 ? "test" : "tests"}`}
           </Text>

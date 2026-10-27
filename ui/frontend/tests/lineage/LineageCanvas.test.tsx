@@ -2,10 +2,11 @@ import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { components } from "../../src/api/schema";
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
+import { layoutGraph } from "../../src/screens/lineage/layout";
 
 type Node = components["schemas"]["LineageNode"];
 
@@ -48,6 +49,11 @@ function Harness({ initial }: { initial?: string }) {
 const item = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}\\b`) });
 
 describe("LineageCanvas", () => {
+  // The first ELK load takes longer than findBy's default timeout under load; pay it once here.
+  beforeAll(async () => {
+    await layoutGraph([{ id: "warm", layer: "marts" }], []);
+  });
+
   it("renders a node per graph node with its status label", async () => {
     render(<Harness />);
 
@@ -91,8 +97,20 @@ describe("LineageCanvas", () => {
     expect(await item("x")).toHaveAttribute("data-dimmed");
     expect(await item("a")).not.toHaveAttribute("data-dimmed");
     expect(await item("c")).not.toHaveAttribute("data-dimmed");
-    // a dimmed node stays focusable
-    expect(await item("x")).not.toHaveAttribute("tabindex", "-1");
+  });
+
+  it("a dimmed node stays focusable and selectable", async () => {
+    render(<Harness initial="model.s.b" />);
+    const x = await item("x");
+    expect(x).toHaveAttribute("data-dimmed");
+
+    x.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(x).toHaveFocus();
+    expect(x).toHaveAttribute("aria-pressed", "true");
+    expect(x).not.toHaveAttribute("data-dimmed");
+    expect(await item("a")).toHaveAttribute("data-dimmed");
   });
 
   it("Esc and a background click clear the highlight", async () => {

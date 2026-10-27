@@ -24,7 +24,7 @@ globalThis.ResizeObserver ??= ResizeObserverStub;
 class DOMMatrixReadOnlyStub {
   m22 = 1;
   constructor(transform?: string) {
-    const scale = /scale(([d.]+))/.exec(transform ?? "");
+    const scale = /scale\(([\d.]+)\)/.exec(transform ?? "");
     if (scale) this.m22 = Number(scale[1]);
   }
 }

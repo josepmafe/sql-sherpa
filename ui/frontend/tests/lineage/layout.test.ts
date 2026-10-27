@@ -4,32 +4,35 @@ import { type LayoutNode, layoutGraph } from "../../src/screens/lineage/layout";
 
 describe("layoutGraph", () => {
   it("puts each layer in its own column, left to right", async () => {
+    // Edges inside a layer (int -> int2, mart -> mart2) may widen its column but never overlap the next one.
     const nodes: LayoutNode[] = [
       { id: "src", layer: "source" },
+      { id: "seed", layer: "seed" },
       { id: "stg", layer: "staging" },
+      { id: "snap", layer: "snapshot" },
       { id: "int", layer: "intermediate" },
+      { id: "int2", layer: "intermediate" },
       { id: "mart", layer: "marts" },
       { id: "mart2", layer: "marts" },
-      { id: "seed", layer: "seed" },
-      { id: "snap", layer: "snapshot" },
+      { id: "exp", layer: "exposure" },
     ];
     const edges = [
       { source: "src", target: "stg" },
-      { source: "stg", target: "int" },
-      { source: "int", target: "mart" },
-      { source: "stg", target: "mart2" },
       { source: "seed", target: "snap" },
+      { source: "stg", target: "int" },
+      { source: "int", target: "int2" },
+      { source: "int2", target: "mart" },
+      { source: "mart", target: "mart2" },
+      { source: "mart2", target: "exp" },
     ];
 
     const positions = await layoutGraph(nodes, edges);
 
-    const x = (id: string) => positions.get(id)!.x;
-    expect(x("src")).toBe(x("seed"));
-    expect(x("stg")).toBe(x("snap"));
-    expect(x("src")).toBeLessThan(x("stg"));
-    expect(x("stg")).toBeLessThan(x("int"));
-    expect(x("int")).toBeLessThan(x("mart"));
-    expect(x("mart")).toBe(x("mart2"));
+    const columns = [["src", "seed"], ["stg", "snap"], ["int", "int2"], ["mart", "mart2"], ["exp"]];
+    const xs = (ids: string[]) => ids.map((id) => positions.get(id)!.x);
+    columns.slice(1).forEach((ids, index) => {
+      expect(Math.max(...xs(columns[index]!))).toBeLessThan(Math.min(...xs(ids)));
+    });
   });
 
   it("lays out a graph with a single node", async () => {
