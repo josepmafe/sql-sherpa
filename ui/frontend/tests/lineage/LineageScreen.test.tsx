@@ -25,6 +25,29 @@ const GRAPH = {
   },
   response: { status: 200 },
 };
+const NODE = {
+  unique_id: "model.s.a",
+  name: "a",
+  resource_type: "model",
+  layer: "staging",
+  materialization: "view",
+  domain: null,
+  contract_enforced: false,
+  file_path: "models/a.sql",
+  description: "",
+  is_mart: false,
+  status: "ok",
+  failing_tests: 0,
+  build: null,
+  columns: [],
+  tests: [],
+  raw_sql: null,
+  compiled_sql: null,
+  sql_note: null,
+};
+// The graph, and an empty node panel for the node asked for.
+const answer = (path: string) =>
+  Promise.resolve(path === "/api/lineage" ? GRAPH : { data: NODE, response: { status: 200 } });
 const MESSAGE = "unsupported selector 'tag:x'; supported selectors: a model name";
 
 function Where() {
@@ -79,7 +102,7 @@ describe("LineageScreen", () => {
   });
 
   it("a node= that the graph does not hold clears itself", async () => {
-    get.mockResolvedValue(GRAPH);
+    get.mockImplementation(answer);
 
     mount("/lineage?node=model.s.gone&failing=1");
 
@@ -87,8 +110,40 @@ describe("LineageScreen", () => {
     expect(screen.getByLabelText("location")).not.toHaveTextContent("node=");
   });
 
+  it("a node= opens its panel, and Esc closes the panel and clears node=", async () => {
+    get.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "/api/lineage"
+          ? GRAPH
+          : { data: { ...NODE, unique_id: "model.s.a", name: "a", description: "Model a." }, response: { status: 200 } },
+      ),
+    );
+    mount("/lineage?node=model.s.a");
+
+    expect(await screen.findByText("Model a.")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByText("Model a.")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("location")).not.toHaveTextContent("node=");
+  });
+
+  it("a node_not_found keeps the graph and shows a note", async () => {
+    get.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "/api/lineage"
+          ? GRAPH
+          : { error: { code: "node_not_found", message: "no node model.s.a" }, response: { status: 404 } },
+      ),
+    );
+    mount("/lineage?node=model.s.a");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("no node model.s.a");
+    expect(screen.getByText("2 nodes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lineage graph")).toBeInTheDocument();
+  });
+
   it("a node= that the graph holds stays", async () => {
-    get.mockResolvedValue(GRAPH);
+    get.mockImplementation(answer);
 
     mount("/lineage?node=model.s.a");
 

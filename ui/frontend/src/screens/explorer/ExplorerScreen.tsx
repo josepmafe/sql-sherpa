@@ -1,8 +1,10 @@
-import { Box, Button, Drawer, Group, ScrollArea, Stack, Tabs } from "@mantine/core";
+import { Alert, Box, Button, Drawer, Group, ScrollArea, Stack, Tabs } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useHealth } from "../../api/queries";
+import { useSearchParams } from "react-router-dom";
+
+import { useCatalog, useHealth } from "../../api/queries";
 import { CatalogTree } from "./CatalogTree";
 import { Inspector } from "./Inspector";
 import { QueryHistory } from "./QueryHistory";
@@ -46,6 +48,11 @@ const DATABASE_DOWN = "Database unavailable: queries run again once it is back";
 export function ExplorerScreen() {
   const [selected, setSelected] = useState<string>();
   const [inspecting, setInspecting] = useState(false);
+  const [unknownTable, setUnknownTable] = useState<string>();
+  // "Open in Explorer" from Lineage arrives with ?table=<name>; it is read once, when the catalog is there to check it.
+  const catalog = useCatalog();
+  const [search] = useSearchParams();
+  const requested = useRef(search.get("table"));
   const wide = useMediaQuery(WIDE_QUERY, undefined, { getInitialValueInEffect: false });
   // UI spec §3: a database that is down disables only what needs it (Run, Run selection, Preview). Health is polled,
   // so they come back on their own.
@@ -85,6 +92,16 @@ export function ExplorerScreen() {
     setInspecting(true);
   };
 
+  useEffect(() => {
+    const name = requested.current;
+    if (name === null || !catalog.data) return;
+    requested.current = null;
+    if (catalog.data.domains.some((domain) => domain.tables.some((table) => table.name === name))) {
+      setSelected(name);
+      setInspecting(true);
+    } else setUnknownTable(name);
+  }, [catalog.data]);
+
   const centre = useRef<HTMLDivElement>(null);
   const skipToEditor = () =>
     centre.current?.querySelector<HTMLElement>(`[data-worksheet="${active.id}"] .cm-content`)?.focus();
@@ -103,6 +120,11 @@ export function ExplorerScreen() {
         />
       </ScrollArea>
       <Box ref={centre} style={{ flex: 1, minWidth: 0 }}>
+        {unknownTable !== undefined && (
+          <Alert color="yellow" role="alert" mb="sm" withCloseButton onClose={() => setUnknownTable(undefined)}>
+            No mart named {unknownTable}.
+          </Alert>
+        )}
         {/* Every panel stays mounted (hidden with display: none, not React's Activity, which would run its effects'
             cleanup), so switching tabs never cancels a running query. */}
         <Tabs

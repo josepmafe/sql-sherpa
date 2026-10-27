@@ -39,18 +39,18 @@ const LAYER_COLOR: Record<Layer, string> = {
   other: "gray",
 };
 
-interface StatusView {
+export interface StatusView {
   label: string;
   Icon: ComponentType<{ size?: number; "aria-hidden"?: boolean }>;
   // The icon's colour (3:1 is enough for a graphic); the label stays in the theme's text colour, or its AA dimmed grey.
   color: string;
   grey?: boolean;
 }
-const RED = "light-dark(var(--mantine-color-red-9), var(--mantine-color-red-4))";
-const ORANGE = "light-dark(var(--mantine-color-orange-9), var(--mantine-color-orange-4))";
-const GREEN = "light-dark(var(--mantine-color-green-9), var(--mantine-color-green-4))";
-const GREY = "var(--mantine-color-dimmed)";
-const STATUS: Partial<Record<NodeStatus, StatusView>> = {
+export const RED = "light-dark(var(--mantine-color-red-9), var(--mantine-color-red-4))";
+export const ORANGE = "light-dark(var(--mantine-color-orange-9), var(--mantine-color-orange-4))";
+export const GREEN = "light-dark(var(--mantine-color-green-9), var(--mantine-color-green-4))";
+export const GREY = "var(--mantine-color-dimmed)";
+export const STATUS: Partial<Record<NodeStatus, StatusView>> = {
   failed: { label: "failed", Icon: IconCircleX, color: RED },
   warned: { label: "warned", Icon: IconAlertTriangle, color: ORANGE },
   skipped: { label: "skipped", Icon: IconPlayerSkipForward, color: GREY, grey: true },

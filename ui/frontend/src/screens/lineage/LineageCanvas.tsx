@@ -58,17 +58,6 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
     if (state === "ready") void fitView();
   }, [state, positions, fitView]);
 
-  // Esc clears the selection, unless it was meant for a text field or a menu.
-  useEffect(() => {
-    if (selected === undefined) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (event.key === "Escape" && !target.closest("input, textarea, [role=listbox]")) onSelect(undefined);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selected, onSelect]);
-
   const flowNodes: Node<GraphNodeData>[] = useMemo(
     () =>
       nodes.flatMap((node) => {

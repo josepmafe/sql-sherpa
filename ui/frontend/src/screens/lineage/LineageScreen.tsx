@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
-import { Loader, Stack, Text } from "@mantine/core";
+import { Box, Group, Loader, ScrollArea, Stack, Text } from "@mantine/core";
 
 import { ApiRequestError, useLineage } from "../../api/queries";
 import { LoadError } from "../explorer/LoadError";
 import { LayerFilter } from "./LayerFilter";
 import { LineageCanvas } from "./LineageCanvas";
+import { NodePanel } from "./NodePanel";
 import { SelectorBar } from "./SelectorBar";
 import { useLineageParams } from "./url";
 
 const UNSUPPORTED_SELECTOR = "unsupported_selector";
+// The panel beside the canvas; at 1280 px the canvas keeps about 700 px, at 1024 px about 480 px.
+const PANEL_WIDTH = 380;
+const PANEL_HEIGHT = "70vh";
 
 export function LineageScreen() {
   const [params, update] = useLineageParams();
@@ -48,12 +52,21 @@ export function LineageScreen() {
       {graph !== undefined && !loadError && (
         <>
           <Text size="sm">{graph.nodes.length} nodes</Text>
-          <LineageCanvas
-            nodes={graph.nodes}
-            edges={graph.edges}
-            selected={params.node}
-            onSelect={(node) => update({ node })}
-          />
+          <Group align="flex-start" wrap="nowrap" gap="md">
+            <Box style={{ flex: 1, minWidth: 0 }}>
+              <LineageCanvas
+                nodes={graph.nodes}
+                edges={graph.edges}
+                selected={params.node}
+                onSelect={(node) => update({ node })}
+              />
+            </Box>
+            {params.node !== undefined && (
+              <ScrollArea h={PANEL_HEIGHT} w={PANEL_WIDTH} style={{ flexShrink: 0 }} offsetScrollbars="y">
+                <NodePanel uniqueId={params.node} onClose={() => update({ node: undefined })} />
+              </ScrollArea>
+            )}
+          </Group>
         </>
       )}
     </Stack>

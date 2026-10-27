@@ -2,6 +2,7 @@ import { MantineProvider } from "@mantine/core";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogTree } from "../src/screens/explorer/CatalogTree";
@@ -85,7 +86,11 @@ vi.mock("../src/api/queries", () => ({
 const apiError = (code: string, message: string) => Object.assign(new Error(message), { code, status: 503 });
 
 function renderWithMantine(ui: ReactNode) {
-  return render(<MantineProvider env="test">{ui}</MantineProvider>);
+  return render(
+    <MantineProvider env="test">
+      <MemoryRouter>{ui}</MemoryRouter>
+    </MantineProvider>,
+  );
 }
 
 describe("CatalogTree", () => {
@@ -253,17 +258,17 @@ describe("CatalogTree", () => {
     expect(onInsertSelect).toHaveBeenCalledWith("marts.dim_products");
   });
 
-  it("menu opens from the ⋯ button, with Lineage disabled and explained", async () => {
+  it("Open in Lineage links to the table path", async () => {
     const user = userEvent.setup();
     renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
 
     const menu = await screen.findByRole("menu");
-    const lineage = within(menu).getByRole("menuitem", { name: "Open in Lineage" });
-    expect(lineage).toBeDisabled();
-    expect(lineage).toHaveAccessibleDescription("Lineage is not available yet.");
-    expect(within(menu).getByText("Lineage is not available yet.")).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Open in Lineage" })).toHaveAttribute(
+      "href",
+      "/lineage?select=%2Bdim_products%2B",
+    );
     expect(within(menu).getByRole("menuitem", { name: "Copy name" })).toBeEnabled();
   });
 });
@@ -293,9 +298,15 @@ describe("Inspector", () => {
     expect(screen.getByText(/Synonyms: state/)).toBeInTheDocument();
     expect(screen.getByText(/Revenue after refunds\./)).toBeInTheDocument();
     expect(screen.getByText("unique_fct_orders_order_id")).toBeInTheDocument();
-    const lineage = screen.getByRole("button", { name: "Open in Lineage" });
-    expect(lineage).toBeDisabled();
-    expect(lineage).toHaveAccessibleDescription("Lineage is not available yet.");
-    expect(screen.getByText("Lineage is not available yet.")).toBeVisible();
+  });
+
+  it("Open in Lineage links to the table path", () => {
+    useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
+    renderWithMantine(<Inspector table="fct_orders" />);
+
+    expect(screen.getByRole("link", { name: "Open in Lineage" })).toHaveAttribute(
+      "href",
+      "/lineage?select=%2Bfct_orders%2B",
+    );
   });
 });

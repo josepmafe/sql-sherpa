@@ -113,16 +113,11 @@ describe("LineageCanvas", () => {
     expect(await item("a")).toHaveAttribute("data-dimmed");
   });
 
-  it("Esc and a background click clear the highlight", async () => {
+  it("a background click clears the highlight", async () => {
     render(<Harness />);
     fireEvent.click(await item("b"));
     expect(await item("x")).toHaveAttribute("data-dimmed");
 
-    await userEvent.keyboard("{Escape}");
-    expect(await item("x")).not.toHaveAttribute("data-dimmed");
-
-    fireEvent.click(await item("b"));
-    expect(await item("x")).toHaveAttribute("data-dimmed");
     fireEvent.click(document.querySelector(".react-flow__pane")!);
     expect(await item("x")).not.toHaveAttribute("data-dimmed");
   });
