@@ -9,14 +9,15 @@ The backend is the Python package `sherpa_ui` (`ui/backend/src/sherpa_ui/`). The
 | Where | Holds |
 |---|---|
 | `app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`. The only place the pieces are wired |
-| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`), `errors.py` (error shape) and `body_limit.py` (1 MiB POST cap) |
+| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`, `lineage.py`), `errors.py` (error shape) and `body_limit.py` (1 MiB POST cap) |
 | `catalog/`, `health/` | `CatalogService`, `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` |
+| `lineage/`, `build/` | `ManifestGraph`, `SelectorEvaluator` and `StatusDeriver` (pure); `ManifestLoader`, `NodeSql`, `LineageService` and `BuildStatusReader` (file and database reads) |
 | `readonly/` | `query_runner.py`, `bounded_result.py`, `sort_filter.py` |
 | `settings.py` | `UiSettings`, the only place that reads configuration (`SHERPA_UI_*`, `SHERPA_DB_*`) |
 | `openapi_export.py` | Writes the OpenAPI schema the frontend types come from |
 | `ui/frontend/src/api/` | `client.ts` (typed `openapi-fetch`), `queries.ts` (TanStack Query hooks), `schema.d.ts` (generated, committed) |
 | `ui/frontend/src/app/` | `AppShell.tsx`, `routes.tsx`, `navItems.ts`, `HealthBanner.tsx` |
-| `ui/frontend/src/screens/<screen>/` | One folder per screen (today `explorer/`) |
+| `ui/frontend/src/screens/<screen>/` | One folder per screen (`explorer/`, `lineage/`) |
 | `ui/frontend/src/components/` | Components shared between screens (`ResultGrid`, `SqlEditor`) |
 
 Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds Vitest, `ui/frontend/e2e/` holds Playwright.
@@ -45,12 +46,12 @@ Example: `GET /api/catalog/domains`. Do the steps in order, so each is proved be
 
 ## 2. Add a screen
 
-The shell lists only screens that exist, so a half-built screen never appears in the navigation. Example: Lineage.
+The shell lists only screens that exist, so a half-built screen never appears in the navigation. Example: Lineage (`screens/lineage/`).
 
 1. Create `ui/frontend/src/screens/<name>/<Name>Screen.tsx`. Move code to `src/components/` only when a second screen needs it.
 2. Add the route in `src/app/routes.tsx`, as a child of the `AppShell` route.
 3. Add the entry to `NAV_ITEMS` in `src/app/navItems.ts`, in the UI spec's order: Home, Ask, Explorer, Lineage.
-4. Enable what earlier screens left disabled. The Explorer's "Open in Lineage" (`CatalogTree.tsx`) and Inspector button (`Inspector.tsx`) carry the `LINEAGE_UNAVAILABLE` note from `screens/explorer/lineage.ts`. Wire them to the route, then delete the note and the file.
+4. Link the screens to each other. The Explorer's "Open in Lineage" (`CatalogTree.tsx`, `Inspector.tsx`) builds its URL with `lineageLink` (`screens/explorer/lineage.ts`); Lineage's "Open in Explorer" links to `/explorer?table=<name>`.
 5. Add a Playwright spec in `ui/frontend/e2e/` for the main flow, and a case in `offline.spec.ts` (every request outside the app's origin is blocked).
 
 Conventions the Explorer follows, which a new screen should too:
@@ -61,7 +62,32 @@ Conventions the Explorer follows, which a new screen should too:
 - **Width.** Three columns from 1280 px (`WIDE_QUERY`), a `Drawer` below. Run `e2e/layout.spec.ts` after changing the columns.
 - **Browser storage.** User state lives in `localStorage` under `sherpa.v1.<screen>`, never result rows. Bump the version or migrate when a stored shape changes (`worksheetStore.ts`).
 
-## 3. Where the read-only rules live
+## 3. Extend Lineage
+
+The selector and the statuses are pure code with an oracle, so a change starts from a test.
+
+**Add a selector atom** (say `tag:<t>`):
+
+1. Add cases to `ui/backend/tests/lineage/test_selector.py`: a match, no match, combined with `+`, and a malformed form.
+2. In `lineage/selector.py`: a regex next to `_SOURCE_ATOM`, a branch in `SelectorEvaluator._match_atom` (before the bare-name branch), and the form in `SUPPORTED_FORMS`, the text of the `unsupported_selector` message. An atom that needs a new node field adds it to `GraphNode` in `lineage/manifest_graph.py`, with a test in `test_manifest_graph.py`.
+3. Add selectors that use it to `SELECTORS` in `test_selector_oracle.py`. That test compares the evaluator with `dbt ls --select <selector>` on a fresh `dbt parse`, so it proves the atom means what dbt means:
+
+   ```bash
+   uv run --env-file .env pytest ui/backend/tests/lineage/test_selector_oracle.py -m integration
+   ```
+
+4. If the three modes should write it, change `ui/frontend/src/screens/lineage/selectors.ts` and its Vitest file; any other selector stays "custom". Then list it in the UI spec §6.5 and in [Using Lineage](../basic/using-lineage.md).
+
+**Add a node status:**
+
+1. Add a case to `NodeStatus` in `lineage/node_status.py` and to `StatusDeriver.node_status`, with tests in `tests/lineage/test_node_status.py` that include its precedence against `failed` and `warned`. A new dbt result status goes in `_NODE_STATUSES` or `_TEST_OUTCOMES`; an unknown one is logged and treated as no row.
+2. The status travels in `LineageNode` (`lineage/lineage_service.py`): run `make ui-client` and commit the schema.
+3. Give it a label, an icon and a colour in `STATUS` (`screens/lineage/GraphNode.tsx`); status is never colour alone, and the colours must pass AA contrast. Add a Vitest case.
+4. Add the row to the status list in the UI spec §6.5 and to the Lineage guide.
+
+The shared warehouse should not hold a really failing build, so `lineage.spec.ts` skips its failing-node check by default. `cd ui/frontend && SHERPA_E2E_LINEAGE_FAILING=1 npx playwright test lineage` inserts a synthetic full build into `ops.dbt_run_results`, checks that the node turns red and that a warning stays out of "Failing only", and deletes the rows. A killed run leaves a fake newest build behind; the next run clears it first.
+
+## 4. Where the read-only rules live
 
 Three layers, none of which trusts the one before it:
 
@@ -86,7 +112,7 @@ To loosen or tighten a rule:
 2. Change the code, then run the `warehouse` tests, which exercise the real role.
 3. If privileges change, edit `roles.sql` or the `grant_read_access` macro, run `make up` (re-applies the roles) and `make build-prod` (re-applies the grants), and update the data platform spec's role table.
 
-## 4. The three test layers
+## 5. The three test layers
 
 ```bash
 (cd ui/frontend && npm ci)                                # once (Node 22+)
@@ -104,7 +130,7 @@ make e2e
 
 - Mock the API at `src/api/client` partially (`vi.mock(..., async (importOriginal) => ({ ...(await importOriginal()), api: { POST: ... } }))`), so `apiError` stays real. Give `beforeEach` a block body: Vitest treats a returned function as teardown.
 - `make e2e` uses one worker and `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`. For another port run `SHERPA_UI_PORT=8091 make e2e` or set it in `.env`; `make ui-dev` follows the same variable.
-- Specs: `explorer.spec.ts`, `layout.spec.ts`, `offline.spec.ts`, `freshness.spec.ts`. Scrollbar overlap and layout widths show only in a real browser, hence Playwright.
+- Specs: `explorer.spec.ts`, `lineage.spec.ts`, `layout.spec.ts`, `offline.spec.ts`, `freshness.spec.ts`. Scrollbar overlap and layout widths show only in a real browser, hence Playwright.
 - `make lint` covers ruff, mypy, sqlfluff, the docs coverage, ESLint, `tsc`, the npm lockfile and the stale-client check.
 
 **`freshness.spec.ts` changes your warehouse.** It runs `make advance DAYS=1` and `make build-prod`, adding a simulated day to the warehouse every checkout shares; only `make reset` and a full rebuild undo it. `make e2e` skips it. Run it deliberately:
@@ -126,6 +152,9 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | A new error shows "Query failed" | Add its code to `ERROR_TITLES` |
 | The memoization test fails after adding a prop | Make the prop stable (`useCallback`, a string) |
 | Playwright cannot connect | `make up && make build-prod`, and match `SHERPA_UI_PORT` |
+| `unsupported_selector` for a form you added | `SelectorEvaluator._match_atom` has no branch for it |
+| The oracle test fails for one selector | The atom differs from `dbt ls`: fix the evaluator, not the list |
+| A new status draws nothing in the graph | Add it to `STATUS` in `GraphNode.tsx` |
 | `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next

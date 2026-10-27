@@ -10,7 +10,7 @@ The answers can be trusted because of the platform underneath: one documented, t
 
 It is a learning project held to production standards: a realistic synthetic e-commerce business, dbt Core features used the way practitioners use them, and an agent where observability and evaluation come first. All data is synthetic.
 
-> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), agent-design-1 (MCP server) and ui-1 (shell and Explorer) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
+> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), agent-design-1 (MCP server), ui-1 (shell and Explorer) and ui-2 (Lineage) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
 
 ## How it works
 
@@ -46,7 +46,7 @@ Tools arrive with the milestone that first needs them. Those marked *planned* ar
 | Data | PostgreSQL 16 (Docker), Python 3.12 + Faker |
 | Transformation | dbt Core + dbt-postgres, dbt_utils, dbt_expectations; MetricFlow *planned* |
 | Agent | the MCP Python SDK; PydanticAI and Claude on Amazon Bedrock *planned* |
-| Web app | React + TypeScript + Vite, Mantine, CodeMirror, TanStack Query and Table, FastAPI; React Flow *planned* |
+| Web app | React + TypeScript + Vite, Mantine, CodeMirror, TanStack Query and Table, FastAPI, React Flow, ELK |
 | Observability & evals | Pydantic Logfire (OpenTelemetry); the execution-accuracy eval runner *planned* |
 | Tooling | uv, ruff, mypy, sqlfluff, ESLint, pre-commit; GitHub Actions *planned* |
 
@@ -61,7 +61,7 @@ make backfill           # simulate a year of data (about 9 minutes)
 make build-prod         # build the warehouse that the agent and the web app read
 ```
 
-Open <http://127.0.0.1:8090> for the Explorer. The MCP server listens on `http://127.0.0.1:8765/mcp`.
+Open <http://127.0.0.1:8090> for the Explorer; Lineage is at `/lineage`. The MCP server listens on `http://127.0.0.1:8765/mcp`.
 
 From there:
 - **Develop:**
@@ -118,6 +118,7 @@ docs/
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, masking, limitations and tracing
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, worksheets, running, sorting and filtering, and what it won't let you do
+- [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, the node panel and copying a selector for `dbt`
 
 ### Advanced: extending it
 
