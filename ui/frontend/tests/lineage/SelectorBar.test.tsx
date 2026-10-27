@@ -24,8 +24,10 @@ const WHOLE_PROJECT = {
 };
 vi.mock("../../src/api/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/api/queries")>()),
-  useLineage: () => ({ data: WHOLE_PROJECT }),
+  useLineage: () => ({ data: state.project }),
 }));
+
+const state = { project: WHOLE_PROJECT };
 
 function renderBar(select: string, error: Error | null = null) {
   const onSelect = vi.fn();
@@ -38,7 +40,10 @@ function renderBar(select: string, error: Error | null = null) {
 }
 
 describe("SelectorBar", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.project = WHOLE_PROJECT;
+  });
 
   it("switching the mode writes the selector to the URL", async () => {
     const onSelect = renderBar("+fct_orders+");
@@ -78,5 +83,47 @@ describe("SelectorBar", () => {
     renderBar("tag:x", new ApiRequestError({ code: "unsupported_selector", message }, 422));
 
     expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  describe("when the selector changes from outside (back/forward, a pasted link)", () => {
+    function mountBar(select: string) {
+      const onSelect = vi.fn();
+      const bar = (value: string) => (
+        <MantineProvider env="test">
+          <SelectorBar select={value} onSelect={onSelect} error={null} />
+        </MantineProvider>
+      );
+      const { rerender } = render(bar(select));
+      return { onSelect, setSelect: (value: string) => rerender(bar(value)) };
+    }
+
+    it("the table field follows the selector", () => {
+      const { setSelect } = mountBar("+fct_orders+");
+
+      setSelect("+dim_products+");
+
+      expect(screen.getByRole("combobox", { name: "Table" })).toHaveValue("dim_products");
+    });
+
+    it("a mode chosen earlier does not outlive the new selector", async () => {
+      const { setSelect } = mountBar("");
+      await userEvent.click(screen.getByRole("radio", { name: "Table path" }));
+      expect(screen.getByRole("radio", { name: "Table path" })).toBeChecked();
+
+      setSelect("+config.meta.domain:sales");
+
+      expect(screen.getByRole("radio", { name: "Domain" })).toBeChecked();
+    });
+
+    it("choosing Table path while a path is applied adds no history entry", async () => {
+      state.project = { ...WHOLE_PROJECT, nodes: WHOLE_PROJECT.nodes.map((node) => ({ ...node, domain: null })) };
+      const { onSelect } = mountBar("+fct_orders+");
+      await userEvent.click(screen.getByRole("radio", { name: "Domain" }));
+
+      await userEvent.click(screen.getByRole("radio", { name: "Table path" }));
+
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(screen.getByRole("radio", { name: "Table path" })).toBeChecked();
+    });
   });
 });

@@ -42,6 +42,7 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
   if (select !== syncedSelect) {
     setSyncedSelect(select);
     setBoxText(select);
+    setChosen(undefined);
   }
 
   const apply = (next: string) => {
@@ -53,8 +54,8 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
       case "project":
         return apply("");
       case "path":
-        // A path keeps the table already chosen, if any.
-        return path !== undefined ? apply(select) : setChosen("path");
+        // The table already chosen stays: the selector is not rewritten.
+        return setChosen("path");
       case "domain":
         return domains[0] !== undefined ? apply(domainSelector(domains[0])) : setChosen("domain");
     }
@@ -70,6 +71,7 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
               label="Table"
               placeholder="Table name"
               data={names}
+              key={path?.name ?? ""}
               defaultValue={path?.name ?? ""}
               onOptionSubmit={(name) => apply(pathSelector(name, path?.up ?? DEFAULT_DEPTH, path?.down ?? DEFAULT_DEPTH))}
             />

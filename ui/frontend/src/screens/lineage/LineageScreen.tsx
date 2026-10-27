@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Loader, Stack, Text } from "@mantine/core";
 
 import { ApiRequestError, useLineage } from "../../api/queries";
@@ -13,7 +14,10 @@ export function LineageScreen() {
   const [params, update] = useLineageParams();
   const lineage = useLineage(params);
   const error = lineage.error;
-  const graph = lineage.data;
+  // The last good graph stays while a selector fails (or loads), so the controls and the count do not vanish.
+  const [lastGood, setLastGood] = useState(lineage.data);
+  if (lineage.data !== undefined && lineage.data !== lastGood) setLastGood(lineage.data);
+  const graph = lineage.data ?? lastGood;
   // An unsupported selector shows under the selector box; the graph of the last good selector stays.
   const loadError = error !== null && !(error instanceof ApiRequestError && error.code === UNSUPPORTED_SELECTOR);
 
@@ -31,7 +35,7 @@ export function LineageScreen() {
       {loadError && (
         <LoadError title="Could not load the lineage" error={error} onRetry={() => void lineage.refetch()} />
       )}
-      {graph === undefined && !loadError && <Loader size="sm" />}
+      {lineage.isPending && <Loader size="sm" />}
       {graph !== undefined && <Text>{graph.nodes.length} nodes</Text>}
     </Stack>
   );
