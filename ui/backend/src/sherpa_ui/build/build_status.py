@@ -69,13 +69,15 @@ class BuildStatusReader:
         self._settings = settings
 
     def last_full_build(self) -> LastFullBuild | None:
-        """None when no full prod build is recorded, or when `ops` (or its table) does not exist yet."""
+        """None when no full prod build is recorded, or when `ops` (or its table) does not exist yet. Raises
+        BuildStatusUnavailable when the database cannot be reached, the role lacks the grant on `ops`, or the read
+        runs past the statement timeout."""
         try:
             with psycopg.connect(self._settings.ui_conninfo(), autocommit=True) as conn:
                 rows = conn.execute(LAST_FULL_BUILD_SQL).fetchall()
         except (errors.UndefinedTable, errors.InvalidSchemaName):
             return None
-        except psycopg.OperationalError as error:
+        except (psycopg.OperationalError, errors.InsufficientPrivilege) as error:  # incl. QueryCanceled
             raise BuildStatusUnavailable(UNAVAILABLE_MESSAGE.format(reason=_first_line(error))) from error
 
         if not rows:

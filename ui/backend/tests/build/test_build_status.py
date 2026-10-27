@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import psycopg
 import pytest
-from psycopg import sql
+from psycopg import errors, sql
 from pydantic import SecretStr
 from sherpa_ui.build.build_status import BuildStatusReader, BuildStatusUnavailable
 from sherpa_ui.settings import UiSettings
@@ -134,3 +134,22 @@ class TestBuildStatusReader:
 
         with pytest.raises(BuildStatusUnavailable):
             BuildStatusReader(settings).last_full_build()
+
+    def test_unavailable_without_the_grant_on_ops(
+        self, scratch_admin: psycopg.Connection, scratch_settings: UiSettings
+    ) -> None:
+        scratch_admin.execute(CREATE_TABLE)
+
+        with pytest.raises(BuildStatusUnavailable):
+            BuildStatusReader(scratch_settings).last_full_build()
+
+    def test_unavailable_when_the_statement_timeout_cancels_the_read(
+        self, scratch_settings: UiSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def cancelled(*_: object, **__: object) -> None:
+            raise errors.QueryCanceled("canceling statement due to statement timeout")
+
+        monkeypatch.setattr(psycopg, "connect", cancelled)
+
+        with pytest.raises(BuildStatusUnavailable):
+            BuildStatusReader(scratch_settings).last_full_build()

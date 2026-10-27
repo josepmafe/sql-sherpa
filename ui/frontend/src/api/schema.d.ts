@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Lineage */
+        get: operations["get_lineage_api_lineage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/lineage/nodes/{unique_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Node */
+        get: operations["get_node_api_lineage_nodes__unique_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/queries": {
         parameters: {
             query?: never;
@@ -127,6 +161,21 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "missing";
+        };
+        /**
+         * BuildInfo
+         * @description `no_build`: the warehouse records no full prod build; `unavailable`: it could not be asked.
+         */
+        BuildInfo: {
+            /** Node Count */
+            node_count: number | null;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ok" | "no_build" | "unavailable";
         };
         /**
          * CatalogTree
@@ -219,6 +268,45 @@ export interface components {
             database: "ok" | "down";
         };
         JsonValue: unknown;
+        /**
+         * Layer
+         * @enum {string}
+         */
+        Layer: "source" | "seed" | "staging" | "snapshot" | "intermediate" | "marts" | "exposure" | "other";
+        /** LineageEdge */
+        LineageEdge: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+        };
+        /** LineageGraph */
+        LineageGraph: {
+            build: components["schemas"]["BuildInfo"];
+            /** Edges */
+            edges: components["schemas"]["LineageEdge"][];
+            /** Layers Available */
+            layers_available: components["schemas"]["Layer"][];
+            /** Nodes */
+            nodes: components["schemas"]["LineageNode"][];
+        };
+        /** LineageNode */
+        LineageNode: {
+            /** Domain */
+            domain: string | null;
+            /** Failing Tests */
+            failing_tests: number;
+            layer: components["schemas"]["Layer"];
+            /** Materialization */
+            materialization: string | null;
+            /** Name */
+            name: string;
+            /** Resource Type */
+            resource_type: string;
+            status: components["schemas"]["NodeStatus"];
+            /** Unique Id */
+            unique_id: string;
+        };
         /** MetricRef */
         MetricRef: {
             /** Definition */
@@ -226,6 +314,68 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * NodeBuildInfo
+         * @description The node's own row in the last full build; `status` is the word dbt recorded (success, error, skipped...).
+         */
+        NodeBuildInfo: {
+            /** Execution Time S */
+            execution_time_s: number | null;
+            /** Message */
+            message: string | null;
+            /** Status */
+            status: string;
+        };
+        /** NodeColumn */
+        NodeColumn: {
+            /** Data Type */
+            data_type: string | null;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+        };
+        /** NodeDetails */
+        NodeDetails: {
+            build: components["schemas"]["NodeBuildInfo"] | null;
+            /** Columns */
+            columns: components["schemas"]["NodeColumn"][];
+            /** Compiled Sql */
+            compiled_sql: string | null;
+            /** Contract Enforced */
+            contract_enforced: boolean;
+            /** Description */
+            description: string;
+            /** Domain */
+            domain: string | null;
+            /** Failing Tests */
+            failing_tests: number;
+            /** File Path */
+            file_path: string;
+            /** Is Mart */
+            is_mart: boolean;
+            layer: components["schemas"]["Layer"];
+            /** Materialization */
+            materialization: string | null;
+            /** Name */
+            name: string;
+            /** Raw Sql */
+            raw_sql: string | null;
+            /** Resource Type */
+            resource_type: string;
+            /** Sql Note */
+            sql_note: string | null;
+            status: components["schemas"]["NodeStatus"];
+            /** Tests */
+            tests: components["schemas"]["TestInfo"][];
+            /** Unique Id */
+            unique_id: string;
+        };
+        /**
+         * NodeStatus
+         * @enum {string}
+         */
+        NodeStatus: "ok" | "warned" | "failed" | "skipped" | "not_in_build" | "inlined" | "no_build" | "none";
         /** QueryRequest */
         QueryRequest: {
             /**
@@ -311,6 +461,29 @@ export interface components {
             /** Primary Key */
             primary_key: string[];
         };
+        /** TestInfo */
+        TestInfo: {
+            /** Column */
+            column: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "generic" | "singular" | "unit";
+            /** Name */
+            name: string;
+            outcome: components["schemas"]["TestOutcome"];
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warn";
+        };
+        /**
+         * TestOutcome
+         * @enum {string}
+         */
+        TestOutcome: "passed" | "warned" | "failed" | "skipped" | "not_run";
     };
     responses: never;
     parameters: never;
@@ -378,7 +551,7 @@ export interface operations {
                     "application/json": components["schemas"]["TableDetails"];
                 };
             };
-            /** @description Not found: `table_not_found` */
+            /** @description Not found: `table_not_found`, `node_not_found` */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -387,7 +560,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -445,6 +618,115 @@ export interface operations {
             };
         };
     };
+    get_lineage_api_lineage_get: {
+        parameters: {
+            query?: {
+                select?: string;
+                layers?: string | null;
+                failing_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LineageGraph"];
+                };
+            };
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_node_api_lineage_nodes__unique_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                unique_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeDetails"];
+                };
+            };
+            /** @description Not found: `table_not_found`, `node_not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
     run_query_api_queries_post: {
         parameters: {
             query?: never;
@@ -476,7 +758,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -545,7 +827,7 @@ export interface operations {
                     "application/json": components["schemas"]["FormatResponse"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -583,7 +865,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
