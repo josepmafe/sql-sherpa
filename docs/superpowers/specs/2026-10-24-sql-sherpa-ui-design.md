@@ -309,7 +309,7 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
 ### 6.5 Lineage
 - **Modes:** **Whole project**, **Table path** (one node, with upstream and downstream depth controls: `all` or 1–5), **Domain** (every mart of a `meta.domain` plus all their ancestors). A layer filter (sources, seeds, staging, intermediate, snapshots, marts, exposures) hides layers, and a **"Failing only"** toggle keeps just the nodes whose last full build failed them or one of their tests, plus the edges between them.
 - **Selector box:** every mode is shown as **real dbt selector syntax**, and typing one applies it. "Copy dbt selector" therefore gives a string `dbt ls --select` accepts. Domain mode reads `+config.meta.domain:sales`. The backend implements this subset on the manifest graph, without running dbt:
-  - **atoms:** a node name, `source:<source>` or `source:<source>.<table>`, `exposure:<name>`, `config.meta.domain:<d>`
+  - **atoms:** a model, seed, snapshot or exposure name (a source table is only reachable as `source:<source>.<table>`, as in dbt), `source:<source>` or `source:<source>.<table>`, `exposure:<name>`, `config.meta.domain:<d>`
   - **graph operators on any atom:** `+atom`, `atom+`, `n+atom+m`
   - **unions:** atoms separated by spaces
 
