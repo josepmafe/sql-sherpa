@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/explorer");
@@ -41,4 +41,64 @@ test.describe("at 1024 x 700", () => {
     await page.keyboard.press("Escape");
     await expect(drawer).toBeHidden();
   });
+
+  test("opening the Lineage node panel keeps the selected node inside the canvas", async ({ page }) => {
+    await expectSelectedNodeInCanvas(page);
+  });
 });
+
+// The node panel is a fixed column beside the canvas, so neither may spill out of the page.
+test.describe("Lineage at 1280 x 800", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("neither the canvas nor the node panel overflows the page", async ({ page }) => {
+    const widths = await lineageWidths(page);
+
+    expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth);
+    expect(widths.panelRight).toBeLessThanOrEqual(widths.clientWidth);
+    expect(widths.canvasRight).toBeLessThanOrEqual(widths.clientWidth);
+  });
+
+  test("opening the node panel keeps the selected node inside the canvas", async ({ page }) => {
+    await expectSelectedNodeInCanvas(page);
+  });
+});
+
+// The panel narrows the canvas under a viewport that was fitted to the full width: the node picked must not end up
+// behind the panel.
+async function expectSelectedNodeInCanvas(page: Page): Promise<void> {
+  await page.goto("/lineage");
+  await page.getByRole("button", { name: /^fct_orders(?!\w)/ }).click();
+  await expect(page.getByRole("complementary", { name: "Node details" })).toBeVisible();
+
+  await expect
+    .poll(async () => {
+      const canvas = await page.getByLabel("Lineage graph").boundingBox();
+      const node = await page.locator('[data-id="model.sherpa.fct_orders"]').boundingBox();
+      if (canvas === null || node === null) return false;
+      return (
+        node.x >= canvas.x &&
+        node.y >= canvas.y &&
+        node.x + node.width <= canvas.x + canvas.width &&
+        node.y + node.height <= canvas.y + canvas.height
+      );
+    })
+    .toBe(true);
+}
+
+async function lineageWidths(page: Page): Promise<Record<"canvasRight" | "panelRight" | "scrollWidth" | "clientWidth", number>> {
+  await page.goto("/lineage?select=%2Bfct_orders%2B&node=model.sherpa.fct_orders");
+  const panel = page.getByRole("complementary", { name: "Node details" });
+  await expect(panel.getByRole("heading", { name: "fct_orders", level: 4 })).toBeVisible();
+  const canvasBox = await page.getByLabel("Lineage graph").boundingBox();
+  const panelBox = await panel.boundingBox();
+  const root = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  return {
+    canvasRight: (canvasBox?.x ?? 0) + (canvasBox?.width ?? 0),
+    panelRight: (panelBox?.x ?? 0) + (panelBox?.width ?? 0),
+    ...root,
+  };
+}

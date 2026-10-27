@@ -20,6 +20,15 @@ class ResizeObserverStub {
   disconnect(): void {}
 }
 globalThis.ResizeObserver ??= ResizeObserverStub;
+// React Flow reads the zoom from the viewport transform with this.
+class DOMMatrixReadOnlyStub {
+  m22 = 1;
+  constructor(transform?: string) {
+    const scale = /scale\(([\d.]+)\)/.exec(transform ?? "");
+    if (scale) this.m22 = Number(scale[1]);
+  }
+}
+globalThis.DOMMatrixReadOnly ??= DOMMatrixReadOnlyStub as unknown as typeof DOMMatrixReadOnly;
 // A Select's dropdown scrolls its selected option into view.
 Element.prototype.scrollIntoView ??= () => {};
 

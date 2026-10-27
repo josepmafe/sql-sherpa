@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExplorerScreen } from "../src/screens/explorer/ExplorerScreen";
@@ -63,7 +64,9 @@ function renderScreen(sql: string, strict = false) {
   saveExplorerState(updateWorksheet(seeded, seeded.activeId, { sql }));
   const screenUnderTest = (
     <MantineProvider env="test">
-      <ExplorerScreen />
+      <MemoryRouter>
+        <ExplorerScreen />
+      </MemoryRouter>
     </MantineProvider>
   );
   render(strict ? <StrictMode>{screenUnderTest}</StrictMode> : screenUnderTest);

@@ -30,6 +30,7 @@ type EditorProps = {
 };
 
 const EDITOR_HEIGHT = "220px";
+const READ_ONLY_HEIGHT = "320px";
 const FORMAT_FAILED = "Could not format the query.";
 const RUN_HINT = "Ctrl/Cmd+Enter runs";
 const EMPTY_HINT = "Write a query to run it";
@@ -149,6 +150,22 @@ export function SqlEditor({
   );
 }
 
+// A read-only view of a query (the node panel's raw and compiled SQL): the editor's SQL language and theme, no toolbar.
+export function ReadOnlySql({ value, label }: { value: string; label: string }) {
+  const colorScheme = useComputedColorScheme("light");
+  return (
+    <CodeMirror
+      value={value}
+      readOnly
+      height={READ_ONLY_HEIGHT}
+      extensions={READ_ONLY_EXTENSIONS}
+      theme={colorScheme}
+      basicSetup={{ lineNumbers: true, foldGutter: false, autocompletion: false }}
+      aria-label={label}
+    />
+  );
+}
+
 // Postgres counts characters (code points) from 0 in the text it was sent; the editor counts UTF-16 units.
 // The highlight covers the word at the position, or one character, and `baseOffset` places the sent text in the editor.
 export function errorHighlight(sentSql: string, position: number, baseOffset: number): Highlight {
@@ -184,6 +201,8 @@ export function sqlExtension(catalog: CatalogTree | undefined, activeTable: stri
 const focusOutline = EditorView.theme({
   "&.cm-focused": { outline: "2px solid var(--mantine-primary-color-filled)" },
 });
+
+const READ_ONLY_EXTENSIONS = [sqlLanguage({ dialect: PostgreSQL }), focusOutline, EditorView.lineWrapping];
 
 const setErrorHighlight = StateEffect.define<Highlight | null>();
 // Mantine's red "light" variant colour follows the colour scheme, so the mark keeps its contrast in dark mode.

@@ -9,7 +9,7 @@ make up           # starts postgres, mcp and ui; waits until all are healthy
 make build-prod   # the prod warehouse and the dbt docs the UI reads
 ```
 
-Open <http://127.0.0.1:8090>; the root redirects to `/explorer`.
+Open <http://127.0.0.1:8090>; the root redirects to `/explorer`. A link `/explorer?table=<name>` (Lineage's "Open in Explorer") selects that table in the Inspector; a name that is not a mart shows a dismissible "No mart named ..." alert above the editor.
 
 - Before `make build-prod` the page shows a yellow "dbt artifacts missing" banner and the tree offers Retry. A reload picks up a later build; no restart needed.
 - The port is `SHERPA_UI_PORT` (default 8090). Put it in `.env` if 8090 is taken.
@@ -27,7 +27,7 @@ The tree is `sherpa > marts > <domain> > table > column`: descriptions from dbt'
   - **Preview 100 rows** opens a worksheet with `select * from marts.<table> limit 100` and runs it.
   - **Insert SELECT** appends a `select *` skeleton to the active worksheet.
   - **Copy name** copies `marts.<table>`.
-  - **Open in Lineage** is disabled until the Lineage screen exists.
+  - **Open in Lineage** opens the table's graph with its ancestors and descendants (`/lineage?select=+<table>+`; [Using Lineage](using-lineage.md)). The Inspector has the same button.
 
 ## Worksheets, history and running
 
@@ -86,4 +86,5 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 ## Next
 
 - [Querying the marts](querying-the-marts.md): queries to paste into the Explorer.
+- [Using Lineage](using-lineage.md): the graph behind a table.
 - [Extending the UI](../advanced/extending-the-ui.md): add an endpoint or a screen.

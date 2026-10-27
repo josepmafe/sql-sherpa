@@ -2,6 +2,7 @@ import { EditorView } from "@codemirror/view";
 import { MantineProvider } from "@mantine/core";
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cellText } from "../src/components/resultView";
@@ -50,10 +51,12 @@ const RESPONSE = {
   mode: "client",
 };
 
-function renderScreen() {
+function renderScreen(path = "/explorer") {
   return render(
     <MantineProvider env="test">
-      <ExplorerScreen />
+      <MemoryRouter initialEntries={[path]}>
+        <ExplorerScreen />
+      </MemoryRouter>
     </MantineProvider>,
   );
 }
@@ -245,7 +248,9 @@ describe("ExplorerScreen", () => {
     useHealth.mockReturnValue({ data: health("ok") });
     view.rerender(
       <MantineProvider env="test">
-        <ExplorerScreen />
+        <MemoryRouter>
+          <ExplorerScreen />
+        </MemoryRouter>
       </MantineProvider>,
     );
 
@@ -264,6 +269,22 @@ describe("ExplorerScreen", () => {
     expect(drawer).toHaveTextContent("Loading fct_orders…");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("?table= selects and inspects a known mart", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
+    renderScreen("/explorer?table=fct_orders");
+
+    expect(await screen.findByText("Loading fct_orders…")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("?table= with an unknown name notifies", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
+    renderScreen("/explorer?table=nope");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No mart named nope");
+    expect(screen.getByText("Select a table to inspect it.")).toBeInTheDocument();
   });
 
   it("from 1280 px the Inspector has its own column", async () => {

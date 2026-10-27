@@ -1,14 +1,13 @@
 import { Badge, Button, Code, Group, Stack, Text, Title } from "@mantine/core";
-import { useId } from "react";
+import { Link } from "react-router-dom";
 
 import { useTableDetails } from "../../api/queries";
 import { ColumnBadges } from "./ColumnBadges";
-import { LINEAGE_UNAVAILABLE } from "./lineage";
+import { lineageLink } from "./lineage";
 import { LoadError } from "./LoadError";
 
 export function Inspector({ table }: { table: string | undefined }) {
   const details = useTableDetails(table);
-  const lineageNote = useId();
 
   if (table === undefined) return <Text c="dimmed">Select a table to inspect it.</Text>;
   if (details.isError) {
@@ -35,14 +34,9 @@ export function Inspector({ table }: { table: string | undefined }) {
           <b>Synonyms:</b> {t.synonyms.join(", ")}
         </Text>
       )}
-      <Group gap="xs">
-        <Button disabled variant="default" size="xs" aria-describedby={lineageNote}>
-          Open in Lineage
-        </Button>
-        <Text id={lineageNote} size="xs" c="dimmed">
-          {LINEAGE_UNAVAILABLE}
-        </Text>
-      </Group>
+      <Button component={Link} to={lineageLink(t.name)} variant="default" size="xs" w="fit-content">
+        Open in Lineage
+      </Button>
 
       <Title order={5}>Columns</Title>
       {t.columns.map((column) => (
