@@ -36,12 +36,14 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
   const domains = unique(project?.nodes.map((node) => node.domain));
   const path = current.mode === "path" ? current : undefined;
   const [boxText, setBoxText] = useState(select);
+  const [tableText, setTableText] = useState(path?.name ?? "");
   const [syncedSelect, setSyncedSelect] = useState(select);
   const clipboard = useClipboard();
   // The box follows the URL (back/forward, a mode control) unless the user is mid-typing a new selector.
   if (select !== syncedSelect) {
     setSyncedSelect(select);
     setBoxText(select);
+    setTableText(path?.name ?? "");
     setChosen(undefined);
   }
 
@@ -71,8 +73,8 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
               label="Table"
               placeholder="Table name"
               data={names}
-              key={path?.name ?? ""}
-              defaultValue={path?.name ?? ""}
+              value={tableText}
+              onChange={setTableText}
               onOptionSubmit={(name) => apply(pathSelector(name, path?.up ?? DEFAULT_DEPTH, path?.down ?? DEFAULT_DEPTH))}
             />
             <DepthSelect

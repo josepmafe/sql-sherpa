@@ -105,6 +105,19 @@ describe("SelectorBar", () => {
       expect(screen.getByRole("combobox", { name: "Table" })).toHaveValue("dim_products");
     });
 
+    it("picking a table keeps the keyboard focus in the field", async () => {
+      const { setSelect } = mountBar("+fct_orders+");
+      const field = screen.getByRole("combobox", { name: "Table" });
+      await userEvent.clear(field);
+      await userEvent.type(field, "dim");
+
+      await userEvent.click(await screen.findByRole("option", { name: "dim_products" }));
+      setSelect("+dim_products+");
+
+      expect(screen.getByRole("combobox", { name: "Table" })).toBe(field);
+      expect(field).toHaveFocus();
+    });
+
     it("a mode chosen earlier does not outlive the new selector", async () => {
       const { setSelect } = mountBar("");
       await userEvent.click(screen.getByRole("radio", { name: "Table path" }));
