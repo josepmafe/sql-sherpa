@@ -4,7 +4,6 @@ strip."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Final
@@ -15,8 +14,6 @@ from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from sherpa_ui.settings import UiSettings
-
-logger = logging.getLogger(__name__)
 
 # The rows of the newest invocation (by when it started) that was a full `dbt build` on prod; the invocation id breaks
 # a tie between two that started in the same instant.
@@ -32,7 +29,10 @@ where invocation_id = (
     limit 1
 )
 """
-UNAVAILABLE_MESSAGE: Final = "the warehouse is unreachable ({reason}); is `make up` running?"
+UNAVAILABLE_MESSAGE: Final = (
+    "could not read ops.dbt_run_results (unreachable, missing grant or timeout): {reason}; "
+    "make build-prod re-applies the grants"
+)
 
 
 class BuildStatusUnavailable(Exception):

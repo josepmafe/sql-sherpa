@@ -69,6 +69,7 @@ export function LineageScreen() {
                 onSelect={(node) => update({ node })}
                 failingOnly={params.failingOnly}
                 layersFiltered={params.layers !== undefined}
+                buildState={graph.build.state}
               />
             </Box>
             {params.node !== undefined && (

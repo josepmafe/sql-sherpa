@@ -27,7 +27,7 @@ A subset of dbt's syntax, evaluated on the manifest without running dbt:
 | `+x`, `x+`, `2+x`, `x+1`, `2+x+1` | add ancestors, descendants, or both, up to a depth |
 | `a b` | the union of the atoms, separated by spaces |
 
-Anything else (`tag:`, `,`, `@`, or a folder, package or test name such as `marts`) is refused under the box with the list of supported forms, and the last good graph stays; use the layer chips for a folder. **Copy dbt selector** copies the applied selector on one line, ready for dbt (it is disabled for the whole project and for a refused selector) (the `dbt` prefix is explained in [Running dbt directly](building-the-warehouse.md#running-dbt-directly)). `dbt ls` rewrites `manifest.json` in its target path, so give it a scratch one:
+Anything else (`tag:`, `,`, `@`, or a folder, package or test name such as `marts`) is refused under the box with the list of supported forms, and the last good graph stays; use the layer chips for a folder. **Copy dbt selector** copies the applied selector on one line, ready for dbt; it is disabled for the whole project and for a refused selector. The `dbt` prefix is explained in [Running dbt directly](building-the-warehouse.md#running-dbt-directly). `dbt ls` rewrites `manifest.json` in its target path, so give it a scratch one:
 
 ```bash
 dbt ls --select "+fct_orders" --target prod --target-path target-scratch

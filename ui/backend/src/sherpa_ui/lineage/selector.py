@@ -16,7 +16,7 @@ SUPPORTED_FORMS = (
     "config.meta.domain:<domain>; graph operators +atom, atom+, n+atom, atom+n, n+atom+m; "
     "several atoms separated by spaces"
 )
-RESERVED_NAME_HINT = "a folder, package or test name selects a group in dbt; use the layer filter for a folder"
+RESERVED_NAME_HINT = "a package, top-level folder or test name is a group in dbt; use the layer filter for a folder"
 # `[n]+` before and `+[m]` after one atom; the digits are the depth, none means unlimited.
 _ATOM_WITH_OPERATORS = re.compile(r"^(?P<up>(?P<up_depth>\d*)\+)?(?P<atom>[^+]+?)(?P<down>\+(?P<down_depth>\d*))?$")
 _NAME = r"[\w-]+"

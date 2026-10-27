@@ -146,10 +146,26 @@ class TestSelectorEvaluator:
 
         assert "layer filter" in error.value.message
 
-    def test_a_folder_name_that_is_also_a_node_name_still_selects_the_node(self, manifest: dict[str, Any]) -> None:
+    def test_a_folder_name_that_is_also_a_node_name_is_still_rejected(self, manifest: dict[str, Any]) -> None:
         manifest["nodes"]["model.p.fct_orders"]["name"] = "intermediate"
 
-        assert SelectorEvaluator(ManifestGraph.from_manifest(manifest)).select("intermediate") == {"model.p.fct_orders"}
+        with pytest.raises(UnsupportedSelector):
+            SelectorEvaluator(ManifestGraph.from_manifest(manifest)).select("intermediate")
+
+    def test_a_test_name_that_is_also_a_node_name_selects_the_node(self, manifest: dict[str, Any]) -> None:
+        manifest["nodes"]["model.p.fct_orders"]["name"] = "scratch"
+
+        assert SelectorEvaluator(ManifestGraph.from_manifest(manifest)).select("scratch") == {FCT}
+
+    def test_only_the_package_and_first_folder_are_reserved_not_deeper_folders(self, manifest: dict[str, Any]) -> None:
+        manifest["nodes"]["model.p.fct_orders"]["fqn"] = ["p", "marts", "sales", "fct_orders"]
+        evaluator = SelectorEvaluator(ManifestGraph.from_manifest(manifest))
+
+        assert evaluator.select("sales") == frozenset()  # dbt selects nothing for a sub-folder name
+        with pytest.raises(UnsupportedSelector):
+            evaluator.select("marts")
+        with pytest.raises(UnsupportedSelector):
+            evaluator.select("p")
 
     def test_a_selector_of_exactly_the_limit_is_evaluated(self, evaluator: SelectorEvaluator) -> None:
         assert evaluator.select("x" * 1000) == frozenset()

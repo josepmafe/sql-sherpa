@@ -17,7 +17,7 @@ import { useEffect, useMemo } from "react";
 import type { components } from "../../api/schema";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
 import { edgeAppearance, edgeId, relatedNodes } from "./highlight";
-import { columnOf, type LayoutEdge, type LayoutNode, NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { type LayoutEdge, type LayoutNode, NODE_HEIGHT, NODE_WIDTH } from "./layout";
 import { useRevealNode } from "./reveal";
 import { useGraphLayout } from "./useGraphLayout";
 
@@ -37,13 +37,14 @@ interface LineageCanvasProps {
   // Why an empty graph is empty.
   failingOnly: boolean;
   layersFiltered: boolean;
+  buildState: "ok" | "no_build" | "unavailable";
 }
 
 export function LineageCanvas(props: LineageCanvasProps) {
   if (props.nodes.length === 0) {
     return (
       <Text c="dimmed" ta="center" py="xl">
-        {emptyText(props.failingOnly, props.layersFiltered)}
+        {emptyText(props)}
       </Text>
     );
   }
@@ -73,7 +74,8 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
     if (selected !== undefined) reveal(selected);
   }, [selected, canvasWidth, canvasHeight, reveal]);
 
-  // The DOM order is the Tab order: column by column, top to bottom.
+  // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (ELK splits a layer into
+  // sub-columns, so the layer alone does not give the order).
   const flowNodes: Node<GraphNodeData>[] = useMemo(
     () =>
       nodes
@@ -81,7 +83,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
           const position = positions?.get(node.unique_id);
           return position === undefined ? [] : [{ node, position }];
         })
-        .sort((a, b) => columnOf(a.node.layer) - columnOf(b.node.layer) || a.position.y - b.position.y)
+        .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y)
         .map(({ node, position }) => ({
           id: node.unique_id,
           type: "graph",
@@ -142,7 +144,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
         onPaneClick={() => onSelect(undefined)}
         proOptions={{ hideAttribution: true }}
       >
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false} fitViewOptions={{ maxZoom: FIT_MAX_ZOOM }} />
         {nodes.length > MINIMAP_ABOVE_NODES && selected === undefined && <MiniMap pannable zoomable />}
       </ReactFlow>
     </div>
@@ -165,8 +167,9 @@ function useTopology(nodes: ApiNode[], edges: ApiEdge[]): { layoutNodes: LayoutN
   }, [key]);
 }
 
-function emptyText(failingOnly: boolean, layersFiltered: boolean): string {
-  if (failingOnly) return "Nothing failed in the last full build";
+function emptyText({ failingOnly, layersFiltered, buildState }: LineageCanvasProps): string {
+  if (failingOnly && buildState !== "ok") return "No build status to filter on";
+  if (failingOnly) return layersFiltered ? "No failed node in the layers shown" : "Nothing failed in the last full build";
   if (layersFiltered) return "No node in the layers shown";
   return "No node matches this selector";
 }

@@ -125,7 +125,7 @@ class TestBuildStatusReaderOnScratchDatabase:
     ) -> None:
         scratch_admin.execute(CREATE_TABLE)
 
-        with pytest.raises(BuildStatusUnavailable):
+        with pytest.raises(BuildStatusUnavailable, match="missing grant or timeout"):
             BuildStatusReader(scratch_settings).last_full_build()
 
 

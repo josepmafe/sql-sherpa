@@ -1,4 +1,4 @@
-import { Autocomplete, Button, Group, SegmentedControl, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Autocomplete, Button, Group, SegmentedControl, Select, Stack, Text, TextInput, VisuallyHidden } from "@mantine/core";
 import { useClipboard } from "@mantine/hooks";
 import { useState } from "react";
 
@@ -12,6 +12,7 @@ const MODE_LABELS: { value: Mode; label: string }[] = [
   { value: "path", label: "Table path" },
   { value: "domain", label: "Domain" },
 ];
+const COPY_BLOCKED_ID = "copy-selector-blocked";
 const DEPTH_OPTIONS = ["all", "1", "2", "3", "4", "5"];
 const DEFAULT_DEPTH: Depth = "all";
 const WHOLE_PROJECT = { select: "", layers: undefined, failingOnly: false } as const;
@@ -117,11 +118,12 @@ export function SelectorBar({ select, onSelect, error }: SelectorBarProps) {
         <Button
           variant="light"
           disabled={copyBlocked !== undefined}
-          title={copyBlocked}
+          aria-describedby={copyBlocked === undefined ? undefined : COPY_BLOCKED_ID}
           onClick={() => clipboard.copy(oneLine(select))}
         >
           {clipboard.copied ? "Copied" : "Copy dbt selector"}
         </Button>
+        {copyBlocked !== undefined && <VisuallyHidden id={COPY_BLOCKED_ID}>{copyBlocked}</VisuallyHidden>}
       </Group>
       {mode === undefined && (
         <Text size="xs" c="dimmed">

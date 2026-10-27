@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 if TYPE_CHECKING:
     from collections.abc import Iterable, KeysView, Mapping
 
+_FQN_GROUP_PARTS = 2  # dbt's bare-name match reads fqn[0] and fqn[1] (and the leaf)
 MODEL_FOLDER_INDEX = 1  # a model's fqn is [package, folder under models/, ...]
 DEFAULT_SEVERITY = "error"
 _NODE_SECTIONS = ("nodes", "sources", "exposures")
@@ -157,13 +158,14 @@ def _build_node(raw: dict[str, Any], graph_ids: KeysView[str]) -> GraphNode:
 
 
 def _reserved_names(manifest: dict[str, Any], graph_names: set[str]) -> frozenset[str]:
-    """What dbt reads as a group or a test in a bare atom: the package and folders of every non-source node (the fqn
-    without the node's own name), and the names of the nodes that are not in the graph (tests, analyses...)."""
+    """What dbt reads as a group or a test in a bare atom: it matches the first two fqn parts (the package and the
+    first folder) of every non-source node, and the names of tests and analyses; a graph node named like a test or
+    an analysis still selects itself, a node named like a package or first folder does not."""
     raws = [*manifest["nodes"].values(), *manifest.get("exposures", {}).values()]
-    groups = {part for raw in raws for part in raw.get("fqn", [])[:-1]}
+    groups = {part for raw in raws for part in raw.get("fqn", [])[:-1][:_FQN_GROUP_PARTS]}
     others = {raw["name"] for raw in raws if raw["resource_type"] not in _GRAPH_RESOURCE_TYPES}
     others |= {raw["name"] for raw in manifest.get("unit_tests", {}).values()}
-    return frozenset(groups | others) - graph_names
+    return frozenset(groups | (others - graph_names))
 
 
 def _layer(resource_type: str, fqn: list[str]) -> Layer:

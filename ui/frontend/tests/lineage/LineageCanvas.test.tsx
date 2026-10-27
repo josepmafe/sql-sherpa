@@ -46,7 +46,7 @@ function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; 
   const [selected, setSelected] = useState(initial);
   return (
     <MantineProvider env="test">
-      <LineageCanvas nodes={nodes} edges={edges} selected={selected} onSelect={setSelected} failingOnly={false} layersFiltered={false} />
+      <LineageCanvas nodes={nodes} edges={edges} selected={selected} onSelect={setSelected} failingOnly={false} layersFiltered={false} buildState="ok" />
     </MantineProvider>
   );
 }
@@ -78,7 +78,7 @@ describe("LineageCanvas", () => {
   it("shows the empty state", () => {
     render(
       <MantineProvider env="test">
-        <LineageCanvas nodes={[]} edges={[]} selected={undefined} onSelect={() => {}} failingOnly={false} layersFiltered={false} />
+        <LineageCanvas nodes={[]} edges={[]} selected={undefined} onSelect={() => {}} failingOnly={false} layersFiltered={false} buildState="ok" />
       </MantineProvider>,
     );
 
@@ -86,25 +86,32 @@ describe("LineageCanvas", () => {
   });
 
   it.each([
-    [true, false, "Nothing failed in the last full build"],
-    [true, true, "Nothing failed in the last full build"],
-    [false, true, "No node in the layers shown"],
-  ])("the empty state names its reason (failing only %s, layers filtered %s)", (failingOnly, layersFiltered, text) => {
-    render(
-      <MantineProvider env="test">
-        <LineageCanvas
-          nodes={[]}
-          edges={[]}
-          selected={undefined}
-          onSelect={() => {}}
-          failingOnly={failingOnly}
-          layersFiltered={layersFiltered}
-        />
-      </MantineProvider>,
-    );
+    [true, false, "ok", "Nothing failed in the last full build"],
+    [true, true, "ok", "No failed node in the layers shown"],
+    [true, false, "no_build", "No build status to filter on"],
+    [true, true, "unavailable", "No build status to filter on"],
+    [false, true, "ok", "No node in the layers shown"],
+    [false, false, "ok", "No node matches this selector"],
+  ] as const)(
+    "the empty state names its reason (failing only %s, layers filtered %s, build %s)",
+    (failingOnly, layersFiltered, buildState, text) => {
+      render(
+        <MantineProvider env="test">
+          <LineageCanvas
+            nodes={[]}
+            edges={[]}
+            selected={undefined}
+            onSelect={() => {}}
+            failingOnly={failingOnly}
+            layersFiltered={layersFiltered}
+            buildState={buildState}
+          />
+        </MantineProvider>,
+      );
 
-    expect(screen.getByText(text)).toBeInTheDocument();
-  });
+      expect(screen.getByText(text)).toBeInTheDocument();
+    },
+  );
 
   it("Enter on a focused node selects it", async () => {
     render(<Harness />);
@@ -166,6 +173,26 @@ describe("LineageCanvas", () => {
 
     expect(names[0]).toBe("a");
     expect(names[3]).toBe("c");
+  });
+
+  it("Tab follows the screen order when a layer is split into sub-columns: left to right, then top to bottom", async () => {
+    const chain = ["p", "q", "r"].map((name) => node(name));
+    const lone = ["s", "t", "u"].map((name) => node(name));
+    const edges = [
+      { source: "model.s.p", target: "model.s.q" },
+      { source: "model.s.q", target: "model.s.r" },
+    ];
+    render(<Harness nodes={[...chain, ...lone]} edges={edges} />);
+    await item("p");
+
+    const corners = [...document.querySelectorAll<HTMLElement>(".react-flow__node")].map((wrapper) => {
+      const match = /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(wrapper.style.transform);
+      return [Number(match?.[1]), Number(match?.[2])] as const;
+    });
+    const sorted = [...corners].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+    expect(new Set(corners.map(([x]) => x)).size).toBeGreaterThan(1);
+    expect(corners).toEqual(sorted);
   });
 
   it("a status-only refetch keeps the layout, so the zoom stays", async () => {

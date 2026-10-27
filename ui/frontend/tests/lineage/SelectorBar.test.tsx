@@ -94,7 +94,7 @@ describe("SelectorBar", () => {
     const button = screen.getByRole("button", { name: "Copy dbt selector" });
 
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", "The whole project has no selector to copy");
+    expect(button).toHaveAccessibleDescription("The whole project has no selector to copy");
   });
 
   it("Copy dbt selector is disabled for a refused selector, with the reason", () => {
@@ -103,7 +103,7 @@ describe("SelectorBar", () => {
     const button = screen.getByRole("button", { name: "Copy dbt selector" });
 
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", "dbt does not run this selector here: nothing to copy");
+    expect(button).toHaveAccessibleDescription("dbt does not run this selector here: nothing to copy");
   });
 
   it("an unsupported selector shows the supported forms", () => {
