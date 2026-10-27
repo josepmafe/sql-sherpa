@@ -27,7 +27,7 @@ A subset of dbt's syntax, evaluated on the manifest without running dbt:
 | `+x`, `x+`, `2+x`, `x+1`, `2+x+1` | add ancestors, descendants, or both, up to a depth |
 | `a b` | the union of the atoms, separated by spaces |
 
-Anything else (`tag:`, `,`, `@`, or a folder, package or test name such as `marts`) is refused under the box with the list of supported forms, and the last good graph stays; use the layer chips for a folder. **Copy dbt selector** copies the applied selector, ready for dbt (the `dbt` prefix is explained in [Running dbt directly](building-the-warehouse.md#running-dbt-directly)). `dbt ls` rewrites `manifest.json` in its target path, so give it a scratch one:
+Anything else (`tag:`, `,`, `@`, or a folder, package or test name such as `marts`) is refused under the box with the list of supported forms, and the last good graph stays; use the layer chips for a folder. **Copy dbt selector** copies the applied selector on one line, ready for dbt (it is disabled for the whole project and for a refused selector) (the `dbt` prefix is explained in [Running dbt directly](building-the-warehouse.md#running-dbt-directly)). `dbt ls` rewrites `manifest.json` in its target path, so give it a scratch one:
 
 ```bash
 dbt ls --select "+fct_orders" --target prod --target-path target-scratch
@@ -53,9 +53,10 @@ The "last full build" is the newest `dbt build` on prod recorded in `ops.dbt_run
 - **Layer chips** hide layers. A hidden layer's nodes and edges disappear; edges are not bridged across the gap.
 - **Failing only** keeps the nodes whose status is failed. Warnings stay out.
 - **No build recorded:** no node has a status and a note says "run make build-prod". "Failing only" then shows nothing.
-- **Build status unavailable** (database down, missing grant, timeout): the graph still draws from the manifest, with a note.
+- **Build status unavailable** (the build record could not be read: database down, missing grant, timeout): the graph still draws from the manifest, with a note.
+- With a build recorded, the note says which one the statuses come from ("Status from the full build of 2026-10-26 14:05 UTC").
 
-Click a node (or focus it and press Enter) to emphasise it, highlight its ancestors and descendants among the nodes shown, and dim the rest. Esc, the panel's close button or a click on the background clears it.
+Click a node (or focus it and press Enter) to emphasise it, draw its ancestors and descendants among the nodes shown (nodes and edges) in the accent colour, and fade the rest. Esc, the panel's close button or a click on the background clears it, and the focus goes back to the node. Tab walks the nodes column by column, top to bottom; the zoom buttons at the bottom left do what the wheel does. When the panel narrows the canvas, the selected node is centred if it would hide behind it.
 
 ## The node panel
 
@@ -71,10 +72,10 @@ Selecting a node opens a panel beside the canvas: description, layer, materializ
 |---|---|
 | "Could not load the lineage" or `catalog_unavailable` | The artifacts are missing: `make build-prod`, then Retry |
 | Red text under the box: "unsupported selector" | Use a form from the table above; the message lists them |
-| Empty graph | The name matched nothing, or it is a source table: write `source:<source>.<table>` |
+| Empty graph | The text says why. "No node matches this selector": the name matched nothing, or it is a source table (write `source:<source>.<table>`). "No node in the layers shown": tick a layer chip. "Nothing failed in the last full build": untick Failing only |
 | "No full build recorded: run make build-prod" | No full prod build is recorded: `make build-prod` |
 | A node reads "not in the last build" | The last full build did not include it: `make build-prod` |
-| "Build status unavailable" | `make build-prod` (it re-applies the grants); else see the `ui` log (`docker compose logs ui`) |
+| "Build status unavailable (could not read the build record; see the ui log)" | `make build-prod` (it re-applies the grants); else see the `ui` log (`docker compose logs ui`) |
 | The panel shows a note instead of compiled SQL | `make build-prod` writes `target-prod/compiled/`; then reselect the node |
 
 ## Next
