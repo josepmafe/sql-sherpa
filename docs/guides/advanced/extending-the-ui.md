@@ -31,7 +31,7 @@ Example: `GET /api/catalog/domains`. Do the steps in order, so each is proved be
    - Read the service from `request.app.state`; run blocking work with `run_in_threadpool`.
    - Raise `ApiException(status, code, message)`; the body is always `{code, message, detail?}`.
    - A new query-runner error code needs its status in `QUERY_ERROR_STATUS` (`api/errors.py`) and a title in `ERROR_TITLES` (`screens/explorer/WorksheetPanel.tsx`).
-   - Declare every error status with `error_responses(*statuses)`. Every `/api` route gets `500`; the catalog router adds `503`. A route with a path or body parameter must declare `422`.
+   - Declare every error status with `error_responses(*statuses)`. Every `/api` route gets `500`; the catalog and lineage routers add `503`. A route with a path or body parameter must declare `422`.
    - Add the route to the table in `TestOpenapiErrors` (`tests/test_app.py`).
    - Test through `TestClient` in `ui/backend/tests/api/`, including the unhappy path.
 3. **Regenerate the client types** and commit the result:
@@ -70,10 +70,10 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 
 1. Add cases to `ui/backend/tests/lineage/test_selector.py`: a match, no match, combined with `+`, and a malformed form.
 2. In `lineage/selector.py`: a regex next to `_SOURCE_ATOM`, a branch in `SelectorEvaluator._match_atom` (before the bare-name branch), and the form in `SUPPORTED_FORMS`, the text of the `unsupported_selector` message. An atom that needs a new node field adds it to `GraphNode` in `lineage/manifest_graph.py`, with a test in `test_manifest_graph.py`.
-3. Add selectors that use it to `SELECTORS` in `test_selector_oracle.py`. That test compares the evaluator with `dbt ls --select <selector>` on a fresh `dbt parse`, so it proves the atom means what dbt means:
+3. Add selectors that use it to `SELECTORS` in `test_selector_oracle.py`. That test (marker `warehouse`, about 30 s: one in-process `dbt parse`, then `dbt ls` per selector) compares the evaluator with `dbt ls --select <selector>`, so it proves the atom means what dbt means:
 
    ```bash
-   uv run --env-file .env pytest ui/backend/tests/lineage/test_selector_oracle.py -m integration
+   uv run --env-file .env pytest ui/backend/tests/lineage/test_selector_oracle.py -m warehouse
    ```
 
 4. If the three modes should write it, change `ui/frontend/src/screens/lineage/selectors.ts` and its Vitest file; any other selector stays "custom". Then list it in the UI spec §6.5 and in [Using Lineage](../basic/using-lineage.md).

@@ -117,7 +117,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - Keep **pure logic separate from I/O**, so most code is testable without a database or a model:
   - generator: `records/`, `RealismRules`, `SimulationCalendar`, `DeterministicRandom` and `OrderPricing` are pure; `database/`, `StoreSnapshotLoader` and `Simulator` do the I/O. `OrderPricing` lives in `behaviour/order_lifecycle.py` and `GeneratorError` in `simulation/simulator.py`
   - MCP server: `sql_guard`, `masking`, the `examples` ranking and the `catalog` parsing are pure; `tools`, `database` and the file reads of the `catalog` loader and of `ExampleIndex.from_yaml` do the I/O
-  - UI backend: `readonly/sort_filter`, the `catalog_service` mapping, `lineage/manifest_graph`, `lineage/selector` and `lineage/node_status` are pure; `readonly/query_runner`, `build/build_status`, `lineage/lineage_service` and the `api/` routers do the I/O
+  - UI backend: `readonly/sort_filter`, the `catalog_service` mapping, `lineage/manifest_graph`, `lineage/selector` and `lineage/node_status` are pure; `readonly/query_runner`, `build/build_status`, `lineage/manifest_loader`, `lineage/node_sql`, `lineage/lineage_service` and the `api/` routers do the I/O
   - agent: `guards` and `outcomes` are pure; variants orchestrate
 - One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_ui`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.
 - Module-level `UPPER_CASE` constants for every tunable value (rates, limits, thresholds), with the spec section in a comment where it comes from the spec. No magic numbers inside logic.

@@ -313,19 +313,19 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
   - **graph operators on any atom:** `+atom`, `atom+`, `n+atom+m`
   - **unions:** atoms separated by spaces
 
-  Anything else returns `code = "unsupported_selector"`, listing what is supported. An integration test checks that, for a fixed list of selectors, the backend's node set equals `dbt ls --select <selector> --output json` (restricted to the graph's resource types) on the same fresh `dbt parse` into a temporary target path, so a stale `target-prod` cannot fail it.
+  Anything else returns `code = "unsupported_selector"`, listing what is supported. That includes a bare name that dbt reads as a group or a test (a package, a folder or a test name such as `marts`): the hint points to the layer filter. A `warehouse` test checks that, for a fixed list of selectors, the backend's node set equals `dbt ls --select <selector> --output json` (restricted to the graph's resource types) on one in-process `dbt parse` into a temporary target path, so a stale `target-prod` cannot fail it.
 - **Graph nodes:** sources, seeds, models, snapshots and exposures. Tests, unit tests, analyses and hooks are not nodes: they appear in the node panel and decide a node's status. The layer filter lists only the layers the manifest has (exposures arrive with data-platform-4).
 - **Layout:** left to right by layer, auto-placed with ELK (loaded on the first Lineage visit, so the Explorer's bundle does not carry it), with edges from each node's `depends_on`. A hidden layer's nodes and their edges disappear; edges are never bridged across them.
 - **Node styling:** colour by layer, a badge for materialization, and the status below. Status is always an icon and a text label as well as a colour (WCAG AA, not colour alone).
 - **Build status** of a node, from the last full prod build (§3):
-  - `failed`: its own row is `error`, or a test counted against it failed. A generic test counts against the node it is defined on, a singular test against every node it depends on, a unit test against the model it checks.
+  - `failed`: its own row is `error`, `runtime error` or `partial success` (dbt treats it as a failure and skips the dependents), or a test counted against it failed. A generic test counts against the node it is defined on, a singular test against every node it depends on, a unit test against the model it checks.
   - `warned`: not failed, and a test with severity `warn` warned. A warning is never "failing".
   - `skipped`: dbt skipped it because an upstream node failed.
   - `ok`: it ran and its tests passed.
   - "not in the last build" (grey): a model, seed or snapshot with no row.
   - `inlined`: an ephemeral model, which never runs.
   - No status at all for sources and exposures.
-  - A warehouse with no full prod build recorded shows no status anywhere and a note ("run `make build-prod`"), never "not in the last build", and "Failing only" then shows nothing. With the database down, the graph still draws from the manifest with a note.
+  - A warehouse with no full prod build recorded shows no status anywhere and a note ("run `make build-prod`"), never "not in the last build", and "Failing only" then shows nothing. With the build record unreadable (database down, missing grant, timeout), the graph still draws from the manifest with a note.
 - **Selecting a node** (a click, or Enter on a focused node) emphasises it, highlights all its ancestors and descendants among the nodes shown and the edges between them, dims the rest (still focusable), and opens the node panel. Esc, the panel's close button or a click on the background clears it. The highlight is computed in the browser from the edges shown, so a chain through a hidden layer ends there.
 - **URL:** `/lineage?select=<selector>&layers=<comma list>&failing=1&node=<unique_id>`. The three modes only write the selector, so reload, back/forward and a shared link restore the view. Selecting a node replaces the history entry rather than adding one. The Explorer's "Open in Lineage" links to `select=+<table>+`, and Lineage's "Open in Explorer" to `/explorer?table=<table>`; the Explorer selects that table, and a name that is no mart shows a dismissible alert above the editor, not a toast.
 - **Node panel:**
@@ -333,7 +333,7 @@ Opening a past run shows its stored draft and **re-executes its final SQL throug
   - **source and compiled SQL**
   - columns
   - the last full build: status, duration, tests
-  - "Open in Explorer" (marts only), "Copy dbt selector" (the node's own name)
+  - "Open in Explorer" (marts only), "Copy dbt selector" (the selector that selects the node: its name, or `source:<source>.<table>` for a source)
   - the panel is a fixed-width column beside the canvas (380 px, scrolling on its own), so the canvas keeps the rest of the width
   - **compiled SQL** is read from `target-prod/compiled/<package>/<path of the node's file>` (the manifest's `original_file_path`, with `\` turned into `/`: dbt writes the separator of the machine it ran on, and the `ui` container is Linux) (a YAML-defined node, such as a snapshot, from `<path of the YAML>/<name>.sql`), because `manifest.json` carries none. A missing file shows the raw SQL with a note, and the path never leaves `compiled/`.
 - Names and SQL only, never data, so the whole project is visible to everyone.
