@@ -329,6 +329,7 @@ describe("Explorer results", () => {
 
     for (const name of ["n", "t", "d", "ts", "b"]) {
       await user.click(await screen.findByRole("button", { name }));
+      expect(screen.getByRole("columnheader", { name })).toHaveAttribute("aria-sort", "ascending");
       expect(firstColumn()).toEqual(["9007199254740992", "9007199254740993"]);
     }
 

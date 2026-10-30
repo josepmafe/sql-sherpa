@@ -127,6 +127,27 @@ describe("ResultGrid", () => {
     expect(screen.queryByText(/run on the server/)).not.toBeInTheDocument();
   });
 
+  it("warns about duplicate column names on a complete result only when the browser cannot sort it exactly", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Harness
+        data={response({
+          columns: ["id", "id"],
+          column_types: ["number", "other"],
+          rows: [["1", "1 day"]],
+          returned_rows: 1,
+        })}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: "id" })[0] as HTMLElement);
+    expect(screen.queryByText(/Duplicate column names/)).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "id" })[1] as HTMLElement);
+
+    expect(screen.getByText(/Duplicate column names/)).toBeInTheDocument();
+    expect(screen.getByText(/may differ from Postgres/)).toBeInTheDocument();
+  });
+
   it("does not allow a filter with an empty value", async () => {
     const user = userEvent.setup();
     renderWithProviders(<Harness data={response()} />);

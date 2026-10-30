@@ -148,7 +148,8 @@ function compareValues(left: Cell, right: Cell, type: ColumnType): number {
   }
 }
 
-// Unparseable values (not expected from the backend) sort after parseable ones, by text, so the order stays total.
+// Unparseable values (a float8 NaN or Infinity arrives as the text "nan" or "inf") sort after parseable ones, by text,
+// so the order stays total.
 function sortOrder(left: Cell, right: Cell, type: ColumnType): number {
   const order = compareValues(left, right, type);
   if (!Number.isNaN(order)) return order;

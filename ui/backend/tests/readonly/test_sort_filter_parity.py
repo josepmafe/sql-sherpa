@@ -4,18 +4,17 @@ frontend's `resultViewParity.test.ts` runs the same file through the browser's c
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
 from typing import TYPE_CHECKING, Any, Literal, get_args
-from unittest.mock import create_autospec
 
 import pytest
 from pydantic import BaseModel, ConfigDict
-from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.readonly.query_runner import COLUMN_TYPES, QueryRunner, UiQueryError
 from sherpa_ui.readonly.sort_filter import FilterOperator, FilterSpec, SortSpec
 from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
+    from sherpa_mcp.catalog import MartCatalogLoader
     from sherpa_ui.settings import UiSettings
 
 CASE_FILE = REPO_ROOT / "ui" / "parity" / "sort_filter_cases.json"
@@ -72,12 +71,10 @@ PARITY = ParityFile.model_validate_json(CASE_FILE.read_text(encoding="utf-8"))
 TABLES = {table.name: table for table in PARITY.tables}
 
 
-@pytest.fixture(scope="module")
-def values_runner(ui_settings: UiSettings) -> QueryRunner:
-    """A runner whose catalog has no marts: the tables are `values` lists, which touch no relation."""
-    loader = create_autospec(MartCatalogLoader, instance=True)
-    loader.load.return_value = MartCatalog(marts=(), metrics=(), generated_at=datetime(2026, 10, 1, tzinfo=UTC))
-    return QueryRunner(ui_settings, loader)
+@pytest.fixture
+def values_runner(ui_settings: UiSettings, empty_catalog_loader: MartCatalogLoader) -> QueryRunner:
+    """The tables are `values` lists, which touch no relation, so a catalog with no marts is enough."""
+    return QueryRunner(ui_settings, empty_catalog_loader)
 
 
 @pytest.mark.integration
@@ -111,20 +108,38 @@ def test_the_tables_are_what_the_api_returns(values_runner: QueryRunner, table: 
     assert body["mode"] == "client"
     assert body["columns"] == table.columns
     assert body["column_types"] == table.column_types
-    assert body["rows"] == table.rows
+    # As JSON text, since Python's == hides the type: True == 1 and 2 == 2.0, but the browser tells them apart.
+    assert json.dumps(body["rows"], ensure_ascii=False) == json.dumps(table.rows, ensure_ascii=False)
 
 
-def test_the_case_file_covers_every_operator_and_column_type() -> None:
-    operators = {spec.operator for case in PARITY.cases for spec in case.filters}
-    types = {kind for table in PARITY.tables for kind in table.column_types}
-    directions = {case.sort.direction for case in PARITY.cases if case.sort}
+def test_the_case_file_covers_every_operator_and_direction_on_every_column_type() -> None:
+    # Per grid type, not overall: an operator that only ever ran on text would leave the other types unchecked.
+    grid_types = {*COLUMN_TYPES.values(), "other"}
+    used: dict[str, set[str]] = {kind: set() for kind in grid_types}
+    for case in PARITY.cases:
+        types = TABLES[case.table].column_types
+        for spec in case.filters:
+            used[types[spec.index]].add(f"op {spec.operator}")
 
-    assert operators == set(get_args(FilterOperator))
-    assert types == {*COLUMN_TYPES.values(), "other"}
-    assert directions == {"asc", "desc"}
+        if case.sort:
+            used[types[case.sort.index]].add(f"sort {case.sort.direction}")
+
+    every = {f"op {operator}" for operator in get_args(FilterOperator)} | {"sort asc", "sort desc"}
+    assert {kind: sorted(every - what) for kind, what in used.items()} == {kind: [] for kind in grid_types}
 
 
-def test_an_accepted_difference_records_what_the_browser_answers() -> None:
+def test_a_table_with_tied_keys_has_at_most_six_rows() -> None:
+    # Postgres's sort is stable below 7 rows (insertion sort) and not above, while the browser's is always stable: a
+    # larger table with ties would make the expected order depend on Postgres's quicksort.
+    for table in PARITY.tables:
+        keys = [json.dumps(row[1]) for row in table.rows if row[1] is not None]
+        nulls = sum(row[1] is None for row in table.rows)
+        has_ties = len(set(keys)) != len(keys) or nulls > 1
+
+        assert not has_ties or len(table.rows) <= 6, table.name
+
+
+def test_an_accepted_difference_in_the_file_names_what_the_browser_answers() -> None:
     accepted = [case for case in PARITY.cases if case.accepted_difference]
 
     assert accepted

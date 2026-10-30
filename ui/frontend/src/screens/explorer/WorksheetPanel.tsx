@@ -90,7 +90,8 @@ export const WorksheetPanel = memo(function WorksheetPanel({
     return () => clearTimeout(timer);
   }, [runOnOpen, initialSql, run, onRunStarted, id]);
 
-  // Sorting and filtering a truncated result re-runs the SQL of the last run, not the editor's current text.
+  // Sorting and filtering a truncated result, or a complete one the browser cannot sort exactly, re-runs the SQL of the
+  // last run (not the editor's current text) on the server.
   const changeView = useCallback(
     (next: ResultView) => {
       if (!response || !isServerSide(response, next)) {

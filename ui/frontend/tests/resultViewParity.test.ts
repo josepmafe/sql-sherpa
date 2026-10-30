@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import parity from "../../parity/sort_filter_cases.json";
 import {
   applyView,
   type ColumnType,
@@ -25,7 +28,11 @@ type ParityCase = {
   accepted_difference?: string;
   client_expected_ids?: number[];
 };
-const { tables, cases } = parity as unknown as { tables: ParityTable[]; cases: ParityCase[] };
+// Read at test time, not imported: ui/parity is outside the frontend folder the Docker build copies, and `npm run build`
+// type-checks the tests.
+const { tables, cases }: { tables: ParityTable[]; cases: ParityCase[] } = JSON.parse(
+  readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../parity/sort_filter_cases.json"), "utf8"),
+);
 const TABLES = new Map(tables.map((table) => [table.name, table]));
 
 const viewOf = (c: ParityCase): ResultView => ({

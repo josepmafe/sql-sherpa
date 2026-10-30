@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { queryResponse } from "./fixtures/api";
 import {
   applyView,
   cellText,
@@ -247,23 +248,21 @@ describe("helpers", () => {
   });
 
   it("keeps a truncated result with duplicate columns in the browser", () => {
-    const base = { mode: "client", truncated: true };
+    const truncated = queryResponse({ truncated: true });
 
-    expect(isServerSide({ ...base, columns: ["a", "b"] } as never, EMPTY_VIEW)).toBe(true);
-    expect(isServerSide({ ...base, columns: ["a", "a"] } as never, EMPTY_VIEW)).toBe(false);
+    expect(isServerSide({ ...truncated, columns: ["a", "b"] }, EMPTY_VIEW)).toBe(true);
+    expect(isServerSide({ ...truncated, columns: ["a", "a"] }, EMPTY_VIEW)).toBe(false);
   });
 
   it("sends a complete result to the server only for a view the browser cannot reproduce", () => {
-    const complete = { mode: "client", truncated: false, columns: ["a", "b"], column_types: ["text", "other"] } as never;
+    const complete = queryResponse({ columns: ["a", "b"], column_types: ["text", "other"] });
     const onText = { filters: [{ index: 0, operator: "contains" as const, value: "x" }] };
     const onOther = { filters: [{ index: 1, operator: "=" as const, value: "1 day" }] };
 
     expect(isServerSide(complete, EMPTY_VIEW)).toBe(false);
     expect(isServerSide(complete, onText)).toBe(false);
     expect(isServerSide(complete, onOther)).toBe(true);
-    expect(isServerSide({ mode: "client", truncated: false, columns: ["a", "a"], column_types: ["text", "other"] } as never, onOther)).toBe(
-      false,
-    );
+    expect(isServerSide({ ...complete, columns: ["a", "a"] }, onOther)).toBe(false);
   });
 
   it("maps a view to the server's names and drops values of valueless operators", () => {

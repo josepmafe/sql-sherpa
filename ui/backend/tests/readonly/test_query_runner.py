@@ -6,7 +6,6 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
@@ -40,14 +39,6 @@ INT4_OID = postgres_types["int4"].oid
 CUT = " …[cut at 10000 chars]"
 ROLE_CONNECTION_LIMIT = 10  # data-platform/postgres/roles.sql
 RUNNER_LOGGER = "sherpa_ui.readonly.query_runner"
-
-
-@pytest.fixture
-def empty_catalog_loader() -> MartCatalogLoader:
-    """A loader whose catalog has no marts: enough for SQL that reads no table."""
-    loader = create_autospec(MartCatalogLoader, instance=True)
-    loader.load.return_value = MartCatalog(marts=(), metrics=(), generated_at=datetime(2026, 10, 1, tzinfo=UTC))
-    return loader
 
 
 @pytest.fixture
