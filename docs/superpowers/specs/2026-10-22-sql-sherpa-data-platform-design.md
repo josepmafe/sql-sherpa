@@ -23,7 +23,7 @@ Even though it is a toy project, the output must be **production-like**: a compl
 
 ### Non-goals
 - Inventory/warehouse management, product reviews, multi-currency (everything is EUR).
-- BI dashboards. The UI's Home screen (UI spec) is the only dashboard, and it is declared as a dbt exposure (data-platform-4).
+- BI dashboards. The UI's Home screen (UI spec) is the only dashboard, and the UI milestone that builds it declares it as a dbt exposure (§8, data-platform-4).
 - Streaming / real-time ingestion.
 - Scale or performance beyond a laptop.
 - dbt Cloud features (see §9).
@@ -356,11 +356,18 @@ session_id, anonymous_id, customer_id (stitched, nullable), session_date, sessio
 
 **`fct_ad_spend_daily`** — 1 row per campaign × day · PK (`campaign_id`, `spend_date`) · domain `marketing_web`
 spend_date, campaign_id, channel, spend, impressions, clicks, sessions, orders, attributed_net_revenue, new_customers
-- Attribution is **last-touch session**: an order is attributed to the campaign of the session in which `purchase` occurred.
-- `new_customers` = customers whose `acquisition_campaign_id` is this campaign and whose first order falls on `spend_date`. Campaign-level, so it sums correctly across campaigns and channels.
+- One row per `ad_spend_daily` row: paid campaigns (`paid_search`, `paid_social`, `affiliate`, `display`) on the days they spend. Email campaigns spend nothing, so they have no rows; their sessions, orders and acquisitions are in `fct_sessions`, `fct_orders` and `dim_customers` only.
+- Attribution is **last-touch session**: an order is attributed to the campaign of the session in which `purchase` occurred. Every column counts the activity of this campaign's sessions **that started on `spend_date`**: `sessions` counts them, `orders` and `attributed_net_revenue` are their non-cancelled orders and those orders' `net_revenue`, and `new_customers` are the customers whose first order (`acquisition_campaign_id`) was placed in one of them. An order placed after midnight in a session that started the day before belongs to the session's day.
+- Campaign-level, so every column sums correctly across campaigns, channels and dates. Over paid campaigns the sums equal what `fct_sessions`, `fct_orders` and `dim_customers` give, because every paid session falls on a day its campaign spends (singular test `assert_ad_spend_attribution_is_complete`).
 
 **`fct_leads`** — 1 row per lead · PK `lead_id` · domain `customers`
-lead_id, email (masked), lead_source, utm_campaign, lifecycle_stage, created_at, is_converted, converted_customer_id, converted_at, days_to_convert, emails_sent, emails_opened, emails_clicked
+lead_id, email (masked), lead_source, lifecycle_stage, created_at, is_converted, converted_customer_id, converted_at, days_to_convert, emails_sent, emails_opened, emails_clicked
+- A mart with PII (PII masking, above): the model that computes the columns is `fct_leads_unmasked`, and `fct_leads` is the view that hashes `email` with `mask_pii`. The salt and `normalize_email` are those of `dim_customers`, so a lead's hash equals its customer's, but leads join customers on `lead_id`, never on the hash.
+- A lead **converts** when a customer has its email: `converted_customer_id` is the customer whose `dim_customers.lead_id` is this lead (the earliest lead with its email, `int_identity__lead_to_customer`), so the two marts agree and a test account never converts a lead (R5). `converted_at` is the customer's `signup_at` and `days_to_convert` the UTC days from `created_at` to it (never negative; the generator creates a lead before the signup that matches it). Unconverted leads have nulls there.
+- `lifecycle_stage` is the CRM's own field and can lag behind `is_converted`: a converted lead is not always at `customer` yet, but a lead at `customer` is always converted.
+- `email` is NULL in `fct_leads_unmasked`, and so in the view, when the converted customer is deleted (R6), as in `dim_customers`.
+- `emails_sent`, `emails_opened` and `emails_clicked` count the lead's sends with a send, an `opened_at` and a `clicked_at`, newsletters included; 0 when none.
+- The raw `utm_campaign` is left out: the generator never fills it (§4.3).
 
 ### 6.6 Metric definitions (single source of truth: doc blocks named `metric_<name>`, e.g. `metric_net_revenue`, reused in YAML)
 
@@ -391,8 +398,8 @@ Precision: amounts `numeric(12,2)`; rates computed as `numeric` and rounded only
 | `dbt_utils` | `unique_combination_of_columns` (fct_ad_spend_daily; `order_id` × `promotion_id` in fct_order_discounts), `expression_is_true`, `accepted_range` |
 | `dbt_expectations` | `expect_column_pair_values_A_to_be_greater_than_B` (gross ≥ net), `expect_column_values_to_match_regex` (email in staging), `expect_row_values_to_have_recent_data` (events, severity warn), `expect_table_row_count_to_be_between` and `expect_column_mean_to_be_between` (generator distributions, severity warn) |
 | Custom generic | `column_sums_match(compare_model, compare_column, group_by)` — e.g. allocated line discounts sum to order discounts |
-| Singular (in `tests/singular/`) | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise); line margins, order discounts and first orders reconcile with `fct_orders`, `dim_promotions` and `dim_customers` (§6.5); from data-platform-3: every source event is staged (§6.2), sessions and orders agree, and sessions with an unmapped channel (`warn_if: >0`, `error_if: >100`: a few mean the `channel_mapping` seed lacks a new UTM pair, many mean broken tracking) |
-| Unit tests (data-platform-3) | discount allocation rounding remainder; sessionization (29 vs 31 min gap; session across midnight; late event inserted into an existing session; no new events; empty table); `customer_segment` boundaries (90/91/180/181 days); refunded revenue tax removal; cost at sale at version boundaries; the device map keeping the latest identification; `fct_sessions` aggregation and test-account stitching. They run in every build (dev, prod, eval and CI): their mocked `this` and ephemeral inputs use `format: sql`, so they need no built relation, and excluding them would mark a prod build as not full for the UI (`is_full_run`, §8 "Added by ui-1") |
+| Singular (in `tests/singular/`) | sessions do not overlap per anonymous_id; captured payments = `order_total` for paid, non-cancelled orders; Pareto check (top 20% of buyers hold 55–65% of net revenue, warn otherwise); line margins, order discounts and first orders reconcile with `fct_orders`, `dim_promotions` and `dim_customers` (§6.5); from data-platform-3: every source event is staged (§6.2), sessions and orders agree, and sessions with an unmapped channel (`warn_if: >0`, `error_if: >100`: a few mean the `channel_mapping` seed lacks a new UTM pair, many mean broken tracking); from data-platform-4: the marts' revenue, discounts and refunds reconcile per day with the raw shop tables (`assert_revenue_reconciles_with_raw`), ad-spend attribution is complete (§6.5), and the `sherpa_agent` exposure lists exactly the public marts (`assert_agent_exposure_lists_every_public_mart`, which reads dbt's `graph`) |
+| Unit tests (data-platform-3) | discount allocation rounding remainder; sessionization (29 vs 31 min gap; session across midnight; late event inserted into an existing session; no new events; empty table); `customer_segment` boundaries (90/91/180/181 days); refunded revenue tax removal; cost at sale at version boundaries; the device map keeping the latest identification; `fct_sessions` aggregation and test-account stitching; from data-platform-4, `fct_ad_spend_daily` attribution (an order after midnight, a cancelled order, an email campaign, two campaigns on one day) and `fct_leads` conversion (unconverted, converted, converted to a deleted customer). They run in every build (dev, prod, eval and CI): their mocked `this` and ephemeral inputs use `format: sql`, so they need no built relation, and excluding them would mark a prod build as not full for the UI (`is_full_run`, §8 "Added by ui-1") |
 | Freshness | `raw_events.events` (`received_at`), `raw_shop.orders` (`updated_at`), `raw_crm.leads` (`updated_at`): warn 36h, error 72h; `ad_spend_daily` on `spend_date::timestamp`: warn 48h. `dbt build` does not check freshness, so `make build` runs `dbt source freshness` first. |
 
 Severity: key/integrity tests `error`; distribution and freshness tests `warn`. `store_failures` enabled for singular and custom tests, into the `test_failures` schema (`dev_test_failures` on dev).
@@ -430,18 +437,17 @@ Each milestone has one implementation plan, `docs/superpowers/plans/<date>-data-
 **Acceptance:** after `make advance DAYS=3 && make build`, an incremental run gives the same `fct_sessions` as `--full-refresh` (verified by an `analyses/` comparison query returning zero diff rows); late events from R2 end up in the correct sessions.
 
 ### data-platform-4 — Marketing, governance, CI
-**Builds:** `fct_leads` (as `fct_leads_unmasked` and the masking view `fct_leads`, §6.5), `fct_ad_spend_daily`, `dim_campaigns`, GitHub Actions.
+**Builds:** `fct_leads` (as `fct_leads_unmasked` and the masking view `fct_leads`, §6.5), `fct_ad_spend_daily`, `dim_campaigns`, the `metric_roas` and `metric_cac` doc blocks, GitHub Actions. The MCP server's `get_context` stops listing campaigns, ad spend and unconverted leads as not covered (agent spec §4.1).
 **dbt features:**
-- **Groups & access.** Groups mirror the domains: `sales`, `customers`, `products`, `marketing_web`, `shared` (each with an owner). Visible marts are `public`; each `<mart>_unmasked` table (§6.5) is `private` to its domain's group, which only its masking view reads. Staging is `protected`. Intermediate models used by only one group are `private` to it (`int_order_items__*`, `int_orders__*` → `sales`; `int_identity__lead_to_customer` → `customers`). Intermediate models used across groups (`int_events__sessionized`, `int_identity__anonymous_to_customer`) are `protected` in `marketing_web`. This is possible because `dim_customers` aggregates from `fct_orders`, not from `int_orders__*`.
-- **Exposures** for the real consumers of the marts, so lineage ends where the data is used (in the dbt docs and the UI's Lineage screen):
-  - `sherpa_home` (type `dashboard`): the UI's Home screen, depending on exactly the marts its curated queries read (`fct_orders`, `fct_refunds`, `dim_date`)
-  - `sherpa_agent` (type `application`): the text-to-SQL agent, used by the CLI and the UI's Ask screen, depending on every public mart
-- **Analyses:** revenue reconciliation raw vs marts, next to data-platform-3's incremental vs full-refresh diff.
-- **A tag and a YAML selector, for CI:** the generator-distribution tests (`dbt_expectations` row-count and mean checks, the Pareto check) are tagged `distribution`. The `ci` selector builds everything except them, because CI's 30-day, scale-0.05 data can't meet distribution targets meant for a full year.
-- **State and environment commands.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`. `make clone` runs **`dbt clone`** of prod relations into dev schemas, so dev can query full data without rebuilding. **`--empty`** is used in CI as a first schema-only build that catches SQL and contract errors in seconds.
+- **Groups & access.** Groups mirror the domains: `sales`, `customers`, `products`, `marketing_web`, `shared` (each with an owner). Visible marts are `public`, so the MCP server keeps seeing all of them (agent spec §3); each `<mart>_unmasked` table (§6.5) is `private` to its domain's group, which only its masking view reads. Staging keeps dbt's default access, `protected`, and has no group. Intermediate models used by only one group are `private` to it (`int_order_items__*`, `int_orders__*` → `sales`; `int_identity__lead_to_customer` → `customers`). Intermediate models used across groups (`int_events__sessionized`, `int_identity__anonymous_to_customer`) are `protected` in `marketing_web`. This is possible because `dim_customers` aggregates from `fct_orders`, not from `int_orders__*`.
+- **Exposures** for the real consumers of the marts, so lineage ends where the data is used (in the dbt docs and the UI's Lineage screen). An exposure is declared by the milestone that builds its consumer, so its dependencies are read from what exists:
+  - `sherpa_agent` (type `application`, data-platform-4): the text-to-SQL agent, whose MCP server reads every public mart; used by the CLI and the UI's Ask screen. A singular test keeps its dependencies equal to the public marts (§7).
+  - `sherpa_home` (type `dashboard`, the UI milestone that builds Home): the Home screen, depending on exactly the marts its curated queries read (UI spec §6.2).
+- **A tag and a YAML selector, for CI:** the generator-distribution tests (`dbt_expectations` row-count and mean checks, the Pareto check) are tagged `distribution`. CI treats every warning as an error (`--warn-error`), so a new unmapped channel, stale source or dbt deprecation fails the pull request; the `ci` selector builds everything except the `distribution` tests, because CI's 30-day, scale-0.05 data can't meet distribution targets meant for a full year.
+- **State-based builds.** `make slim` runs `dbt build --select state:modified+ --defer --state target-prod` on `dev`: only the changed models and their children are built, and their unchanged parents are read from prod. **`--empty`** is CI's first, schema-only run (`dbt run --empty`), which catches SQL and contract errors before the data build.
 
-**CI (`.github/workflows/ci.yml`, on PR; adds the `ci` dbt target to `profiles.yml`):** Postgres service container → `uv sync` → `ruff` + `sqlfluff lint` → generator unit tests → generator (30 days, scale 0.05) → `dbt deps/seed` → `dbt build --empty --target ci --selector ci` → `dbt build --target ci --selector ci`. Full build on tiny data: deferral needs persistent prod relations, which CI does not have, so slim/defer is demonstrated locally.
-**Acceptance:** CI green on a PR; both exposures appear in the docs lineage graph with their dependencies.
+**CI (`.github/workflows/ci.yml`, on every pull request to `main`):** the same Postgres as locally (`docker compose up -d --wait postgres`, so the init script creates the roles) with `.env` copied from `.env.example` → `uv sync --locked`, `npm ci` → generator (30 days, scale 0.05, through the backfill script, so the snapshot has history) → `dbt deps`, `dbt seed`, `dbt run --empty` → `dbt build --full-refresh --selector ci --warn-error` on the `dev` target (the full refresh rebuilds the incremental models that the empty run left empty) → `make lint`, `make test` and the frontend's `npm test`. It is the repository's pull-request gate, so it runs every check `make lint` and `make test` run; the warehouse tests, Playwright and `live` stay local. Deferral needs persistent prod relations, which CI does not have, so slim/defer is local only.
+**Acceptance:** CI green on a PR; the `sherpa_agent` exposure appears in the docs lineage graph and the UI's Lineage screen with every public mart upstream; `make slim` right after `make build-prod` selects nothing, and after a change to one model it builds that model and its children only; a model of another group that refs a `private` model fails `dbt parse` (verified once, manually).
 
 ### data-platform-5 — Semantic Layer
 **Builds:** semantic models on `fct_orders`, `fct_order_items`, `fct_sessions`, `fct_ad_spend_daily`; metrics for every row of §6.6. Their consumer is the agent's MetricFlow variant (agent spec, agent-design-9).
@@ -481,6 +487,7 @@ Postgres hides personal values from the roles that read the marts, so the agent'
 | MetricFlow saved queries | Their only candidate consumer is Home, and Home tiles from saved queries is a UI later idea; they come with it |
 | `--sample` | No workflow needs dev builds on a sample; a full dev build already takes seconds |
 | Selectors and tags beyond `ci` | No scheduler or Make target would use them |
+| `dbt clone` | Postgres can't clone without copying, so it makes views onto prod. Dev and prod read the same raw data, so a dev build already has the full data, and `make slim`'s deferral covers the time a full dev build takes |
 
 ---
 
@@ -504,7 +511,7 @@ Targets added by later milestones:
 | Target | Milestone | Does |
 |---|---|---|
 | `make eval-db` | data-platform-2 | Build the frozen eval database (§3) |
-| `make slim` / `make clone` | data-platform-4 | State-based dev build deferring to `target-prod` / `dbt clone` prod → dev |
+| `make slim` | data-platform-4 | State-based dev build of the changed models and their children, deferring to `target-prod` (needs a `make build-prod` first) |
 
 ---
 
@@ -537,7 +544,8 @@ Agent and UI work can start once data-platform-2 is done; data-platform-3–data
 - `as_of_date` instead of `now()` for all relative-time columns.
 - Last-touch session attribution; `acquisition_channel` from the first order's session.
 - Contracts enforce PK/not-null in the database; foreign keys are tested, not enforced.
-- CI does a full build on tiny data; slim/defer is local-only.
+- CI does a full build on tiny data and runs every lint and default test of the repository, with warnings as errors; slim/defer is local-only.
+- An exposure is declared by the milestone that builds its consumer.
 - Backfill runs in 7-day chunks with snapshots between chunks.
 - Scale of ~8k orders / ~600k events per simulated year, consistent with a realistic ~3.1% session conversion. Volume, rate and distribution numbers are approximate targets, not exact goals.
 - Snapshots live in one shared `snapshots` schema for all targets; prod artifacts in `data-platform/dbt/target-prod/`.

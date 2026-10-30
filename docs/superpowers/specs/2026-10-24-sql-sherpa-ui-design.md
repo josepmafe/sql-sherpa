@@ -232,7 +232,7 @@ Explorer, Home and history re-runs all go through one `QueryRunner`; Ask's own e
   - the last full prod build: time and node count, from `ops.dbt_run_results` (§3)
   - freshness warnings and errors, from `target-prod/sources.json`
   - failing tests: a count that links to Lineage with **"failing only"** on (§6.5)
-- **Definitions:** tiles and trend are curated queries in `ui/backend/src/sherpa_ui/home/home_queries.yaml` (id, title, SQL, value format, whether up is good). They are SQL over `marts`, run through the read-only path on every request, and validated against the guard by a test. Metric definitions follow the data platform spec §6.6 (non-cancelled orders, refunds by order date).
+- **Definitions:** tiles and trend are curated queries in `ui/backend/src/sherpa_ui/home/home_queries.yaml` (id, title, SQL, value format, whether up is good). They are SQL over `marts`, run through the read-only path on every request, and validated against the guard by a test. Metric definitions follow the data platform spec §6.6 (non-cancelled orders, refunds by order date). The milestone that builds Home declares it as the dbt exposure `sherpa_home` (type `dashboard`, data platform spec §8), depending on exactly the marts these queries read, with a test that compares the two.
 - **When something is missing:** no marts yet shows an empty state pointing to `make backfill && make build-prod`; no artifacts hides the status strip's build items and says why.
 
 ### 6.3 Ask
