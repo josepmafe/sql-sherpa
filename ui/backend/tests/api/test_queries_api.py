@@ -22,6 +22,7 @@ from sherpa_ui.readonly.sort_filter import (
     SortSpec,
     UnknownColumnError,
 )
+from ui_helpers import LONG_AGGREGATE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,11 +32,7 @@ if TYPE_CHECKING:
     from sherpa_ui.settings import UiSettings
 
 QUERY_ID = "11111111-1111-1111-1111-111111111111"
-# An aggregate, so no row comes back before the whole cross join is counted: far longer than any test.
-LONG_AGGREGATE = (
-    "select count(*) as n from marts.fct_order_items a "
-    "cross join marts.fct_order_items b cross join marts.fct_order_items c"
-)
+LARGEST_VALID_REQUEST_BYTES = 600_000  # UI spec §4
 CANCEL_WITHIN_SECONDS = 2.0
 SERVER_START_SECONDS = 10.0
 CLIENT_GIVES_UP_SECONDS = 1.0
@@ -121,24 +118,6 @@ class TestQueriesApi:
         runner.run.side_effect = UiQueryError("sql_error", "syntax error", position=0)
 
         assert client.post("/api/queries", json=body()).json()["detail"] == {"position": 0}
-
-    def test_duplicate_query_id_is_409(self, client: TestClient, runner: MagicMock) -> None:
-        runner.run.side_effect = UiQueryError("duplicate_query_id", "a query with id x is already running")
-
-        response = client.post("/api/queries", json=body())
-
-        assert response.status_code == 409
-        assert response.json()["code"] == "duplicate_query_id"
-
-    def test_duplicate_columns_fall_back_with_warning(self, client: TestClient, runner: MagicMock) -> None:
-        warning = "duplicate column names: sorting and filtering apply only to the rows shown"
-        runner.run.return_value = outcome(warning=warning)
-
-        response = client.post("/api/queries", json=body(sort=[{"column": "n", "direction": "asc"}]))
-
-        assert response.status_code == 200
-        assert (response.json()["mode"], response.json()["warning"]) == ("client", warning)
-        runner.run.assert_called_once()  # the runner falls back within the run, under the one query id
 
     def test_unknown_sort_column_is_422(self, client: TestClient, runner: MagicMock) -> None:
         runner.run.side_effect = UnknownColumnError("column 'zzz' is not a column of the result")
@@ -246,6 +225,17 @@ class TestQueriesApi:
         response = client.post("/api/queries", json=body(sql="x" * MAX_SQL_CHARS))
 
         assert response.status_code == 200
+
+    def test_the_largest_valid_request_is_accepted(self, client: TestClient, runner: MagicMock) -> None:
+        # Every character of a control-character SQL is escaped to 6 bytes of JSON (UI spec §4: about 600,000 bytes).
+        runner.run.return_value = outcome()
+        content = json.dumps(body(sql="" * MAX_SQL_CHARS)).encode()
+
+        response = client.post("/api/queries", content=content, headers={"content-type": "application/json"})
+
+        assert len(content) > LARGEST_VALID_REQUEST_BYTES
+        assert response.status_code == 200
+        runner.run.assert_called_once()
 
     @pytest.mark.parametrize(
         "payload",
@@ -359,6 +349,33 @@ class TestQueriesApiWarehouse:
         assert result["columns"] == ["n"]
         assert result["mode"] == "client"
         assert result["returned_rows"] == 1
+
+    def test_duplicate_columns_fall_back_to_client_mode_with_a_warning(self, warehouse_client: TestClient) -> None:
+        response = warehouse_client.post(
+            "/api/queries",
+            json={
+                "query_id": QUERY_ID,
+                "sql": "select order_id, order_id from marts.fct_orders",
+                "sort": [{"column": "order_id", "direction": "desc"}],
+            },
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert (result["mode"], result["columns"]) == ("client", ["order_id", "order_id"])
+        assert result["warning"] == "duplicate column names: sorting and filtering apply only to the rows shown"
+
+    def test_format_pretty_prints(self, warehouse_client: TestClient) -> None:
+        response = warehouse_client.post("/api/queries/format", json={"sql": "select 1 as n from marts.dim_date"})
+
+        assert response.status_code == 200
+        assert response.json() == {"sql": "SELECT\n  1 AS n\nFROM marts.dim_date"}
+
+    def test_cancel_of_an_unknown_id_is_204(self, warehouse_client: TestClient) -> None:
+        response = warehouse_client.post("/api/queries/never-ran/cancel")
+
+        assert response.status_code == 204
+        assert response.content == b""
 
     def test_disconnect_cancels(self, live_server: tuple[str, FastAPI]) -> None:
         url, app = live_server

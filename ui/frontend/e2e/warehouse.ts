@@ -6,6 +6,10 @@ import type { Page } from "@playwright/test";
 const REPO_ROOT = resolve(import.meta.dirname, "../../..");
 const COMPOSE_FILE = resolve(REPO_ROOT, "docker-compose.yml");
 
+// An aggregate, so no row comes back before the whole cross join is counted: far longer than any test.
+export const LONG_AGGREGATE =
+  "select count(*) as n from marts.fct_order_items a cross join marts.fct_order_items b cross join marts.fct_order_items c";
+
 // The admin login lives only inside the postgres container, so the check runs through `docker compose exec`.
 export function adminScalar(sql: string): string {
   return execFileSync(

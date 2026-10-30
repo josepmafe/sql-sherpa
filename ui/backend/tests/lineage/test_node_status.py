@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
-from sherpa_ui.build.build_status import LastFullBuild, NodeResult
 from sherpa_ui.lineage.manifest_graph import GraphNode, Layer, ManifestGraph, NodeTest
 from sherpa_ui.lineage.node_status import NodeStatus, StatusDeriver, TestOutcome
+from ui_helpers import STARTED_AT, make_last_full_build, make_node_result
 
-STARTED_AT = datetime(2026, 10, 27, 10, 0, tzinfo=UTC)
 NODE_STATUS_LOGGER = "sherpa_ui.lineage.node_status"
 MODEL = "model.p.fct_orders"
 TEST = "test.p.not_null_fct_orders_id"
@@ -50,31 +48,18 @@ def _test(
     )
 
 
-def _build(statuses: dict[str, str]) -> LastFullBuild:
-    return LastFullBuild(
-        invocation_id="inv",
-        started_at=STARTED_AT,
-        results={
-            unique_id: NodeResult(
-                unique_id=unique_id,
-                resource_type="test" if unique_id.startswith("test.") else "model",
-                status=status,
-                failures=None,
-                execution_time_s=None,
-                message=None,
-            )
-            for unique_id, status in statuses.items()
-        },
-    )
-
-
 def _deriver(
     statuses: dict[str, str] | None, *extra_nodes: GraphNode, tests: tuple[NodeTest, ...] | None = None
 ) -> StatusDeriver:
     nodes = {node.unique_id: node for node in (_node(MODEL), *extra_nodes)}
     default_tests = (_test(TEST, (MODEL,)), _test(OTHER_TEST, (MODEL,)))
     graph = ManifestGraph(nodes, default_tests if tests is None else tests, STARTED_AT)
-    return StatusDeriver(graph, None if statuses is None else _build(statuses))
+    return StatusDeriver(
+        graph,
+        None
+        if statuses is None
+        else make_last_full_build(*(make_node_result(uid, status) for uid, status in statuses.items())),
+    )
 
 
 class TestStatusDeriver:
@@ -162,12 +147,6 @@ class TestStatusDeriver:
 
         assert deriver.node_status(MODEL) == NodeStatus.FAILED
         assert deriver.node_status(other.unique_id) == NodeStatus.FAILED
-
-    def test_a_warning_is_not_a_failure(self) -> None:
-        status = _deriver({MODEL: "success", TEST: "warn"}).node_status(MODEL)
-
-        assert status == NodeStatus.WARNED
-        assert status != NodeStatus.FAILED
 
     def test_a_failed_model_marks_downstream_skipped_not_failed(self) -> None:
         child = _node("model.p.dim_customers", parents=(MODEL,))

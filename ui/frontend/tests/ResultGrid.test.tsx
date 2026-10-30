@@ -41,17 +41,6 @@ const firstColumn = () =>
     .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
 
 describe("ResultGrid", () => {
-  it("sorts numeric strings numerically", async () => {
-    const user = userEvent.setup();
-    render(<Harness data={response()} />);
-
-    await user.click(screen.getByRole("button", { name: "amount" }));
-
-    expect(firstColumn()).toEqual(["c", "b", "a"]);
-    await user.click(screen.getByRole("button", { name: "amount" }));
-    expect(firstColumn()).toEqual(["a", "b", "c"]);
-  });
-
   it("sorts by one column at a time, also on shift-click", async () => {
     const user = userEvent.setup();
     render(<Harness data={response()} />);

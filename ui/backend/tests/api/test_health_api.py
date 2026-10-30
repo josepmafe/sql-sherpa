@@ -12,15 +12,8 @@ if TYPE_CHECKING:
     from sherpa_mcp.catalog import MartCatalogLoader
 
 
+@pytest.mark.usefixtures("offline_settings")  # the app is built from these settings, and no connection works
 class TestHealthApi:
-    @pytest.fixture(autouse=True)
-    def database_down(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Connecting to a port nothing listens on takes the whole connect timeout on Windows.
-        def refused(*args: object, **kwargs: object) -> None:
-            raise psycopg.OperationalError("connection failed: connection refused")
-
-        monkeypatch.setattr(psycopg, "connect", refused)
-
     def test_artifacts_missing_reported(self, client: TestClient, loader: MartCatalogLoader) -> None:
         loader.load.side_effect = CatalogUnavailable("not built")  # type: ignore[attr-defined]
 
@@ -61,3 +54,15 @@ class TestHealthApi:
         assert [record.getMessage() for record in caplog.records] == [
             f"health: the database is up but refuses more connections for the UI's login: {refusal}"
         ]
+
+
+@pytest.mark.warehouse
+class TestHealthApiWarehouse:
+    def test_the_real_warehouse_and_artifacts_are_up(self, warehouse_client: TestClient) -> None:
+        response = warehouse_client.get("/api/health")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["database"] == "ok"
+        assert body["artifacts"]["status"] == "ok"
+        assert body["artifacts"]["generated_at"] is not None

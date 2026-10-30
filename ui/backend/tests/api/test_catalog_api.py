@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from sherpa_mcp.catalog import CatalogUnavailable
+from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_reader_access.py"
 
 
@@ -21,9 +20,9 @@ class TestCatalogApi:
 
         assert body["database"] == "sherpa"
         assert body["schema_name"] == "marts"
-        assert [domain["name"] for domain in body["domains"]] == ["customers", "sales", "shared"]
+        assert [domain["name"] for domain in body["domains"]] == ["customers", "sales", "support", "shared"]
         assert [table["name"] for table in body["domains"][1]["tables"]] == ["dim_products", "fct_orders"]
-        assert [table["name"] for table in body["domains"][2]["tables"]] == ["dim_agents", "dim_dates"]
+        assert [table["name"] for table in body["domains"][3]["tables"]] == ["dim_agents", "dim_dates"]
 
     def test_tree_columns_carry_flags(self, client: TestClient) -> None:
         table = client.get("/api/catalog").json()["domains"][0]["tables"][0]
@@ -73,6 +72,19 @@ class TestCatalogApi:
         tables = [table for domain in body["domains"] for table in domain["tables"]]
         assert sorted(table["name"] for table in tables) == sorted(_expected_marts())
         assert body["domains"][-1]["name"] == "shared"
+
+    @pytest.mark.warehouse
+    def test_real_table_details_carry_columns_and_the_unknown_table_is_404(self, warehouse_client: TestClient) -> None:
+        found = warehouse_client.get("/api/catalog/tables/fct_orders")
+        missing = warehouse_client.get("/api/catalog/tables/raw_orders")
+
+        assert found.status_code == 200
+        body = found.json()
+        assert body["name"] == "fct_orders"
+        assert "order_id" in [column["name"] for column in body["columns"]]
+        assert body["primary_key"] == ["order_id"]
+        assert missing.status_code == 404
+        assert missing.json()["code"] == "table_not_found"
 
 
 def _expected_marts() -> tuple[str, ...]:

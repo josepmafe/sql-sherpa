@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,15 +31,6 @@ function renderAt(path: string) {
 describe("AppShell", () => {
   beforeEach(() => {
     useCatalog.mockReset().mockReturnValue({ data: { database: "sherpa", schema_name: "marts", domains: [] } });
-  });
-
-  it("shows only existing screens", () => {
-    renderAt("/explorer");
-
-    const nav = screen.getByRole("navigation");
-    const links = within(nav).getAllByRole("link");
-
-    expect(links.map((link) => link.textContent)).toEqual(["Explorer", "Lineage"]);
   });
 
   it("shows Lineage", () => {

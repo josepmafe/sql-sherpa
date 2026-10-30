@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { adminScalar, runQuery } from "./warehouse";
+import { adminScalar, LONG_AGGREGATE, runQuery } from "./warehouse";
 
 // The UI's login, which `make e2e` passes from .env (compose's default otherwise).
 const UI_USER = process.env.SHERPA_UI_USER ?? "sherpa_ui";
@@ -88,10 +88,7 @@ test("a small result sorts in the browser without another request", async ({ pag
 test("a long aggregate is cancelled with the button and its session ends", async ({ page }) => {
   // The health checks' short sessions come and go, so the baseline is the lowest of a few counts.
   const before = Math.min(uiSessions(), uiSessions(), uiSessions());
-  await runQuery(
-    page,
-    "select count(*) from marts.fct_order_items a cross join marts.fct_order_items b cross join marts.fct_order_items c",
-  );
+  await runQuery(page, LONG_AGGREGATE);
   await expect.poll(uiSessions).toBeGreaterThan(before); // the query holds a connection
 
   await page.getByRole("button", { name: "Cancel" }).first().click();

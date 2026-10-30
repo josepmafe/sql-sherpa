@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import socket
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,11 +12,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_ui.readonly.query_runner import QueryRunner
 from sherpa_ui.settings import UiSettings
+from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 LOCALHOST = "127.0.0.1"
 GENERATED_AT = "2026-10-27T10:58:39.861036Z"
 BACKEND_EXIT_SECONDS = 2.0  # how long the server process of a closed connection may take to leave pg_stat_activity
@@ -115,15 +114,6 @@ def leaked_ui_backends(ui_sessions: Callable[[], int]) -> Callable[[], int]:
 
 
 @pytest.fixture
-def closed_port() -> int:
-    """A loopback port nothing listens on: free a moment ago, and nothing here binds it."""
-    with socket.socket() as sock:
-        sock.bind((LOCALHOST, 0))
-        port: int = sock.getsockname()[1]
-        return port
-
-
-@pytest.fixture
 def settings(tmp_path: Path) -> UiSettings:
     return UiSettings(
         _env_file=None,  # type: ignore[call-arg]
@@ -134,6 +124,30 @@ def settings(tmp_path: Path) -> UiSettings:
         ui_password=SecretStr("x"),
         ui_dbt_target_path=tmp_path / "missing-target",
     )
+
+
+@pytest.fixture
+def offline_settings(settings: UiSettings, monkeypatch: pytest.MonkeyPatch) -> UiSettings:
+    """The settings of a warehouse that refuses every connection. The refusal is raised directly: connecting to a
+    closed port takes the whole connect timeout on Windows."""
+
+    def refused(*args: object, **kwargs: object) -> None:
+        raise psycopg.OperationalError("connection failed: connection refused")
+
+    monkeypatch.setattr(psycopg, "connect", refused)
+    return settings
+
+
+@pytest.fixture
+def ui_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The environment of a UI process: what `UiSettings()` and the apps built from the environment read."""
+    monkeypatch.setenv("SHERPA_DB_HOST", "db.example")
+    monkeypatch.setenv("SHERPA_DB_PORT", "5433")
+    monkeypatch.setenv("SHERPA_DB_NAME", "sherpa")
+    monkeypatch.setenv("SHERPA_UI_USER", "sherpa_ui")
+    monkeypatch.setenv("SHERPA_UI_PASSWORD", "s3cret pw")
+    monkeypatch.delenv("SHERPA_UI_STATEMENT_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("SHERPA_UI_DBT_TARGET_PATH", raising=False)
 
 
 @pytest.fixture

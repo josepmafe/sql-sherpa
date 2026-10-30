@@ -14,7 +14,6 @@ from unittest.mock import create_autospec
 import psycopg
 import pytest
 from psycopg.postgres import types as postgres_types
-from pydantic import SecretStr
 from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.health.health_service import HealthService
 from sherpa_ui.readonly import query_runner
@@ -25,18 +24,15 @@ from sherpa_ui.readonly.sort_filter import (
     SortSpec,
     UnknownColumnError,
 )
-from sherpa_ui.settings import UiSettings
+from ui_helpers import LONG_AGGREGATE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
     from unittest.mock import MagicMock
 
-# An aggregate, so no row comes back before the whole cross join is counted (UI spec §8): far longer than any test.
-LONG_AGGREGATE = (
-    "select count(*) as n from marts.fct_order_items a "
-    "cross join marts.fct_order_items b cross join marts.fct_order_items c"
-)
+    from sherpa_ui.settings import UiSettings
+
 REGISTER_WAIT_SECONDS = 10.0
 SETTLE_SECONDS = 0.5
 DECLARE_OFFSET = len('DECLARE "sherpa_ui" CURSOR FOR ')
@@ -44,18 +40,6 @@ INT4_OID = postgres_types["int4"].oid
 CUT = " …[cut at 10000 chars]"
 ROLE_CONNECTION_LIMIT = 10  # data-platform/postgres/roles.sql
 RUNNER_LOGGER = "sherpa_ui.readonly.query_runner"
-
-
-@pytest.fixture
-def offline_settings(closed_port: int) -> UiSettings:
-    return UiSettings(
-        _env_file=None,  # type: ignore[call-arg]
-        db_host="127.0.0.1",
-        db_port=closed_port,
-        db_name="sherpa",
-        ui_user="sherpa_ui",
-        ui_password=SecretStr("x"),
-    )
 
 
 @pytest.fixture
@@ -69,6 +53,76 @@ def empty_catalog_loader() -> MartCatalogLoader:
 @pytest.fixture
 def offline_runner(offline_settings: UiSettings, empty_catalog_loader: MartCatalogLoader) -> QueryRunner:
     return QueryRunner(offline_settings, empty_catalog_loader)
+
+
+# One function per way a run can end. Each makes every run of `runner` end that way and returns the SQL and sort to run
+# (defined here, above the tests, because the parametrization below needs them at import time).
+def _arrange_succeeds(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    _connect_to(monkeypatch, _fake_connection(rows=[(1,)]))
+    return "select 1 as a", ()
+
+
+def _arrange_guard_rejected(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    return "delete from marts.fct_orders", ()
+
+
+def _arrange_cancelled_before_connecting(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    catalog = loader.load.return_value
+
+    def load_then_cancel() -> MartCatalog:
+        runner.cancel("q1")
+        return catalog
+
+    loader.load.side_effect = load_then_cancel
+    return "select 1 as a", ()
+
+
+def _arrange_connect_fails(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    return "select 1 as a", ()  # the `offline_settings` of the runner refuse every connection
+
+
+def _arrange_cancelled_while_connecting(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    connection = _fake_connection(rows=[(1,)])
+
+    def connect(*args: object, **kwargs: object) -> MagicMock:
+        runner.cancel("q1")
+        return connection
+
+    monkeypatch.setattr(psycopg, "connect", connect)
+    return "select 1 as a", ()
+
+
+def _arrange_sql_error(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    connection = _fake_connection(rows=[(1,)])
+    connection.execute.side_effect = psycopg.errors.InsufficientPrivilege("permission denied for schema ops")
+    _connect_to(monkeypatch, connection)
+    return "select 1 as a", ()
+
+
+def _arrange_duplicate_columns(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    _connect_to(monkeypatch, _fake_connection(rows=[(1, 1)], columns=("a", "a")))
+    return "select 1 as a, 1 as a", (SortSpec(column="a", direction="asc"),)
+
+
+def _arrange_unknown_column(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    _connect_to(monkeypatch, _fake_connection(rows=[(1,)]))
+    return "select 1 as a", (SortSpec(column="b", direction="asc"),)
 
 
 @pytest.mark.parametrize(
@@ -175,13 +229,8 @@ class TestQueryRunnerOffline:
         )
 
     def test_an_unreachable_warehouse_is_a_warning_with_its_reason(
-        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, offline_runner: QueryRunner, caplog: pytest.LogCaptureFixture
     ) -> None:
-        def refused(*args: object, **kwargs: object) -> None:
-            raise psycopg.OperationalError("connection failed: connection refused")
-
-        monkeypatch.setattr(psycopg, "connect", refused)
-
         with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
             offline_runner.run("q1", "select 1 as a")
 
@@ -192,6 +241,65 @@ class TestQueryRunnerOffline:
             r"the warehouse is unreachable \(connection failed: connection refused\); is `make up` running\?",
             record.getMessage(),
         )
+
+    @pytest.mark.parametrize(
+        "code", ["timeout", "busy", "catalog_unavailable", "database_unavailable", "too_many_connections"]
+    )
+    def test_a_failure_of_the_warehouse_or_server_is_a_warning_with_its_message(
+        self,
+        offline_runner: QueryRunner,
+        empty_catalog_loader: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        code: str,
+    ) -> None:
+        empty_catalog_loader.load.side_effect = UiQueryError(code, "the reason")  # type: ignore[arg-type]
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
+            offline_runner.run("q1", "select 1 as a")
+
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert re.fullmatch(
+            rf"query q1 failed \({code}\) after \d+ ms, sql 13 chars sha256 [0-9a-f]{{12}}: the reason",
+            record.getMessage(),
+        )
+
+    @pytest.mark.parametrize("code", ["guard_rejected", "sql_error", "cancelled", "duplicate_query_id"])
+    def test_a_failure_of_the_query_itself_is_logged_by_code_alone(
+        self,
+        offline_runner: QueryRunner,
+        empty_catalog_loader: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        code: str,
+    ) -> None:
+        empty_catalog_loader.load.side_effect = UiQueryError(code, "quotes jurre931@hotmail.com")  # type: ignore[arg-type]
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
+            offline_runner.run("q1", "select 1 as a")
+
+        [record] = caplog.records
+        assert record.levelno == logging.INFO
+        assert "jurre931" not in record.getMessage()
+
+    @pytest.mark.parametrize(
+        ("update", "expected"), [({}, "'30s'"), ({"ui_statement_timeout_s": 1}, "'1s'")], ids=["default", "one_second"]
+    )
+    def test_sets_the_statement_timeout_of_the_settings(
+        self,
+        offline_settings: UiSettings,
+        empty_catalog_loader: MartCatalogLoader,
+        monkeypatch: pytest.MonkeyPatch,
+        update: dict[str, int],
+        expected: str,
+    ) -> None:
+        runner = QueryRunner(offline_settings.model_copy(update=update), empty_catalog_loader)
+        connection = _fake_connection(rows=[(1,)])
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        runner.run("q1", "select 1 as a")
+
+        [call] = connection.execute.call_args_list  # the only statement the connection itself executes
+        assert call.args[0].as_string() == f"set local statement_timeout = {expected}"
 
     def test_a_successful_run_is_logged_with_its_digest(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -366,34 +474,34 @@ class TestQueryRunnerOffline:
         assert offline_runner.running_query_ids() == frozenset()
 
     @pytest.mark.parametrize(
-        "path",
+        "arrange",
         [
-            "succeeds",
-            "guard_rejected",
-            "cancelled_before_connecting",
-            "connect_fails",
-            "cancelled_while_connecting",
-            "sql_error",
-            "duplicate_columns",
-            "unknown_column",
+            _arrange_succeeds,
+            _arrange_guard_rejected,
+            _arrange_cancelled_before_connecting,
+            _arrange_connect_fails,
+            _arrange_cancelled_while_connecting,
+            _arrange_sql_error,
+            _arrange_duplicate_columns,
+            _arrange_unknown_column,
         ],
+        ids=lambda arrange: arrange.__name__.removeprefix("_arrange_"),
     )
     def test_every_way_a_run_ends_gives_its_slot_back(
         self,
-        offline_settings: UiSettings,
+        offline_runner: QueryRunner,
         empty_catalog_loader: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
-        path: str,
+        arrange: Callable[[QueryRunner, MagicMock, pytest.MonkeyPatch], tuple[str, tuple[SortSpec, ...]]],
     ) -> None:
-        runner = QueryRunner(offline_settings, empty_catalog_loader)
-        sql_text, sort = _arrange_exit_path(runner, empty_catalog_loader, monkeypatch, path)
+        sql_text, sort = arrange(offline_runner, empty_catalog_loader, monkeypatch)
 
         # One run more than there are slots: a slot kept by each run would make the last one `busy`.
-        endings = [_ending(runner, sql_text, sort) for _ in range(MAX_CONCURRENT_QUERIES + 1)]
+        endings = [_ending(offline_runner, sql_text, sort) for _ in range(MAX_CONCURRENT_QUERIES + 1)]
 
         assert "busy" not in endings
         assert len(set(endings)) == 1
-        assert runner.running_query_ids() == frozenset()
+        assert offline_runner.running_query_ids() == frozenset()
 
     @pytest.mark.parametrize(
         "refusal",
@@ -1233,44 +1341,6 @@ def _endless_rows(
     cursor.fetchmany.side_effect = fetchmany
 
 
-def _arrange_exit_path(
-    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch, path: str
-) -> tuple[str, tuple[SortSpec, ...]]:
-    """Make every run of `runner` end the way `path` names; returns the SQL and sort to run."""
-    columns = ("a", "a") if path == "duplicate_columns" else ("a",)
-    connection = _fake_connection(rows=[(1,) * len(columns)], columns=columns)
-    sql_text, sort = "select 1 as a", ()
-    catalog = loader.load.return_value
-
-    def connect(*args: object, **kwargs: object) -> MagicMock:
-        match path:
-            case "connect_fails":
-                raise psycopg.OperationalError("connection failed: connection refused")
-            case "cancelled_while_connecting":
-                runner.cancel("q1")
-
-        return connection
-
-    def load_then_cancel() -> MartCatalog:
-        runner.cancel("q1")
-        return catalog
-
-    match path:
-        case "guard_rejected":
-            sql_text = "delete from marts.fct_orders"
-        case "cancelled_before_connecting":
-            loader.load.side_effect = load_then_cancel
-        case "sql_error":
-            connection.execute.side_effect = psycopg.errors.InsufficientPrivilege("permission denied for schema ops")
-        case "duplicate_columns":
-            sort = (SortSpec(column="a", direction="asc"),)
-        case "unknown_column":
-            sort = (SortSpec(column="b", direction="asc"),)
-
-    monkeypatch.setattr(psycopg, "connect", connect)
-    return sql_text, sort
-
-
 def _ending(runner: QueryRunner, sql_text: str, sort: tuple[SortSpec, ...]) -> str:
     """How one run ended: `ok`, the `UiQueryError` code, or the type of anything else it raised."""
     try:
@@ -1323,3 +1393,7 @@ def _wait_until_running(runner: QueryRunner, query_id: str) -> None:
     while query_id not in runner.running_query_ids():
         assert time.monotonic() < deadline, f"{query_id} never started running"
         time.sleep(0.01)
+
+
+def _connect_to(monkeypatch: pytest.MonkeyPatch, connection: MagicMock) -> None:
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
