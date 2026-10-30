@@ -226,17 +226,6 @@ class TestOrderLifecycleSimulator:
             assert times[-1] < MONTH_END_AT
 
     @pytest.mark.integration
-    def test_discount_share(self, month: Database) -> None:
-        with month.connect() as conn:
-            [(orders, discounted)] = fetch_all(
-                conn,
-                "SELECT count(*), count(*) FILTER (WHERE id IN (SELECT order_id FROM raw_shop.order_discounts))"
-                " FROM raw_shop.orders",
-            )
-
-        assert 0.10 <= discounted / orders <= 0.40  # only checks that discounts flow; the 25 % rate is in rate_orders
-
-    @pytest.mark.integration
     def test_no_coupon_code_is_single_use(self, month: Database) -> None:
         """Known simplification (Spec A §5.4): every coupon code is unlimited."""
         with month.connect() as conn:
@@ -278,20 +267,6 @@ class TestOrderLifecycleSimulator:
         for subtotal, cart_value, item_variants, carted_variants in rows:
             assert cart_value == subtotal
             assert item_variants[0] in carted_variants
-
-    @pytest.mark.integration
-    def test_never_paid_orders_are_cancelled_next_day_without_refund(self, month: Database) -> None:
-        with month.connect() as conn:
-            rows = fetch_all(conn, _NEVER_PAID_ORDERS)
-
-        assert rows
-        for _, status, placed_at, cancelled_at, payment_statuses, refunds in rows:
-            assert payment_statuses == ["authorized"]
-            assert refunds == 0
-            if status == "placed":
-                assert placed_at >= MONTH_END_AT - timedelta(days=1)  # placed on the last day, cancelled tomorrow
-            else:
-                assert cancelled_at == placed_at + timedelta(days=1)
 
     @pytest.mark.integration
     def test_shipments_follow_shipped_and_delivered_orders(self, month: Database) -> None:
@@ -371,6 +346,22 @@ class TestOrderLifecycleSimulator:
 
         assert_rate(len(unpaid), len(rate_orders.orders), 0.02)  # Spec A §5.2 step 6: 2 % never paid
         assert all([p.status for p in by_order[o.id]] == [PaymentStatus.AUTHORIZED] for o in unpaid)
+
+    def test_every_never_paid_order_is_cancelled_the_next_day_without_a_refund(self, rate_orders: _RateOrders) -> None:
+        unpaid = [o for o in rate_orders.orders if o.status == OrderStatus.PLACED]
+        changes = DayChanges()
+
+        _simulator().progress_orders(_snapshot(DAY + timedelta(days=1), open_orders=unpaid), changes)
+
+        cancelled = {
+            u.key["id"]: u.values["updated_at"]
+            for u in changes.updates
+            if u.record_type is Order and u.values["status"] == OrderStatus.CANCELLED
+        }
+        assert unpaid
+        assert set(cancelled) == {o.id for o in unpaid}
+        assert all(cancelled[o.id] == o.placed_at + timedelta(days=1) for o in unpaid)
+        assert changes.inserted(Refund) == []
 
     def test_paid_cancellations_hit_three_percent_of_paid_orders(self) -> None:
         changes = DayChanges()
@@ -788,16 +779,6 @@ _PURCHASE_EVENTS_BY_ORDER = f"""
 SELECT o.id, o.sales_channel, count(DISTINCT e.event_id)
 FROM raw_shop.orders o LEFT JOIN ({_PURCHASE_EVENTS}) e ON e.order_id = o.id
 GROUP BY o.id, o.sales_channel ORDER BY o.id
-"""
-
-_NEVER_PAID_ORDERS = """
-SELECT o.id, o.status, o.placed_at,
-       (SELECT h.changed_at FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'cancelled'),
-       (SELECT array_agg(p.status::text ORDER BY p.id) FROM raw_shop.payments p WHERE p.order_id = o.id),
-       (SELECT count(*) FROM raw_shop.refunds r WHERE r.order_id = o.id)
-FROM raw_shop.orders o
-WHERE NOT EXISTS (SELECT 1 FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'paid')
-ORDER BY o.id
 """
 
 _SHIPMENTS_BY_ORDER = """
