@@ -41,6 +41,7 @@ PARITY_CALLS: tuple[tuple[str, dict[str, object]], ...] = (
 )
 VOLATILE_FIELDS = frozenset({"elapsed_ms"})
 STDIO_TIMEOUT_SECONDS = 120
+STARTUP_FAILURE_TIMEOUT_SECONDS = 60  # the 15 s startup wait plus process start; it took 25 s once
 LEGACY_PROTOCOL_VERSION = "2025-06-18"  # the initialize handshake a pre-2026 client sends
 HTTP_TIMEOUT_SECONDS = 30
 INITIALIZE = {
@@ -249,7 +250,7 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
 ) -> None:
     env = get_default_environment() | (stdio_server.env or {}) | {"SHERPA_DB_PORT": str(closed_port)}
 
-    # The server gives up after its 15 s wait; this bound fails the test if it hangs instead. It took 25 s once.
+    # The server gives up after its 15 s wait; this bound fails the test if it hangs instead.
     completed = subprocess.run(
         [stdio_server.command, *stdio_server.args],
         input="",
@@ -258,7 +259,7 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
         encoding="utf-8",
         cwd=stdio_server.cwd,
         env=env,
-        timeout=60,
+        timeout=STARTUP_FAILURE_TIMEOUT_SECONDS,
         check=False,
     )
 
