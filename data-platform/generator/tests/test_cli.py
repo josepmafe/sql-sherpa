@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import psycopg
 import pytest
-from helpers import RUN_SCALE, RUN_SEED, RUN_TODAY, STATE_TABLE, fingerprint
+from helpers import RUN_SCALE, RUN_SEED, RUN_TODAY, STATE_TABLE, assert_empty, fingerprint
 from sherpa_generator import settings
 from sherpa_generator.cli import app
 from sherpa_generator.database.raw_schema import RawSchema
@@ -120,12 +120,6 @@ class TestCli:
         assert result.exit_code == 2
         assert "--days" in result.stderr
 
-    def test_requires_days(self) -> None:
-        result = runner.invoke(app, ["generate"])
-
-        assert result.exit_code == 2
-        assert "--days" in result.stderr
-
     @pytest.mark.integration
     def test_generator_error_exits_2_with_message_on_stderr(self, cli_database: Database) -> None:
         result = runner.invoke(app, ["generate", "--days", "1", "--start-date", "2999-01-01"])
@@ -193,6 +187,4 @@ class TestCli:
 
         assert result.exit_code == 0, result.output
         assert RawSchema(cli_database).tables() == tables_before
-        after = fingerprint(cli_database)
-        assert after.pop(STATE_TABLE) is None
-        assert all(count == 0 for count, _ in after.values())
+        assert_empty(cli_database)

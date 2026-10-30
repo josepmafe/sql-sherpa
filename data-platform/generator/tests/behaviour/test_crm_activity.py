@@ -1,33 +1,36 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import SIMULATION_SEED, TRAFFIC_MONTH_END, make_customer
+from helpers import MONTH_END_AT, SIMULATION_SEED, assert_rate, make_campaign, make_customer, shop_snapshot
 from sherpa_generator.behaviour.crm_activity import CrmActivitySimulator
 from sherpa_generator.records import Campaign, CampaignChannel, EmailSend, Lead, LeadSource, LifecycleStage
 from sherpa_generator.simulation.day_changes import DayChanges
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.primary_keys import PrimaryKeyAllocator
 from sherpa_generator.simulation.realism_rules import RealismRules
-from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
     from sherpa_generator.records import Customer
+    from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
-END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
 TUESDAY = date(2025, 3, 11)
 SATURDAY = date(2025, 3, 15)
 STAGE_RANK = {stage: rank for rank, stage in enumerate(LifecycleStage)}
 TUESDAY_WEEKDAY = 1
+RATE_LEADS = 4_000  # ~1,000 opens and ~120 clicks: enough for assert_rate to tell 3 % and 10 % from 0
+LEAD_RATE_SCALE = 250.0  # one day of 16 x 250 new leads
+ENGAGEMENT_DAYS = 4  # a send at 08:00-08:30 is opened within 48 h and clicked within 30 minutes of that
 
 
 class TestCrmActivitySimulator:
     @pytest.mark.integration
-    def test_lead_match_rate_of_customers(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_lead_match_rate_of_customers(self, month: Database) -> None:
+        with month.connect() as conn:
             customers = [row[0] for row in conn.execute("SELECT lower(trim(email)) FROM raw_shop.customers")]
             leads = {row[0] for row in conn.execute("SELECT lower(trim(email)) FROM raw_crm.leads")}
 
@@ -36,8 +39,8 @@ class TestCrmActivitySimulator:
         assert 0.25 <= rate <= 0.45
 
     @pytest.mark.integration
-    def test_lifecycle_never_moves_backwards(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_lifecycle_never_moves_backwards(self, month: Database) -> None:
+        with month.connect() as conn:
             leads = conn.execute(
                 "SELECT l.id, l.lifecycle_stage, l.created_at, l.updated_at,"
                 " bool_or(s.opened_at IS NOT NULL), bool_or(s.clicked_at IS NOT NULL),"
@@ -48,7 +51,7 @@ class TestCrmActivitySimulator:
                 " GROUP BY l.id, l.lifecycle_stage, l.created_at, l.updated_at"
             ).fetchall()
 
-        converted_by = END_OF_RUN - timedelta(days=2)
+        converted_by = MONTH_END_AT - timedelta(days=2)
         stages = {row[1] for row in leads}
         for _, stage, created_at, updated_at, opened, clicked, signed_up_at in leads:
             evidence = LifecycleStage.SUBSCRIBER
@@ -62,30 +65,48 @@ class TestCrmActivitySimulator:
             assert stage != LifecycleStage.CUSTOMER or signed_up_at is not None
             assert stage != LifecycleStage.MQL or clicked
             assert stage != LifecycleStage.LEAD or opened
-            assert created_at <= updated_at < END_OF_RUN
+            assert created_at <= updated_at < MONTH_END_AT
         assert {LifecycleStage.SUBSCRIBER, LifecycleStage.LEAD, LifecycleStage.CUSTOMER} <= stages
 
     @pytest.mark.integration
-    def test_newsletter_only_on_tuesdays(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_newsletter_only_on_tuesdays(self, month: Database) -> None:
+        with month.connect() as conn:
             sent = [row[0] for row in conn.execute("SELECT sent_at FROM raw_crm.email_sends WHERE campaign_id IS NULL")]
 
         assert {instant.weekday() for instant in sent} == {TUESDAY_WEEKDAY}
         assert len({instant.date() for instant in sent}) == 4
 
     @pytest.mark.integration
-    def test_email_engagement_is_ordered_rated_and_never_after_the_last_day(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_email_engagement_is_ordered_and_never_after_the_last_day(self, month: Database) -> None:
+        with month.connect() as conn:
             sends = conn.execute("SELECT sent_at, opened_at, clicked_at FROM raw_crm.email_sends").fetchall()
-
-        settled = [opened for sent, opened, _ in sends if sent < END_OF_RUN - timedelta(days=3)]
-        open_rate = sum(1 for opened in settled if opened is not None) / len(settled)
 
         for sent, opened, clicked in sends:
             assert opened is None or sent <= opened <= sent + timedelta(hours=48)
             assert clicked is None or (opened is not None and opened <= clicked)
-            assert max(t for t in (sent, opened, clicked) if t is not None) < END_OF_RUN
-        assert 0.17 <= open_rate <= 0.33
+            assert max(t for t in (sent, opened, clicked) if t is not None) < MONTH_END_AT
+
+    def test_email_noise_hits_ten_percent_of_new_leads_and_normalizes_back(self) -> None:
+        changes = DayChanges()
+
+        _simulator(scale=LEAD_RATE_SCALE).simulate_day(_snapshot(SATURDAY), changes)
+
+        emails = [lead.email for lead in changes.inserted(Lead)]
+        noisy = [email for email in emails if email != email.strip().lower()]
+        assert_rate(len(noisy), len(emails), 0.10)  # R3, Spec A §4.4
+        assert all(email.strip().lower().count("@") == 1 for email in noisy)
+
+    def test_opens_hit_25_percent_and_clicks_3_percent_of_sends_and_every_click_was_opened(self) -> None:
+        leads = [_lead(lead_id) for lead_id in range(1, RATE_LEADS + 1)]
+        sends = _newsletter_sends_with_engagement(leads)
+
+        opened = [send for send in sends if send.opened_at is not None]
+        clicked = [send for send in sends if send.clicked_at is not None]
+
+        assert len(sends) == RATE_LEADS
+        assert_rate(len(opened), len(sends), 0.25)  # Spec A §5.2 step 2: open 25 % of sends
+        assert_rate(len(clicked), len(sends), 0.03)  # Spec A §5.2 step 2: click 3 % of sends
+        assert {send.id for send in clicked} <= {send.id for send in opened}
 
     def test_zero_scale_without_leads_writes_nothing(self) -> None:
         changes = DayChanges()
@@ -135,9 +156,7 @@ class TestCrmActivitySimulator:
     def test_signup_converts_matching_lead_one_to_two_days_later(self) -> None:
         signed_up_at = datetime(2025, 3, 12, 15, tzinfo=UTC)
         lead = _lead(7, email=" Anna.Berg@Example.com")
-        customer = make_customer(3).model_copy(
-            update={"email": "anna.berg@example.com", "created_at": signed_up_at, "updated_at": signed_up_at}
-        )
+        customer = make_customer(3, email="anna.berg@example.com", created_at=signed_up_at, updated_at=signed_up_at)
         days = [signed_up_at.date() + timedelta(days=offset) for offset in range(4)]
         conversions: list[tuple[date, dict[str, object]]] = []
 
@@ -155,7 +174,7 @@ class TestCrmActivitySimulator:
     def test_converted_lead_is_not_converted_again(self) -> None:
         signed_up_at = datetime(2025, 3, 12, 15, tzinfo=UTC)
         lead = _lead(7, stage=LifecycleStage.CUSTOMER)
-        customer = make_customer(3).model_copy(update={"email": lead.email, "created_at": signed_up_at})
+        customer = make_customer(3, email=lead.email, created_at=signed_up_at)
         changes = [DayChanges() for _ in range(3)]
 
         for offset, day_changes in enumerate(changes):
@@ -169,35 +188,35 @@ def _simulator(scale: float = 1.0) -> CrmActivitySimulator:
     return CrmActivitySimulator(DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({}), RealismRules(), scale)
 
 
+def _newsletter_sends_with_engagement(leads: list[Lead]) -> list[EmailSend]:
+    """The Tuesday newsletter to `leads`, with the opens and clicks that the following days write onto the sends."""
+    simulator = _simulator(scale=0.0)
+    first = DayChanges()
+    simulator.simulate_day(_snapshot(TUESDAY, leads=leads), first)
+    sends = {send.id: send for send in first.inserted(EmailSend)}
+    for offset in range(1, ENGAGEMENT_DAYS):
+        changes = DayChanges()
+        snapshot = _snapshot(TUESDAY + timedelta(days=offset), leads=leads)
+        simulator.simulate_day(snapshot.model_copy(update={"recent_email_sends": list(sends.values())}), changes)
+        for update in changes.updates:
+            if update.record_type is EmailSend:
+                key = int(str(update.key["id"]))
+                sends[key] = sends[key].model_copy(update=update.values)
+
+    return list(sends.values())
+
+
 def _snapshot(
     day: date,
     leads: list[Lead] | None = None,
     customers: list[Customer] | None = None,
     campaign: Campaign | None = None,
 ) -> StoreSnapshot:
-    customers = customers or []
-    return StoreSnapshot(
-        day=day,
-        variants=[],
-        variant_popularity={},
-        customers=customers,
-        customer_propensity={c.id: 1.0 for c in customers},
-        customer_devices={},
+    return shop_snapshot(
+        day,
+        customers=customers or [],
         leads=leads or [],
         active_campaigns={CampaignChannel.EMAIL: [campaign]} if campaign else {},
-        recent_email_sends=[],
-        active_promotions=[],
-        coupon_codes=[],
-        shipping_address_ids={},
-        open_orders=[],
-        open_shipments=[],
-        captured_payments=[],
-        products=[],
-        product_category_l1={},
-        recently_delivered_orders=[],
-        recently_delivered_items=[],
-        recently_delivered_payments=[],
-        open_returns=[],
     )
 
 
@@ -215,12 +234,12 @@ def _lead(lead_id: int, email: str | None = None, stage: LifecycleStage = Lifecy
 
 def _email_campaign(starts: date) -> Campaign:
     starts_at = datetime(starts.year, starts.month, starts.day, tzinfo=UTC)
-    return Campaign(
-        id=9,
+    return make_campaign(
+        9,
         name="Spring Newsletter 2025",
         utm_campaign="spring-newsletter-2025",
         channel=CampaignChannel.EMAIL,
         starts_at=starts_at,
         ends_at=starts_at + timedelta(days=30),
-        budget=5000,
+        budget=Decimal(5000),
     )

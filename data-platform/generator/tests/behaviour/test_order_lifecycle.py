@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
-from helpers import SIMULATION_SEED, TRAFFIC_MONTH_END, make_customer
-from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
+from helpers import (
+    MONTH_END_AT,
+    SIMULATION_SEED,
+    assert_rate,
+    catalog_variants,
+    fetch_all,
+    make_event,
+    make_item,
+    make_order,
+    make_payment,
+    shop_snapshot,
+)
 from sherpa_generator.behaviour.order_lifecycle import (
     PAID_CANCELLATION_PURPOSE,
     OrderLifecycleSimulator,
@@ -21,7 +32,6 @@ from sherpa_generator.records import (
     DeviceType,
     EventContext,
     EventProperties,
-    EventType,
     Order,
     OrderDiscount,
     OrderItem,
@@ -31,7 +41,6 @@ from sherpa_generator.records import (
     PaymentMethod,
     PaymentStatus,
     PendingEvent,
-    ProductVariant,
     Promotion,
     PromotionType,
     Refund,
@@ -45,20 +54,21 @@ from sherpa_generator.simulation.day_changes import DayChanges
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.primary_keys import PrimaryKeyAllocator
 from sherpa_generator.simulation.realism_rules import RealismRules
-from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import psycopg
     from sherpa_generator.database.connection import Database
+    from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 DAY = date(2025, 3, 12)
 DAY_START = datetime(2025, 3, 12, tzinfo=UTC)
-END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
 CENT = Decimal("0.01")
 MAX_SESSION_SECONDS = EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS  # the longest a session runs, add_to_cart to purchase
 LINE_ORDERS = 400  # enough web orders to see every line count of LINE_COUNT_WEIGHTS
+# Enough orders for assert_rate to tell a 2-3 % rule from 0 (the smallest samples: 518 for 3 %, 784 for 2 %).
+RATE_ORDERS = 4_000
+SECONDS_BETWEEN_RATE_ORDERS = 20  # RATE_ORDERS x 20 s stays inside the day
 VALID_STATUS_PATHS = {
     ("placed",),
     ("placed", "cancelled"),
@@ -160,9 +170,9 @@ class TestOrderPricing:
 
 class TestOrderLifecycleSimulator:
     @pytest.mark.integration
-    def test_order_totals_are_consistent_with_items_and_discounts(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _ORDER_TOTALS)
+    def test_order_totals_are_consistent_with_items_and_discounts(self, month: Database) -> None:
+        with month.connect() as conn:
+            rows = fetch_all(conn, _ORDER_TOTALS)
 
         assert rows
         for number, subtotal, discount, shipping, tax, total, items_sum, discounts_sum, lines, free in rows:
@@ -177,9 +187,9 @@ class TestOrderLifecycleSimulator:
             assert total == subtotal - discount + shipping + tax
 
     @pytest.mark.integration
-    def test_captured_payments_equal_total_for_paid_orders(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _PAYMENTS_BY_ORDER)
+    def test_captured_payments_equal_total_for_paid_orders(self, month: Database) -> None:
+        with month.connect() as conn:
+            rows = fetch_all(conn, _PAYMENTS_BY_ORDER)
 
         paid = [row for row in rows if row[1]]
         assert paid
@@ -189,12 +199,15 @@ class TestOrderLifecycleSimulator:
         assert any(failed_rows > 0 for *_, failed_rows in paid)  # R7 failed attempts
 
     @pytest.mark.integration
-    def test_status_history_is_monotonic_and_matches_current_status(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_status_history_is_monotonic_and_matches_current_status(self, month: Database) -> None:
+        with month.connect() as conn:
             orders = {
-                row[0]: row[1:] for row in _rows(conn, "SELECT id, status, placed_at, updated_at FROM raw_shop.orders")
+                row[0]: row[1:]
+                for row in fetch_all(conn, "SELECT id, status, placed_at, updated_at FROM raw_shop.orders")
             }
-            history = _rows(conn, "SELECT order_id, status, changed_at FROM raw_shop.order_status_history ORDER BY id")
+            history = fetch_all(
+                conn, "SELECT order_id, status, changed_at FROM raw_shop.order_status_history ORDER BY id"
+            )
 
         by_order: dict[int, list[tuple[str, datetime]]] = defaultdict(list)
         for order_id, status, changed_at in history:
@@ -210,60 +223,44 @@ class TestOrderLifecycleSimulator:
             assert times == sorted(times)
             assert times[0] == placed_at
             assert times[-1] == updated_at
-            assert times[-1] < END_OF_RUN
+            assert times[-1] < MONTH_END_AT
 
     @pytest.mark.integration
-    def test_discount_share(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            [(orders, discounted)] = _rows(
-                conn,
-                "SELECT count(*), count(*) FILTER (WHERE id IN (SELECT order_id FROM raw_shop.order_discounts))"
-                " FROM raw_shop.orders",
+    def test_no_coupon_code_is_single_use(self, month: Database) -> None:
+        """Known simplification (Spec A §5.4): every coupon code is unlimited."""
+        with month.connect() as conn:
+            [(coupons, single_use)] = fetch_all(
+                conn, "SELECT count(*), count(*) FILTER (WHERE is_single_use) FROM raw_shop.coupon_codes"
             )
 
-        assert 0.18 <= discounted / orders <= 0.32
+        assert coupons > 0
+        assert single_use == 0
 
     @pytest.mark.integration
-    def test_r8_orders_stack_a_coupon_of_another_promotion(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _STACKED_DISCOUNTS)
-
-        assert rows
-        for subtotal, discount_total, amounts, promotion_ids, coupon_ids, coupon_promotion_ids in rows:
-            assert len(amounts) == 2
-            assert promotion_ids[0] != promotion_ids[1]
-            assert coupon_ids[0] is None
-            assert coupon_ids[1] is not None
-            assert coupon_promotion_ids[1] == promotion_ids[1]
-            assert discount_total == sum(amounts)
-            assert discount_total <= subtotal
-
-    @pytest.mark.integration
-    def test_app_share(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            [(orders, app)] = _rows(
+    def test_app_share(self, month: Database) -> None:
+        # R12 (35 %) is a per-day rounded share of the web orders, not a binomial draw, so assert_rate does not apply.
+        with month.connect() as conn:
+            [(orders, app)] = fetch_all(
                 conn, "SELECT count(*), count(*) FILTER (WHERE sales_channel = 'app') FROM raw_shop.orders"
             )
 
         assert 0.28 <= app / orders <= 0.42
 
     @pytest.mark.integration
-    def test_every_web_order_has_exactly_one_purchase_event(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _PURCHASE_EVENTS_BY_ORDER)
-            [(untagged,)] = _rows(conn, f"SELECT count(*) FROM ({_PURCHASE_EVENTS}) e WHERE order_id IS NULL")
+    def test_every_web_order_has_exactly_one_purchase_event(self, month: Database) -> None:
+        with month.connect() as conn:
+            rows = fetch_all(conn, _PURCHASE_EVENTS_BY_ORDER)
+            [(untagged,)] = fetch_all(conn, f"SELECT count(*) FROM ({_PURCHASE_EVENTS}) e WHERE order_id IS NULL")
 
         assert any(channel == "app" for _, channel, _ in rows)
         assert all(events == (1 if channel == "web" else 0) for _, channel, events in rows)
         assert untagged == 0
 
     @pytest.mark.integration
-    def test_web_order_matches_its_purchase_event_and_leads_with_the_carted_variant(
-        self, order_month: Database
-    ) -> None:
-        with order_month.connect() as conn:
+    def test_web_order_matches_its_purchase_event_and_leads_with_the_carted_variant(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = conn.execute(_WEB_ORDER_PURCHASES, [MAX_SESSION_SECONDS]).fetchall()
-            [(web_orders,)] = _rows(conn, "SELECT count(*) FROM raw_shop.orders WHERE sales_channel = 'web'")
+            [(web_orders,)] = fetch_all(conn, "SELECT count(*) FROM raw_shop.orders WHERE sales_channel = 'web'")
 
         assert web_orders > 0
         assert len(rows) == web_orders
@@ -272,35 +269,9 @@ class TestOrderLifecycleSimulator:
             assert item_variants[0] in carted_variants
 
     @pytest.mark.integration
-    def test_never_paid_orders_are_cancelled_next_day_without_refund(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _NEVER_PAID_ORDERS)
-
-        cancelled = [row for row in rows if row[1] == "cancelled"]
-        assert cancelled
-        for _, status, placed_at, cancelled_at, payment_statuses, refunds in rows:
-            assert payment_statuses == ["authorized"]
-            assert refunds == 0
-            if status == "placed":
-                assert placed_at >= END_OF_RUN - timedelta(days=1)  # placed on the last day, cancelled tomorrow
-            else:
-                assert cancelled_at == placed_at + timedelta(days=1)
-
-    @pytest.mark.integration
-    def test_paid_cancellations_refund_the_captured_amount_on_the_largest_payment(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _PAID_CANCELLATIONS)
-
-        assert rows
-        for paid_at, cancelled_at, refunds, payment_id, amount, reason, refunded_at, captured, largest_id in rows:
-            assert cancelled_at == paid_at + timedelta(days=1)
-            assert refunds == 1
-            assert (payment_id, amount, reason, refunded_at) == (largest_id, captured, "cancellation", cancelled_at)
-
-    @pytest.mark.integration
-    def test_shipments_follow_shipped_and_delivered_orders(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
-            rows = _rows(conn, _SHIPMENTS_BY_ORDER)
+    def test_shipments_follow_shipped_and_delivered_orders(self, month: Database) -> None:
+        with month.connect() as conn:
+            rows = fetch_all(conn, _SHIPMENTS_BY_ORDER)
 
         assert any(row[0] == "delivered" for row in rows)
         for status, paid, shipped, delivered, shipments, carrier, cost, shipped_at, delivered_at in rows:
@@ -313,6 +284,98 @@ class TestOrderLifecycleSimulator:
                 assert delivered_at == delivered
             if status == "delivered":
                 assert delivered - shipped in {timedelta(days=days) for days in (2, 3, 4, 5)}
+
+    def test_failed_first_attempts_hit_three_percent_of_paid_orders_and_precede_a_capture_of_the_same_amount(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        paid = [o for o in rate_orders.orders if o.status == OrderStatus.PAID]
+        by_order = rate_orders.payments
+        failed_orders = [o for o in paid if any(p.status == PaymentStatus.FAILED for p in by_order[o.id])]
+
+        assert_rate(len(failed_orders), len(paid), 0.03)  # R7, Spec A §4.4: 3 % failed then retried
+        for order in failed_orders:
+            [failed] = [p for p in by_order[order.id] if p.status == PaymentStatus.FAILED]
+            retries = [
+                p for p in by_order[order.id] if p.status == PaymentStatus.CAPTURED and p.amount == failed.amount
+            ]
+            assert retries
+            assert all(failed.created_at < retry.created_at for retry in retries)
+
+    def test_split_payments_hit_five_percent_of_paid_orders_and_pair_a_gift_card_with_a_card(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        paid = [o for o in rate_orders.orders if o.status == OrderStatus.PAID]
+        captured = {o.id: [p for p in rate_orders.payments[o.id] if p.status == PaymentStatus.CAPTURED] for o in paid}
+        split = [parts for parts in captured.values() if len(parts) == 2]
+
+        assert_rate(len(split), len(paid), 0.05)  # R7, Spec A §4.4: 5 % split
+        assert all(sorted(p.method for p in parts) == [PaymentMethod.CARD, PaymentMethod.GIFT_CARD] for parts in split)
+        assert all(len(parts) in {1, 2} for parts in captured.values())
+
+    def test_a_quarter_of_the_orders_get_a_discount(self, rate_orders: _RateOrders) -> None:
+        discounted = {d.order_id for d in rate_orders.changes.inserted(OrderDiscount)}
+
+        assert_rate(len(discounted), len(rate_orders.orders), 0.25)  # Spec A §5.2 step 5: a quarter of the orders
+
+    def test_r8_draw_stacks_about_twelve_percent_of_discounted_orders_when_a_coupon_is_available(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        # The fixture gives every order two eligible promotions with a coupon each, so this measures the draw
+        # (R8's 3 % of orders over the 25 % discounted), not the rate of the generator's own catalog.
+        by_order: dict[int, list[OrderDiscount]] = defaultdict(list)
+        for discount in rate_orders.changes.inserted(OrderDiscount):
+            by_order[discount.order_id].append(discount)
+        orders = {o.id: o for o in rate_orders.orders}
+        coupons = {9: 1, 10: 2}  # coupon id -> the promotion it belongs to
+        stacked = {order_id: rows for order_id, rows in by_order.items() if len(rows) == 2}
+
+        assert_rate(len(stacked), len(by_order), 0.12)  # R8 / DISCOUNTED_ORDER_RATE = 0.03 / 0.25
+        assert all(len(rows) <= 2 for rows in by_order.values())
+        for order_id, (first, second) in stacked.items():
+            assert first.promotion_id != second.promotion_id
+            assert first.coupon_code_id is None
+            assert second.coupon_code_id is not None
+            assert coupons[second.coupon_code_id] == second.promotion_id
+            assert orders[order_id].discount_total == first.amount + second.amount <= orders[order_id].subtotal
+
+    def test_never_paid_orders_hit_two_percent_of_orders_and_keep_only_an_authorization(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        unpaid = [o for o in rate_orders.orders if o.status == OrderStatus.PLACED]
+        by_order = rate_orders.payments
+
+        assert_rate(len(unpaid), len(rate_orders.orders), 0.02)  # Spec A §5.2 step 6: 2 % never paid
+        assert all([p.status for p in by_order[o.id]] == [PaymentStatus.AUTHORIZED] for o in unpaid)
+
+    def test_every_never_paid_order_is_cancelled_the_next_day_without_a_refund(self, rate_orders: _RateOrders) -> None:
+        unpaid = [o for o in rate_orders.orders if o.status == OrderStatus.PLACED]
+        changes = DayChanges()
+
+        _simulator().progress_orders(_snapshot(DAY + timedelta(days=1), open_orders=unpaid), changes)
+
+        cancelled = {
+            u.key["id"]: u.values["updated_at"]
+            for u in changes.updates
+            if u.record_type is Order and u.values["status"] == OrderStatus.CANCELLED
+        }
+        assert unpaid
+        assert set(cancelled) == {o.id for o in unpaid}
+        assert all(cancelled[o.id] == o.placed_at + timedelta(days=1) for o in unpaid)
+        assert changes.inserted(Refund) == []
+
+    def test_paid_cancellations_hit_three_percent_of_paid_orders(self) -> None:
+        changes = DayChanges()
+        paid_at = DAY_START - timedelta(hours=2)
+        orders = [_order(order_id, OrderStatus.PAID, paid_at) for order_id in range(1, RATE_ORDERS + 1)]
+        payments = [_payment(order.id, order.id, PaymentMethod.CARD, "64.95") for order in orders]
+
+        _simulator().progress_orders(_snapshot(open_orders=orders, captured_payments=payments), changes)
+
+        cancelled = [
+            u for u in changes.updates if u.record_type is Order and u.values["status"] == OrderStatus.CANCELLED
+        ]
+        assert_rate(len(cancelled), len(orders), 0.03)  # Spec A §5.2 step 6: 3 % of paid orders
+        assert {r.order_id for r in changes.inserted(Refund)} == {u.key["id"] for u in cancelled}
 
     def test_place_orders_without_intents_writes_nothing(self) -> None:
         changes = DayChanges()
@@ -406,7 +469,7 @@ class TestOrderLifecycleSimulator:
         automatic = _promotion(PromotionType.PERCENT, "50", promotion_id=1)
         couponed = _promotion(PromotionType.PERCENT, "50", promotion_id=2)
         coupon = CouponCode(id=9, promotion_id=2, code="SPRING25", is_single_use=False)
-        snapshot = _snapshot(promotions=[automatic, couponed], coupon_codes=[coupon])
+        snapshot = _snapshot(active_promotions=[automatic, couponed], coupon_codes=[coupon])
         intents = [_app_intent(1 + index % 50, DAY_START + timedelta(seconds=index)) for index in range(400)]
 
         orders = _simulator().place_orders(snapshot, changes, intents)
@@ -531,47 +594,49 @@ class TestOrderLifecycleSimulator:
         assert changes.updates == []
 
 
+@dataclass(frozen=True)
+class _RateOrders:
+    orders: list[Order]
+    changes: DayChanges
+    payments: dict[int, list[Payment]]  # by order id
+
+
+@pytest.fixture(scope="module")
+def rate_orders() -> _RateOrders:
+    """RATE_ORDERS app orders placed in one day, every one eligible for either of two promotions that each have a
+    coupon, so R8 can stack on any discounted order. Read-only: tests only measure it."""
+    changes = DayChanges()
+    first = _promotion(PromotionType.PERCENT, "10", promotion_id=1)
+    second = _promotion(PromotionType.PERCENT, "10", promotion_id=2)
+    coupons = [
+        CouponCode(id=9, promotion_id=1, code="ONE", is_single_use=False),
+        CouponCode(id=10, promotion_id=2, code="TWO", is_single_use=False),
+    ]
+    intents = [
+        _app_intent(1 + index % 50, DAY_START + timedelta(seconds=SECONDS_BETWEEN_RATE_ORDERS * index))
+        for index in range(RATE_ORDERS)
+    ]
+
+    orders = _simulator().place_orders(
+        _snapshot(active_promotions=[first, second], coupon_codes=coupons), changes, intents
+    )
+
+    payments: dict[int, list[Payment]] = defaultdict(list)
+    for payment in changes.inserted(Payment):
+        payments[payment.order_id].append(payment)
+
+    return _RateOrders(orders, changes, payments)
+
+
 def _simulator() -> OrderLifecycleSimulator:
     return OrderLifecycleSimulator(
         DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({}), RealismRules(), SimulationCalendar()
     )
 
 
-def _snapshot(
-    day: date = DAY,
-    open_orders: list[Order] | None = None,
-    open_shipments: list[Shipment] | None = None,
-    captured_payments: list[Payment] | None = None,
-    promotions: list[Promotion] | None = None,
-    coupon_codes: list[CouponCode] | None = None,
-) -> StoreSnapshot:
-    catalog = DayChanges()
-    CatalogBuilder(DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({})).build(catalog, DAY, DAY)
-    variants = catalog.inserted(ProductVariant)
-    people = [make_customer(customer_id) for customer_id in range(1, 51)]
-    return StoreSnapshot(
-        day=day,
-        variants=variants,
-        variant_popularity={v.id: 1 / len(variants) for v in variants},
-        customers=people,
-        customer_propensity={c.id: 1.0 for c in people},
-        customer_devices={},
-        leads=[],
-        active_campaigns={},
-        recent_email_sends=[],
-        active_promotions=catalog.inserted(Promotion) if promotions is None else promotions,
-        coupon_codes=coupon_codes or [],
-        shipping_address_ids={c.id: 1000 + c.id for c in people},
-        open_orders=open_orders or [],
-        open_shipments=open_shipments or [],
-        captured_payments=captured_payments or [],
-        products=[],
-        product_category_l1={},
-        recently_delivered_orders=[],
-        recently_delivered_items=[],
-        recently_delivered_payments=[],
-        open_returns=[],
-    )
+def _snapshot(day: date = DAY, **fields: object) -> StoreSnapshot:
+    """The shop of `day` with the promotions its catalog creates, unless a test passes `active_promotions`."""
+    return shop_snapshot(day, **{"active_promotions": catalog_variants(day).promotions, **fields})
 
 
 def _order_id_where(accept: Callable[[float], bool]) -> int:
@@ -580,15 +645,11 @@ def _order_id_where(accept: Callable[[float], bool]) -> int:
 
 
 def _order(order_id: int, status: OrderStatus, updated_at: datetime, total: str = "64.95") -> Order:
-    return Order(
-        id=order_id,
-        order_number=f"SS-{order_id:06d}",
-        customer_id=1,
+    return make_order(
+        order_id,
         shipping_address_id=1001,
         status=status,
         subtotal=Decimal("50.00"),
-        discount_total=Decimal("0.00"),
-        shipping_amount=Decimal("4.95"),
         tax_amount=Decimal("10.00"),
         order_total=Decimal(total),
         sales_channel=SalesChannel.APP,
@@ -598,13 +659,8 @@ def _order(order_id: int, status: OrderStatus, updated_at: datetime, total: str 
 
 
 def _payment(payment_id: int, order_id: int, method: PaymentMethod, amount: str) -> Payment:
-    return Payment(
-        id=payment_id,
-        order_id=order_id,
-        method=method,
-        amount=Decimal(amount),
-        status=PaymentStatus.CAPTURED,
-        created_at=DAY_START - timedelta(days=1),
+    return make_payment(
+        payment_id, order_id=order_id, method=method, amount=Decimal(amount), created_at=DAY_START - timedelta(days=1)
     )
 
 
@@ -621,7 +677,7 @@ def _promotion(promotion_type: PromotionType, value: str, promotion_id: int = 1)
 
 
 def _item(item_id: int, quantity: int, unit_price: str) -> OrderItem:
-    return OrderItem(id=item_id, order_id=1, variant_id=item_id, quantity=quantity, unit_price=Decimal(unit_price))
+    return make_item(item_id, variant_id=item_id, quantity=quantity, unit_price=Decimal(unit_price))
 
 
 def _address(address_id: int, customer_id: int, *, is_default: bool) -> Address:
@@ -638,11 +694,11 @@ def _address(address_id: int, customer_id: int, *, is_default: bool) -> Address:
 
 def _purchase_event(event_type: type[TrackedEvent], event_id: str) -> TrackedEvent:
     received_at = DAY_START + timedelta(hours=12)
-    return event_type(
-        event_id=event_id,
+    return make_event(
+        event_id,
+        event_type,
         anonymous_id="device-1",
         user_id="1",
-        event_type=EventType.PURCHASE,
         occurred_at=received_at.isoformat(),
         received_at=received_at,
         context=EventContext(device_type=DeviceType.MOBILE),
@@ -672,10 +728,6 @@ def _app_intent(customer_id: int, purchased_at: datetime) -> PurchaseIntent:
         purchase_event_id=None,
         variant_id=None,
     )
-
-
-def _rows(conn: psycopg.Connection, query: str) -> list[tuple[Any, ...]]:
-    return conn.execute(query).fetchall()  # type: ignore[arg-type]  # static SQL only
 
 
 _ORDER_TOTALS = """
@@ -727,38 +779,6 @@ _PURCHASE_EVENTS_BY_ORDER = f"""
 SELECT o.id, o.sales_channel, count(DISTINCT e.event_id)
 FROM raw_shop.orders o LEFT JOIN ({_PURCHASE_EVENTS}) e ON e.order_id = o.id
 GROUP BY o.id, o.sales_channel ORDER BY o.id
-"""
-
-_NEVER_PAID_ORDERS = """
-SELECT o.id, o.status, o.placed_at,
-       (SELECT h.changed_at FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'cancelled'),
-       (SELECT array_agg(p.status::text ORDER BY p.id) FROM raw_shop.payments p WHERE p.order_id = o.id),
-       (SELECT count(*) FROM raw_shop.refunds r WHERE r.order_id = o.id)
-FROM raw_shop.orders o
-WHERE NOT EXISTS (SELECT 1 FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'paid')
-ORDER BY o.id
-"""
-
-_STACKED_DISCOUNTS = """
-SELECT o.subtotal, o.discount_total, array_agg(d.amount ORDER BY d.id), array_agg(d.promotion_id ORDER BY d.id),
-       array_agg(d.coupon_code_id ORDER BY d.id), array_agg(c.promotion_id ORDER BY d.id)
-FROM raw_shop.orders o JOIN raw_shop.order_discounts d ON d.order_id = o.id
-LEFT JOIN raw_shop.coupon_codes c ON c.id = d.coupon_code_id
-GROUP BY o.id HAVING count(*) > 1 ORDER BY o.id
-"""
-
-_PAID_CANCELLATIONS = """
-SELECT (SELECT h.changed_at FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'paid'),
-       (SELECT h.changed_at FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'cancelled'),
-       (SELECT count(*) FROM raw_shop.refunds r WHERE r.order_id = o.id),
-       r.payment_id, r.amount, r.reason, r.refunded_at,
-       (SELECT sum(p.amount) FROM raw_shop.payments p WHERE p.order_id = o.id AND p.status = 'captured'),
-       (SELECT p.id FROM raw_shop.payments p WHERE p.order_id = o.id AND p.status = 'captured'
-        ORDER BY p.amount DESC, p.id LIMIT 1)
-FROM raw_shop.orders o LEFT JOIN raw_shop.refunds r ON r.order_id = o.id
-WHERE o.status = 'cancelled'
-  AND EXISTS (SELECT 1 FROM raw_shop.order_status_history h WHERE h.order_id = o.id AND h.status = 'paid')
-ORDER BY o.id
 """
 
 _SHIPMENTS_BY_ORDER = """

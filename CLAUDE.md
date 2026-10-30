@@ -88,7 +88,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 ## Conventions
 
 - **Repository layout, grouped by spec:**
-  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt.
+  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt (`dbt/`, `scripts/`) and the SQL tests of `postgres/`.
   - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
@@ -163,6 +163,14 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
+- **Shared builders.** Generator test builders live in `data-platform/generator/tests/helpers.py` as `make_<record>(id, **overrides)`; a test asserts only values it passes at the call site. Snapshots are built only through `make_snapshot` / `shop_snapshot`.
+- **Parametrize** when tests share arrange and act and differ in data or the assertion.
+- **Slow arrange becomes a fixture.** Arrange over about 1 s that tests only read is a module or session fixture, read-only; a fixture that holds a database compares a fingerprint in its teardown (`month`, `after_sales_season` in `data-platform/generator/tests/conftest.py`).
+- **Statistics come from the simulator, never a copy of its day loop.** A rate is measured on the shared month run where its sample suffices (R1, R2, R12), otherwise on a larger run of the simulator that applies the rule (`run_days` in `helpers.py`).
+- **Each realism rule gets a pure test and a rate test on generator output.** Where the rule is a per-trial probability the test uses `assert_rate` in `helpers.py` (a `z = 4` binomial bound from the trial count); a rule that is a per-day rounded share (R12) gets a loose bound with a comment.
+- **Tests don't write data to `sherpa` or `sherpa_eval`.** Tests that need a database use `temp_database`, and a dbt-running test identifies its own invocation rather than reading "the latest build". The exception is `data-platform/tests/dbt/test_run_results_audit.py`: its dbt runs add rows to `ops.dbt_run_results`, refresh `test_failures` and re-run `grant_read_access` on prod.
+- **Mark by need:** `integration` when Postgres is enough, `warehouse` only for built relations or artifacts. Tests of `data-platform/postgres/*.sql` live in `data-platform/tests/postgres/`.
+- **Don't test a constant against what defines it** (a rate against the constant it is read from); test it against the spec's value.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:

@@ -193,13 +193,6 @@ class TestCatalogBuilder:
         assert all(p.starts_at < p.ends_at for p in changes.inserted(Promotion))
         assert all(c.starts_at < c.ends_at for c in changes.inserted(Campaign))
 
-    def test_ids_are_unique_per_table(self) -> None:
-        changes = build()
-
-        for record_type in (Category, Product, ProductVariant, Campaign, Promotion, CouponCode):
-            ids = [r.id for r in changes.inserted(record_type)]
-            assert len(set(ids)) == len(ids)
-
     @staticmethod
     def _depth(categories: dict[int, Category], category_id: int) -> int:
         parent = categories[category_id].parent_id

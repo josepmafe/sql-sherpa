@@ -7,18 +7,30 @@ missing table cannot pass for a missing privilege.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+import json
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import psycopg
 import pytest
 from psycopg import errors, sql
-from psycopg.conninfo import make_conninfo
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from conftest import Database, Role, WarehouseSettings
+
+MANIFEST = Path(__file__).parents[2] / "dbt" / "target-prod" / "manifest.json"
+LARGE_OBJECT_FUNCTIONS = (
+    "lo_create(oid)",
+    "lo_creat(integer)",
+    "lo_from_bytea(oid, bytea)",
+    "lo_open(oid, integer)",
+    "lowrite(integer, bytea)",
+    "lo_put(oid, bigint, bytea)",
+)
+# Spec §6.5: the marts built so far. Hard-coded on purpose: the MCP server and UI suites import it, and a list read
+# from the same manifest as their catalogs would pass when a mart disappears.
 MARTS = (
     "dim_customers",
     "dim_date",
@@ -49,70 +61,42 @@ TRIGRAM_INDEXES = [
 
 pytestmark = pytest.mark.warehouse
 
-Database = Literal["main", "eval"]
-Role = Literal["admin", "agent", "ui"]
-
-
-class WarehouseSettings(BaseSettings):
-    """The admin, agent and UI connections, read from `.env` like the generator's admin settings."""
-
-    model_config = SettingsConfigDict(frozen=True, env_prefix="SHERPA_", env_file=".env", extra="ignore")
-
-    db_host: str
-    db_port: int
-    db_name: str
-    eval_db_name: str = "sherpa_eval"
-    admin_user: str
-    admin_password: SecretStr
-    agent_user: str
-    agent_password: SecretStr
-    ui_user: str
-    ui_password: SecretStr
-
-    def conninfo(self, database: Database, role: Role) -> str:
-        credentials = {
-            "admin": (self.admin_user, self.admin_password),
-            "agent": (self.agent_user, self.agent_password),
-            "ui": (self.ui_user, self.ui_password),
-        }
-        user, password = credentials[role]
-        return make_conninfo(
-            host=self.db_host,
-            port=self.db_port,
-            dbname=self.db_name if database == "main" else self.eval_db_name,
-            user=user,
-            password=password.get_secret_value(),
-        )
-
 
 @pytest.fixture(params=["main", "eval"])
 def database(request: pytest.FixtureRequest) -> Database:
     return request.param
 
 
-@pytest.fixture(params=["agent", "ui"])
-def reader(request: pytest.FixtureRequest, database: Database) -> Iterator[psycopg.Connection]:
+def _login(settings: WarehouseSettings, database: Database, role: Role) -> Iterator[psycopg.Connection]:
     # autocommit: a denied query must not abort the session for the next statement.
-    with psycopg.connect(WarehouseSettings().conninfo(database, request.param), autocommit=True) as conn:
+    with psycopg.connect(settings.conninfo(database, role), autocommit=True) as conn:
         yield conn
+
+
+@pytest.fixture(params=["agent", "ui"])
+def reader(
+    request: pytest.FixtureRequest, settings: WarehouseSettings, database: Database
+) -> Iterator[psycopg.Connection]:
+    yield from _login(settings, database, request.param)
 
 
 @pytest.fixture
-def ui(database: Database) -> Iterator[psycopg.Connection]:
-    with psycopg.connect(WarehouseSettings().conninfo(database, "ui"), autocommit=True) as conn:
-        yield conn
+def ui(settings: WarehouseSettings, database: Database) -> Iterator[psycopg.Connection]:
+    yield from _login(settings, database, "ui")
 
 
 @pytest.fixture
-def agent(database: Database) -> Iterator[psycopg.Connection]:
-    with psycopg.connect(WarehouseSettings().conninfo(database, "agent"), autocommit=True) as conn:
-        yield conn
+def agent(settings: WarehouseSettings, database: Database) -> Iterator[psycopg.Connection]:
+    yield from _login(settings, database, "agent")
 
 
-@pytest.fixture
-def admin(database: Database) -> Iterator[psycopg.Connection]:
-    with psycopg.connect(WarehouseSettings().conninfo(database, "admin"), autocommit=True) as conn:
-        yield conn
+def test_manifest_marts_are_the_expected_marts() -> None:
+    assert MANIFEST.exists(), f"no manifest at {MANIFEST}; run make build-prod"
+    nodes = json.loads(MANIFEST.read_text(encoding="utf-8"))["nodes"].values()
+
+    built = sorted(node["name"] for node in nodes if node["resource_type"] == "model" and node["schema"] == "marts")
+
+    assert built == sorted(MARTS)
 
 
 class TestReaderAccess:
@@ -150,6 +134,29 @@ class TestReaderAccess:
         with pytest.raises(errors.InsufficientPrivilege):
             reader.execute(query)
 
+    def test_cannot_write_to_any_mart_or_ops_relation_or_create_in_the_exposed_schemas(
+        self, admin: psycopg.Connection, reader: psycopg.Connection
+    ) -> None:
+        # One query per reader: INSERT/UPDATE/DELETE/TRUNCATE on every relation of marts and ops, and CREATE on the
+        # schemas the reader can see or whose objects (extensions) it uses. The read-only options are defence in depth.
+        query = """
+            SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname IN ('marts', 'ops') AND c.relkind IN ('r', 'v', 'm', 'p', 'f')),
+                   (SELECT coalesce(array_agg(n.nspname || '.' || c.relname ORDER BY c.relname), '{}')
+                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname IN ('marts', 'ops') AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+                      AND has_table_privilege(%(role)s, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE')),
+                   (SELECT coalesce(array_agg(nspname ORDER BY nspname), '{}') FROM pg_namespace
+                    WHERE nspname IN ('marts', 'extensions', 'ops') AND has_schema_privilege(%(role)s, oid, 'CREATE'))
+        """
+
+        row = admin.execute(query, {"role": _current_user(reader)}).fetchone()  # type: ignore[call-overload]
+
+        assert row is not None
+        inspected, writable, creatable = row
+        assert inspected >= len(MARTS)
+        assert (writable, creatable) == ([], [])
+
     def test_has_no_usage_on_public(self, reader: psycopg.Connection) -> None:
         query = "select has_schema_privilege('public', 'USAGE')"
 
@@ -157,19 +164,23 @@ class TestReaderAccess:
 
         assert row == (False,)
 
-    def test_cannot_create_temporary_tables_or_large_objects(
-        self, admin: psycopg.Connection, reader: psycopg.Connection
+    def test_cannot_create_temporary_tables(self, admin: psycopg.Connection, reader: psycopg.Connection) -> None:
+        query = "select has_database_privilege(%s, current_database(), 'TEMPORARY')"
+
+        row = admin.execute(query, (_current_user(reader),)).fetchone()
+
+        assert row == (False,)
+
+    @pytest.mark.parametrize("function", LARGE_OBJECT_FUNCTIONS)
+    def test_cannot_execute_large_object_functions(
+        self, admin: psycopg.Connection, reader: psycopg.Connection, function: str
     ) -> None:
-        # Both are writable storage outside the schema privileges; the init script and eval-db revoke them.
-        query = (
-            "select has_database_privilege(%(role)s, current_database(), 'TEMPORARY'),"
-            " has_function_privilege(%(role)s, 'lo_from_bytea(oid, bytea)', 'EXECUTE'),"
-            " has_function_privilege(%(role)s, 'lo_create(oid)', 'EXECUTE')"
-        )
+        # The eval database inherits the revoke from template1; the main database got it from the init script.
+        query = "select has_function_privilege(%s, %s, 'EXECUTE')"
 
-        privileges = admin.execute(query, {"role": _current_user(reader)}).fetchone()
+        row = admin.execute(query, (_current_user(reader), function)).fetchone()
 
-        assert privileges == (False, False, False)
+        assert row == (False,)
 
     def test_can_use_trigram_similarity_unqualified(self, reader: psycopg.Connection) -> None:
         query = "select similarity('running', 'runing') > 0.3"
@@ -202,36 +213,6 @@ class TestRunResultsAccess:
         assert row[0] > 0
         with pytest.raises(errors.InsufficientPrivilege):
             agent.execute(query)
-
-
-class TestRoleSettings:
-    # Role settings are cluster-wide, so the main database is enough.
-    @pytest.mark.parametrize("database", ["main"], indirect=True)
-    @pytest.mark.parametrize(
-        ("role", "statement_timeout", "conn_limit"),
-        [("agent_user", "5s", 20), ("ui_user", "30s", 10)],
-    )
-    def test_reader_role_settings(
-        self, admin: psycopg.Connection, role: str, statement_timeout: str, conn_limit: int
-    ) -> None:
-        role_name = getattr(WarehouseSettings(), role)
-        query = (
-            "select s.setconfig, r.rolconnlimit from pg_roles r"
-            " left join pg_db_role_setting s on s.setrole = r.oid and s.setdatabase = 0"
-            " where r.rolname = %s"
-        )
-
-        row = admin.execute(query, (role_name,)).fetchone()
-
-        assert row is not None
-        assert sorted(row[0]) == sorted(
-            [
-                "default_transaction_read_only=on",
-                f"statement_timeout={statement_timeout}",
-                "temp_file_limit=256MB",
-            ]
-        )
-        assert row[1] == conn_limit
 
 
 class TestTrigramIndexes:

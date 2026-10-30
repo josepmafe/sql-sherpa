@@ -10,16 +10,6 @@ from sherpa_generator.simulation.realism_rules import RealismRules
 SEEDS_DIR = Path(__file__).parents[2] / "dbt" / "seeds"
 
 
-def test_every_noisy_country_variant_is_in_seed() -> None:
-    rules = RealismRules()
-    expected = set(rules.COUNTRY_WEIGHTS)
-    expected |= {variant for variants in rules.noisy_country_variants().values() for variant in variants}
-
-    mapping = _read_variants_seed()
-
-    assert expected <= mapping.keys()
-
-
 def test_country_seed_maps_every_variant_back_to_its_canonical_code() -> None:
     rules = RealismRules()
 
