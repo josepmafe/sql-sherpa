@@ -30,18 +30,12 @@ class TestSimulationStateStore:
         with temp_database.connect() as conn:
             assert SimulationStateStore(conn).load() is None
 
-    def test_save_then_load_round_trips(self, temp_database: Database) -> None:
-        state = make_state()
-
-        with temp_database.transaction() as conn:
-            SimulationStateStore(conn).save(state)
-
-        with temp_database.connect() as conn:
-            assert SimulationStateStore(conn).load() == state
-
-    def test_save_round_trips_state_before_first_day(self, temp_database: Database) -> None:
-        state = make_state(last_simulated_date=None, next_ids={})
-
+    @pytest.mark.parametrize(
+        "state",
+        [make_state(), make_state(last_simulated_date=None, next_ids={})],
+        ids=["after_first_day", "before_first_day"],
+    )
+    def test_save_then_load_round_trips(self, temp_database: Database, state: SimulationState) -> None:
         with temp_database.transaction() as conn:
             SimulationStateStore(conn).save(state)
 

@@ -17,9 +17,12 @@ SIMULATION_STATE_COLUMNS = ("id", "seed", "scale", "start_date", "last_simulated
 
 
 class TestRawSchema:
-    def test_create_is_idempotent(self, temp_database: Database) -> None:
+    @pytest.mark.parametrize("drop_first", [False, True], ids=["create_again", "drop_then_create"])
+    def test_create_leaves_the_same_tables(self, temp_database: Database, drop_first: bool) -> None:
         schema = RawSchema(temp_database)
         before = schema.tables()
+        if drop_first:
+            schema.drop()
 
         schema.create()
 
@@ -77,12 +80,3 @@ class TestRawSchema:
                 "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'raw\\_%'"
             )
             assert remaining.fetchall() == []
-
-    def test_drop_then_create_restores_tables(self, temp_database: Database) -> None:
-        schema = RawSchema(temp_database)
-        before = schema.tables()
-
-        schema.drop()
-        schema.create()
-
-        assert schema.tables() == before

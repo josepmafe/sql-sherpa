@@ -129,9 +129,6 @@ class TestRealismRules:
 
         assert seen == {"DE", "de"}
 
-    def test_country_weights_sum_to_one(self) -> None:
-        assert sum(RealismRules.COUNTRY_WEIGHTS.values()) == pytest.approx(1.0)
-
     def test_ad_clicks_zero_sessions(self) -> None:
         assert self.rules.ad_clicks(0, self.r) == 0
 

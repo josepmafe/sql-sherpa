@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import random
 import subprocess
 import sys
 from datetime import date
 
-from sherpa_generator.simulation.deterministic_random import DeterministicRandom, poisson, stable_int
+from sherpa_generator.simulation.deterministic_random import FAKER_LOCALES, DeterministicRandom, poisson, stable_int
 
 SEED = 42
 DAY = date(2025, 1, 1)
+FAKER_METHODS = ("first_name", "last_name", "user_name", "free_email_domain", "city", "postcode")
+PROBE = (
+    "import json; from datetime import date; "
+    "from sherpa_generator.simulation.deterministic_random import FAKER_LOCALES, DeterministicRandom; "
+    "faker = DeterministicRandom(42).faker_for_day(date(2025, 1, 1), 'traffic'); "
+    "print(json.dumps({'random': DeterministicRandom(42).for_day(date(2025, 1, 1)).random(), "
+    f"'faker': [getattr(faker[loc], m)() for loc in FAKER_LOCALES for m in {FAKER_METHODS!r} for _ in range(20)]}}))"
+)
 
 
 def test_stable_int_is_first_eight_bytes_of_sha256() -> None:
@@ -24,51 +33,18 @@ def test_stable_int_distinguishes_part_boundaries() -> None:
 
 
 class TestDeterministicRandom:
-    def test_for_day_is_stable_across_processes(self) -> None:
-        expected = DeterministicRandom(SEED).for_day(DAY).random()
-        code = (
-            "from datetime import date; "
-            "from sherpa_generator.simulation.deterministic_random import DeterministicRandom; "
-            "print(repr(DeterministicRandom(42).for_day(date(2025, 1, 1)).random()))"
-        )
+    def test_draws_match_a_subprocess_with_a_fixed_hash_seed(self) -> None:
+        """Covers the day stream and every locale and provider the generator draws names, emails and addresses from
+        (Spec A §5.1). The subprocess pins PYTHONHASHSEED, so a hash-dependent draw differs from this process."""
+        output = subprocess.run(
+            [sys.executable, "-c", PROBE],
+            env={**os.environ, "PYTHONHASHSEED": "1"},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
 
-        results = [
-            float(
-                subprocess.run(
-                    [sys.executable, "-c", code],
-                    env={**os.environ, "PYTHONHASHSEED": hashseed},
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout
-            )
-            for hashseed in ("1", "2")
-        ]
-
-        assert results == [expected, expected]
-
-    def test_faker_output_is_independent_of_pythonhashseed(self) -> None:
-        """Every locale and provider the generator draws names, emails and addresses from (Spec A §5.1)."""
-        code = (
-            "from datetime import date; "
-            "from sherpa_generator.simulation.deterministic_random import FAKER_LOCALES, DeterministicRandom; "
-            "faker = DeterministicRandom(42).faker_for_day(date(2025, 1, 1), 'traffic'); "
-            "methods = ('first_name', 'last_name', 'user_name', 'free_email_domain', 'city', 'postcode'); "
-            "print([getattr(faker[loc], m)() for loc in FAKER_LOCALES for m in methods for _ in range(20)])"
-        )
-
-        outputs = [
-            subprocess.run(
-                [sys.executable, "-c", code],
-                env={**os.environ, "PYTHONHASHSEED": hashseed},
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout
-            for hashseed in ("1", "2")
-        ]
-
-        assert outputs[0] == outputs[1]
+        assert json.loads(output) == _draws_in_this_process()
 
     def test_for_day_differs_by_day_and_seed(self) -> None:
         base = DeterministicRandom(SEED).for_day(DAY).random()
@@ -176,3 +152,11 @@ def test_poisson_of_large_mean_does_not_underflow() -> None:
 
 def test_poisson_of_zero_mean_is_zero() -> None:
     assert poisson(random.Random(1), 0.0) == 0
+
+
+def _draws_in_this_process() -> dict[str, object]:
+    faker = DeterministicRandom(SEED).faker_for_day(DAY, "traffic")
+    return {
+        "random": DeterministicRandom(SEED).for_day(DAY).random(),
+        "faker": [getattr(faker[loc], m)() for loc in FAKER_LOCALES for m in FAKER_METHODS for _ in range(20)],
+    }

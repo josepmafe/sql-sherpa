@@ -116,30 +116,34 @@ class TestSimulator:
         assert result == RunResult(first_day=None, last_day=None, rows_written={})
         assert fingerprint(temp_database) == before
 
-    def test_resume_stops_at_yesterday(self, temp_database: Database) -> None:
-        make_simulator(temp_database).run(2, date(2025, 3, 29))
+    @pytest.mark.parametrize("resume", [False, True], ids=["fresh", "resume"])
+    def test_never_beyond_yesterday(self, temp_database: Database, resume: bool) -> None:
+        simulator = make_simulator(temp_database)
+        if resume:
+            simulator.run(2, date(2025, 3, 25))
+            result = simulator.run(400)
+            expected_first = date(2025, 3, 27)
+        else:
+            result = simulator.run(400, date(2025, 3, 25))
+            expected_first = date(2025, 3, 25)
 
-        result = make_simulator(temp_database).run(5)
-
-        assert (result.first_day, result.last_day) == (YESTERDAY, YESTERDAY)
-        assert stored_state(temp_database).last_simulated_date == YESTERDAY
-
-    def test_never_beyond_yesterday(self, temp_database: Database) -> None:
-        result = make_simulator(temp_database).run(400, date(2025, 3, 25))
-
-        assert (result.first_day, result.last_day) == (date(2025, 3, 25), date(2025, 3, 31))
+        assert (result.first_day, result.last_day) == (expected_first, date(2025, 3, 31))
         assert stored_state(temp_database).last_simulated_date == date(2025, 3, 31)
         assert latest_activity(temp_database) < datetime(2025, 4, 1, tzinfo=UTC)
 
-    def test_zero_days_rejected(self, temp_database: Database) -> None:
-        with pytest.raises(GeneratorError, match="days must be at least 1, got 0"):
-            make_simulator(temp_database).run(0, RUN_START)
-
-        assert_empty(temp_database)
-
-    def test_start_date_after_yesterday_rejected(self, temp_database: Database) -> None:
-        with pytest.raises(GeneratorError, match="start date 2025-04-01 is after yesterday \\(2025-03-31\\)"):
-            make_simulator(temp_database).run(1, RUN_TODAY)
+    @pytest.mark.parametrize(
+        ("days", "start", "message"),
+        [
+            (0, RUN_START, "days must be at least 1, got 0"),
+            (1, RUN_TODAY, "start date 2025-04-01 is after yesterday \\(2025-03-31\\)"),
+        ],
+        ids=["zero_days", "start_after_yesterday"],
+    )
+    def test_invalid_run_request_rejected_without_writes(
+        self, temp_database: Database, days: int, start: date, message: str
+    ) -> None:
+        with pytest.raises(GeneratorError, match=message):
+            make_simulator(temp_database).run(days, start)
 
         assert_empty(temp_database)
 

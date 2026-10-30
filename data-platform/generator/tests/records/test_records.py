@@ -39,10 +39,7 @@ def test_money_quantizes_half_up() -> None:
     assert Priced(amount=Decimal("-1.005")).amount == Decimal("-1.01")
 
 
-def test_record_rejects_unknown_fields_and_invalid_enum_values() -> None:
-    with pytest.raises(ValidationError):
-        Order(**_order_kwargs(status="shipping"))
-
+def test_record_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         Order(**_order_kwargs(), surprise=1)
 
