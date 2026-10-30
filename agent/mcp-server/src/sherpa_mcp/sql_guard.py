@@ -102,6 +102,8 @@ _CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
 _OPERATOR_NODES: Final = (exp.Connector, exp.Exists)
+# The SQL keyword for the statements whose sqlglot node is named otherwise (the model reads this name in the error).
+_STATEMENT_KEYWORDS: Final = {"transaction": "BEGIN", "truncatetable": "TRUNCATE"}
 _QUERY_NODES: Final = (exp.Select, exp.Union, exp.Intersect, exp.Except)
 _WRITE_NODES: Final = (
     exp.Insert,
@@ -518,10 +520,15 @@ def _rejected(error: str) -> GuardResult:
 
 
 def _statement_kind(statement: exp.Expr) -> str:
-    if isinstance(statement, exp.Command):
-        return str(statement.this).upper()
-
-    return statement.key.upper()
+    match statement:
+        case exp.Command():
+            return str(statement.this).upper()
+        case exp.Alias():
+            return _statement_kind(statement.this)  # `listen x` parses as the column `listen` aliased `x`
+        case exp.Column():
+            return statement.name.upper()  # a lone keyword (`checkpoint`) parses as a column
+        case _:
+            return _STATEMENT_KEYWORDS.get(statement.key, statement.key.upper())
 
 
 def _function_name(func: exp.Func) -> str:
