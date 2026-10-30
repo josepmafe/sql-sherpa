@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import MONTH_END, SIMULATION_SEED, make_customer
+from helpers import MONTH_END, SIMULATION_SEED, assert_rate, make_customer
 from sherpa_generator.behaviour.crm_activity import CrmActivitySimulator
 from sherpa_generator.records import Campaign, CampaignChannel, EmailSend, Lead, LeadSource, LifecycleStage
 from sherpa_generator.simulation.day_changes import DayChanges
@@ -22,6 +22,9 @@ TUESDAY = date(2025, 3, 11)
 SATURDAY = date(2025, 3, 15)
 STAGE_RANK = {stage: rank for rank, stage in enumerate(LifecycleStage)}
 TUESDAY_WEEKDAY = 1
+RATE_LEADS = 4_000  # ~1,000 opens and ~120 clicks: enough for assert_rate to tell 3 % and 10 % from 0 and 10x
+LEAD_RATE_SCALE = 250.0  # one day of 16 x 250 new leads
+ENGAGEMENT_DAYS = 4  # a send at 08:00-08:30 is opened within 48 h and clicked within 30 minutes of that
 
 
 class TestCrmActivitySimulator:
@@ -86,6 +89,28 @@ class TestCrmActivitySimulator:
             assert clicked is None or (opened is not None and opened <= clicked)
             assert max(t for t in (sent, opened, clicked) if t is not None) < END_OF_RUN
         assert 0.17 <= open_rate <= 0.33
+
+    def test_email_noise_hits_ten_percent_of_new_leads_and_normalizes_back(self) -> None:
+        changes = DayChanges()
+
+        _simulator(scale=LEAD_RATE_SCALE).simulate_day(_snapshot(SATURDAY), changes)
+
+        emails = [lead.email for lead in changes.inserted(Lead)]
+        noisy = [email for email in emails if email != email.strip().lower()]
+        assert_rate(len(noisy), len(emails), 0.10)  # R3, Spec A §4.4
+        assert all(email.strip().lower().count("@") == 1 for email in noisy)
+
+    def test_opens_hit_25_percent_and_clicks_3_percent_of_sends_and_every_click_was_opened(self) -> None:
+        leads = [_lead(lead_id) for lead_id in range(1, RATE_LEADS + 1)]
+        sends = _newsletter_sends_with_engagement(leads)
+
+        opened = [send for send in sends if send.opened_at is not None]
+        clicked = [send for send in sends if send.clicked_at is not None]
+
+        assert len(sends) == RATE_LEADS
+        assert_rate(len(opened), len(sends), 0.25)  # Spec A §5.2 step 2: open 25 % of sends
+        assert_rate(len(clicked), len(sends), 0.03)  # Spec A §5.2 step 2: click 3 % of sends
+        assert {send.id for send in clicked} <= {send.id for send in opened}
 
     def test_zero_scale_without_leads_writes_nothing(self) -> None:
         changes = DayChanges()
@@ -167,6 +192,24 @@ class TestCrmActivitySimulator:
 
 def _simulator(scale: float = 1.0) -> CrmActivitySimulator:
     return CrmActivitySimulator(DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({}), RealismRules(), scale)
+
+
+def _newsletter_sends_with_engagement(leads: list[Lead]) -> list[EmailSend]:
+    """The Tuesday newsletter to `leads`, with the opens and clicks that the following days write onto the sends."""
+    simulator = _simulator(scale=0.0)
+    first = DayChanges()
+    simulator.simulate_day(_snapshot(TUESDAY, leads=leads), first)
+    sends = {send.id: send for send in first.inserted(EmailSend)}
+    for offset in range(1, ENGAGEMENT_DAYS):
+        changes = DayChanges()
+        snapshot = _snapshot(TUESDAY + timedelta(days=offset), leads=leads)
+        simulator.simulate_day(snapshot.model_copy(update={"recent_email_sends": list(sends.values())}), changes)
+        for update in changes.updates:
+            if update.record_type is EmailSend:
+                key = int(str(update.key["id"]))
+                sends[key] = sends[key].model_copy(update=update.values)
+
+    return list(sends.values())
 
 
 def _snapshot(

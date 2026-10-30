@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import MONTH_END, SIMULATION_SEED, make_customer
+from helpers import MONTH_END, SIMULATION_SEED, assert_rate, make_customer
+from sherpa_generator.behaviour import visitor_traffic
 from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
-from sherpa_generator.behaviour.visitor_traffic import EVENT_GAP_SECONDS, MAX_SESSION_GAPS, VisitorTrafficSimulator
+from sherpa_generator.behaviour.visitor_traffic import (
+    EVENT_GAP_SECONDS,
+    MAX_SESSION_GAPS,
+    TrafficOutcome,
+    VisitorTrafficSimulator,
+)
 from sherpa_generator.records import (
+    Address,
     Campaign,
     CampaignChannel,
     EventType,
@@ -33,6 +41,7 @@ END_OF_RUN = datetime(MONTH_END.year, MONTH_END.month, MONTH_END.day, tzinfo=UTC
 PAID_MEDIUMS = {"cpc", "paid_social", "affiliate"}
 MAX_SESSION = timedelta(seconds=EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS)  # the longest a session runs
 PURCHASE_RATE_SCALE = 20.0  # one day with enough signups and returning checkouts to measure both purchase rates
+SIGNUP_SCALE = 10.0  # one day of 4,000 sessions, each of which signs up (see `signup_day`)
 EventRow = tuple[str, str, str | None, str, datetime, str | None, str | None]
 
 
@@ -89,6 +98,36 @@ class TestVisitorTrafficSimulator:
             assert all(row[2] is None for row in device_events if row[4] < signup[4])
             assert {row[2] for row in device_events if row[2] is not None} == {signup[2]}
         assert all(row[2] is None for row in events if row[1] not in identified)
+
+    def test_email_noise_hits_ten_percent_of_new_customers_and_normalizes_back(self, signup_day: _SignupDay) -> None:
+        emails = [c.email for c in signup_day.outcome.new_customers]
+
+        noisy = [email for email in emails if email != email.strip().lower()]
+
+        assert_rate(len(noisy), len(emails), 0.10)  # R3, Spec A §4.4
+        assert all(email.strip().lower().count("@") == 1 for email in noisy)
+
+    def test_country_noise_hits_three_percent_of_customers_and_addresses(self, signup_day: _SignupDay) -> None:
+        codes = [c.country_code for c in signup_day.outcome.new_customers]
+        codes += [a.country_code for a in signup_day.changes.inserted(Address)]
+
+        noisy = [code for code in codes if code not in RealismRules.COUNTRY_WEIGHTS]
+
+        assert_rate(len(noisy), len(codes), 0.03)  # R4, Spec A §4.4: 3 % of customers/addresses
+        assert {code.upper().replace("UK", "GB") for code in noisy} <= set(RealismRules.COUNTRY_WEIGHTS)
+
+    def test_test_accounts_hit_half_a_percent_of_customers_use_the_test_domain_and_place_orders(
+        self, signup_day: _SignupDay
+    ) -> None:
+        customers = signup_day.outcome.new_customers
+        test_accounts = [c for c in customers if c.is_test_account]
+        domain = f"@{RealismRules.TEST_EMAIL_DOMAIN}"
+
+        assert_rate(len(test_accounts), len(customers), 0.005)  # R5, Spec A §4.4: 0.5 % of customers
+        assert all(c.email.strip().lower().endswith(domain) for c in test_accounts)
+        assert not any(domain in c.email.lower() for c in customers if not c.is_test_account)
+        buyers = {i.customer_id for i in signup_day.outcome.purchase_intents}
+        assert buyers & {c.id for c in test_accounts}  # they "place orders" (R5)
 
     def test_zero_scale_day_produces_no_sessions(self) -> None:
         changes = DayChanges()
@@ -222,6 +261,30 @@ class TestVisitorTrafficSimulator:
 
         assert outcome_a == outcome_b
         assert _events(first) == _events(second)
+
+
+@dataclass(frozen=True)
+class _SignupDay:
+    outcome: TrafficOutcome
+    changes: DayChanges
+
+
+@pytest.fixture(scope="module")
+def signup_day() -> _SignupDay:
+    """One day on which every session is a new visitor who signs up (about 4,000 customers and 8,000 addresses).
+
+    The rules measured here (R3, R4, R5) act at signup, not in the funnel. A real day signs up one session in 33,
+    so the funnel and the signup cap are opened to get enough customers for `assert_rate` in about 3 s. Read-only.
+    """
+    changes = DayChanges()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(visitor_traffic, "PRODUCT_VIEW_RATE", 1.0)
+        patch.setattr(visitor_traffic, "ADD_TO_CART_RATE", 1.0)
+        patch.setattr(visitor_traffic, "BEGIN_CHECKOUT_RATE", 1.0)
+        patch.setattr(visitor_traffic, "BASE_DAILY_SIGNUPS", visitor_traffic.BASE_DAILY_SESSIONS * 2)
+        outcome = _simulator(scale=SIGNUP_SCALE).simulate_day(_snapshot(customers=0), changes)
+
+    return _SignupDay(outcome, changes)
 
 
 _ALL_EVENTS_OCCURRED = (

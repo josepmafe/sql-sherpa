@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from helpers import SIMULATION_SEED, make_snapshot
+from helpers import SIMULATION_SEED, assert_rate, make_snapshot
 from sherpa_generator.behaviour.after_sales import OUTCOME_PURPOSE, REJECTION_PURPOSE, AfterSalesSimulator
 from sherpa_generator.records import (
     Order,
@@ -43,6 +44,8 @@ APPAREL_PRODUCT = 2
 RETURN_RATE = 0.12
 GOODWILL_RATE = 0.01
 REJECTION_RATE = 0.10
+RATE_ORDERS = 6_000  # ~720 returns and ~60 goodwill refunds: enough for assert_rate to tell 1 % and 90 % from 0 and 10x
+DECISION_DAYS = 36  # a request falls up to 30 days after delivery and is decided up to 2 days after that
 
 
 class TestAfterSalesSimulator:
@@ -134,8 +137,8 @@ class TestAfterSalesSimulator:
         assert 0.09 <= apparel_rate <= 0.15
         assert 0.20 <= footwear_rate <= 0.28
 
-    def test_non_footwear_reasons_and_restockable_share(self) -> None:
-        requests, returned = _requests([_order(i) for i in range(1, 6001)], variant_id=201)
+    def test_non_footwear_reasons_and_restockable_share(self, season: _Season) -> None:
+        requests, returned = season.requests, season.returned_items
 
         reasons = Counter(r.reason for r in requests)
         restockable = sum(r.is_restockable for r in returned) / len(returned)
@@ -218,6 +221,20 @@ class TestAfterSalesSimulator:
         assert Decimal("5.40") <= refund.amount <= Decimal("21.60")  # 5-20 % of 108
         assert all(not c.inserted(Return) for _, c in changes_by_day)
 
+    def test_goodwill_refunds_hit_one_percent_of_delivered_orders(self, season: _Season) -> None:
+        goodwill = [r for _, c in season.first_run for r in c.inserted(Refund) if r.reason == RefundReason.GOODWILL]
+
+        assert_rate(len(goodwill), RATE_ORDERS, 0.01)  # R9, Spec A §5.2 step 7: 1 %
+        assert len({r.order_id for r in goodwill}) == len(goodwill)
+
+    def test_nine_in_ten_decided_returns_are_approved(self, season: _Season) -> None:
+        decisions = [u.values["status"] for _, c in season.decision_run for u in c.updates if u.record_type is Return]
+
+        approved = sum(1 for status in decisions if status == ReturnStatus.APPROVED)
+
+        assert len(decisions) == len(season.requests)  # every request got decided in the window
+        assert_rate(approved, len(decisions), 0.90)  # R9, Spec A §5.2 step 7: 90 % approved
+
     def test_order_without_after_sales_writes_nothing(self) -> None:
         order = _order(_order_id_where(lambda outcome, _: outcome >= RETURN_RATE + GOODWILL_RATE))
 
@@ -257,6 +274,40 @@ class TestAfterSalesSimulator:
             assert timedelta(days=1) <= requested_at - delivered_at <= timedelta(days=30)
             assert 1 <= items <= items_of_order
             assert not over_returned
+
+
+@dataclass(frozen=True)
+class _Season:
+    first_run: list[tuple[date, DayChanges]]
+    decision_run: list[tuple[date, DayChanges]]
+    requests: list[Return]
+    returned_items: list[ReturnItem]
+
+
+@pytest.fixture(scope="module")
+def season() -> _Season:
+    """RATE_ORDERS delivered single-line apparel orders over their whole return window, then the requested orders
+    again with their requests open so the decisions fall due. Read-only: tests only measure it."""
+    orders = [_order(order_id) for order_id in range(1, RATE_ORDERS + 1)]
+    items = [_item(o.id, 1, "50.00", order_id=o.id, variant_id=201) for o in orders]
+    payments = [_payment(o.id, o.id, PaymentMethod.CARD, "108.00") for o in orders]
+    snapshot = _delivered_snapshot(orders[0], items).model_copy(
+        update={"recently_delivered_orders": orders, "recently_delivered_payments": payments}
+    )
+    first_run = _run_days(snapshot, first=DELIVERY_DAY, days=31)
+    requests = [r for _, c in first_run for r in c.inserted(Return)]
+    returned_items = [r for _, c in first_run for r in c.inserted(ReturnItem)]
+    requested = {r.order_id for r in requests}
+    decision_snapshot = snapshot.model_copy(
+        update={
+            "open_returns": requests,
+            "recently_delivered_orders": [o for o in orders if o.id in requested],
+            "recently_delivered_items": [i for i in items if i.order_id in requested],
+            "recently_delivered_payments": [p for p in payments if p.order_id in requested],
+        }
+    )
+    decision_run = _run_days(decision_snapshot, DELIVERY_DAY, DECISION_DAYS)
+    return _Season(first_run, decision_run, requests, returned_items)
 
 
 def _simulator() -> AfterSalesSimulator:

@@ -16,10 +16,22 @@ logger = logging.getLogger(__name__)
 # Spec A §5.2: expected totals for 365 days at scale 1.0, each within ±15%; generation under 5 minutes.
 VOLUME_TOLERANCE = 0.15
 EXPECTED_VOLUMES = {"customers": 5_000, "orders": 8_000, "events": 600_000, "leads": 6_000}
-MAX_RUNTIME_SECONDS = 300
+MAX_RUNTIME_SECONDS = 420  # Spec A §5.2: generation takes about 5 minutes; "the slow test allows 7"
 # Spec A §4.4: the top 20% of buyers produce roughly 55-65% of net revenue (a soft target).
 TOP_BUYER_SHARE = 0.20
 TOP_REVENUE_SHARE_RANGE = (0.55, 0.65)  # measured 0.570 (seed 42): 0.020 above the floor
+
+# R6 (Spec A §4.4): a deletion takes effect at the end of its day, so nothing of a deleted customer is placed or
+# occurs after deleted_at. The year is the shortest run with deletions (30-199 days after signup).
+EVENTS_OF_DELETED_CUSTOMERS = """
+SELECT e.event_id
+FROM (SELECT * FROM raw_events.events UNION ALL SELECT * FROM raw_meta.pending_events) e
+JOIN raw_shop.customers c ON c.id::text = e.user_id
+WHERE e.occurred_at::timestamptz > c.deleted_at
+"""
+ORDERS_OF_DELETED_CUSTOMERS = """
+SELECT o.id FROM raw_shop.orders o JOIN raw_shop.customers c ON c.id = o.customer_id WHERE o.placed_at > c.deleted_at
+"""
 
 VOLUMES = """
 SELECT
@@ -88,3 +100,16 @@ def test_top_buyers_hold_55_to_65_percent_of_net_revenue(full_year: tuple[Databa
     top_share = float(row[0])
     logger.info("top 20%% of buyers hold %.3f of net revenue", top_share)
     assert TOP_REVENUE_SHARE_RANGE[0] <= top_share <= TOP_REVENUE_SHARE_RANGE[1]
+
+
+def test_nothing_happens_after_a_customer_is_deleted(full_year: tuple[Database, float]) -> None:
+    db, _ = full_year
+
+    with db.connect() as conn:
+        [(deleted,)] = conn.execute("SELECT count(*) FROM raw_shop.customers WHERE deleted_at IS NOT NULL").fetchall()
+        late_events = conn.execute(EVENTS_OF_DELETED_CUSTOMERS).fetchall()
+        late_orders = conn.execute(ORDERS_OF_DELETED_CUSTOMERS).fetchall()
+
+    assert deleted > 0
+    assert late_events == []
+    assert late_orders == []

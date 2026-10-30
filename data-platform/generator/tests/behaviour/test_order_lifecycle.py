@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from helpers import MONTH_END, SIMULATION_SEED, make_customer
+from helpers import MONTH_END, SIMULATION_SEED, assert_rate, make_customer
 from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
 from sherpa_generator.behaviour.order_lifecycle import (
     PAID_CANCELLATION_PURPOSE,
@@ -59,6 +60,9 @@ END_OF_RUN = datetime(MONTH_END.year, MONTH_END.month, MONTH_END.day, tzinfo=UTC
 CENT = Decimal("0.01")
 MAX_SESSION_SECONDS = EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS  # the longest a session runs, add_to_cart to purchase
 LINE_ORDERS = 400  # enough web orders to see every line count of LINE_COUNT_WEIGHTS
+# Enough orders for assert_rate to tell a 2-3 % rule from 0 and 10x (the smallest samples: 518 for 3 %, 784 for 2 %).
+RATE_ORDERS = 4_000
+SECONDS_BETWEEN_RATE_ORDERS = 20  # RATE_ORDERS x 20 s stays inside the day
 VALID_STATUS_PATHS = {
     ("placed",),
     ("placed", "cancelled"),
@@ -312,6 +316,63 @@ class TestOrderLifecycleSimulator:
             if status == "delivered":
                 assert delivered - shipped in {timedelta(days=days) for days in (2, 3, 4, 5)}
 
+    def test_failed_first_attempts_hit_three_percent_of_paid_orders_and_precede_a_capture_of_the_same_amount(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        paid = [o for o in rate_orders.orders if o.status == OrderStatus.PAID]
+        by_order = rate_orders.payments
+        failed_orders = [o for o in paid if any(p.status == PaymentStatus.FAILED for p in by_order[o.id])]
+
+        assert_rate(len(failed_orders), len(paid), 0.03)  # R7, Spec A §4.4: 3 % failed then retried
+        for order in failed_orders:
+            [failed] = [p for p in by_order[order.id] if p.status == PaymentStatus.FAILED]
+            retries = [
+                p for p in by_order[order.id] if p.status == PaymentStatus.CAPTURED and p.amount == failed.amount
+            ]
+            assert retries
+            assert all(failed.created_at < retry.created_at for retry in retries)
+
+    def test_split_payments_hit_five_percent_of_paid_orders_and_pair_a_gift_card_with_a_card(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        paid = [o for o in rate_orders.orders if o.status == OrderStatus.PAID]
+        captured = {o.id: [p for p in rate_orders.payments[o.id] if p.status == PaymentStatus.CAPTURED] for o in paid}
+        split = [parts for parts in captured.values() if len(parts) == 2]
+
+        assert_rate(len(split), len(paid), 0.05)  # R7, Spec A §4.4: 5 % split
+        assert all(sorted(p.method for p in parts) == [PaymentMethod.CARD, PaymentMethod.GIFT_CARD] for parts in split)
+        assert all(len(parts) in {1, 2} for parts in captured.values())
+
+    def test_stacked_discounts_hit_three_percent_of_orders(self, rate_orders: _RateOrders) -> None:
+        discounts = Counter(d.order_id for d in rate_orders.changes.inserted(OrderDiscount))
+
+        stacked = sum(1 for count in discounts.values() if count == 2)
+
+        assert_rate(stacked, len(rate_orders.orders), 0.03)  # R8, Spec A §4.4: 3 % of orders
+
+    def test_never_paid_orders_hit_two_percent_of_orders_and_keep_only_an_authorization(
+        self, rate_orders: _RateOrders
+    ) -> None:
+        unpaid = [o for o in rate_orders.orders if o.status == OrderStatus.PLACED]
+        by_order = rate_orders.payments
+
+        assert_rate(len(unpaid), len(rate_orders.orders), 0.02)  # Spec A §5.2 step 6: 2 % never paid
+        assert all([p.status for p in by_order[o.id]] == [PaymentStatus.AUTHORIZED] for o in unpaid)
+
+    def test_paid_cancellations_hit_three_percent_of_paid_orders(self) -> None:
+        changes = DayChanges()
+        paid_at = DAY_START - timedelta(hours=2)
+        orders = [_order(order_id, OrderStatus.PAID, paid_at) for order_id in range(1, RATE_ORDERS + 1)]
+        payments = [_payment(order.id, order.id, PaymentMethod.CARD, "64.95") for order in orders]
+
+        _simulator().progress_orders(_snapshot(open_orders=orders, captured_payments=payments), changes)
+
+        cancelled = [
+            u for u in changes.updates if u.record_type is Order and u.values["status"] == OrderStatus.CANCELLED
+        ]
+        assert_rate(len(cancelled), len(orders), 0.03)  # Spec A §5.2 step 6: 3 % of paid orders
+        assert {r.order_id for r in changes.inserted(Refund)} == {u.key["id"] for u in cancelled}
+
     def test_place_orders_without_intents_writes_nothing(self) -> None:
         changes = DayChanges()
 
@@ -527,6 +588,38 @@ class TestOrderLifecycleSimulator:
 
         assert changes.insert_counts() == {}
         assert changes.updates == []
+
+
+@dataclass(frozen=True)
+class _RateOrders:
+    orders: list[Order]
+    changes: DayChanges
+    payments: dict[int, list[Payment]]  # by order id
+
+
+@pytest.fixture(scope="module")
+def rate_orders() -> _RateOrders:
+    """RATE_ORDERS app orders placed in one day, every one eligible for either of two promotions that each have a
+    coupon, so R8 can stack on any discounted order. Read-only: tests only measure it."""
+    changes = DayChanges()
+    first = _promotion(PromotionType.PERCENT, "10", promotion_id=1)
+    second = _promotion(PromotionType.PERCENT, "10", promotion_id=2)
+    coupons = [
+        CouponCode(id=9, promotion_id=1, code="ONE", is_single_use=False),
+        CouponCode(id=10, promotion_id=2, code="TWO", is_single_use=False),
+    ]
+    intents = [
+        _app_intent(1 + index % 50, DAY_START + timedelta(seconds=SECONDS_BETWEEN_RATE_ORDERS * index))
+        for index in range(RATE_ORDERS)
+    ]
+
+    orders = _simulator().place_orders(_snapshot(promotions=[first, second], coupon_codes=coupons), changes, intents)
+
+    payments: dict[int, list[Payment]] = defaultdict(list)
+    for payment in changes.inserted(Payment):
+        payments[payment.order_id].append(payment)
+
+    return _RateOrders(orders, changes, payments)
 
 
 def _simulator() -> OrderLifecycleSimulator:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from math import sqrt
 from typing import TYPE_CHECKING
 
 from sherpa_generator.database.raw_schema import RawSchema
@@ -80,6 +81,30 @@ def fingerprint(db: Database) -> dict[str, object]:
         }
         result[STATE_TABLE] = SimulationStateStore(conn).load()
     return result
+
+
+def assert_rate(hits: int, trials: int, expected: float, *, z: float = 4.0) -> None:
+    """Fail when hits / trials lies outside `expected` +/- z binomial standard deviations.
+
+    A sample whose bound includes 0, or reaches 10x `expected` while that is still a rate, would pass a rule that
+    does nothing or one that fires ten times too often, so it is refused instead of measured.
+    """
+    half = z * sqrt(expected * (1 - expected) / trials) if trials > 0 else float("inf")
+    low, high = expected - half, expected + half
+    ten_times = 10 * expected
+    if low <= 0 or (ten_times < 1 and high >= ten_times):
+        msg = (
+            f"sample too small: {trials} trials give {expected:.4f} +/- {half:.4f}, "
+            f"which cannot exclude 0 or {ten_times:.4f}"
+        )
+        raise AssertionError(msg)
+
+    if not low <= hits / trials <= high:
+        msg = (
+            f"rate {hits / trials:.4f} ({hits}/{trials}) outside {expected:.4f} +/- {half:.4f} "
+            f"= [{low:.4f}, {high:.4f}] (z={z})"
+        )
+        raise AssertionError(msg)
 
 
 def make_customer(customer_id: int) -> Customer:
