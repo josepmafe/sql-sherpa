@@ -139,6 +139,10 @@ class TestErrorMapping:
                 "[sql] a value could not be converted or computed (InvalidDatetimeFormat); check the literal format",
             ),
             (
+                errors.DatetimeFieldOverflow('date/time field value out of range: "alice@x.com"'),
+                "[sql] a value could not be converted or computed (DatetimeFieldOverflow); check the literal format",
+            ),
+            (
                 errors.NumericValueOutOfRange('value "alice@x.com" is out of range'),
                 "[sql] a value could not be converted or computed (NumericValueOutOfRange); "
                 "check the column types and use explicit, safe casts",

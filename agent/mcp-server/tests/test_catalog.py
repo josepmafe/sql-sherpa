@@ -3,30 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sherpa_mcp.catalog import CatalogUnavailable, MartCatalog, MartCatalogLoader
 
-FIXTURES = Path(__file__).parent / "fixtures"
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
-def target(tmp_path: Path) -> Path:
-    shutil.copy(FIXTURES / "manifest.json", tmp_path)
-    shutil.copy(FIXTURES / "catalog.json", tmp_path)
-    return tmp_path
+def catalog(fixture_target: Path) -> MartCatalog:
+    return MartCatalogLoader(fixture_target).load()
 
 
-@pytest.fixture
-def catalog(target: Path) -> MartCatalog:
-    return MartCatalogLoader(target).load()
-
-
-def _edit_manifest(target: Path, edit: Any) -> None:
-    path = target / "manifest.json"
+def _edit_manifest(fixture_target: Path, edit: Any) -> None:
+    path = fixture_target / "manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     edit(manifest)
     path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -40,7 +32,7 @@ def _bump_mtime(path: Path, seconds: int) -> None:
 
 class TestMartCatalogLoader:
     def test_loads_only_marts_schema_models(self, catalog: MartCatalog) -> None:
-        assert sorted(mart.name for mart in catalog.marts) == ["dim_customers", "fct_orders"]
+        assert sorted(mart.name for mart in catalog.marts) == ["dim_customers", "dim_products", "fct_orders"]
 
     def test_column_types_meta_accepted_values_metric_refs_and_tests(self, catalog: MartCatalog) -> None:
         orders = catalog.mart("fct_orders")
@@ -94,18 +86,18 @@ class TestMartCatalogLoader:
     def test_generated_at_comes_from_the_manifest(self, catalog: MartCatalog) -> None:
         assert catalog.generated_at.isoformat() == "2026-10-24T12:36:42.863017+00:00"
 
-    def test_public_access_rule_applies_once_any_model_is_public(self, target: Path) -> None:
+    def test_public_access_rule_applies_once_any_model_is_public(self, fixture_target: Path) -> None:
         def make_orders_public(manifest: dict[str, Any]) -> None:
             manifest["nodes"]["model.sherpa.fct_orders"]["access"] = "public"
 
-        _edit_manifest(target, make_orders_public)
+        _edit_manifest(fixture_target, make_orders_public)
 
-        loaded = MartCatalogLoader(target).load()
+        loaded = MartCatalogLoader(fixture_target).load()
 
         assert loaded.visible_names() == frozenset({"fct_orders"})
 
-    def test_reloads_on_mtime_change(self, target: Path) -> None:
-        loader = MartCatalogLoader(target)
+    def test_reloads_on_mtime_change(self, fixture_target: Path) -> None:
+        loader = MartCatalogLoader(fixture_target)
         first = loader.load()
 
         assert loader.load() is first
@@ -113,42 +105,42 @@ class TestMartCatalogLoader:
         def make_orders_public(manifest: dict[str, Any]) -> None:
             manifest["nodes"]["model.sherpa.fct_orders"]["access"] = "public"
 
-        _edit_manifest(target, make_orders_public)
-        stat = (target / "manifest.json").stat()
-        os.utime(target / "manifest.json", ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+        _edit_manifest(fixture_target, make_orders_public)
+        stat = (fixture_target / "manifest.json").stat()
+        os.utime(fixture_target / "manifest.json", ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
         reloaded = loader.load()
 
         assert reloaded is not first
         assert reloaded.visible_names() == frozenset({"fct_orders"})
 
-    def test_reloads_when_only_catalog_json_changes(self, target: Path) -> None:
-        loader = MartCatalogLoader(target)
+    def test_reloads_when_only_catalog_json_changes(self, fixture_target: Path) -> None:
+        loader = MartCatalogLoader(fixture_target)
         first = loader.load()
 
-        stat = (target / "catalog.json").stat()
-        os.utime(target / "catalog.json", ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+        stat = (fixture_target / "catalog.json").stat()
+        os.utime(fixture_target / "catalog.json", ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
 
         assert loader.load() is not first
 
     def test_missing_artifacts_raise_catalog_unavailable(
-        self, target: Path, tmp_path_factory: pytest.TempPathFactory
+        self, fixture_target: Path, tmp_path_factory: pytest.TempPathFactory
     ) -> None:
         missing_folder = tmp_path_factory.mktemp("empty") / "nope"
-        (target / "catalog.json").unlink()
+        (fixture_target / "catalog.json").unlink()
 
         with pytest.raises(CatalogUnavailable, match="make build-prod") as no_folder:
             MartCatalogLoader(missing_folder).load()
         with pytest.raises(CatalogUnavailable, match="make build-prod") as no_catalog:
-            MartCatalogLoader(target).load()
+            MartCatalogLoader(fixture_target).load()
 
         assert "make docs-prod" not in str(no_folder.value)
         assert "catalog.json" in str(no_catalog.value)
 
-    def test_unparsable_artifact_raises_catalog_unavailable(self, target: Path) -> None:
-        (target / "manifest.json").write_text("{not json", encoding="utf-8")
+    def test_unparsable_artifact_raises_catalog_unavailable(self, fixture_target: Path) -> None:
+        (fixture_target / "manifest.json").write_text("{not json", encoding="utf-8")
 
         with pytest.raises(CatalogUnavailable, match="make build-prod"):
-            MartCatalogLoader(target).load()
+            MartCatalogLoader(fixture_target).load()
 
     @pytest.mark.parametrize(
         ("broken", "reason"),
@@ -160,10 +152,10 @@ class TestMartCatalogLoader:
         ids=["half_written", "wrong_layout", "removed"],
     )
     def test_a_failed_reload_keeps_the_last_catalog(
-        self, target: Path, caplog: pytest.LogCaptureFixture, broken: str | None, reason: str
+        self, fixture_target: Path, caplog: pytest.LogCaptureFixture, broken: str | None, reason: str
     ) -> None:
-        manifest = target / "manifest.json"
-        loader = MartCatalogLoader(target)
+        manifest = fixture_target / "manifest.json"
+        loader = MartCatalogLoader(fixture_target)
         first = loader.load()
         good_manifest = manifest.read_text(encoding="utf-8")
         if broken is None:
@@ -199,41 +191,42 @@ class TestMartCatalog:
         assert orders.column("nope") is None
 
     def test_pii_columns(self, catalog: MartCatalog) -> None:
-        assert catalog.pii_columns() == frozenset({"email"})
+        assert catalog.pii_columns() == frozenset({"email", "supplier_email"})
 
     def test_visible_names_and_domains(self, catalog: MartCatalog) -> None:
-        assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers"})
-        assert catalog.domains() == ("customers", "sales")
+        assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+        assert catalog.domains() == ("customers", "products", "sales")
 
     def test_mart_columns_name_every_column_of_every_visible_mart(self, catalog: MartCatalog) -> None:
         assert catalog.mart_columns() == {
             "fct_orders": frozenset({"order_id", "customer_id", "order_date", "net_revenue", "current_status"}),
             "dim_customers": frozenset({"customer_id", "email", "customer_segment"}),
+            "dim_products": frozenset({"brand", "product_id", "supplier_email"}),
         }
 
 
 class TestCatalogShape:
     @pytest.mark.parametrize("manifest", ["{}", "[]", '{"nodes": 3}'])
-    def test_wrong_shape_raises_catalog_unavailable(self, target: Path, manifest: str) -> None:
-        (target / "manifest.json").write_text(manifest, encoding="utf-8")
+    def test_wrong_shape_raises_catalog_unavailable(self, fixture_target: Path, manifest: str) -> None:
+        (fixture_target / "manifest.json").write_text(manifest, encoding="utf-8")
 
         with pytest.raises(CatalogUnavailable, match="make build-prod"):
-            MartCatalogLoader(target).load()
+            MartCatalogLoader(fixture_target).load()
 
     @pytest.mark.parametrize("primary_key", [None, [], ""])
-    def test_mart_without_primary_key_is_unavailable(self, target: Path, primary_key: object) -> None:
+    def test_mart_without_primary_key_is_unavailable(self, fixture_target: Path, primary_key: object) -> None:
         def drop_primary_key(manifest: dict[str, Any]) -> None:
             manifest["nodes"]["model.sherpa.dim_customers"]["meta"]["primary_key"] = primary_key
 
-        _edit_manifest(target, drop_primary_key)
+        _edit_manifest(fixture_target, drop_primary_key)
 
         with pytest.raises(CatalogUnavailable, match=r"mart dim_customers has no meta.primary_key"):
-            MartCatalogLoader(target).load()
+            MartCatalogLoader(fixture_target).load()
 
-    def test_message_does_not_expose_the_path(self, target: Path) -> None:
-        (target / "catalog.json").unlink()
+    def test_message_does_not_expose_the_path(self, fixture_target: Path) -> None:
+        (fixture_target / "catalog.json").unlink()
 
         with pytest.raises(CatalogUnavailable) as error:
-            MartCatalogLoader(target).load()
+            MartCatalogLoader(fixture_target).load()
 
-        assert str(target) not in str(error.value)
+        assert str(fixture_target) not in str(error.value)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
@@ -8,26 +8,18 @@ from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.examples import Example, ExampleIndex
 from sherpa_mcp.sql_guard import SqlGuard
 
-EXAMPLES_YAML = Path(__file__).parents[1] / "src" / "sherpa_mcp" / "examples.yaml"
-PROD_TARGET = Path(__file__).parents[3] / "data-platform" / "dbt" / "target-prod"
-MARTS_MODELS = Path(__file__).parents[3] / "data-platform" / "dbt" / "models" / "marts"
-# Data platform spec §6.5.
-MARTS = frozenset(
-    {
-        *("dim_customers", "dim_products", "dim_promotions", "dim_date"),
-        *("fct_orders", "fct_order_items", "fct_order_discounts", "fct_returns", "fct_refunds"),
-        "fct_sessions",
-    }
-)
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
-def _mart_columns() -> dict[str, frozenset[str]]:
+def _mart_columns(repo_root: Path) -> dict[str, frozenset[str]]:
     """The built catalog's marts and columns; without a prod build, the same names from the marts' dbt YAML."""
-    if PROD_TARGET.joinpath("catalog.json").exists():
-        return MartCatalogLoader(PROD_TARGET).load().mart_columns()
+    prod_target = repo_root / "data-platform" / "dbt" / "target-prod"
+    if prod_target.joinpath("catalog.json").exists():
+        return MartCatalogLoader(prod_target).load().mart_columns()
     models = [
         model
-        for path in MARTS_MODELS.glob("*/_*__models.yml")
+        for path in (repo_root / "data-platform" / "dbt" / "models" / "marts").glob("*/_*__models.yml")
         for model in yaml.safe_load(path.read_text(encoding="utf-8"))["models"]
     ]
     return {model["name"]: frozenset(column["name"] for column in model.get("columns", [])) for model in models}
@@ -145,17 +137,17 @@ class TestExampleIndex:
             ("grouped by refund reason", "select 1", 0.071),
         ]
 
-    def test_examples_yaml_ranks_each_question_first(self) -> None:
-        index = ExampleIndex.from_yaml(EXAMPLES_YAML)
+    def test_examples_yaml_ranks_each_question_first(self, examples_path: Path) -> None:
+        index = ExampleIndex.from_yaml(examples_path)
 
         for example in index.examples:
             assert index.top(example.question, 1)[0].question == example.question
 
 
-def test_examples_yaml_passes_the_guard() -> None:
-    mart_columns = _mart_columns()
-    assert set(mart_columns) == MARTS
-    index = ExampleIndex.from_yaml(EXAMPLES_YAML)
+def test_examples_yaml_passes_the_guard(repo_root: Path, examples_path: Path, marts: tuple[str, ...]) -> None:
+    mart_columns = _mart_columns(repo_root)
+    assert set(mart_columns) == set(marts)
+    index = ExampleIndex.from_yaml(examples_path)
     guard = SqlGuard(mart_columns)
 
     assert len(index.examples) == 19
