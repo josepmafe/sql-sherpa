@@ -1,39 +1,30 @@
 """The `ops.dbt_run_results` audit table that the on-run-end hook fills (data platform spec §8, "Added by ui-1").
 
-Needs `make build-prod`. The tests that run dbt need `.env` and uv on the PATH. They build nothing (a compile, one
-data test, the data tests) and write their artifacts to `target-scratch`, so the warehouse's data and `target-prod`
-stay as the build left them; their runs add rows to the audit table, never as full builds.
+Needs `make build-prod` and `.env`. The tests that run dbt (in-process, via the `dbt` fixture) build nothing (a
+compile, one data test, the data tests) and write their artifacts to `target-scratch`, so the warehouse's data
+and `target-prod` stay as the build left them; their runs add rows to the audit table, never as full builds.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import psycopg
 import pytest
-from psycopg.conninfo import make_conninfo
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable
+
+    import psycopg
+    from dbt.cli.main import dbtRunnerResult
 
 DBT_DIR = Path(__file__).parents[2] / "dbt"
-ENV_FILE = "../../.env"  # relative to DBT_DIR: uv mishandles an absolute path with spaces
-DBT_TIMEOUT_SECONDS = 600
 SCRATCH = ("--target-path", "target-scratch")
 PROD = ("--target", "prod", *SCRATCH)
 # What `dbt build` runs and records: models other than ephemeral ones, seeds, snapshots and tests, and unit tests
 # (kept apart in the manifest, under `unit_tests`).
 BUILT_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot", "test"})
-LATEST_INVOCATION = (
-    "select invocation_id, is_full_run from ops.dbt_run_results"
-    " where target_name = 'prod' and command = %s order by run_started_at desc, invocation_id limit 1"
-)
 # The other tests run dbt after this one in a full file run, but before it on a rerun, so look past them.
 LATEST_FULL_INVOCATION = (
     "select invocation_id from ops.dbt_run_results"
@@ -58,31 +49,6 @@ ARGS_CASES: tuple[tuple[str, bool], ...] = (
 pytestmark = pytest.mark.warehouse
 
 
-class AdminSettings(BaseSettings):
-    model_config = SettingsConfigDict(frozen=True, env_prefix="SHERPA_", env_file=".env", extra="ignore")
-
-    db_host: str
-    db_port: int
-    db_name: str
-    admin_user: str
-    admin_password: SecretStr
-
-    def conninfo(self) -> str:
-        return make_conninfo(
-            host=self.db_host,
-            port=self.db_port,
-            dbname=self.db_name,
-            user=self.admin_user,
-            password=self.admin_password.get_secret_value(),
-        )
-
-
-@pytest.fixture
-def admin() -> Iterator[psycopg.Connection]:
-    with psycopg.connect(AdminSettings().conninfo(), autocommit=True) as conn:
-        yield conn
-
-
 @pytest.fixture(scope="module")
 def manifest() -> dict[str, Any]:
     content: dict[str, Any] = json.loads((DBT_DIR / "target-prod" / "manifest.json").read_text(encoding="utf-8"))
@@ -90,12 +56,15 @@ def manifest() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def full_run_verdicts() -> list[str]:
+def full_run_verdicts(dbt: Callable[..., dbtRunnerResult]) -> list[str]:
     """`audit_is_full_run` for this compile's own arguments (it runs with --empty), then for each of ARGS_CASES: one
     dbt invocation for all of them."""
     calls = ["invocation_args_dict", *(args for args, _ in ARGS_CASES)]
     inline = "|".join(f"{{{{ audit_is_full_run({args}) }}}}" for args in calls)
-    return _dbt("compile", "--empty", "--quiet", *SCRATCH, "--inline", inline).strip().split("|")
+
+    result = dbt("compile", "--empty", "--quiet", *SCRATCH, "--inline", inline)
+
+    return result.result.results[0].node.compiled_code.strip().split("|")
 
 
 def test_full_prod_build_records_every_built_node_once(admin: psycopg.Connection, manifest: dict[str, Any]) -> None:
@@ -115,34 +84,38 @@ def test_full_prod_build_records_every_built_node_once(admin: psycopg.Connection
     assert all(is_full_run for _, is_full_run in rows)
 
 
-def test_a_selected_build_is_not_full(admin: psycopg.Connection, manifest: dict[str, Any]) -> None:
-    # One data test of a mart: the build reads the warehouse and changes nothing in it.
-    test_id, test_name = next(
-        (unique_id, node["name"])
-        for unique_id, node in sorted(manifest["nodes"].items())
-        if node["resource_type"] == "test" and node.get("attached_node") == "model.sherpa.dim_date"
-    )
+def test_reads_its_own_invocation(
+    admin: psycopg.Connection, manifest: dict[str, Any], dbt: Callable[..., dbtRunnerResult]
+) -> None:
+    # Another checkout can build prod at the same time, so the rows are found by this run's own invocation id.
+    test_id, test_name = _data_test_of(manifest, "model.sherpa.dim_date")
 
-    _dbt("build", "--select", test_name, *PROD)
+    dbt("build", "--select", test_name, *PROD)
 
-    latest = admin.execute(LATEST_INVOCATION, ("build",)).fetchone()
-    assert latest is not None
     recorded = admin.execute(
-        "select unique_id from ops.dbt_run_results where invocation_id = %s", (latest[0],)
+        "select unique_id from ops.dbt_run_results where invocation_id = %s", (_own_invocation_id(),)
     ).fetchall()
-
-    assert latest[1] is False
     assert recorded == [(test_id,)]
 
 
-def test_a_run_limited_to_a_resource_type_is_not_full(admin: psycopg.Connection) -> None:
+def test_a_selected_build_is_not_full(
+    admin: psycopg.Connection, manifest: dict[str, Any], dbt: Callable[..., dbtRunnerResult]
+) -> None:
+    # One data test of a mart: the build reads the warehouse and changes nothing in it.
+    _, test_name = _data_test_of(manifest, "model.sherpa.dim_date")
+
+    dbt("build", "--select", test_name, *PROD)
+
+    assert _is_full_run(admin, _own_invocation_id()) is False
+
+
+def test_a_run_limited_to_a_resource_type_is_not_full(
+    admin: psycopg.Connection, dbt: Callable[..., dbtRunnerResult]
+) -> None:
     # Every data test and nothing else; read-only, and recorded as command `test`, which the UI never reads.
-    _dbt("test", "--resource-type", "test", *PROD)
+    dbt("test", "--resource-type", "test", *PROD)
 
-    latest = admin.execute(LATEST_INVOCATION, ("test",)).fetchone()
-
-    assert latest is not None
-    assert latest[1] is False
+    assert _is_full_run(admin, _own_invocation_id()) is False
 
 
 def test_an_empty_run_is_not_full(full_run_verdicts: list[str]) -> None:
@@ -154,14 +127,24 @@ def test_which_invocations_are_full_runs(full_run_verdicts: list[str], index: in
     assert full_run_verdicts[index] == str(full), args
 
 
-def _dbt(*args: str) -> str:
-    completed = subprocess.run(
-        ["uv", "run", "--env-file", ENV_FILE, "dbt", *args],
-        cwd=DBT_DIR,
-        env={**os.environ, "DBT_PROFILES_DIR": "."},
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=DBT_TIMEOUT_SECONDS,
+def _data_test_of(manifest: dict[str, Any], model_id: str) -> tuple[str, str]:
+    return next(
+        (unique_id, node["name"])
+        for unique_id, node in sorted(manifest["nodes"].items())
+        if node["resource_type"] == "test" and node.get("attached_node") == model_id
     )
-    return completed.stdout
+
+
+def _own_invocation_id() -> str:
+    # The run that just finished wrote this file into its own target path.
+    run_results = json.loads((DBT_DIR / "target-scratch" / "run_results.json").read_text(encoding="utf-8"))
+    return str(run_results["metadata"]["invocation_id"])
+
+
+def _is_full_run(admin: psycopg.Connection, invocation_id: str) -> bool:
+    row = admin.execute(
+        "select bool_and(is_full_run) from ops.dbt_run_results where invocation_id = %s", (invocation_id,)
+    ).fetchone()
+    assert row is not None
+    assert row[0] is not None, f"invocation {invocation_id} recorded nothing"
+    return bool(row[0])
