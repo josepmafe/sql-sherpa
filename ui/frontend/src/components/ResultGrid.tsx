@@ -70,7 +70,7 @@ const OPERATORS: { value: Operator; label: string }[] = [
 // Memoized: a worksheet's editor re-renders its panel on every keystroke, and the grid's props stay the same.
 export const ResultGrid = memo(function ResultGrid({ response, view, onViewChange, masked }: GridProps) {
   const { columns, column_types: types } = response;
-  const serverSide = isServerSide(response);
+  const serverSide = isServerSide(response, view);
   // In server mode the rows already are the sorted and filtered ones.
   const rows = useMemo(
     () => (serverSide ? (response.rows as Row[]) : applyView(response.rows as Row[], types, view)),

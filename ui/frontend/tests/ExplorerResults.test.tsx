@@ -310,6 +310,51 @@ describe("Explorer results", () => {
     expect(queryCalls()).toHaveLength(1);
   });
 
+  it("a complete result is sorted in the browser for the exact types", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue(
+      ok(
+        queryResponse({
+          columns: ["n", "t", "d", "ts", "b"],
+          column_types: ["number", "text", "date", "timestamp", "boolean"],
+          rows: [
+            ["9007199254740993", "b", "2025-01-16", "2025-01-15T10:30:00+00:00", true],
+            ["9007199254740992", "a", "2025-01-15", "2025-01-15T10:00:00+00:00", false],
+          ],
+        }),
+      ),
+    );
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    for (const name of ["n", "t", "d", "ts", "b"]) {
+      await user.click(await screen.findByRole("button", { name }));
+      expect(firstColumn()).toEqual(["9007199254740992", "9007199254740993"]);
+    }
+
+    expect(queryCalls()).toHaveLength(1);
+  });
+
+  it("an interval column is sorted on the server", async () => {
+    const user = userEvent.setup();
+    const columns = ["name", "span"];
+    const day = ["a", "1 day, 1:00:00"];
+    const hours = ["b", "2:00:00"];
+    post.mockResolvedValueOnce(ok(queryResponse({ columns, column_types: ["text", "other"], rows: [day, hours] })));
+    post.mockResolvedValueOnce(
+      ok(queryResponse({ columns, column_types: ["text", "other"], rows: [hours, day], mode: "server" })),
+    );
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    await user.click(await screen.findByRole("button", { name: "span" }));
+
+    await waitFor(() => expect(queryCalls()).toHaveLength(2));
+    expect(queryCalls()[1]?.[1].body).toMatchObject({ sql: "select 1", sort: [{ column: "span", direction: "asc" }] });
+    expect(await screen.findByText("Sorting and filtering run on the server over all rows")).toBeInTheDocument();
+    expect(firstColumn()).toEqual(["b", "a"]);
+  });
+
   it("Preview opens a worksheet and runs", async () => {
     const user = userEvent.setup();
     post.mockImplementation((path: string) =>

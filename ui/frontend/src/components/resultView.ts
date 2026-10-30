@@ -27,8 +27,24 @@ export function hasDuplicateColumns(columns: readonly string[]): boolean {
   return new Set(columns).size !== columns.length;
 }
 
-export function isServerSide(response: QueryResponse): boolean {
-  return response.mode === "server" || (response.truncated && !hasDuplicateColumns(response.columns));
+// Whether sorting and filtering `view` goes to the server (UI spec §5): the browser cannot reproduce Postgres's order
+// or text for an `other` column (interval, uuid, json, arrays, ...), nor `contains` on a number (JavaScript and
+// Postgres write a float differently).
+export function needsServer(view: ResultView, types: readonly ColumnType[]): boolean {
+  const typeAt = (index: number): ColumnType => types[index] ?? "other";
+  const sortsOther = view.sort !== undefined && typeAt(view.sort.index) === "other";
+  const filtersServerOnly = view.filters.some(
+    (f) => typeAt(f.index) === "other" || (f.operator === "contains" && typeAt(f.index) === "number"),
+  );
+  return sortsOther || filtersServerOnly;
+}
+
+// Whether `response` holds the rows of the sorted and filtered view already: a server answer, a truncated result
+// (the browser holds only a part of the rows), or a complete one that the browser cannot sort or filter exactly.
+export function isServerSide(response: QueryResponse, view: ResultView): boolean {
+  if (response.mode === "server") return true;
+  if (hasDuplicateColumns(response.columns)) return false;
+  return response.truncated || needsServer(view, response.column_types);
 }
 
 export function toServerOptions(view: ResultView, columns: readonly string[]) {
@@ -120,8 +136,9 @@ function matches(value: Cell, type: ColumnType, filter: FilterState): boolean {
 function compareValues(left: Cell, right: Cell, type: ColumnType): number {
   switch (type) {
     case "number":
-      return numeric(parseNumber(left), parseNumber(right));
+      return compareNumbers(left, right);
     case "date":
+      return numeric(parseDatePart(left), parseDatePart(right));
     case "timestamp":
       return numeric(parseTime(left), parseTime(right));
     case "boolean":
@@ -156,11 +173,50 @@ function compareCodePoints(left: string, right: string): number {
 
 // Postgres's numeric input: a decimal with an optional exponent, spaces around it allowed. Number() would read
 // "" and "  " as 0 and "0x10" as 16.
-const NUMBER_TEXT = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?\s*$/i;
+const NUMBER_TEXT = /^\s*([+-]?)(\d+(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?\s*$/i;
 function parseNumber(value: Cell): number {
   if (typeof value === "number") return value;
   const text = String(value);
   return NUMBER_TEXT.test(text) ? Number(text) : Number.NaN;
+}
+
+// A JSON number is a double, so it compares as one (a float8 against Postgres's own double parse of the filter). A
+// string is an int8 past 2^53 or a numeric, which a double would round: those compare as digits.
+function compareNumbers(left: Cell, right: Cell): number {
+  if (typeof left === "number") return numeric(left, parseNumber(right));
+  return compareDecimals(parseDecimal(String(left)), parseDecimal(String(right)));
+}
+
+// value = 0.<digits> x 10^magnitude, with no leading or trailing zeros in `digits` (zero has none).
+type Decimal = { negative: boolean; digits: string; magnitude: number };
+function parseDecimal(text: string): Decimal | undefined {
+  const match = NUMBER_TEXT.exec(text);
+  if (!match) return undefined;
+  const [, sign = "", mantissa = "", exponent = "0"] = match;
+  const [whole = "", fraction = ""] = mantissa.split(".");
+  const all = whole + fraction;
+  const significant = all.replace(/^0+/, "");
+  const leadingZeros = all.length - significant.length;
+  return {
+    negative: sign === "-",
+    digits: significant.replace(/0+$/, ""),
+    magnitude: whole.length - leadingZeros + Number(exponent),
+  };
+}
+
+function compareDecimals(left: Decimal | undefined, right: Decimal | undefined): number {
+  if (!left || !right) return Number.NaN;
+  const sign = (d: Decimal) => (d.digits === "" ? 0 : d.negative ? -1 : 1);
+  if (sign(left) !== sign(right)) return sign(left) < sign(right) ? -1 : 1;
+  if (sign(left) === 0) return 0;
+  const order = compareMagnitudes(left, right);
+  return sign(left) < 0 ? -order : order;
+}
+
+function compareMagnitudes(left: Decimal, right: Decimal): number {
+  if (left.magnitude !== right.magnitude) return left.magnitude < right.magnitude ? -1 : 1;
+  const width = Math.max(left.digits.length, right.digits.length);
+  return compareCodePoints(left.digits.padEnd(width, "0"), right.digits.padEnd(width, "0"));
 }
 
 // Postgres's boolean input: true/yes/on/1 and false/no/off/0 in any case, with spaces around, and any unique prefix
@@ -200,6 +256,13 @@ function parseTime(value: Cell): number {
   if (time.getUTCMonth() !== Number(month) - 1 || time.getUTCDate() !== Number(day)) return Number.NaN;
   if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return Number.NaN;
   return utc + Number(fraction) * 1000 - offsetMinutes(offset) * MS_PER_MINUTE;
+}
+
+// Postgres reads a `date` column's filter value by its date part, whatever time or offset follows it.
+const DATE_LENGTH = "2025-01-15".length;
+function parseDatePart(value: Cell): number {
+  const text = String(value).trim();
+  return Number.isNaN(parseTime(text)) ? Number.NaN : parseTime(text.slice(0, DATE_LENGTH));
 }
 
 function offsetMinutes(offset: string): number {

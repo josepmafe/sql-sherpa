@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { applyView, cellText, hasDuplicateColumns, isServerSide, toServerOptions } from "../src/components/resultView";
+import {
+  applyView,
+  cellText,
+  EMPTY_VIEW,
+  hasDuplicateColumns,
+  isServerSide,
+  toServerOptions,
+} from "../src/components/resultView";
 
 const ids = (rows: unknown[][]) => rows.map((r) => r[0]);
 
@@ -242,8 +249,21 @@ describe("helpers", () => {
   it("keeps a truncated result with duplicate columns in the browser", () => {
     const base = { mode: "client", truncated: true };
 
-    expect(isServerSide({ ...base, columns: ["a", "b"] } as never)).toBe(true);
-    expect(isServerSide({ ...base, columns: ["a", "a"] } as never)).toBe(false);
+    expect(isServerSide({ ...base, columns: ["a", "b"] } as never, EMPTY_VIEW)).toBe(true);
+    expect(isServerSide({ ...base, columns: ["a", "a"] } as never, EMPTY_VIEW)).toBe(false);
+  });
+
+  it("sends a complete result to the server only for a view the browser cannot reproduce", () => {
+    const complete = { mode: "client", truncated: false, columns: ["a", "b"], column_types: ["text", "other"] } as never;
+    const onText = { filters: [{ index: 0, operator: "contains" as const, value: "x" }] };
+    const onOther = { filters: [{ index: 1, operator: "=" as const, value: "1 day" }] };
+
+    expect(isServerSide(complete, EMPTY_VIEW)).toBe(false);
+    expect(isServerSide(complete, onText)).toBe(false);
+    expect(isServerSide(complete, onOther)).toBe(true);
+    expect(isServerSide({ mode: "client", truncated: false, columns: ["a", "a"], column_types: ["text", "other"] } as never, onOther)).toBe(
+      false,
+    );
   });
 
   it("maps a view to the server's names and drops values of valueless operators", () => {

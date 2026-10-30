@@ -93,7 +93,7 @@ export const WorksheetPanel = memo(function WorksheetPanel({
   // Sorting and filtering a truncated result re-runs the SQL of the last run, not the editor's current text.
   const changeView = useCallback(
     (next: ResultView) => {
-      if (!response || !isServerSide(response)) {
+      if (!response || !isServerSide(response, next)) {
         setView(next);
         return;
       }
