@@ -128,9 +128,12 @@ class ColumnLineage:
 class ColumnLineageBuilder:
     """Reads the compiled SQL of every model and snapshot with sqlglot and links each output column to its inputs."""
 
-    def __init__(self, graph: ManifestGraph, columns_by_node: Mapping[str, Sequence[str]]) -> None:
+    def __init__(
+        self, graph: ManifestGraph, columns_by_node: Mapping[str, Sequence[str]], *, columns_note: str | None = None
+    ) -> None:
         self._graph = graph
         self._columns_by_node = columns_by_node
+        self._columns_note = columns_note  # about where the columns came from; goes on every node that has none yet
 
     def build(self, compiled_sql: Mapping[str, str | None]) -> ColumnLineage:
         run = _Run(self._graph, self._columns_by_node, compiled_sql)
@@ -138,6 +141,11 @@ class ColumnLineageBuilder:
             {uid: node.parents for uid, node in self._graph.nodes.items()}
         ).static_order():
             run.add(self._graph.nodes[unique_id])
+
+        if self._columns_note is not None:
+            for unique_id, infos in run.columns.items():
+                if infos:
+                    run.node_notes.setdefault(unique_id, self._columns_note)
 
         return ColumnLineage(run.columns, list(run.edges), run.node_notes)
 

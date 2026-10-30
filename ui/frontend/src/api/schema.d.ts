@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lineage/columns/{unique_id}/{column}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Column Focus */
+        get: operations["get_column_focus_api_lineage_columns__unique_id___column__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lineage/nodes/{unique_id}": {
         parameters: {
             query?: never;
@@ -189,6 +206,24 @@ export interface components {
             /** Schema Name */
             schema_name: string;
         };
+        /**
+         * ColumnDetail
+         * @description A column of the node panel: the YAML's text, plus the trace's verdict when there is one.
+         */
+        ColumnDetail: {
+            /** Counts */
+            counts: string | null;
+            /** Data Type */
+            data_type: string | null;
+            /** Description */
+            description: string;
+            kind: components["schemas"]["ColumnKind"] | null;
+            /** Name */
+            name: string;
+            /** Notes */
+            notes: string[];
+            resolution: components["schemas"]["Resolution"] | null;
+        };
         /** ColumnDetails */
         ColumnDetails: {
             /** Accepted Values */
@@ -208,6 +243,22 @@ export interface components {
             /** Synonyms */
             synonyms: string[];
         };
+        /**
+         * ColumnFocusView
+         * @description The column, every column it is made of and every column made of it, and the edges between them.
+         */
+        ColumnFocusView: {
+            /** Columns */
+            columns: components["schemas"]["FocusColumn"][];
+            /** Edges */
+            edges: components["schemas"]["FocusEdge"][];
+            focus: components["schemas"]["FocusRef"];
+        };
+        /**
+         * ColumnKind
+         * @enum {string}
+         */
+        ColumnKind: "passthrough" | "rename" | "transformed" | "row_count" | "constant" | "generated" | "source";
         /** ColumnSummary */
         ColumnSummary: {
             /** Data Type */
@@ -220,6 +271,16 @@ export interface components {
             is_primary_key: boolean;
             /** Name */
             name: string;
+        };
+        /**
+         * ColumnView
+         * @description What the graph shows of a column: its name and how it is made.
+         */
+        ColumnView: {
+            kind: components["schemas"]["ColumnKind"];
+            /** Name */
+            name: string;
+            resolution: components["schemas"]["Resolution"];
         };
         /** DomainNode */
         DomainNode: {
@@ -244,6 +305,34 @@ export interface components {
             operator: "=" | "!=" | "<" | "<=" | ">" | ">=" | "contains" | "is_null" | "is_not_null";
             /** Value */
             value?: string | null;
+        };
+        /** FocusColumn */
+        FocusColumn: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "focus" | "upstream" | "downstream";
+            kind: components["schemas"]["ColumnKind"];
+            /** Name */
+            name: string;
+            /** Node */
+            node: string;
+            /** Notes */
+            notes: string[];
+            resolution: components["schemas"]["Resolution"];
+        };
+        /** FocusEdge */
+        FocusEdge: {
+            child: components["schemas"]["FocusRef"];
+            parent: components["schemas"]["FocusRef"];
+        };
+        /** FocusRef */
+        FocusRef: {
+            /** Column */
+            column: string;
+            /** Node */
+            node: string;
         };
         /** FormatRequest */
         FormatRequest: {
@@ -283,6 +372,14 @@ export interface components {
         /** LineageGraph */
         LineageGraph: {
             build: components["schemas"]["BuildInfo"];
+            /**
+             * Column Lineage
+             * @default ok
+             * @enum {string}
+             */
+            column_lineage: "ok" | "unavailable";
+            /** Column Lineage Reason */
+            column_lineage_reason?: string | null;
             /** Edges */
             edges: components["schemas"]["LineageEdge"][];
             /** Layers Available */
@@ -292,6 +389,8 @@ export interface components {
         };
         /** LineageNode */
         LineageNode: {
+            /** Columns */
+            columns?: components["schemas"]["ColumnView"][] | null;
             /** Domain */
             domain: string | null;
             /** Failing Tests */
@@ -326,20 +425,13 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** NodeColumn */
-        NodeColumn: {
-            /** Data Type */
-            data_type: string | null;
-            /** Description */
-            description: string;
-            /** Name */
-            name: string;
-        };
         /** NodeDetails */
         NodeDetails: {
             build: components["schemas"]["NodeBuildInfo"] | null;
+            /** Column Lineage Note */
+            column_lineage_note: string | null;
             /** Columns */
-            columns: components["schemas"]["NodeColumn"][];
+            columns: components["schemas"]["ColumnDetail"][];
             /** Compiled Sql */
             compiled_sql: string | null;
             /** Contract Enforced */
@@ -419,6 +511,11 @@ export interface components {
             /** Warning */
             warning?: string | null;
         };
+        /**
+         * Resolution
+         * @enum {string}
+         */
+        Resolution: "full" | "partial" | "unresolved";
         /** SortSpec */
         SortSpec: {
             /** Column */
@@ -553,7 +650,7 @@ export interface operations {
                     "application/json": components["schemas"]["TableDetails"];
                 };
             };
-            /** @description Not found: `table_not_found`, `node_not_found` */
+            /** @description Not found: `table_not_found`, `node_not_found`, `column_not_found` */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -626,6 +723,7 @@ export interface operations {
                 select?: string;
                 layers?: string | null;
                 failing_only?: boolean;
+                columns?: boolean;
             };
             header?: never;
             path?: never;
@@ -640,6 +738,65 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LineageGraph"];
+                };
+            };
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_column_focus_api_lineage_columns__unique_id___column__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                unique_id: string;
+                column: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ColumnFocusView"];
+                };
+            };
+            /** @description Not found: `table_not_found`, `node_not_found`, `column_not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
@@ -691,7 +848,7 @@ export interface operations {
                     "application/json": components["schemas"]["NodeDetails"];
                 };
             };
-            /** @description Not found: `table_not_found`, `node_not_found` */
+            /** @description Not found: `table_not_found`, `node_not_found`, `column_not_found` */
             404: {
                 headers: {
                     [name: string]: unknown;

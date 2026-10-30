@@ -16,6 +16,7 @@ from sherpa_ui.api.queries import QueryService
 from sherpa_ui.build.build_status import BuildStatusReader
 from sherpa_ui.catalog.catalog_service import CatalogService
 from sherpa_ui.health.health_service import HealthService
+from sherpa_ui.lineage.column_lineage_loader import ColumnLineageLoader
 from sherpa_ui.lineage.lineage_service import LineageService
 from sherpa_ui.lineage.manifest_loader import ManifestLoader
 from sherpa_ui.lineage.node_sql import NodeSql
@@ -52,8 +53,13 @@ def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
     app.state.query_service = QueryService(runner)
     app.state.catalog_service = CatalogService(loader, settings.db_name)
     app.state.health_service = HealthService(settings, loader)
+    manifests = ManifestLoader(settings.ui_dbt_target_path)
+    node_sql = NodeSql(settings.ui_dbt_target_path)
     app.state.lineage_service = LineageService(
-        ManifestLoader(settings.ui_dbt_target_path), BuildStatusReader(settings), NodeSql(settings.ui_dbt_target_path)
+        manifests,
+        BuildStatusReader(settings),
+        node_sql,
+        ColumnLineageLoader(settings.ui_dbt_target_path, manifests, node_sql),
     )
 
     api = APIRouter(prefix=API_PREFIX, responses=error_responses(500))  # the catch-all handler's internal_error

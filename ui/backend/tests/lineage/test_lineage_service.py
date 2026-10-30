@@ -5,8 +5,18 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import create_autospec
 
 import pytest
+from sherpa_mcp.catalog import CatalogUnavailable
 from sherpa_ui.build.build_status import BuildStatusReader, BuildStatusUnavailable
-from sherpa_ui.lineage.lineage_service import LineageService
+from sherpa_ui.lineage.column_lineage import (
+    ColumnEdge,
+    ColumnInfo,
+    ColumnKind,
+    ColumnLineage,
+    ColumnRef,
+    Resolution,
+)
+from sherpa_ui.lineage.column_lineage_loader import ColumnLineageLoader
+from sherpa_ui.lineage.lineage_service import ColumnDetail, ColumnView, FocusRef, LineageService
 from sherpa_ui.lineage.manifest_graph import Layer, ManifestGraph
 from sherpa_ui.lineage.manifest_loader import ManifestLoader
 from sherpa_ui.lineage.node_sql import NodeSql
@@ -39,11 +49,48 @@ def node_sql() -> NodeSql:
     return fake
 
 
+def _ref(unique_id: str, column: str) -> ColumnRef:
+    return ColumnRef(unique_id=unique_id, column=column)
+
+
+def _info(
+    unique_id: str, column: str, kind: ColumnKind, resolution: Resolution = Resolution.FULL, notes: tuple[str, ...] = ()
+) -> ColumnInfo:
+    return ColumnInfo(ref=_ref(unique_id, column), kind=kind, resolution=resolution, notes=notes, counts=None)
+
+
 @pytest.fixture
-def service(graph: ManifestGraph, builds: BuildStatusReader, node_sql: NodeSql) -> LineageService:
+def column_lineage() -> ColumnLineage:
+    """stg_shop__orders.id -> int_orders__enriched.id -> fct_orders.id, and fct_orders.id -> dim_customers.id."""
+    ids = ["model.p.stg_shop__orders", "model.p.int_orders__enriched", "model.p.fct_orders", "model.p.dim_customers"]
+    columns = {
+        ids[0]: (_info(ids[0], "id", ColumnKind.RENAME),),
+        ids[1]: (_info(ids[1], "id", ColumnKind.PASSTHROUGH),),
+        ids[2]: (_info(ids[2], "id", ColumnKind.TRANSFORMED, Resolution.PARTIAL, ("column x not found in y",)),),
+        ids[3]: (_info(ids[3], "id", ColumnKind.PASSTHROUGH),),
+    }
+    edges = [
+        ColumnEdge(parent=_ref(ids[0], "id"), child=_ref(ids[1], "id")),
+        ColumnEdge(parent=_ref(ids[1], "id"), child=_ref(ids[2], "id")),
+        ColumnEdge(parent=_ref(ids[2], "id"), child=_ref(ids[3], "id")),
+    ]
+    return ColumnLineage(columns, edges, {ids[3]: "a node note"})
+
+
+@pytest.fixture
+def columns_loader(column_lineage: ColumnLineage) -> ColumnLineageLoader:
+    fake = create_autospec(ColumnLineageLoader, instance=True)
+    fake.load.return_value = column_lineage
+    return fake
+
+
+@pytest.fixture
+def service(
+    graph: ManifestGraph, builds: BuildStatusReader, node_sql: NodeSql, columns_loader: ColumnLineageLoader
+) -> LineageService:
     loader = create_autospec(ManifestLoader, instance=True)
     loader.load.return_value = graph
-    return LineageService(loader, builds, node_sql)
+    return LineageService(loader, builds, node_sql, columns_loader)
 
 
 def _ids(result: LineageGraph) -> set[str]:
@@ -278,3 +325,98 @@ class TestLineageServiceNode:
 
         assert details is not None
         assert (details.status, details.build) == (NodeStatus.NO_BUILD, None)
+
+
+class TestLineageServiceColumns:
+    def test_graph_with_columns_carries_kinds(self, service: LineageService) -> None:
+        result = service.graph("fct_orders", None, failing_only=False, columns=True)
+
+        assert result.column_lineage == "ok"
+        assert result.column_lineage_reason is None
+        [node] = result.nodes
+        assert node.columns == [ColumnView(name="id", kind=ColumnKind.TRANSFORMED, resolution=Resolution.PARTIAL)]
+
+    def test_graph_without_the_flag_carries_no_columns_and_never_loads_them(
+        self, service: LineageService, columns_loader: ColumnLineageLoader
+    ) -> None:
+        result = service.graph("fct_orders", None, failing_only=False)
+
+        assert [node.columns for node in result.nodes] == [None]
+        columns_loader.load.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_column_lineage_unavailable_keeps_the_graph(
+        self, service: LineageService, columns_loader: ColumnLineageLoader
+    ) -> None:
+        columns_loader.load.side_effect = CatalogUnavailable("no catalog")  # type: ignore[attr-defined]
+
+        result = service.graph("fct_orders", None, failing_only=False, columns=True)
+
+        assert [node.name for node in result.nodes] == ["fct_orders"]
+        assert result.column_lineage == "unavailable"
+        assert result.column_lineage_reason == "no catalog"
+        assert [node.columns for node in result.nodes] == [None]
+
+    def test_node_columns_carry_the_yaml_text_and_the_trace(self, service: LineageService) -> None:
+        details = service.node("model.p.fct_orders")
+
+        assert details is not None
+        assert details.columns == [
+            ColumnDetail(
+                name="id",
+                data_type="bigint",
+                description="The key.",
+                kind=ColumnKind.TRANSFORMED,
+                resolution=Resolution.PARTIAL,
+                notes=["column x not found in y"],
+                counts=None,
+            )
+        ]
+        assert details.column_lineage_note is None
+
+    def test_node_note_and_unavailability_reach_the_panel(
+        self, service: LineageService, columns_loader: ColumnLineageLoader
+    ) -> None:
+        noted = service.node("model.p.dim_customers")
+        columns_loader.load.side_effect = CatalogUnavailable("no catalog")  # type: ignore[attr-defined]
+        unavailable = service.node("model.p.fct_orders")
+
+        assert noted is not None
+        assert noted.column_lineage_note == "a node note"
+        assert unavailable is not None
+        assert unavailable.column_lineage_note == "no catalog"
+        assert [(c.name, c.kind, c.resolution) for c in unavailable.columns] == [("id", None, None)]
+
+    def test_column_focus_walks_both_ways_from_the_column(self, service: LineageService) -> None:
+        view = service.column_focus("model.p.int_orders__enriched", "id")
+
+        assert view is not None
+        assert view.focus == FocusRef(node="model.p.int_orders__enriched", column="id")
+        assert [(c.node, c.name, c.direction) for c in view.columns] == [
+            ("model.p.stg_shop__orders", "id", "upstream"),
+            ("model.p.int_orders__enriched", "id", "focus"),
+            ("model.p.dim_customers", "id", "downstream"),
+            ("model.p.fct_orders", "id", "downstream"),
+        ]
+        assert {(e.parent.node, e.child.node) for e in view.edges} == {
+            ("model.p.stg_shop__orders", "model.p.int_orders__enriched"),
+            ("model.p.int_orders__enriched", "model.p.fct_orders"),
+            ("model.p.fct_orders", "model.p.dim_customers"),
+        }
+        fct = next(c for c in view.columns if c.node == "model.p.fct_orders")
+        assert (fct.kind, fct.resolution, fct.notes) == (
+            ColumnKind.TRANSFORMED,
+            Resolution.PARTIAL,
+            ["column x not found in y"],
+        )
+
+    def test_column_focus_unknown_column_is_none(self, service: LineageService) -> None:
+        assert service.column_focus("model.p.fct_orders", "nope") is None
+
+    def test_column_focus_unknown_node_is_none(self, service: LineageService) -> None:
+        assert service.column_focus("model.p.nope", "id") is None
+
+    def test_column_focus_matches_the_column_ignoring_case(self, service: LineageService) -> None:
+        view = service.column_focus("model.p.fct_orders", "ID")
+
+        assert view is not None
+        assert view.focus.column == "id"
