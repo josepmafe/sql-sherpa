@@ -302,7 +302,47 @@ class TestAgentDatabaseOnPostgres:
         assert seen == [("5s",), ("5s",)]  # inside fetch, then inside explain
 
     def test_session_is_read_only(self, agent_database: AgentDatabase) -> None:
+        # The setting comes from the connection's `-c` option, not from a role or database default.
         assert agent_database.scalar("select current_setting('transaction_read_only')") == "on"
+        assert (
+            agent_database.scalar("select source from pg_settings where name = 'default_transaction_read_only'")
+            == "client"
+        )
+
+    def test_fetch_caps_and_flags_truncation(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch("select n from generate_series(1, 101) n")
+
+        assert result.returned_rows == 100
+        assert len(result.rows) == 100
+        assert result.truncated
+
+    def test_fetch_exact_cap_is_not_truncated(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch("select n from generate_series(1, 100) n")
+
+        assert result.returned_rows == 100
+        assert not result.truncated
+
+    def test_fetch_returns_values_as_psycopg_loads_them(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch("select 1.5::numeric, date '2025-03-01', lpad('a', 20000, 'b')")
+
+        assert result.rows == ((Decimal("1.5"), dt.date(2025, 3, 1), "b" * 19_999 + "a"),)
+
+    def test_long_cells_are_cut_and_the_result_stops_at_its_budget(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch_for_model("select lpad('a', 1000000, 'b') as n from generate_series(1, 10)")
+
+        # 10,022 characters a row: four rows fit in 50,000, a fifth would not.
+        assert result.returned_rows == 4
+        assert result.truncated
+        assert set(result.rows) == {("b" * 10_000 + CUT,)}
+
+    def test_rows_that_fill_the_budget_exactly_are_not_truncated(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch_for_model("select lpad('a', 10000, 'b') as n from generate_series(1, 5)")
+        over = agent_database.fetch_for_model("select lpad('a', 10000, 'b') as n from generate_series(1, 6)")
+
+        assert result.returned_rows == 5
+        assert not result.truncated
+        assert over.returned_rows == 5
+        assert over.truncated
 
     def test_a_row_of_exactly_50000_characters_is_kept_and_one_of_50001_is_truncated(
         self, agent_database: AgentDatabase
@@ -317,31 +357,86 @@ class TestAgentDatabaseOnPostgres:
         assert over_budget.rows == ()
         assert over_budget.truncated
 
+    def test_a_first_row_over_the_budget_returns_no_rows(self, agent_database: AgentDatabase) -> None:
+        columns = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(6))
+
+        result = agent_database.fetch_for_model(f"select {columns}")
+
+        assert result.rows == ()
+        assert result.truncated
+
     def test_a_two_million_character_cell_is_cut(self, agent_database: AgentDatabase) -> None:
         # Above the 1,000,000-character large-row threshold and far past the 10,000-character cell cap.
         result = agent_database.fetch_for_model("select lpad('a', 2000000, 'b') as n")
 
         assert result.rows == (("b" * 10_000 + CUT,),)
 
+    def test_rows_come_in_batches_and_one_past_the_cap(
+        self, agent_database: AgentDatabase, fetch_sizes: list[int]
+    ) -> None:
+        agent_database.fetch_for_model("select n from generate_series(1, 101) n")
+        capped = list(fetch_sizes)
+        fetch_sizes.clear()
+        agent_database.fetch_for_model("select n from generate_series(1, 45) n")
+
+        assert capped == [20, 20, 20, 20, 20, 1]
+        assert fetch_sizes == [20, 20, 20, 20]
+
+    def test_after_a_large_row_the_rest_come_one_at_a_time(
+        self, agent_database: AgentDatabase, fetch_sizes: list[int]
+    ) -> None:
+        result = agent_database.fetch_for_model(
+            "select case when n = 1 then lpad('a', 1000001, 'b') else 'x' end as v from generate_series(1, 30) n"
+        )
+
+        assert result.returned_rows == 30
+        assert fetch_sizes == [20, *[1] * 11]  # 10 more rows, then the empty fetch that ends the result
+
+    def test_deeply_nested_value_is_a_tool_error(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError, match=r"^\[sql\] a value is nested too deeply"):
+            agent_database.fetch_for_model("select (repeat('[', 5000) || repeat(']', 5000))::jsonb")
+
+        assert agent_database.scalar("select 1") == 1
+
+    def test_heavy_fetches_wait_for_a_free_slot(
+        self, agent_database: AgentDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("sherpa_mcp.database.HEAVY_FETCH_WAIT_SECONDS", 0.1)
+        slots = agent_database._heavy_fetches  # both slots taken, as by two running queries
+        slots.acquire()
+        slots.acquire()
+        try:
+            with pytest.raises(WarehouseToolError, match=r"^\[timeout\] the server is busy with other queries"):
+                agent_database.fetch_for_model("select 1")
+        finally:
+            slots.release()
+            slots.release()
+
+        assert agent_database.fetch_for_model("select 1").rows == ((1,),)
+
     def test_fetching_stops_between_5_and_7_seconds(self, agent_database: AgentDatabase) -> None:
         started = time.monotonic()
 
         # Each FETCH of 20 rows sleeps 1.75 s, well inside the statement timeout, so only the fetch deadline stops it:
         # the check before the 4th FETCH (at 5.25 s) is the first past 5 s. A 6 s deadline would stop it at 7 s.
-        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
+        with pytest.raises(WarehouseToolError, match=r"^\[timeout\] the query took longer than 5 s"):
             agent_database.fetch_for_model("select pg_sleep(0.0875), n from generate_series(1, 1000) n")
         elapsed = time.monotonic() - started
 
         assert 5 <= elapsed < 7
         assert agent_database.scalar("select 1") == 1
 
-    def test_timeout_is_reported_and_connection_reusable(self, agent_database: AgentDatabase) -> None:
+    def test_timeout_is_reported_and_connection_reusable(
+        self, agent_database: AgentDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The 5 s value itself is pinned by test_set_local_timeout_is_enforced_on_its_own; a short one keeps this fast.
+        monkeypatch.setattr("sherpa_mcp.database.STATEMENT_TIMEOUT", "200ms")
         started = time.monotonic()
 
-        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
+        with pytest.raises(WarehouseToolError, match=r"^\[timeout\] the query took longer than 5 s"):
             agent_database.fetch("select pg_sleep(30)")
 
-        assert time.monotonic() - started < 7
+        assert time.monotonic() - started < 3
         assert agent_database.scalar("select 1") == 1
 
     def test_a_write_is_refused_by_the_read_only_session(self, agent_database: AgentDatabase) -> None:
@@ -364,119 +459,21 @@ class TestAgentDatabaseOnPostgres:
         assert str(error.value) == "[sql] cannot insert multiple commands into a prepared statement"
         assert agent_database.scalar("select 1") == 1
 
-
-@pytest.mark.warehouse
-class TestAgentDatabase:
-    def test_fetch_caps_and_flags_truncation(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch("select * from marts.fct_order_items")
-
-        assert result.returned_rows == 100
-        assert len(result.rows) == 100
-        assert result.truncated
-
-    def test_fetch_exact_cap_is_not_truncated(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch("select * from marts.fct_order_items limit 100")
-
-        assert result.returned_rows == 100
-        assert not result.truncated
-
-    def test_fetch_returns_values_as_psycopg_loads_them(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch("select 1.5::numeric, date '2025-03-01', lpad('a', 20000, 'b')")
-
-        assert result.rows == ((Decimal("1.5"), dt.date(2025, 3, 1), "b" * 19_999 + "a"),)
-
-    def test_long_cells_are_cut_and_the_result_stops_at_its_budget(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch_for_model("select lpad('a', 1000000, 'b') as n from marts.fct_order_items")
-
-        # 10,022 characters a row: four rows fit in 50,000, a fifth would not.
-        assert result.returned_rows == 4
-        assert result.truncated
-        assert set(result.rows) == {("b" * 10_000 + CUT,)}
-
-    def test_rows_that_fill_the_budget_exactly_are_not_truncated(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch_for_model("select lpad('a', 10000, 'b') as n from marts.fct_order_items limit 5")
-        over = agent_database.fetch_for_model("select lpad('a', 10000, 'b') as n from marts.fct_order_items limit 6")
-
-        assert result.returned_rows == 5
-        assert not result.truncated
-        assert over.returned_rows == 5
-        assert over.truncated
-
-    def test_a_first_row_over_the_budget_returns_no_rows(self, agent_database: AgentDatabase) -> None:
-        columns = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(6))
-
-        result = agent_database.fetch_for_model(f"select {columns}")
-
-        assert result.rows == ()
-        assert result.truncated
-
-    def test_rows_come_in_batches_and_one_past_the_cap(
-        self, agent_database: AgentDatabase, fetch_sizes: list[int]
-    ) -> None:
-        agent_database.fetch_for_model("select order_item_id from marts.fct_order_items")
-        capped = list(fetch_sizes)
-        fetch_sizes.clear()
-        agent_database.fetch_for_model("select n from generate_series(1, 45) n")
-
-        assert capped == [20, 20, 20, 20, 20, 1]
-        assert fetch_sizes == [20, 20, 20, 20]
-
-    def test_after_a_large_row_the_rest_come_one_at_a_time(
-        self, agent_database: AgentDatabase, fetch_sizes: list[int]
-    ) -> None:
-        result = agent_database.fetch_for_model(
-            "select case when n = 1 then lpad('a', 1000001, 'b') else 'x' end as v from generate_series(1, 30) n"
-        )
-
-        assert result.returned_rows == 30
-        assert fetch_sizes == [20, *[1] * 11]  # 10 more rows, then the empty fetch that ends the result
-
-    def test_deeply_nested_value_is_a_tool_error(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError, match="nested too deeply"):
-            agent_database.fetch_for_model("select (repeat('[', 5000) || repeat(']', 5000))::jsonb")
-
-        assert agent_database.scalar("select 1") == 1
-
-    def test_heavy_fetches_wait_for_a_free_slot(
-        self, agent_database: AgentDatabase, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr("sherpa_mcp.database.HEAVY_FETCH_WAIT_SECONDS", 0.1)
-        slots = agent_database._heavy_fetches  # both slots taken, as by two running queries
-        slots.acquire()
-        slots.acquire()
-        try:
-            with pytest.raises(WarehouseToolError, match="busy with other queries"):
-                agent_database.fetch_for_model("select 1")
-        finally:
-            slots.release()
-            slots.release()
-
-        assert agent_database.fetch_for_model("select 1").rows == ((1,),)
-
-    def test_the_role_has_no_write_privilege_even_in_a_read_write_session(self, agent_database: AgentDatabase) -> None:
-        # A session can switch itself to read write (the role setting is only a default); the grants still refuse.
-        with agent_database._pool.connection() as conn:
-            conn.execute("set transaction read write")
-            with pytest.raises(errors.InsufficientPrivilege) as locked:
-                conn.execute("select * from marts.fct_orders limit 1 for update")
-            conn.rollback()
-            conn.execute("set transaction read write")
-            with pytest.raises(errors.InsufficientPrivilege) as created:
-                conn.execute("create table marts.x(i int)")
-            conn.rollback()
-
-        assert str(locked.value).startswith("permission denied for table fct_orders")
-        assert str(created.value).startswith("permission denied for schema marts")
-
-    def test_unreadable_relation_is_refused_by_the_role(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError, match="permission denied"):
-            agent_database.fetch("select * from staging.stg_shop__orders")
+    def test_explain_plans_without_running_the_query(self, agent_database: AgentDatabase) -> None:
+        # Running this query would raise DivisionByZero.
+        agent_database.explain("select 1 / (n - n) from generate_series(1, 1) n")
 
     def test_explain_rejects_analyze_prefix(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError):
+        with pytest.raises(WarehouseToolError, match=r"^\[sql\] "):
             agent_database.explain("analyze select 1")
-        with pytest.raises(WarehouseToolError):
+        with pytest.raises(WarehouseToolError, match=r"^\[sql\] "):
             agent_database.explain("(analyze) select 1")
+
+    def test_explain_reports_postgres_message(self, agent_database: AgentDatabase) -> None:
+        agent_database.explain("select 1")
+
+        with pytest.raises(WarehouseToolError, match=r"^\[sql\] .*does_not_exist"):
+            agent_database.explain("select * from pg_catalog.does_not_exist")
 
     def test_values_are_json_safe(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch_for_model(
@@ -486,30 +483,39 @@ class TestAgentDatabase:
         assert result.columns == ("d", "day", "ts")
         assert result.rows == (("1.5", "2025-03-01", "2025-03-01T04:05:00+00:00"),)
 
-    def test_errors_point_into_the_query_as_written(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError) as fetched:
-            agent_database.fetch_for_model("select nope from marts.fct_orders")
-        with pytest.raises(WarehouseToolError) as explained:
-            agent_database.explain("select nope from marts.fct_orders")
-
-        assert str(fetched.value) == '[sql] column "nope" does not exist (at character 8)'
-        assert str(explained.value) == '[sql] column "nope" does not exist (at character 8)'
-
-    def test_postgres_hint_is_appended(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError) as error:
-            agent_database.fetch_for_model("select c.emial from marts.dim_customers c")
-
-        assert str(error.value) == (
-            '[sql] column c.emial does not exist (at character 8); Perhaps you meant to reference the column "c.email".'
+    def test_arrays_intervals_and_nan_are_json_safe(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch_for_model(
+            "select array_agg(d) as days, date '2025-03-05' - date '2025-03-01' as gap,"
+            " age(timestamp '2025-03-05', timestamp '2025-03-01') as span, 'NaN'::float8 as nan,"
+            " '{\"k\": [1.5]}'::jsonb as doc, '\\xdead'::bytea as raw"
+            " from (values (date '2025-01-01'), (date '2025-01-02')) as t(d)"
         )
+
+        row = dict(zip(result.columns, result.rows[0], strict=True))
+        assert row["days"] == ["2025-01-01", "2025-01-02"]
+        assert row["gap"] == 4  # date minus date is an integer
+        assert row["span"] == "4 days, 0:00:00"
+        assert row["nan"] == "nan"
+        assert row["doc"] == {"k": [1.5]}
+        assert row["raw"] == "dead"
+        json.dumps(result.rows, allow_nan=False)
 
     def test_division_by_zero_gets_its_remedy(self, agent_database: AgentDatabase) -> None:
         with pytest.raises(WarehouseToolError) as error:
-            agent_database.fetch_for_model("select count(*) / 0 from marts.fct_orders")
+            agent_database.fetch_for_model("select count(*) / 0 from generate_series(1, 3)")
 
         assert str(error.value) == (
             "[sql] a value could not be converted or computed (DivisionByZero); wrap the denominator in nullif(x, 0)"
         )
+
+    def test_similarity_thresholds_are_set_on_request(self, agent_database: AgentDatabase) -> None:
+        result = agent_database.fetch(
+            "select current_setting('pg_trgm.similarity_threshold'), "
+            "current_setting('pg_trgm.word_similarity_threshold')",
+            set_similarity_threshold=True,
+        )
+
+        assert result.rows == (("0.2", "0.6"),)
 
     def test_pool_size_comes_from_the_settings(self, warehouse_settings: McpSettings) -> None:
         database = AgentDatabase(warehouse_settings.model_copy(update={"mcp_pool_size": 2}))
@@ -531,20 +537,46 @@ class TestAgentDatabase:
         finally:
             database.close()
 
-    def test_explain_reports_postgres_message(self, agent_database: AgentDatabase) -> None:
-        agent_database.explain("select 1")
 
-        with pytest.raises(WarehouseToolError, match="does_not_exist"):
-            agent_database.explain("select * from marts.does_not_exist")
+@pytest.mark.warehouse
+class TestAgentDatabase:
+    """What needs the built marts: their grants, their columns and their types."""
 
-    def test_similarity_thresholds_are_set_on_request(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch(
-            "select current_setting('pg_trgm.similarity_threshold'), "
-            "current_setting('pg_trgm.word_similarity_threshold')",
-            set_similarity_threshold=True,
+    def test_the_role_has_no_write_privilege_even_in_a_read_write_session(self, agent_database: AgentDatabase) -> None:
+        # A session can switch itself to read write (the role setting is only a default); the grants still refuse.
+        with agent_database._pool.connection() as conn:
+            conn.execute("set transaction read write")
+            with pytest.raises(errors.InsufficientPrivilege) as locked:
+                conn.execute("select * from marts.fct_orders limit 1 for update")
+            conn.rollback()
+            conn.execute("set transaction read write")
+            with pytest.raises(errors.InsufficientPrivilege) as created:
+                conn.execute("create table marts.x(i int)")
+            conn.rollback()
+
+        assert str(locked.value).startswith("permission denied for table fct_orders")
+        assert str(created.value).startswith("permission denied for schema marts")
+
+    def test_unreadable_relation_is_refused_by_the_role(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError, match=r"^\[sql\] permission denied"):
+            agent_database.fetch("select * from staging.stg_shop__orders")
+
+    def test_errors_point_into_the_query_as_written(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as fetched:
+            agent_database.fetch_for_model("select nope from marts.fct_orders")
+        with pytest.raises(WarehouseToolError) as explained:
+            agent_database.explain("select nope from marts.fct_orders")
+
+        assert str(fetched.value) == '[sql] column "nope" does not exist (at character 8)'
+        assert str(explained.value) == '[sql] column "nope" does not exist (at character 8)'
+
+    def test_postgres_hint_is_appended(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as error:
+            agent_database.fetch_for_model("select c.emial from marts.dim_customers c")
+
+        assert str(error.value) == (
+            '[sql] column c.emial does not exist (at character 8); Perhaps you meant to reference the column "c.email".'
         )
-
-        assert result.rows == (("0.2", "0.6"),)
 
     def test_result_carries_postgres_column_types(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch_for_model(
@@ -553,20 +585,3 @@ class TestAgentDatabase:
         )
 
         assert result.column_types == ("int8", "numeric(12,2)", "numeric", "date", "text", "int4[]")
-
-    def test_arrays_intervals_and_nan_are_json_safe(self, agent_database: AgentDatabase) -> None:
-        result = agent_database.fetch_for_model(
-            "select array_agg(d) as days, date '2025-03-05' - date '2025-03-01' as gap,"
-            " age(timestamp '2025-03-05', timestamp '2025-03-01') as span, 'NaN'::float8 as nan,"
-            " '{\"k\": [1.5]}'::jsonb as doc, '\\xdead'::bytea as raw"
-            " from (values (date '2025-01-01'), (date '2025-01-02')) as t(d)"
-        )
-
-        row = dict(zip(result.columns, result.rows[0], strict=True))
-        assert row["days"] == ["2025-01-01", "2025-01-02"]
-        assert row["gap"] == 4  # date minus date is an integer
-        assert row["span"] == "4 days, 0:00:00"
-        assert row["nan"] == "nan"
-        assert row["doc"] == {"k": [1.5]}
-        assert row["raw"] == "dead"
-        json.dumps(result.rows, allow_nan=False)
