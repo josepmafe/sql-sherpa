@@ -30,9 +30,8 @@ class TestAssertRate:
 
         assert_rate(150, 10_000, 0.01, z=5.1)
 
-    def test_refuses_a_sample_too_small_to_tell_10x(self) -> None:
-        # 100 trials at 3 %: the z = 4 interval is -0.039 to 0.099, so a rate of 0 passes it, and a sample this size
-        # could not tell 3 % from 10x (30 %) in a test that measured nothing
+    def test_refuses_a_sample_whose_bound_includes_zero(self) -> None:
+        # 100 trials at 3 %: the z = 4 interval is -0.039 to 0.099, so a rate of 0 would pass it
         with pytest.raises(AssertionError, match="sample too small"):
             assert_rate(3, 100, 0.03)
 
@@ -45,7 +44,3 @@ class TestAssertRate:
     def test_refuses_zero_trials(self) -> None:
         with pytest.raises(AssertionError, match="sample too small"):
             assert_rate(0, 0, 0.5)
-
-    def test_a_high_rate_needs_no_10x_check(self) -> None:
-        # 10 x 0.9 is not a rate, so only the lower bound counts
-        assert_rate(900, 1_000, 0.90)

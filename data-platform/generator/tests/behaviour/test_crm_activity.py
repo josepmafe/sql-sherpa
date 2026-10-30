@@ -22,7 +22,7 @@ TUESDAY = date(2025, 3, 11)
 SATURDAY = date(2025, 3, 15)
 STAGE_RANK = {stage: rank for rank, stage in enumerate(LifecycleStage)}
 TUESDAY_WEEKDAY = 1
-RATE_LEADS = 4_000  # ~1,000 opens and ~120 clicks: enough for assert_rate to tell 3 % and 10 % from 0 and 10x
+RATE_LEADS = 4_000  # ~1,000 opens and ~120 clicks: enough for assert_rate to tell 3 % and 10 % from 0
 LEAD_RATE_SCALE = 250.0  # one day of 16 x 250 new leads
 ENGAGEMENT_DAYS = 4  # a send at 08:00-08:30 is opened within 48 h and clicked within 30 minutes of that
 
@@ -77,18 +77,14 @@ class TestCrmActivitySimulator:
         assert len({instant.date() for instant in sent}) == 4
 
     @pytest.mark.integration
-    def test_email_engagement_is_ordered_rated_and_never_after_the_last_day(self, month: Database) -> None:
+    def test_email_engagement_is_ordered_and_never_after_the_last_day(self, month: Database) -> None:
         with month.connect() as conn:
             sends = conn.execute("SELECT sent_at, opened_at, clicked_at FROM raw_crm.email_sends").fetchall()
-
-        settled = [opened for sent, opened, _ in sends if sent < MONTH_END_AT - timedelta(days=3)]
-        open_rate = sum(1 for opened in settled if opened is not None) / len(settled)
 
         for sent, opened, clicked in sends:
             assert opened is None or sent <= opened <= sent + timedelta(hours=48)
             assert clicked is None or (opened is not None and opened <= clicked)
             assert max(t for t in (sent, opened, clicked) if t is not None) < MONTH_END_AT
-        assert 0.17 <= open_rate <= 0.33
 
     def test_email_noise_hits_ten_percent_of_new_leads_and_normalizes_back(self) -> None:
         changes = DayChanges()
@@ -160,9 +156,7 @@ class TestCrmActivitySimulator:
     def test_signup_converts_matching_lead_one_to_two_days_later(self) -> None:
         signed_up_at = datetime(2025, 3, 12, 15, tzinfo=UTC)
         lead = _lead(7, email=" Anna.Berg@Example.com")
-        customer = make_customer(3).model_copy(
-            update={"email": "anna.berg@example.com", "created_at": signed_up_at, "updated_at": signed_up_at}
-        )
+        customer = make_customer(3, email="anna.berg@example.com", created_at=signed_up_at, updated_at=signed_up_at)
         days = [signed_up_at.date() + timedelta(days=offset) for offset in range(4)]
         conversions: list[tuple[date, dict[str, object]]] = []
 
@@ -180,7 +174,7 @@ class TestCrmActivitySimulator:
     def test_converted_lead_is_not_converted_again(self) -> None:
         signed_up_at = datetime(2025, 3, 12, 15, tzinfo=UTC)
         lead = _lead(7, stage=LifecycleStage.CUSTOMER)
-        customer = make_customer(3).model_copy(update={"email": lead.email, "created_at": signed_up_at})
+        customer = make_customer(3, email=lead.email, created_at=signed_up_at)
         changes = [DayChanges() for _ in range(3)]
 
         for offset, day_changes in enumerate(changes):

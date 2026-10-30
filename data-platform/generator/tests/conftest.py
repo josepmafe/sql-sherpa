@@ -75,7 +75,9 @@ def simulator_reference() -> Iterator[dict[str, object]]:
         Simulator(db, seed=RUN_SEED, scale=RUN_SCALE, today=RUN_TODAY).run(RUN_DAYS, RUN_START)
         reference = fingerprint(db)
         yield reference
-        assert fingerprint(db) == reference, "a test wrote into the shared `simulator_reference` run"
+        assert fingerprint(db) == reference, (
+            "`simulator_reference` changed: a test mutated its fingerprint or wrote into the run"
+        )
 
 
 @pytest.fixture(scope="module")

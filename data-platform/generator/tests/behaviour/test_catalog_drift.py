@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from helpers import SIMULATION_SEED, make_snapshot, run_days
+from helpers import SIMULATION_SEED, assert_rate, make_snapshot, run_days
 from sherpa_generator.behaviour.catalog_drift import CatalogDriftSimulator
 from sherpa_generator.records import Product, ProductVariant
 from sherpa_generator.simulation.day_changes import DayChanges
@@ -47,9 +47,8 @@ class TestCatalogDriftSimulator:
                     assert Decimal("0.05") - Decimal("0.001") <= abs(new_cost / old.cost_price - 1)
                     assert abs(new_cost / old.cost_price - 1) <= Decimal("0.20") + Decimal("0.001")
 
-        expected_list, expected_cost = 0.003 * VARIANTS * DAYS, 0.001 * VARIANTS * DAYS  # R10: 450 and 150
-        assert 0.85 * expected_list <= list_changes <= 1.15 * expected_list
-        assert 0.75 * expected_cost <= cost_changes <= 1.25 * expected_cost
+        assert_rate(list_changes, VARIANTS * DAYS, 0.003)  # R10, Spec A §4.4: 0.3 % of variants a day
+        assert_rate(cost_changes, VARIANTS * DAYS, 0.001)  # R10: 0.1 % a day
 
     def test_price_changes_go_both_ways(self) -> None:
         snapshot = _catalog()

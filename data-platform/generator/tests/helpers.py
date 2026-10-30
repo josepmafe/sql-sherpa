@@ -115,17 +115,13 @@ def fingerprint(db: Database) -> dict[str, object]:
 def assert_rate(hits: int, trials: int, expected: float, *, z: float = 4.0) -> None:
     """Fail when hits / trials lies outside `expected` +/- z binomial standard deviations.
 
-    A sample whose bound includes 0, or reaches 10x `expected` while that is still a rate, would pass a rule that
-    does nothing or one that fires ten times too often, so it is refused instead of measured.
+    A sample whose bound includes 0 would pass a rule that does nothing, so it is refused instead of measured. A bound
+    that excludes 0 stays below twice `expected`, so it also excludes a rule that fires ten times too often.
     """
     half = z * sqrt(expected * (1 - expected) / trials) if trials > 0 else float("inf")
     low, high = expected - half, expected + half
-    ten_times = 10 * expected
-    if low <= 0 or (ten_times < 1 and high >= ten_times):
-        msg = (
-            f"sample too small: {trials} trials give {expected:.4f} +/- {half:.4f}, "
-            f"which cannot exclude 0 or {ten_times:.4f}"
-        )
+    if low <= 0:
+        msg = f"sample too small: {trials} trials give {expected:.4f} +/- {half:.4f}, which cannot exclude 0"
         raise AssertionError(msg)
 
     if not low <= hits / trials <= high:
@@ -136,18 +132,20 @@ def assert_rate(hits: int, trials: int, expected: float, *, z: float = 4.0) -> N
         raise AssertionError(msg)
 
 
-def make_customer(customer_id: int) -> Customer:
-    return Customer(
-        id=customer_id,
-        email=f"c{customer_id}@example.com",
-        first_name="A",
-        last_name="B",
-        country_code="DE",
-        marketing_opt_in=True,
-        is_test_account=False,
-        created_at=NOW,
-        updated_at=NOW,
-    )
+def make_customer(customer_id: int, **overrides: object) -> Customer:
+    """An opted-in German customer who signed up at NOW; a test states the fields it relies on."""
+    fields: dict[str, object] = {
+        "id": customer_id,
+        "email": f"c{customer_id}@example.com",
+        "first_name": "A",
+        "last_name": "B",
+        "country_code": "DE",
+        "marketing_opt_in": True,
+        "is_test_account": False,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    return Customer(**{**fields, **overrides})
 
 
 def make_order(order_id: int, **overrides: object) -> Order:

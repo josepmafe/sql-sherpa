@@ -4,11 +4,16 @@ from collections import Counter
 from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
-from helpers import SIMULATION_SEED, make_customer, make_snapshot, run_days
-from sherpa_generator.behaviour.customer_deletions import CustomerDeletionSimulator
+from helpers import SIMULATION_SEED, assert_rate, make_customer, make_snapshot, run_days
+from sherpa_generator.behaviour.customer_deletions import (
+    DELETE_AFTER_PURPOSE,
+    DELETE_PURPOSE,
+    CustomerDeletionSimulator,
+)
 from sherpa_generator.records import Customer
 from sherpa_generator.simulation.day_changes import DayChanges
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
+from sherpa_generator.simulation.realism_rules import RealismRules
 
 SIGNUP_DAY = date(2025, 1, 1)
 CREATED_AT = datetime(2025, 1, 1, 9, 15, tzinfo=UTC)
@@ -25,7 +30,7 @@ def deletions() -> list[tuple[int, datetime]]:
 class TestCustomerDeletionSimulator:
     def test_deletion_rate_and_timing_window(self, deletions: list[tuple[int, datetime]]) -> None:
         delays = [(deleted_at.date() - CREATED_AT.date()).days for _, deleted_at in deletions]
-        assert 0.008 * CUSTOMERS <= len(deletions) <= 0.012 * CUSTOMERS  # R6: 1 %
+        assert_rate(len(deletions), CUSTOMERS, 0.01)  # R6, Spec A §4.4: 1 % of customers
         assert all(30 <= delay <= 199 for delay in delays)
         assert min(delays) < 60
         assert max(delays) > 170
@@ -53,7 +58,7 @@ class TestCustomerDeletionSimulator:
     ) -> None:
         changes = DayChanges()
         [(customer_id, deleted_at)] = deletions[:1]
-        customer = make_customer(customer_id).model_copy(update={"created_at": CREATED_AT})
+        customer = make_customer(customer_id, created_at=CREATED_AT)
 
         CustomerDeletionSimulator(DeterministicRandom(SIMULATION_SEED)).simulate_day(
             make_snapshot(deleted_at.date(), customers=[customer]), changes
@@ -64,9 +69,44 @@ class TestCustomerDeletionSimulator:
         assert update.values == {"deleted_at": deleted_at, "updated_at": deleted_at}
         assert changes.insert_counts() == {}
 
+    @pytest.mark.parametrize(("first_fraction", "last_fraction", "delay"), [(0.0, 1 / 170, 30), (169 / 170, 1.0, 199)])
+    def test_a_customer_drawn_at_the_edge_of_the_window_is_deleted_on_its_first_or_last_day(
+        self, first_fraction: float, last_fraction: float, delay: int
+    ) -> None:
+        customer_id = _customer_id_where(first_fraction, last_fraction)
+        customer = make_customer(customer_id, created_at=CREATED_AT)
+        simulator = CustomerDeletionSimulator(DeterministicRandom(SIMULATION_SEED))
+
+        deleted_on = [
+            day
+            for day in (SIGNUP_DAY + timedelta(days=d) for d in range(delay - 1, delay + 2))
+            if _updates_on(simulator, day, customer)
+        ]
+
+        assert deleted_on == [SIGNUP_DAY + timedelta(days=delay)]
+
+
+def _customer_id_where(first_fraction: float, last_fraction: float) -> int:
+    """The first customer id R6 deletes whose delay fraction lies in [first_fraction, last_fraction)."""
+    random = DeterministicRandom(SIMULATION_SEED)
+    return next(
+        i
+        for i in range(1, 500_000)
+        if random.entity_fraction("customer", i, DELETE_PURPOSE) < RealismRules.SOFT_DELETED_CUSTOMER_RATE
+        and first_fraction <= random.entity_fraction("customer", i, DELETE_AFTER_PURPOSE) < last_fraction
+    )
+
+
+def _updates_on(simulator: CustomerDeletionSimulator, day: date, customer: Customer) -> bool:
+    changes = DayChanges()
+
+    simulator.simulate_day(make_snapshot(day, customers=[customer]), changes)
+
+    return bool(changes.updates)
+
 
 def _customers(count: int) -> list[Customer]:
-    return [make_customer(i).model_copy(update={"created_at": CREATED_AT}) for i in range(1, count + 1)]
+    return [make_customer(i, created_at=CREATED_AT) for i in range(1, count + 1)]
 
 
 def _deletions(customers: list[Customer], days: int) -> list[tuple[int, datetime]]:

@@ -50,7 +50,7 @@ APPAREL_PRODUCT = 2
 RETURN_RATE = 0.12
 GOODWILL_RATE = 0.01
 REJECTION_RATE = 0.10
-RATE_ORDERS = 6_000  # ~720 returns and ~60 goodwill refunds: enough for assert_rate to tell 1 % and 90 % from 0 and 10x
+RATE_ORDERS = 6_000  # ~720 returns and ~60 goodwill refunds: enough for assert_rate to tell 1 % and 90 % from 0
 DECISION_DAYS = 36  # a request falls up to 30 days after delivery and is decided up to 2 days after that
 
 
