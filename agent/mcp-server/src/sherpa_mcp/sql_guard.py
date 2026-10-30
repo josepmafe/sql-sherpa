@@ -625,16 +625,13 @@ def _is_projection_item(column: exp.Column) -> bool:
 
 
 def _is_whole_row(column: exp.Column) -> bool:
-    """An unqualified name that is a table alias, table name or CTE name in scope reads the whole record as one value.
+    """An unqualified name that is a table alias, table name or CTE name listed in a FROM reads the whole record.
 
     Postgres resolves a real column first, so this also rejects a column that shares such a name; that is rare and the
     model can qualify it (`alias.column`).
     """
     # Fails closed: compared case-insensitively on both sides, so `"C"`, `C` and `c` all count as the same name.
     name = _identifier_value(column.this).lower()
-    if name in {cte.lower() for cte in _ctes_in_scope(column)}:
-        return True
-
     scope = column.parent
     while scope is not None:
         if isinstance(scope, exp.Select):
@@ -647,18 +644,14 @@ def _is_whole_row(column: exp.Column) -> bool:
 
 
 def _relations(relation: exp.Expr) -> list[exp.Expr]:
-    """The relation and, for an unaliased parenthesized join, the relations joined inside it (to any depth).
+    """The relation and, for a parenthesized join, the relations joined inside it (to any depth).
 
-    `from (a join b c on ...)` parses as a Subquery around a Table that carries the joins, so `c` is only visible here.
+    `from (a join b c on ...)` parses as a Subquery around the first relation, and that relation (a Table, a derived
+    table or an inner parenthesized join) carries the joins, so `c` is only visible here.
     """
     found = [relation]
-    if (
-        isinstance(relation, exp.Subquery)
-        and not relation.alias
-        and isinstance(relation.this, exp.Subquery | exp.Table)
-    ):
+    if isinstance(relation, exp.Subquery) and isinstance(relation.this, exp.Subquery | exp.Table):
         found.extend(_relations(relation.this))
-    if isinstance(relation, exp.Table):
-        for join in relation.args.get("joins", []):
-            found.extend(_relations(join.this))
+    for join in relation.args.get("joins") or []:
+        found.extend(_relations(join.this))
     return found

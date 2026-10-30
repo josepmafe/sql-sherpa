@@ -353,6 +353,33 @@ REJECTED_QUERIES = [
         "whole-row reference `c` is not allowed",
     ),
     (
+        "select c from ((select 1 as a) x join marts.dim_customers c on true)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from ((marts.fct_orders o join marts.fct_order_items i on true) join marts.dim_customers c on true)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from (((marts.fct_orders o join marts.fct_order_items i on true))"
+        " join marts.dim_customers c on true)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from ((marts.fct_orders o join marts.fct_order_items i on true) p"
+        " join marts.dim_customers c on true)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from (marts.fct_orders o join marts.fct_order_items i on true join marts.dim_customers c on true)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
         "select d from (marts.dim_customers c join marts.fct_order_items d on true)",
         "whole_row",
         "whole-row reference `d` is not allowed",
