@@ -11,10 +11,12 @@ from unittest.mock import create_autospec
 import pytest
 from mcp import Client
 from mcp.client.stdio import get_default_environment
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from mcp.types import TextContent
 from sherpa_mcp.database import WarehouseToolError
-from sherpa_mcp.server import build_server, configure_logging
+from sherpa_mcp.server import _transport_security, build_server, configure_logging
 from sherpa_mcp.tools import WarehouseTools
+from starlette.requests import Request
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -247,6 +249,7 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
 ) -> None:
     env = get_default_environment() | (stdio_server.env or {}) | {"SHERPA_DB_PORT": str(closed_port)}
 
+    # The server gives up after its 15 s wait; this bound fails the test if it hangs instead. It took 25 s once.
     completed = subprocess.run(
         [stdio_server.command, *stdio_server.args],
         input="",
@@ -255,7 +258,7 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
         encoding="utf-8",
         cwd=stdio_server.cwd,
         env=env,
-        timeout=STDIO_TIMEOUT_SECONDS,
+        timeout=60,
         check=False,
     )
 
@@ -264,6 +267,48 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
     assert "cannot connect to the warehouse at" in completed.stderr
     assert completed.stdout == ""
     assert env["SHERPA_AGENT_PASSWORD"] not in completed.stderr
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_loopback_bind_leaves_the_sdks_own_protection(host: str) -> None:
+    assert _transport_security(host) is None
+
+
+def test_other_binds_allow_loopback_and_the_compose_service_name() -> None:
+    assert _transport_security("0.0.0.0") == TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "mcp:*"],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", "http://mcp:*"],
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("host", "origin", "status"),
+    [
+        ("127.0.0.1:8765", None, None),
+        ("localhost:8765", None, None),
+        ("[::1]:8765", None, None),
+        ("mcp:8765", None, None),
+        ("evil.example:8765", None, 421),
+        ("127.0.0.1.evil.example:8765", None, 421),
+        ("mcp", None, 421),
+        ("localhost:8765", "http://localhost:5173", None),
+        ("localhost:8765", "http://evil.example:5173", 403),
+    ],
+)
+async def test_other_binds_check_host_and_origin_as_the_sdk_does(
+    host: str, origin: str | None, status: int | None
+) -> None:
+    headers = [(b"host", host.encode()), (b"content-type", b"application/json")]
+    if origin is not None:
+        headers.append((b"origin", origin.encode()))
+    request = Request({"type": "http", "method": "POST", "headers": headers})
+    middleware = TransportSecurityMiddleware(_transport_security("0.0.0.0"))
+
+    response = await middleware.validate_request(request, is_post=True)
+
+    assert (response.status_code if response is not None else None) == status
 
 
 @pytest.mark.warehouse

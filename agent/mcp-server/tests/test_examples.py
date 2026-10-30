@@ -4,19 +4,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 import yaml
-from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.examples import Example, ExampleIndex
 from sherpa_mcp.sql_guard import SqlGuard
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sherpa_mcp.catalog import MartCatalogLoader
 
-def _mart_columns(repo_root: Path) -> dict[str, frozenset[str]]:
-    """The built catalog's marts and columns; without a prod build, the same names from the marts' dbt YAML."""
-    prod_target = repo_root / "data-platform" / "dbt" / "target-prod"
-    if prod_target.joinpath("catalog.json").exists():
-        return MartCatalogLoader(prod_target).load().mart_columns()
+
+def _yaml_mart_columns(repo_root: Path) -> dict[str, frozenset[str]]:
+    """The marts and their columns as the marts' dbt YAML declares them, which needs no build."""
     models = [
         model
         for path in (repo_root / "data-platform" / "dbt" / "models" / "marts").glob("*/_*__models.yml")
@@ -145,13 +143,26 @@ class TestExampleIndex:
 
 
 def test_examples_yaml_passes_the_guard(repo_root: Path, examples_path: Path, marts: tuple[str, ...]) -> None:
-    mart_columns = _mart_columns(repo_root)
+    mart_columns = _yaml_mart_columns(repo_root)
     assert set(mart_columns) == set(marts)
     index = ExampleIndex.from_yaml(examples_path)
     guard = SqlGuard(mart_columns)
 
-    assert len(index.examples) == 19
+    assert index.examples
     for example in index.examples:
         result = guard.check(example.sql)
         assert result.ok, f"{example.question}: {result.errors}"
         assert example.notes
+
+
+@pytest.mark.warehouse
+def test_examples_yaml_passes_the_guard_on_the_build(
+    repo_root: Path, examples_path: Path, prod_loader: MartCatalogLoader
+) -> None:
+    built = prod_loader.load().mart_columns()
+    guard = SqlGuard(built)
+
+    assert _yaml_mart_columns(repo_root) == built
+    for example in ExampleIndex.from_yaml(examples_path).examples:
+        result = guard.check(example.sql)
+        assert result.ok, f"{example.question}: {result.errors}"

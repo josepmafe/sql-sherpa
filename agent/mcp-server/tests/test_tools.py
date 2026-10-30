@@ -11,7 +11,7 @@ import pytest
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import QueryResult, WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
-from sherpa_mcp.tools import DOMAIN_SUBJECTS, TableSummary, WarehouseTools
+from sherpa_mcp.tools import TableSummary, WarehouseTools
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,10 +59,6 @@ NOTES = [
     "test accounts and their orders are left out of every mart",
     "sessions are web only: app orders have no session, so conversion_rate and session counts leave app orders out",
 ]
-
-
-def test_marketing_web_subject_does_not_promise_landing_pages() -> None:
-    assert "landing page" not in DOMAIN_SUBJECTS["marketing_web"]
 
 
 @pytest.mark.warehouse
