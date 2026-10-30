@@ -326,6 +326,11 @@ REJECTED_QUERIES = [
         "whole-row reference `c` is not allowed",
     ),
     ("with x as (select 1 as a) select x from x", "whole_row", "whole-row reference `x` is not allowed"),
+    (
+        "with revenue as (select sum(net_revenue) as revenue from marts.fct_orders) select revenue from revenue",
+        "whole_row",
+        "whole-row reference `revenue` is not allowed",
+    ),
     ("select s from (select email from marts.dim_customers) s", "whole_row", "whole-row reference `s` is not allowed"),
     (
         "select * from marts.fct_orders where exists (select c from marts.dim_customers c)",
@@ -555,7 +560,16 @@ REMEDY_HINTS = [
     ("select * from fct_orders", "table", "qualify it as marts.fct_orders"),
     ("select * from pg_catalog.pg_roles", "table", "query only the marts that list_tables returns"),
     ("select * from a.b.c.d", "table", "use marts.<name>"),
-    ("select c from marts.dim_customers c", "whole_row", "select named columns"),
+    (
+        "select c from marts.dim_customers c",
+        "whole_row",
+        "select named columns; qualify a column that shares a table, alias or CTE name (`t.name`)",
+    ),
+    (
+        "with revenue as (select sum(net_revenue) as revenue from marts.fct_orders) select revenue from revenue",
+        "whole_row",
+        "select named columns; qualify a column that shares a table, alias or CTE name (`t.name`)",
+    ),
     ("select c.*::text from marts.dim_customers c", "whole_row", "select named columns"),
     ("select (c.email).x from marts.dim_customers c", "field", "select named columns"),
     ("select c.nope from marts.dim_customers c", "column", "use a column listed by describe_table"),
@@ -1115,6 +1129,8 @@ class TestWholeRowReferences:
             "with t as (select c.* from marts.dim_customers c) select t.* from t",
             "select customer_id from marts.dim_customers c where c.customer_id > 1",
             "with x as (select 1 as a) select a from x",
+            "with revenue as (select sum(net_revenue) as revenue from marts.fct_orders) "
+            "select r.revenue from revenue r",
             "select s.email from (select email from marts.dim_customers) s",
         ],
     )
