@@ -217,3 +217,13 @@ def test_falls_back_to_yaml_columns_without_a_catalog(tmp_path: Path, manifests:
     assert [info.ref.column for info in lineage.columns_of(FCT)] == ["id"]
     assert lineage.node_note(FCT) == NOTE_NO_CATALOG
     assert ColumnRef(unique_id=ENRICHED, column="id") in lineage.focus(ColumnRef(unique_id=FCT, column="id")).upstream
+
+
+@pytest.mark.usefixtures("fake_builder")
+def test_a_first_build_that_fails_in_sqlglot_is_catalog_unavailable(
+    loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]
+) -> None:
+    fake_builder.fail = True
+
+    with pytest.raises(CatalogUnavailable, match="cannot build the column lineage"):
+        loader.load()

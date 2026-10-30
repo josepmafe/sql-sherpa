@@ -7,6 +7,7 @@ from unittest.mock import create_autospec
 import pytest
 from sherpa_mcp.catalog import CatalogUnavailable
 from sherpa_ui.build.build_status import BuildStatusReader, BuildStatusUnavailable
+from sherpa_ui.lineage import column_lineage_loader
 from sherpa_ui.lineage.column_lineage import (
     ColumnEdge,
     ColumnInfo,
@@ -22,9 +23,12 @@ from sherpa_ui.lineage.manifest_loader import ManifestLoader
 from sherpa_ui.lineage.node_sql import NodeSql
 from sherpa_ui.lineage.node_status import NodeStatus, TestOutcome
 from sherpa_ui.lineage.selector import UnsupportedSelector
+from sqlglot.errors import SqlglotError
 from ui_helpers import STARTED_AT, make_last_full_build, make_node_result
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sherpa_ui.lineage.lineage_service import LineageGraph
 
 PROJECT_NODE_COUNT = 12  # the conftest project: 6 models, seed, snapshot, 3 sources, exposure
@@ -420,3 +424,43 @@ class TestLineageServiceColumns:
 
         assert view is not None
         assert view.focus.column == "id"
+
+
+class _ExplodingBuilder:
+    def __init__(self, *_: object, **__: object) -> None:
+        pass
+
+    def build(self, _: object) -> ColumnLineage:
+        raise SqlglotError("boom")
+
+
+class TestLineageServiceFirstBuildFails:
+    @pytest.fixture
+    def failing_service(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        graph: ManifestGraph,
+        builds: BuildStatusReader,
+        node_sql: NodeSql,
+    ) -> LineageService:
+        monkeypatch.setattr(column_lineage_loader, "ColumnLineageBuilder", _ExplodingBuilder)
+        (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
+        manifests = create_autospec(ManifestLoader, instance=True)
+        manifests.load.return_value = graph
+        return LineageService(manifests, builds, node_sql, ColumnLineageLoader(tmp_path, manifests, node_sql))
+
+    def test_graph_and_panel_survive_with_the_reason(self, failing_service: LineageService) -> None:
+        result = failing_service.graph("fct_orders", None, failing_only=False, columns=True)
+        details = failing_service.node("model.p.fct_orders")
+
+        assert [node.name for node in result.nodes] == ["fct_orders"]
+        assert result.column_lineage == "unavailable"
+        assert result.column_lineage_reason is not None
+        assert "boom" in result.column_lineage_reason
+        assert details is not None
+        assert details.column_lineage_note is not None
+
+    def test_focus_raises_catalog_unavailable(self, failing_service: LineageService) -> None:
+        with pytest.raises(CatalogUnavailable):
+            failing_service.column_focus("model.p.fct_orders", "id")

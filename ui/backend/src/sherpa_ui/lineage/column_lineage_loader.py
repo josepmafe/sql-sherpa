@@ -56,6 +56,8 @@ class ColumnLineageLoader:
                 return self._lineage
             except (CatalogUnavailable, SqlglotError) as exc:
                 if self._lineage is None:
+                    if isinstance(exc, SqlglotError):
+                        raise CatalogUnavailable(f"cannot build the column lineage: {exc}") from exc
                     raise
 
                 logger.warning("could not rebuild the column lineage, so the previous one stays in use: %s", exc)
