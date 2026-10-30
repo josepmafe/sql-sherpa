@@ -61,6 +61,8 @@ packages = ["data-platform/generator/src/sherpa_generator", "agent/mcp-server/sr
 testpaths = ["data-platform/generator/tests", "data-platform/tests", "agent/mcp-server/tests", "ui/backend/tests"]
 pythonpath = ["data-platform/scripts", "data-platform/generator/tests"]  # scripts is not a package, and the generator tests import their helpers module
 addopts = '-m "not slow and not warehouse" --import-mode=importlib'  # an explicit -m on the command line replaces the marker default; importlib lets two components both have a test_settings.py
+# Pytest's default list without `build`, which would skip ui/backend/tests/build/.
+norecursedirs = ["*.egg", ".*", "_darcs", "CVS", "dist", "node_modules", "venv", "{arch}"]
 markers = [
     "integration: needs Postgres",
     "slow: full-year runs",

@@ -14,6 +14,11 @@ vi.mock("../src/api/queries", async (importOriginal) => ({
   useLineage: () => ({ error: null, data: { nodes: [], edges: [], layers_available: [], build: { state: "ok" } } }),
 }));
 
+vi.mock("../src/screens/lineage/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/screens/lineage/layout")>()),
+  layoutGraph: () => Promise.resolve(new Map()),
+}));
+
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   return render(

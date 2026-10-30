@@ -289,7 +289,7 @@ describe("ExplorerScreen", () => {
 
   it("from 1280 px the Inspector has its own column", async () => {
     const user = userEvent.setup();
-    const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
+    vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
     renderScreen();
     expect(screen.getByText("Select a table to inspect it.")).toBeInTheDocument();
 
@@ -297,7 +297,6 @@ describe("ExplorerScreen", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Table details" })).toHaveTextContent("Loading fct_orders…");
-    matchMedia.mockRestore();
   });
 
   it("typing in one worksheet re-renders neither the other worksheets nor any result grid", async () => {
@@ -321,7 +320,8 @@ describe("ExplorerScreen", () => {
     act(() => editors()[0]!.dispatch({ changes: { from: 0, insert: "x" } }));
 
     expect(editors()[0]!.state.doc.toString()).toBe("x-- note\nselect 1");
-    expect(panelRenders(first!.id)).toBe(before.first + 2);
+    expect(panelRenders(first!.id)).toBeGreaterThan(before.first);
+    expect(panelRenders(first!.id)).toBeLessThanOrEqual(before.first + 4); // a bound, not React's exact count
     expect(panelRenders(second!.id)).toBe(before.second);
     expect(cellText).not.toHaveBeenCalled();
   });

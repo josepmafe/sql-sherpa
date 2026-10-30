@@ -25,6 +25,18 @@ BACKEND_EXIT_SECONDS = 2.0  # how long the server process of a closed connection
 # sessions (backend_type, state, query) as NULL.
 UI_SESSIONS = "select count(*) from pg_stat_activity where usename = %s"
 
+_DESELECTED_FILES: set[Path] = set()
+
+
+def pytest_deselected(items: list[pytest.Item]) -> None:
+    """Note the files whose tests a marker expression left out, so `test_layout.py` can tell them from unseen ones."""
+    _DESELECTED_FILES.update(Path(str(item.path)).resolve() for item in items)
+
+
+@pytest.fixture(scope="session")
+def deselected_files() -> frozenset[Path]:
+    return frozenset(_DESELECTED_FILES)
+
 
 class AdminSettings(BaseSettings):
     """The admin login the warehouse tests use for their checks, read from `.env`."""

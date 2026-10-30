@@ -130,11 +130,15 @@ class TestBuildStatusReaderOnScratchDatabase:
 
 
 class TestBuildStatusReaderOffline:
-    def test_unavailable_when_the_database_is_down(self, settings: UiSettings, closed_port: int) -> None:
-        unreachable = settings.model_copy(update={"db_port": closed_port})
+    def test_unavailable_when_the_database_is_down(self, settings: UiSettings, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A refused connection takes the whole connect timeout on Windows, so the failure is raised directly.
+        def refused(*_: object, **__: object) -> None:
+            raise psycopg.OperationalError("connection failed: connection refused")
+
+        monkeypatch.setattr(psycopg, "connect", refused)
 
         with pytest.raises(BuildStatusUnavailable):
-            BuildStatusReader(unreachable).last_full_build()
+            BuildStatusReader(settings).last_full_build()
 
     def test_unavailable_when_the_statement_timeout_cancels_the_read(
         self, settings: UiSettings, monkeypatch: pytest.MonkeyPatch

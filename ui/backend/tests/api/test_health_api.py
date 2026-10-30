@@ -4,15 +4,23 @@ import logging
 from typing import TYPE_CHECKING
 
 import psycopg
+import pytest
 from sherpa_mcp.catalog import CatalogUnavailable
 
 if TYPE_CHECKING:
-    import pytest
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
 
 
 class TestHealthApi:
+    @pytest.fixture(autouse=True)
+    def database_down(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Connecting to a port nothing listens on takes the whole connect timeout on Windows.
+        def refused(*args: object, **kwargs: object) -> None:
+            raise psycopg.OperationalError("connection failed: connection refused")
+
+        monkeypatch.setattr(psycopg, "connect", refused)
+
     def test_artifacts_missing_reported(self, client: TestClient, loader: MartCatalogLoader) -> None:
         loader.load.side_effect = CatalogUnavailable("not built")  # type: ignore[attr-defined]
 
@@ -27,7 +35,6 @@ class TestHealthApi:
         assert body["artifacts"]["generated_at"].startswith("2026-10-01T00:00:00")
 
     def test_unreachable_database_reported_down(self, client: TestClient) -> None:
-        # The settings point at port 1, where nothing listens.
         body = client.get("/api/health").json()
 
         assert body["database"] == "down"

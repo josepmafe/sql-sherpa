@@ -47,6 +47,7 @@ describe("API hooks", () => {
   });
 
   it("a network failure is retried once", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     // fetch() rejects with a TypeError when no answer comes.
     get.mockImplementation(() => {
       throw new TypeError("Failed to fetch");
@@ -54,7 +55,9 @@ describe("API hooks", () => {
 
     const { result } = renderHook(() => useHealth(), { wrapper });
 
-    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3000 });
+    await waitFor(() => expect(get).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(1_000); // the retry delay
+    await waitFor(() => expect(result.current.isError).toBe(true));
     expect(get).toHaveBeenCalledTimes(2);
   });
 

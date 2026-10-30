@@ -17,6 +17,7 @@ from psycopg.postgres import types as postgres_types
 from pydantic import SecretStr
 from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.health.health_service import HealthService
+from sherpa_ui.readonly import query_runner
 from sherpa_ui.readonly.query_runner import MAX_CONCURRENT_QUERIES, QueryRunner, UiQueryError, user_position
 from sherpa_ui.readonly.sort_filter import (
     FilterSpec,
@@ -622,7 +623,7 @@ class TestQueryRunnerOffline:
     ) -> None:
         connection = _fake_connection()
         fetch_sizes: list[int] = []
-        _endless_rows(connection, width=1000, fetch_sizes=fetch_sizes)
+        _endless_rows(connection, width=1000, fetch_sizes=fetch_sizes, total_rows=10)
         monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
 
         offline_runner.run("q1", "select 1 as a")
@@ -635,16 +636,17 @@ class TestQueryRunnerOffline:
         # Postgres times each FETCH on its own, so a slow FETCH after slow FETCH would never reach its timeout.
         runner = QueryRunner(offline_settings.model_copy(update={"ui_statement_timeout_s": 1}), empty_catalog_loader)
         connection = _fake_connection()
-        _endless_rows(connection, width=1, fetch_sizes=[], delay=0.4)
+        clock = _FakeClock()
+        _endless_rows(connection, width=1, fetch_sizes=[], on_fetch=lambda: clock.advance(0.4))
         monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
-        started = time.monotonic()
+        monkeypatch.setattr(query_runner, "time", clock)  # the runner's only use of `time` is the monotonic clock
 
         with pytest.raises(UiQueryError) as error:
             runner.run("q1", "select 1 as a")
 
         assert error.value.code == "timeout"
         assert error.value.message == "the query ran longer than 1 s and was stopped; filter or aggregate more narrowly"
-        assert time.monotonic() - started < 2
+        assert clock.now == pytest.approx(1.2)  # three fetches: the third ends past the 1 s timeout
         connection.close.assert_called_once_with()
 
     def test_format_pretty_prints_postgres(self, offline_runner: QueryRunner) -> None:
@@ -1191,15 +1193,42 @@ def _fake_connection(rows: list[tuple[object, ...]] | None = None, columns: tupl
     return connection
 
 
-def _endless_rows(connection: MagicMock, width: int, fetch_sizes: list[int], delay: float = 0.0) -> None:
-    """Make the cursor of `connection` return as many rows of `width` int4 columns as each FETCH asks for."""
+class _FakeClock:
+    """Stands in for the `time` module of the runner: time passes only when a test advances it."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _endless_rows(
+    connection: MagicMock,
+    width: int,
+    fetch_sizes: list[int],
+    on_fetch: Callable[[], None] | None = None,
+    total_rows: int | None = None,
+) -> None:
+    """Make the cursor of `connection` return as many rows of `width` int4 columns as each FETCH asks for, up to
+    `total_rows` when given; `on_fetch` runs at every FETCH."""
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.description = [SimpleNamespace(name=f"c{index}", type_code=INT4_OID) for index in range(width)]
+    left = [total_rows]
 
     def fetchmany(size: int) -> list[tuple[object, ...]]:
         fetch_sizes.append(size)
-        time.sleep(delay)
-        return [(0,) * width] * size
+        if on_fetch is not None:
+            on_fetch()
+
+        count = size if left[0] is None else min(size, left[0])
+        if left[0] is not None:
+            left[0] -= count
+
+        return [(0,) * width] * count
 
     cursor.fetchmany.side_effect = fetchmany
 
