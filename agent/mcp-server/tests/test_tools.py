@@ -584,7 +584,7 @@ class TestDescribeTable:
 
 
 class TestSearchValues:
-    def test_the_query_ranks_by_similarity_then_value_and_sets_the_thresholds(
+    def test_the_query_ranks_by_similarity_then_value_and_asks_for_the_thresholds(
         self, fake_tools: WarehouseTools, fake_database: Mock
     ) -> None:
         fake_database.fetch.return_value = _result(("value", "similarity", "row_count"), [])
@@ -696,7 +696,7 @@ class TestValidateSql:
     def test_a_query_reading_the_clock_warns_with_the_as_of_date(
         self, fake_tools: WarehouseTools, fake_database: Mock
     ) -> None:
-        fake_database.scalar.return_value = dt.date(2025, 12, 31)
+        _set_dates(fake_database, first=dt.date(2025, 1, 1), latest=dt.date(2025, 12, 31))
 
         validation = fake_tools.validate_sql(
             "select count(*) from marts.fct_orders where order_date >= current_date - 30"
@@ -710,7 +710,7 @@ class TestValidateSql:
         fake_database.scalar.assert_called_once_with(AS_OF_QUERY)
 
     def test_allowed_functions_pass_in_upper_case(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        fake_database.scalar.return_value = dt.date(2025, 12, 31)
+        _set_dates(fake_database, first=dt.date(2025, 1, 1), latest=dt.date(2025, 12, 31))
 
         validation = fake_tools.validate_sql(
             "SELECT UPPER(current_status), COUNT(*), SUM(net_revenue), COALESCE(MAX(order_date), CURRENT_DATE) "
@@ -778,6 +778,42 @@ class TestRunSql:
             fake_tools.run_sql("select order_id from marts.fct_orders")
 
 
+class TestToolsWithoutArtifacts:
+    def test_tools_report_missing_artifacts(self, tmp_path: Path, fake_database: Mock) -> None:
+        tools = WarehouseTools(MartCatalogLoader(tmp_path), fake_database, ExampleIndex([]))
+        # Every tool that reads the catalog; get_examples is covered separately below.
+        calls = (
+            tools.get_context,
+            tools.list_tables,
+            lambda: tools.describe_table("fct_orders"),
+            lambda: tools.search_values("dim_products", "brand", "x"),
+            tools.get_metric_definitions,
+            lambda: tools.validate_sql("select 1"),
+            lambda: tools.run_sql("select 1"),
+        )
+
+        for call_tool in calls:
+            with pytest.raises(WarehouseToolError, match=r"^\[unavailable\] .*make build-prod"):
+                call_tool()
+
+        # The catalog is read first: the database is never touched.
+        assert fake_database.method_calls == []
+
+    def test_get_examples_is_static_and_needs_no_artifacts(
+        self, tmp_path: Path, fake_database: Mock, examples_path: Path
+    ) -> None:
+        # get_examples reads examples.yaml only, so it is intentionally independent of the dbt catalog.
+        tools = WarehouseTools(MartCatalogLoader(tmp_path), fake_database, ExampleIndex.from_yaml(examples_path))
+
+        assert len(tools.get_examples("net revenue by month", k=2).examples) == 2
+
+
+def _only_span(spans: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    matching = [span for span in spans if span["name"] == name]
+    assert len(matching) == 1, [span["name"] for span in spans]
+    return matching[0]
+
+
 def _result(
     columns: tuple[str, ...],
     rows: Sequence[tuple[object, ...]],
@@ -821,39 +857,3 @@ def _value_query_column(text: str) -> str:
     found = re.match(r'select "(\w+)" from "marts"', text)
     assert found, text
     return found.group(1)
-
-
-class TestToolsWithoutArtifacts:
-    def test_tools_report_missing_artifacts(self, tmp_path: Path, fake_database: Mock) -> None:
-        tools = WarehouseTools(MartCatalogLoader(tmp_path), fake_database, ExampleIndex([]))
-        # Every tool that reads the catalog; get_examples is covered separately below.
-        calls = (
-            tools.get_context,
-            tools.list_tables,
-            lambda: tools.describe_table("fct_orders"),
-            lambda: tools.search_values("dim_products", "brand", "x"),
-            tools.get_metric_definitions,
-            lambda: tools.validate_sql("select 1"),
-            lambda: tools.run_sql("select 1"),
-        )
-
-        for call_tool in calls:
-            with pytest.raises(WarehouseToolError, match=r"^\[unavailable\] .*make build-prod"):
-                call_tool()
-
-        # The catalog is read first: the database is never touched.
-        assert fake_database.method_calls == []
-
-    def test_get_examples_is_static_and_needs_no_artifacts(
-        self, tmp_path: Path, fake_database: Mock, examples_path: Path
-    ) -> None:
-        # get_examples reads examples.yaml only, so it is intentionally independent of the dbt catalog.
-        tools = WarehouseTools(MartCatalogLoader(tmp_path), fake_database, ExampleIndex.from_yaml(examples_path))
-
-        assert len(tools.get_examples("net revenue by month", k=2).examples) == 2
-
-
-def _only_span(spans: list[dict[str, Any]], name: str) -> dict[str, Any]:
-    matching = [span for span in spans if span["name"] == name]
-    assert len(matching) == 1, [span["name"] for span in spans]
-    return matching[0]

@@ -459,6 +459,21 @@ class TestAgentDatabaseOnPostgres:
         assert str(error.value) == "[sql] cannot insert multiple commands into a prepared statement"
         assert agent_database.scalar("select 1") == 1
 
+    def test_a_statement_that_is_not_a_query_is_a_syntax_error_in_a_cursor_and_in_explain(
+        self, agent_database: AgentDatabase
+    ) -> None:
+        # The guard is not involved: DECLARE ... CURSOR FOR and EXPLAIN only take a query, so Postgres refuses a
+        # statement that changes the role before it can run.
+        statement = "alter role sherpa_agent set default_transaction_read_only = off"
+
+        with pytest.raises(WarehouseToolError) as fetched:
+            agent_database.fetch(statement)
+        with pytest.raises(WarehouseToolError) as explained:
+            agent_database.explain(statement)
+
+        assert str(fetched.value) == '[sql] syntax error at or near "alter" (at character 1)'
+        assert str(explained.value) == '[sql] syntax error at or near "alter" (at character 1)'
+
     def test_explain_plans_without_running_the_query(self, agent_database: AgentDatabase) -> None:
         # Running this query would raise DivisionByZero.
         agent_database.explain("select 1 / (n - n) from generate_series(1, 1) n")

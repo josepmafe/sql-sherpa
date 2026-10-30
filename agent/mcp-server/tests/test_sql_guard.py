@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 import pytest
-from sherpa_mcp.database import MAX_CELL_CHARS
-from sherpa_mcp.sql_guard import ALLOWED_FUNCTIONS, MAX_PAD_LENGTH, SqlGuard
+from sherpa_mcp.sql_guard import ALLOWED_FUNCTIONS, SqlGuard
+
+if TYPE_CHECKING:
+    import psycopg
+    from sherpa_mcp.settings import McpSettings
 
 MART_COLUMNS = {
     "fct_orders": frozenset(
@@ -73,6 +77,10 @@ REJECTED_QUERIES = [
     ("copy marts.fct_orders to stdout", "not_select", "the statement must be a SELECT query, not COPY"),
     ("copy (select 1) to program 'id'", "not_select", "the statement must be a SELECT query, not COPY"),
     ("begin", "not_select", "the statement must be a SELECT query, not BEGIN"),
+    ("start transaction", "not_select", "the statement must be a SELECT query, not START"),
+    ("checkpoint", "not_select", "the statement must be a SELECT query, not CHECKPOINT"),
+    ("abort", "not_select", "the statement must be a SELECT query, not ABORT"),
+    ("cluster", "not_select", "the statement must be a SELECT query, not CLUSTER"),
     ("grant select on marts.fct_orders to public", "not_select", "the statement must be a SELECT query, not GRANT"),
     # writes hidden inside a query
     ("select * into x from marts.fct_orders", "select_into", "SELECT ... INTO is not allowed"),
@@ -83,6 +91,12 @@ REJECTED_QUERIES = [
         "with i as (insert into marts.fct_orders values (1) returning *) select * from i",
         "write",
         "INSERT is not allowed",
+    ),
+    (
+        "with d as (merge into marts.fct_orders t using marts.dim_customers s on true when matched then delete) "
+        "select 1",
+        "write",
+        "MERGE is not allowed",
     ),
     ("select * from marts.fct_orders for update", "locking", "locking clause FOR UPDATE/SHARE is not allowed"),
     ("select * from marts.fct_orders for share", "locking", "locking clause FOR UPDATE/SHARE is not allowed"),
@@ -312,6 +326,17 @@ REJECTED_QUERIES = [
     ("select s from (select email from marts.dim_customers) s", "whole_row", "whole-row reference `s` is not allowed"),
     (
         "select * from marts.fct_orders where exists (select c from marts.dim_customers c)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    # an alias of an outer query read from a subquery
+    (
+        "select (select c from marts.fct_orders o limit 1) from marts.dim_customers c",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select x.v from marts.dim_customers c, lateral (select c as v) x",
         "whole_row",
         "whole-row reference `c` is not allowed",
     ),
@@ -639,6 +664,48 @@ class TestAllowedFunctions:
         assert not SqlGuard(MART_COLUMNS).check("select md5(channel) from marts.fct_orders").ok
 
 
+@pytest.mark.integration
+class TestFunctionsThePostgresRoleCanRun:
+    def test_the_guard_accepts_exactly_the_specs_functions_among_them(
+        self, guard: SqlGuard, admin: psycopg.Connection, warehouse_settings: McpSettings
+    ) -> None:
+        # Every function the agent role may execute, by a name Postgres reads unquoted, called with 0 to 4 literal
+        # arguments. The accepted names are the spec's list (agent spec §4.2) as Postgres spells it, plus a few other
+        # spellings that sqlglot parses into an allowed node or operator.
+        names = [
+            row[0]
+            for row in admin.execute(
+                "select distinct proname from pg_proc"
+                " where has_function_privilege(%s, oid, 'EXECUTE') and proname ~ '^[a-z_][a-z0-9_]*$' order by 1",
+                (warehouse_settings.agent_user,),
+            )
+        ]
+
+        accepted = {name for name in names if any(guard.check(_call(name, arguments)).ok for arguments in range(5))}
+
+        assert accepted == {
+            # aggregates
+            *("count", "sum", "avg", "min", "max", "stddev", "stddev_samp", "stddev_pop", "variance"),
+            *("var_samp", "var_pop", "percentile_cont", "percentile_disc", "mode"),
+            *("string_agg", "array_agg", "bool_and", "bool_or"),
+            # window
+            *("row_number", "rank", "dense_rank", "ntile", "lag", "lead", "first_value", "last_value", "nth_value"),
+            *("percent_rank", "cume_dist"),
+            # math
+            *("abs", "round", "ceil", "ceiling", "floor", "trunc", "power", "pow", "sqrt", "ln", "log", "exp", "mod"),
+            *("sign",),
+            # string
+            *("lower", "upper", "length", "char_length", "substring", "substr", "ltrim", "rtrim", "replace"),
+            *("concat", "concat_ws", "left", "right", "split_part", "strpos", "position", "lpad", "rpad", "initcap"),
+            # date
+            *("date_trunc", "date_part", "extract", "age", "now", "to_char", "to_date", "make_date", "date_bin"),
+            # trigram
+            "similarity",
+            # other spellings of the above that sqlglot parses into an allowed node or operator
+            *("btrim", "character_length", "div", "interval", "like", "log10"),
+        }
+
+
 class TestSqlGuard:
     def test_accepts_plain_select(self, guard: SqlGuard) -> None:
         result = guard.check("select order_id, net_revenue from marts.fct_orders where order_date >= '2025-01-01'")
@@ -731,6 +798,17 @@ class TestSqlGuard:
             select customer_id from marts.dim_customers
             except
             select customer_id from marts.fct_order_items
+        """
+
+        result = guard.check(sql)
+
+        assert result.ok
+
+    def test_accepts_intersect_of_selects(self, guard: SqlGuard) -> None:
+        sql = """
+            select customer_id from marts.fct_orders
+            intersect
+            select customer_id from marts.dim_customers
         """
 
         result = guard.check(sql)
@@ -892,9 +970,6 @@ class TestSqlGuard:
         result = guard.check(sql)
 
         assert result.ok, result.errors
-
-    def test_pad_limit_is_the_cell_cap(self) -> None:
-        assert MAX_PAD_LENGTH == MAX_CELL_CHARS
 
     def test_repeat_stays_rejected(self, guard: SqlGuard) -> None:
         result = guard.check("select repeat('a', 5) from marts.fct_orders")
@@ -1221,3 +1296,7 @@ def _says(error: str, rule: str, message: str) -> bool:
     rest = error.removeprefix(f"[guard:{rule}] ")
 
     return rest.startswith(message) and not rest[len(message) :][:1].isalnum()
+
+
+def _call(name: str, arguments: int) -> str:
+    return f"select {name}({', '.join(['1'] * arguments)}) from marts.fct_orders"
