@@ -35,10 +35,11 @@ def test_stable_int_distinguishes_part_boundaries() -> None:
 class TestDeterministicRandom:
     def test_draws_match_a_subprocess_with_a_fixed_hash_seed(self) -> None:
         """Covers the day stream and every locale and provider the generator draws names, emails and addresses from
-        (Spec A §5.1). The subprocess pins PYTHONHASHSEED, so a hash-dependent draw differs from this process."""
+        (Spec A §5.1). The subprocess pins a PYTHONHASHSEED other than this process's, so a hash-dependent draw
+        differs from it."""
         output = subprocess.run(
             [sys.executable, "-c", PROBE],
-            env={**os.environ, "PYTHONHASHSEED": "1"},
+            env={**os.environ, "PYTHONHASHSEED": _other_hash_seed()},
             capture_output=True,
             text=True,
             check=True,
@@ -160,3 +161,8 @@ def _draws_in_this_process() -> dict[str, object]:
         "random": DeterministicRandom(SEED).for_day(DAY).random(),
         "faker": [getattr(faker[loc], m)() for loc in FAKER_LOCALES for m in FAKER_METHODS for _ in range(20)],
     }
+
+
+def _other_hash_seed() -> str:
+    """A seed that differs from the one this process was started with, when that one was pinned."""
+    return "2" if os.environ.get("PYTHONHASHSEED") == "1" else "1"

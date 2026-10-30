@@ -252,6 +252,17 @@ class TestOrderLifecycleSimulator:
             assert discount_total <= subtotal
 
     @pytest.mark.integration
+    def test_no_coupon_code_is_single_use(self, month: Database) -> None:
+        """Known simplification (Spec A §5.4): every coupon code is unlimited."""
+        with month.connect() as conn:
+            [(coupons, single_use)] = fetch_all(
+                conn, "SELECT count(*), count(*) FILTER (WHERE is_single_use) FROM raw_shop.coupon_codes"
+            )
+
+        assert coupons > 0
+        assert single_use == 0
+
+    @pytest.mark.integration
     def test_app_share(self, month: Database) -> None:
         with month.connect() as conn:
             [(orders, app)] = fetch_all(
