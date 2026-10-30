@@ -7,7 +7,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import create_autospec
 
 import psycopg
@@ -104,11 +104,11 @@ def fixture_target(tmp_path: Path) -> Path:
 def fake_database() -> AgentDatabase:
     """An `AgentDatabase` that answers nothing until a test sets the canned `QueryResult`s of `fetch`,
     `fetch_for_model` and `scalar`; a call with the wrong signature fails (autospec)."""
-    database = create_autospec(AgentDatabase, instance=True)
+    database: Any = create_autospec(AgentDatabase, instance=True)
     empty = QueryResult(columns=(), rows=(), returned_rows=0, truncated=False, elapsed_ms=0)
     database.fetch.return_value = empty
     database.fetch_for_model.return_value = empty
-    return database  # type: ignore[no-any-return]
+    return cast("AgentDatabase", database)
 
 
 @pytest.fixture

@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import psycopg
 import pytest
@@ -179,6 +180,28 @@ class TestErrorMapping:
 
         with pytest.raises(AttributeError):
             result.truncated = True  # type: ignore[misc]
+
+
+class TestSessionOptions:
+    def test_similarity_thresholds_are_set_locally_to_the_specs_values(self) -> None:
+        conn = MagicMock()
+
+        AgentDatabase._begin(conn, set_similarity_threshold=True)
+
+        statements = [item.args[0].as_string() for item in conn.execute.call_args_list]
+        assert statements == [
+            "set local statement_timeout = '5s'",
+            "set local pg_trgm.similarity_threshold = '0.2'",
+            "set local pg_trgm.word_similarity_threshold = '0.6'",
+        ]
+
+    def test_thresholds_are_left_alone_unless_requested(self) -> None:
+        conn = MagicMock()
+
+        AgentDatabase._begin(conn, set_similarity_threshold=False)
+
+        statements = [item.args[0].as_string() for item in conn.execute.call_args_list]
+        assert statements == ["set local statement_timeout = '5s'"]
 
 
 class TestStartup:
