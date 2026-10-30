@@ -320,7 +320,11 @@ class TestAgentDatabaseOnPostgres:
 
         def recording(conn: psycopg.Connection, *, set_similarity_threshold: bool = False) -> None:
             begin(conn, set_similarity_threshold=set_similarity_threshold)
-            seen.append(conn.execute("select current_setting('transaction_read_only')").fetchone())
+            seen.append(
+                conn.execute(
+                    "select current_setting('default_transaction_read_only'), current_setting('transaction_read_only')"
+                ).fetchone()
+            )
 
         try:
             database.fetch("select set_config('default_transaction_read_only', 'off', false)")
@@ -331,7 +335,8 @@ class TestAgentDatabaseOnPostgres:
             database.close()
 
         assert fetched == "on"
-        assert seen == [("on",), ("on",)]  # inside fetch, then inside explain
+        # The default really is off in the later transactions, so only the per-transaction setting keeps them read-only.
+        assert seen == [("off", "on"), ("off", "on")]  # inside fetch, then inside explain
 
     def test_fetch_caps_and_flags_truncation(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch("select n from generate_series(1, 101) n")

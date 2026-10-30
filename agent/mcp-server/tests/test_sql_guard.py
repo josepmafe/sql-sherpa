@@ -151,6 +151,7 @@ REJECTED_QUERIES = [
     ("select pg_catalog.pg_sleep(1)", "function", "function pg_catalog.pg_sleep is not allowed"),
     ("select pg_catalog.lower('a') from marts.fct_orders", "function", "function pg_catalog.lower is not allowed"),
     ("select marts.lower('a') from marts.fct_orders", "function", "function marts.lower is not allowed"),
+    ("select * from pg_catalog.lower('a')", "function", "function pg_catalog.lower is not allowed"),
     ("select * from public.lower('a')", "function", "function public.lower is not allowed"),
     ("select * from marts.upper('a') u", "function", "function marts.upper is not allowed"),
     ("select * from sherpa.public.lower('a')", "function", "function sherpa.public.lower is not allowed"),
@@ -326,6 +327,11 @@ REJECTED_QUERIES = [
         "whole-row reference `c` is not allowed",
     ),
     ("with x as (select 1 as a) select x from x", "whole_row", "whole-row reference `x` is not allowed"),
+    (
+        "with x as (select email from marts.dim_customers) select x from (marts.fct_orders o join x on true)",
+        "whole_row",
+        "whole-row reference `x` is not allowed",
+    ),
     (
         "with revenue as (select sum(net_revenue) as revenue from marts.fct_orders) select revenue from revenue",
         "whole_row",
@@ -563,12 +569,12 @@ REMEDY_HINTS = [
     (
         "select c from marts.dim_customers c",
         "whole_row",
-        "select named columns; qualify a column that shares a table, alias or CTE name (`t.name`)",
+        "select named columns, or qualify a column that shares a table, alias or CTE name (`t.name`)",
     ),
     (
         "with revenue as (select sum(net_revenue) as revenue from marts.fct_orders) select revenue from revenue",
         "whole_row",
-        "select named columns; qualify a column that shares a table, alias or CTE name (`t.name`)",
+        "select named columns, or qualify a column that shares a table, alias or CTE name (`t.name`)",
     ),
     ("select c.*::text from marts.dim_customers c", "whole_row", "select named columns"),
     ("select (c.email).x from marts.dim_customers c", "field", "select named columns"),

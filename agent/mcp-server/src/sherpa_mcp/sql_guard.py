@@ -70,7 +70,9 @@ JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_jso
 JSON_HINT: Final = "aggregate with string_agg, or select the columns"
 DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
 DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
-WHOLE_ROW_NAME_HINT: Final = "select named columns; qualify a column that shares a table, alias or CTE name (`t.name`)"
+WHOLE_ROW_NAME_HINT: Final = (
+    "select named columns, or qualify a column that shares a table, alias or CTE name (`t.name`)"
+)
 PARAMETER_MESSAGE: Final = "query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
 PARAMETER_HINT: Final = "write the values into the query, and abs(x) for an absolute value"
 NUMBER_HINT: Final = "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix"
