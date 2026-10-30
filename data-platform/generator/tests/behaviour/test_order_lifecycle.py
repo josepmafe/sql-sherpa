@@ -249,6 +249,7 @@ class TestOrderLifecycleSimulator:
 
     @pytest.mark.integration
     def test_app_share(self, month: Database) -> None:
+        # R12 (35 %) is a per-day rounded share of the web orders, not a binomial draw, so assert_rate does not apply.
         with month.connect() as conn:
             [(orders, app)] = fetch_all(
                 conn, "SELECT count(*), count(*) FILTER (WHERE sales_channel = 'app') FROM raw_shop.orders"

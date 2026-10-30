@@ -91,7 +91,7 @@ data-platform/
   generator/       the synthetic-data generator (Python package, CLI and tests)
   dbt/             the dbt project: sources, seeds, staging, intermediate and mart models, macros and tests
   scripts/         helper scripts, such as the dbt docs-coverage check
-  tests/           tests spanning the generator and dbt (seeds, reader access to the marts, scripts)
+  tests/           tests spanning the generator and dbt (seeds, reader access to the marts, scripts) and the roles' SQL (`postgres/`)
 agent/
   mcp-server/      the read-only MCP server (Python package `sherpa_mcp`, its tests and Dockerfile)
 ui/
