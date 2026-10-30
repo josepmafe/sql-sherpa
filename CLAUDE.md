@@ -163,10 +163,20 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
+- **MCP server tests** (`agent/mcp-server/tests/`):
+  - Every limit the spec names gets a boundary test on both sides, asserting the spec's literal value, never the module constant.
+  - A security allow-list is pinned by an exact-set test, and each rejected family the spec names has at least three members in the rejection table.
+  - A defence-in-depth layer is tested with the other layers turned off (the role's privileges with the guard skipped and a read-write session).
+  - A refusal test asserts which layer refused (the guard rule, the read-only session or the role's privileges).
+  - Tool logic that needs no rows is unit-tested in the default suite on the fixture catalog and an autospec'd `AgentDatabase`.
+  - Data-dependent assertions use data that tells the cases apart (values that differ per case, never all-equal rows).
+  - Never compare a tool's output with the constant it returns.
+  - Timing tests keep a 2× margin or patch the clock.
+  - When dbt is bumped, refresh the fixture manifest from a real build.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:
-  - `integration`: needs Postgres
+  - `integration`: needs Postgres. A test that needs only Postgres and the `sherpa_agent` role (no marts) is `integration`, not `warehouse`, so it runs in the default suite
   - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`). The MCP server tests over the compose container also need `SHERPA_TEST_MCP_CONTAINER=1` and the `mcp` service up; without it they are skipped. The UI's `e2e` Playwright specs need the compose stack up and the prod warehouse built; they run with `make e2e`, not pytest
   - `slow`: full-year runs
   - `live`: real Bedrock calls; costs money, never in CI

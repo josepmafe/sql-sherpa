@@ -107,6 +107,8 @@ List the sqlglot name (and the Postgres one if both can appear) and extend the m
 
 **2. `test_sql_guard.py`.** The list is the safety boundary and nothing else checks it:
 
+- update the set in `TestAllowedFunctions::test_the_allow_list_is_exactly_the_specs`: it compares the full spec §4.2 list with `ALLOWED_FUNCTIONS`, so an addition fails it until you list the name there under its category;
+- check the rejected-family rows (the parameters of `test_a_rejected_family_member_is_refused_by_name`): your function must not belong to a family the spec rejects (`pg_*` admin and file functions, `dblink*`, `lo_*`, `*_to_xml`, `setval`/`nextval`/`currval`, `current_setting`/`set_config`), and a new rejected family needs at least three members there;
 - add the call, written as a model would, to the `test_accepts_every_allowed_function` parameters;
 - add any abusable form (subquery argument, schema-qualified spelling, table-valued form, unbounded size) to `test_rejects_hostile_inputs` with the expected error fragment.
 
