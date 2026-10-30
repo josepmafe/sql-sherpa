@@ -200,8 +200,7 @@ class _Run:
                 self._fail(node, NOTE_SQL_UNPARSED)
                 return
 
-            roots, failures = self._trace(tree)
-            infos = self._describe(node, roots, failures)
+            infos = self._describe(node, self._trace(tree))
         except RecursionError:
             logger.warning("column lineage of %s: the compiled SQL is nested too deeply", node.unique_id)
             self._fail(node, NOTE_SQL_UNPARSED)
@@ -221,26 +220,15 @@ class _Run:
             for name in names
         )
 
-    def _trace(self, tree: exp.Query) -> tuple[dict[str, Node], dict[str, str]]:
-        """The lineage root of every output column, and the reason for each column sqlglot could not trace."""
-        try:
-            traced = lineage(None, tree, schema=self._schema, dialect=DIALECT)
-        except SqlglotError:
-            return self._trace_one_by_one(tree)  # one bad column fails the whole call: isolate it
+    def _trace(self, tree: exp.Query) -> dict[str, Node]:
+        """The lineage root of every output column. `trim_selects=False` keeps the CTEs reachable from a node's
+        source; partial qualification lets a column the parent lacks fail alone instead of failing the query."""
+        traced = lineage(
+            None, tree, schema=self._schema, dialect=DIALECT, trim_selects=False, allow_partial_qualification=True
+        )
+        return {name.lower(): root for name, root in traced.items()}
 
-        return {name.lower(): root for name, root in traced.items()}, {}
-
-    def _trace_one_by_one(self, tree: exp.Query) -> tuple[dict[str, Node], dict[str, str]]:
-        roots: dict[str, Node] = {}
-        failures: dict[str, str] = {}
-        for name in dict.fromkeys(select.alias_or_name for select in tree.selects if select.alias_or_name):
-            try:
-                roots[name.lower()] = lineage(name, tree, schema=self._schema, dialect=DIALECT)
-            except SqlglotError as exc:
-                failures[name.lower()] = str(exc)
-        return roots, failures
-
-    def _describe(self, node: GraphNode, roots: dict[str, Node], failures: dict[str, str]) -> list[ColumnInfo]:
+    def _describe(self, node: GraphNode, roots: dict[str, Node]) -> list[ColumnInfo]:
         names = self._columns_by_node.get(node.unique_id) or [name for name in roots if name != "*"]
         infos = []
         for name in names:
@@ -249,10 +237,6 @@ class _Run:
                 infos.append(_generated(node.unique_id, name))
             elif key in roots:
                 infos.append(self._classify(node, name, roots[key]))
-            elif key in failures:
-                infos.append(
-                    _info(node.unique_id, name, ColumnKind.TRANSFORMED, Resolution.UNRESOLVED, (failures[key],))
-                )
             elif "*" in roots:
                 note = f"* is not expanded: {'; '.join(self._unknown_relations(roots['*']))}"
                 infos.append(_info(node.unique_id, name, ColumnKind.TRANSFORMED, Resolution.UNRESOLVED, (note,)))
@@ -269,7 +253,7 @@ class _Run:
         for leaf in leaves:
             parent_uid = self._uid_by_relation.get(leaf.key)
             if parent_uid is None:
-                notes.append(f"unknown relation {'.'.join(leaf.key)}")
+                notes.append(f"reads an unknown relation {'.'.join(leaf.key)}")
             elif parent_uid == node.unique_id:
                 notes.append(NOTE_SELF_READ)
                 resolved += 1
@@ -306,7 +290,9 @@ class _Run:
 
     def _unknown_relations(self, root: Node) -> list[str]:
         return [
-            f"unknown relation {'.'.join(leaf.key)}" for leaf in _leaves(root) if leaf.key not in self._uid_by_relation
+            f"reads an unknown relation {'.'.join(leaf.key)}"
+            for leaf in _leaves(root)
+            if leaf.key not in self._uid_by_relation
         ]
 
     def _learn_ephemeral(self, node: GraphNode, infos: list[ColumnInfo]) -> None:
@@ -420,7 +406,7 @@ def _is_bare_chain(node: Node, casts: list[str]) -> bool:
 
     expression = node.expression.unalias()
     while isinstance(expression, exp.Cast):
-        casts.append(expression.to.sql(dialect=DIALECT).lower())
+        casts.append(_type_text(expression.to))
         expression = expression.this
     return (
         isinstance(expression, exp.Column)
@@ -460,3 +446,9 @@ def _unquote(identifier: str) -> str:
     if len(identifier) > 1 and identifier.startswith('"') and identifier.endswith('"'):
         return identifier[1:-1].replace('""', '"')
     return identifier
+
+
+def _type_text(data_type: exp.DataType) -> str:
+    """A type as the project writes it: sqlglot renders Postgres' `numeric(12,2)` as `DECIMAL(12, 2)`."""
+    text = data_type.sql(dialect=DIALECT).lower().replace(", ", ",")
+    return f"numeric{text.removeprefix('decimal')}" if text.startswith("decimal") else text

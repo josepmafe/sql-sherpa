@@ -117,7 +117,7 @@ class TestColumnLineageBuilder:
         _, renamed = _only_column("amount::numeric(12,2) as c")
 
         assert (same_name.kind, same_name.notes) == (ColumnKind.PASSTHROUGH, ("cast to bigint",))
-        assert (renamed.kind, renamed.notes) == (ColumnKind.RENAME, ("cast to decimal(12, 2)",))
+        assert (renamed.kind, renamed.notes) == (ColumnKind.RENAME, ("cast to numeric(12,2)",))
 
     def test_an_expression_is_transformed(self) -> None:
         lineage, info = _only_column("amount * 2 as c")
@@ -216,7 +216,7 @@ class TestColumnLineageBuilder:
         info = lineage.columns_of(STG)[0]
         assert (info.resolution, info.notes) == (
             Resolution.UNRESOLVED,
-            ("* is not expanded: unknown relation db.raw.mystery",),
+            ("* is not expanded: reads an unknown relation db.raw.mystery",),
         )
 
     def test_quoted_and_unquoted_identifiers_meet(self) -> None:
@@ -249,7 +249,7 @@ class TestColumnLineageBuilder:
         lineage = _lineage([_src(), mart], sql)
 
         both, only_unknown, fine = lineage.columns_of(MART)
-        note = ("unknown relation db.raw.mystery",)
+        note = ("reads an unknown relation db.raw.mystery",)
         assert (both.resolution, both.notes) == (Resolution.PARTIAL, note)
         assert (only_unknown.resolution, only_unknown.notes) == (Resolution.UNRESOLVED, note)
         assert (fine.resolution, fine.notes) == (Resolution.FULL, ())
@@ -264,6 +264,36 @@ class TestColumnLineageBuilder:
         assert bad.resolution is Resolution.UNRESOLVED
         assert "nope" in bad.notes[0]
         assert (good.kind, good.resolution) == (ColumnKind.RENAME, Resolution.FULL)
+
+    def test_a_qualified_column_the_parent_lacks_is_partial_and_the_rest_stay_full(self) -> None:
+        mart = _Spec("mart", ("good", "mixed", "lone"), parents=(SRC,))
+        sql = {MART: f"select a.id as good, coalesce(a.id, a.nope) as mixed, a.nope as lone from {SRC_SQL} as a"}
+
+        lineage = _lineage([_src(), mart], sql)
+
+        good, mixed, lone = lineage.columns_of(MART)
+        assert (good.resolution, good.notes) == (Resolution.FULL, ())
+        assert (mixed.resolution, mixed.notes) == (Resolution.PARTIAL, ("column nope not found in src",))
+        assert lineage.focus(mixed.ref).upstream == {_ref(SRC, "id")}
+        assert (lone.resolution, lone.notes) == (Resolution.UNRESOLVED, ("column nope not found in src",))
+
+    def test_a_stale_column_in_a_join_condition_does_not_fail_the_node(self) -> None:
+        mart = _Spec("mart", ("id",), parents=(SRC,))
+        sql = {MART: f"select a.id from {SRC_SQL} as a join {SRC_SQL} as b on a.id = b.nope"}
+
+        lineage = _lineage([_src(), mart], sql)
+
+        assert (lineage.columns_of(MART)[0].resolution, lineage.node_note(MART)) == (Resolution.FULL, None)
+
+    def test_count_star_in_a_cte_reading_another_cte_is_a_row_count(self) -> None:
+        sql = (
+            f"with a as (select * from {SRC_SQL}), t as (select id, count(*) as c from a group by id) select t.c from t"
+        )
+
+        lineage = _lineage([_src(), _stg("c")], {STG: sql})
+
+        info = lineage.columns_of(STG)[0]
+        assert (info.kind, info.counts) == (ColumnKind.ROW_COUNT, SRC)
 
     def test_a_column_missing_from_the_compiled_output_is_noted(self) -> None:
         lineage = _lineage([_src(), _stg("id", "ghost")], {STG: f"select id from {SRC_SQL}"})
@@ -284,16 +314,25 @@ class TestColumnLineageBuilder:
         assert lineage.columns_of(MART)[0].resolution is Resolution.FULL
         assert lineage.node_note(MART) is None
 
-    def test_a_recursion_error_marks_the_node_unresolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def explode(*_: object, **__: object) -> None:
-            raise RecursionError
+    def test_a_recursion_error_marks_only_its_node_unresolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        real_parse_one = sqlglot.parse_one
 
-        monkeypatch.setattr(sqlglot, "parse_one", explode)
+        def explode_for_stg(sql: str, *args: object, **kwargs: object) -> object:
+            if "analytics" not in sql:  # only the staging node reads straight from the source
+                raise RecursionError
+            return real_parse_one(sql, *args, **kwargs)  # type: ignore[call-overload]
 
-        lineage = _lineage([_src(), _stg("id")], {STG: f"select id from {SRC_SQL}"})
+        monkeypatch.setattr(sqlglot, "parse_one", explode_for_stg)
+        mart = _Spec("mart", ("id",), parents=(STG,))
+
+        lineage = _lineage(
+            [_src(), _stg("id"), mart], {STG: f"select id from {SRC_SQL}", MART: f"select id from {STG_SQL}"}
+        )
 
         assert lineage.columns_of(STG)[0].resolution is Resolution.UNRESOLVED
         assert lineage.node_note(STG) == DID_NOT_PARSE
+        assert lineage.columns_of(MART)[0].resolution is Resolution.FULL
+        assert lineage.node_note(MART) is None
 
     def test_missing_sql_marks_the_node_unresolved_with_its_note(self) -> None:
         lineage = _lineage([_src(), _stg("id", "amount")], {STG: None})
