@@ -163,6 +163,14 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
+- **Shared builders.** Generator test builders live in `data-platform/generator/tests/helpers.py` as `make_<record>(id, **overrides)`; a test asserts only values it passes at the call site. Snapshots are built only through `make_snapshot` / `shop_snapshot`.
+- **Parametrize** when tests share arrange and act and differ in data or the assertion.
+- **Slow arrange becomes a fixture.** Arrange over about 1 s that tests only read is a module or session fixture, read-only, with a fingerprint teardown (`month`, `after_sales_season` in `data-platform/generator/tests/conftest.py`).
+- **Statistics run through `Simulator`** (`run_days` in `helpers.py`), never a copy of its day loop.
+- **Each realism rule gets a pure test and a rate test on generator output** (`assert_rate` in `helpers.py`: a `z = 4` binomial bound from the trial count).
+- **Nothing writes to `sherpa` or `sherpa_eval`.** Tests that need a database use `temp_database`, and a dbt-running test identifies its own invocation rather than reading "the latest build".
+- **Mark by need:** `integration` when Postgres is enough, `warehouse` only for built relations or artifacts. Tests of `data-platform/postgres/*.sql` live in `data-platform/tests/postgres/`.
+- **Don't test a constant against what defines it** (a rate against the constant it is read from); test it against the spec's value.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:
