@@ -183,6 +183,7 @@ class TestSessionOptions:
 
         statements = [item.args[0].as_string() for item in conn.execute.call_args_list]
         assert statements == [
+            "set transaction read only",
             "set local statement_timeout = '5s'",
             "set local pg_trgm.similarity_threshold = '0.2'",
             "set local pg_trgm.word_similarity_threshold = '0.6'",
@@ -194,7 +195,7 @@ class TestSessionOptions:
         AgentDatabase._begin(conn, set_similarity_threshold=False)
 
         statements = [item.args[0].as_string() for item in conn.execute.call_args_list]
-        assert statements == ["set local statement_timeout = '5s'"]
+        assert statements == ["set transaction read only", "set local statement_timeout = '5s'"]
 
 
 class TestStartup:
@@ -308,6 +309,29 @@ class TestAgentDatabaseOnPostgres:
             agent_database.scalar("select source from pg_settings where name = 'default_transaction_read_only'")
             == "client"
         )
+
+    def test_a_session_default_switched_off_does_not_make_later_transactions_writable(
+        self, warehouse_settings: McpSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `set_config` is a plain SELECT that a cursor accepts and that changes the pooled connection's default.
+        database = AgentDatabase(warehouse_settings.model_copy(update={"mcp_pool_size": 1}))
+        seen: list[object] = []
+        begin = AgentDatabase._begin
+
+        def recording(conn: psycopg.Connection, *, set_similarity_threshold: bool = False) -> None:
+            begin(conn, set_similarity_threshold=set_similarity_threshold)
+            seen.append(conn.execute("select current_setting('transaction_read_only')").fetchone())
+
+        try:
+            database.fetch("select set_config('default_transaction_read_only', 'off', false)")
+            monkeypatch.setattr(AgentDatabase, "_begin", staticmethod(recording))
+            fetched = database.scalar("select current_setting('transaction_read_only')")
+            database.explain("select 1")
+        finally:
+            database.close()
+
+        assert fetched == "on"
+        assert seen == [("on",), ("on",)]  # inside fetch, then inside explain
 
     def test_fetch_caps_and_flags_truncation(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch("select n from generate_series(1, 101) n")

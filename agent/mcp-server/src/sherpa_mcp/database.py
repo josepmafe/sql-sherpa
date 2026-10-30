@@ -281,6 +281,8 @@ class AgentDatabase:
 
     @staticmethod
     def _begin(conn: psycopg.Connection, *, set_similarity_threshold: bool = False) -> None:
+        # Per transaction, so a session default switched off by a query (`set_config`) cannot make a later one writable.
+        conn.execute(sql.SQL("set transaction read only"))
         conn.execute(sql.SQL("set local statement_timeout = {}").format(sql.Literal(STATEMENT_TIMEOUT)))
         if set_similarity_threshold:
             conn.execute(
