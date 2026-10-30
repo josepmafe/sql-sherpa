@@ -67,8 +67,12 @@ def _is_blank(description: str | None) -> bool:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with path.open(encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"error: {path} not found; run `dbt docs generate` first", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
