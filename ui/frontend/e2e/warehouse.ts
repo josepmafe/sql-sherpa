@@ -12,22 +12,12 @@ export const LONG_AGGREGATE =
 
 // The admin login lives only inside the postgres container, so the check runs through `docker compose exec`.
 export function adminScalar(sql: string): string {
-  return execFileSync(
-    "docker",
-    [
-      "compose",
-      "-f",
-      COMPOSE_FILE,
-      "exec",
-      "-T",
-      "postgres",
-      "sh",
-      "-c",
-      'psql -U "$SHERPA_ADMIN_USER" -d "$POSTGRES_DB" -tA -c "$0"',
-      sql,
-    ],
-    { encoding: "utf8" },
-  ).trim();
+  return psqlScalar('"$SHERPA_ADMIN_USER"', sql);
+}
+
+// The container's superuser, the only login that sees another role's query text in pg_stat_activity.
+export function superuserScalar(sql: string): string {
+  return psqlScalar('"${POSTGRES_USER:-postgres}"', sql);
 }
 
 export function make(...args: string[]): string {
@@ -39,4 +29,12 @@ export async function runQuery(page: Page, sql: string): Promise<void> {
   await editor.click();
   await editor.fill(sql);
   await page.getByRole("button", { name: "Run", exact: true }).click();
+}
+
+function psqlScalar(user: string, sql: string): string {
+  return execFileSync(
+    "docker",
+    ["compose", "-f", COMPOSE_FILE, "exec", "-T", "postgres", "sh", "-c", `psql -U ${user} -d "$POSTGRES_DB" -tA -c "$0"`, sql],
+    { encoding: "utf8" },
+  ).trim();
 }
