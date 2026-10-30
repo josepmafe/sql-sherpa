@@ -23,6 +23,7 @@ SQLGLOT_NODE_NAME = re.compile(
 
 # (sql, rule, message): the rule code and the message before the hint, as the model reads them
 REJECTED_QUERIES = [
+    # one statement only
     ("select 1 from marts.fct_orders; drop table x", "statement_count", "expected exactly one statement, got 2"),
     (
         "select 1 from marts.fct_orders -- c\n; delete from marts.fct_orders",
@@ -36,6 +37,7 @@ REJECTED_QUERIES = [
     ),
     ("", "statement_count", "expected exactly one statement, got 0"),
     ("-- only a comment", "statement_count", "expected exactly one statement, got 0"),
+    # DML, DDL and session changes; the name is the SQL keyword the model reads
     ("delete from marts.fct_orders", "not_select", "the statement must be a SELECT query, not DELETE"),
     ("update marts.fct_orders set net_revenue = 0", "not_select", "the statement must be a SELECT query, not UPDATE"),
     ("insert into marts.fct_orders values (1)", "not_select", "the statement must be a SELECT query, not INSERT"),
@@ -72,6 +74,7 @@ REJECTED_QUERIES = [
     ("copy (select 1) to program 'id'", "not_select", "the statement must be a SELECT query, not COPY"),
     ("begin", "not_select", "the statement must be a SELECT query, not BEGIN"),
     ("grant select on marts.fct_orders to public", "not_select", "the statement must be a SELECT query, not GRANT"),
+    # writes hidden inside a query
     ("select * into x from marts.fct_orders", "select_into", "SELECT ... INTO is not allowed"),
     ("select * from (select * into t from marts.fct_orders) s", "select_into", "SELECT ... INTO is not allowed"),
     ("with d as (delete from marts.fct_orders returning *) select * from d", "write", "DELETE is not allowed"),
@@ -88,8 +91,11 @@ REJECTED_QUERIES = [
         "locking",
         "locking clause FOR UPDATE/SHARE is not allowed",
     ),
+    # functions outside the allow-list
     ("select pg_sleep(10)", "function", "function pg_sleep is not allowed"),
     ("select query_to_xml('select 1', true, true, '')", "function", "function query_to_xml is not allowed"),
+    ("select table_to_xml('t', true, true, '')", "function", "function table_to_xml is not allowed"),
+    ("select cursor_to_xml('c', 1, true, true, '')", "function", "function cursor_to_xml is not allowed"),
     ("select current_setting('x')", "function", "function current_setting is not allowed"),
     ("select set_config('a', 'b', false)", "function", "function set_config is not allowed"),
     ("select * from dblink('host=x', 'select 1') as t(a int)", "function", "function dblink is not allowed"),
@@ -109,11 +115,13 @@ REJECTED_QUERIES = [
         "function pg_sleep is not allowed",
     ),
     ("select 1 from marts.fct_orders order by (select pg_sleep(1))", "function", "function pg_sleep is not allowed"),
+    # casts to reg* types look names up in the system catalogs
     ("select 10::regrole::text from marts.fct_orders", "cast", "cast to type REGROLE is not allowed"),
     ("select cast('pg_authid' as regclass) from marts.fct_orders", "cast", "cast to type REGCLASS is not allowed"),
     ("select 'x'::regnamespace", "cast", "cast to type REGNAMESPACE is not allowed"),
     ("select 1::pg_catalog.regclass", "cast", "cast to type pg_catalog.regclass is not allowed"),
     ("select * from generate_series(1, 3)", "function", "function generate_series is not allowed"),
+    # table functions in FROM
     ("select * from unnest(array[1, 2])", "function", "function unnest is not allowed"),
     (
         "select * from rows from (generate_series(1, 2))",
@@ -125,15 +133,18 @@ REJECTED_QUERIES = [
         "function",
         "function generate_series is not allowed",
     ),
+    # schema-qualified functions, even allowed ones
     ("select pg_catalog.pg_sleep(1)", "function", "function pg_catalog.pg_sleep is not allowed"),
     ("select pg_catalog.lower('a') from marts.fct_orders", "function", "function pg_catalog.lower is not allowed"),
     ("select marts.lower('a') from marts.fct_orders", "function", "function marts.lower is not allowed"),
+    # tables outside the visible marts
     ("select * from pg_catalog.pg_roles", "table", "table pg_catalog.pg_roles is outside marts"),
     ("select * from information_schema.tables", "table", "table information_schema.tables is outside marts"),
     ("select * from fct_orders", "table", "table fct_orders is not schema-qualified"),
     ("select * from pg_roles", "table", "table pg_roles is not schema-qualified"),
     ('select * from "marts.fct_orders"', "table", "table marts.fct_orders is not schema-qualified"),
     ("select * from staging.stg_shop__orders", "table", "table staging.stg_shop__orders is outside marts"),
+    # the dev target's schemas hold the same marts under another name
     ("select * from dev_marts.dim_customers", "table", "table dev_marts.dim_customers is outside marts"),
     ("select * from marts_dev.dim_customers", "table", "table marts_dev.dim_customers is outside marts"),
     ('select * from "dev_marts"."fct_orders"', "table", "table dev_marts.fct_orders is outside marts"),
@@ -179,6 +190,7 @@ REJECTED_QUERIES = [
         "table",
         "table pg_catalog.pg_roles is outside marts",
     ),
+    # CTE names only cover references Postgres resolves to the CTE
     ('with "PG_ROLES" as (select 1) select * from pg_roles', "table", "table pg_roles is not schema-qualified"),
     (
         "with pg_roles as (select * from pg_roles) select * from pg_roles",
@@ -201,6 +213,7 @@ REJECTED_QUERIES = [
         "table x is not schema-qualified",
     ),
     ("(with x as (select 1) select * from x) union select * from x", "table", "table x is not schema-qualified"),
+    # OPERATOR(schema.op) names any operator, past the rules for the operators written out
     (
         "select 1 from marts.dim_customers where email OPERATOR(pg_catalog.~) '^a'",
         "operator",
@@ -221,6 +234,7 @@ REJECTED_QUERIES = [
         "operator",
         "operator call `order_id OPERATOR(pg_catalog.+) 1` is not allowed",
     ),
+    # parameters nobody binds: Postgres refuses `$1`, and sqlglot reads Postgres's prefix `@` as one
     (
         "select $1 from marts.fct_orders",
         "parameter",
@@ -252,10 +266,12 @@ REJECTED_QUERIES = [
         "parameter",
         "query parameters ($1, ?, :name) and the prefix @ operator are not allowed",
     ),
+    # parser differentials and malformed input
     ("select 1 from marts.fct_orders # 1", "parse", "could not parse the query"),
     ('select * from U&"pg_\\0072oles"', "parse", "could not parse the query"),
     ("select xmlparse(document '<a/>')", "parse", "could not parse the query"),
     ("select " + "(" * 2000 + "1" + ")" * 2000, "parse", "could not parse the query"),
+    # functions named as written in Postgres, not as sqlglot names them
     ("select json_agg(order_id) from marts.fct_orders", "function", "function json_agg is not allowed"),
     ("select to_timestamp(0) from marts.fct_orders", "function", "function to_timestamp is not allowed"),
     ("select random() from marts.fct_orders", "function", "function random is not allowed"),
@@ -278,6 +294,7 @@ REJECTED_QUERIES = [
         "function",
         "function or operator `" + ("a ->> '" + "k" * 80)[:60] + "...` is not allowed",
     ),
+    # whole-row references, record conversions and field selections
     ("select c from marts.dim_customers c", "whole_row", "whole-row reference `c` is not allowed"),
     ("select c from marts.dim_customers as c", "whole_row", "whole-row reference `c` is not allowed"),
     (
@@ -302,6 +319,7 @@ REJECTED_QUERIES = [
     ("select row_to_json(c) from marts.dim_customers c", "function", "function row_to_json is not allowed"),
     ("select row(c.email) from marts.dim_customers c", "function", "function row is not allowed"),
     ("select c::text from marts.dim_customers c", "whole_row", "whole-row reference `c` is not allowed"),
+    # a qualified star inside an expression returns the whole row
     (
         "select c.*::text from marts.dim_customers c limit 1",
         "whole_row",
@@ -342,6 +360,7 @@ REJECTED_QUERIES = [
         "whole_row",
         "whole-row reference `c.*` inside an expression is not allowed",
     ),
+    # Postgres expands `c.* as x` and ignores the alias; the guard fails closed on it anyway
     (
         "select c.* as x from marts.dim_customers c",
         "whole_row",
@@ -416,6 +435,7 @@ REJECTED_QUERIES = [
     ("select to_jsonb(c.*) from marts.dim_customers c", "function", "function to_jsonb is not allowed"),
     ("select (c).* from marts.dim_customers c", "whole_row", "whole-row reference `c` is not allowed"),
     ("select (c).email from marts.dim_customers c", "whole_row", "whole-row reference `c` is not allowed"),
+    # quoted names match case-insensitively; Postgres reads unquoted `Foo` as foo, and the guard fails closed on it too
     ('select "C" from marts.dim_customers "C"', "whole_row", "whole-row reference `C` is not allowed"),
     ('select "Foo" from marts.dim_customers as "Foo"', "whole_row", "whole-row reference `Foo` is not allowed"),
     (
@@ -503,6 +523,41 @@ REMEDY_HINTS = [
         "function",
         "aggregate with string_agg, or select the columns",
     ),
+    ("select * from fct_orders", "table", "qualify it as marts.fct_orders"),
+    ("select * from pg_catalog.pg_roles", "table", "query only the marts that list_tables returns"),
+    ("select * from a.b.c.d", "table", "use marts.<name>"),
+    ("select c from marts.dim_customers c", "whole_row", "select named columns"),
+    ("select c.*::text from marts.dim_customers c", "whole_row", "select named columns"),
+    ("select (c.email).x from marts.dim_customers c", "field", "select named columns"),
+    ("select c.nope from marts.dim_customers c", "column", "use a column listed by describe_table"),
+    ("select 1 from", "parse", "write one Postgres SELECT"),
+    ("select 1 from marts.fct_orders; select 2", "statement_count", "send one SELECT"),
+    ("delete from marts.fct_orders", "not_select", "write one SELECT"),
+    ("select * into x from marts.fct_orders", "select_into", "remove INTO"),
+    ("select * from marts.fct_orders for update", "locking", "remove it"),
+    ("with d as (delete from marts.fct_orders returning *) select * from d", "write", "only SELECT queries run"),
+    (
+        "select 1::regclass from marts.fct_orders",
+        "cast",
+        "cast to a built-in type such as text, numeric, date or timestamp",
+    ),
+    (
+        "with recursive n as (select 1) select * from n",
+        "recursive",
+        "use marts.dim_date for a series of dates, or a non-recursive query",
+    ),
+    (
+        "select lpad('a', 99999) from marts.fct_orders",
+        "pad",
+        "write the length as a number, e.g. lpad(x::text, 2, '0')",
+    ),
+    (
+        "select 1_000 from marts.fct_orders",
+        "number",
+        "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix",
+    ),
+    ("select ''::char(20000) from marts.fct_orders", "type_length", "use lengths up to 10,000, or cast to text"),
+    ("select pg_catalog.lower('a') from marts.fct_orders", "function", "call functions without a schema"),
 ]
 
 
@@ -549,7 +604,7 @@ class TestAllowedFunctions:
             *("pg_terminate_backend", "pg_read_file", "pg_sleep", "pg_ls_dir", "pg_backend_pid"),
             *("dblink_connect", "dblink", "dblink_exec"),
             *("lo_create", "lo_import", "lo_export"),
-            *("query_to_xml", "current_setting", "set_config"),
+            *("query_to_xml", "table_to_xml", "cursor_to_xml", "current_setting", "set_config"),
             *("setval", "nextval", "currval"),
             "inet_server_addr",
         ],
