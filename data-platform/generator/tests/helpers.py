@@ -15,12 +15,12 @@ if TYPE_CHECKING:
 NOW = datetime(2025, 1, 1, 12, tzinfo=UTC)
 STATE_TABLE = "raw_meta.simulation_state"
 
-# The shared statistical run (conftest `traffic_month`): Spec A §5.4, a 30-day run at scale 0.2.
 SIMULATION_SEED = 42
-TRAFFIC_MONTH_DAYS = 30
-TRAFFIC_MONTH_SCALE = 0.2
-TRAFFIC_MONTH_START = date(2025, 3, 1)
-TRAFFIC_MONTH_END = date(2025, 3, 31)  # exclusive: the day after the last simulated day
+# The shared statistical run (conftest `month`): Spec A §5.4, a 30-day Simulator run at scale 0.2 with RUN_SEED.
+MONTH_DAYS = 30
+MONTH_SCALE = 0.2
+MONTH_START = date(2025, 3, 1)
+MONTH_END = date(2025, 3, 31)  # exclusive: the day after the last simulated day, and the run's `today`
 # The shared after-sales run (conftest `after_sales_season`): the smallest that yields returns in every status and
 # goodwill refunds (~285 orders, ~18 returns).
 AFTER_SALES_DAYS = 45

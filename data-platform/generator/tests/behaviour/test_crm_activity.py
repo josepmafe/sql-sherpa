@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import SIMULATION_SEED, TRAFFIC_MONTH_END, make_customer
+from helpers import MONTH_END, SIMULATION_SEED, make_customer
 from sherpa_generator.behaviour.crm_activity import CrmActivitySimulator
 from sherpa_generator.records import Campaign, CampaignChannel, EmailSend, Lead, LeadSource, LifecycleStage
 from sherpa_generator.simulation.day_changes import DayChanges
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
     from sherpa_generator.records import Customer
 
-END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
+END_OF_RUN = datetime(MONTH_END.year, MONTH_END.month, MONTH_END.day, tzinfo=UTC)
 TUESDAY = date(2025, 3, 11)
 SATURDAY = date(2025, 3, 15)
 STAGE_RANK = {stage: rank for rank, stage in enumerate(LifecycleStage)}
@@ -26,8 +26,8 @@ TUESDAY_WEEKDAY = 1
 
 class TestCrmActivitySimulator:
     @pytest.mark.integration
-    def test_lead_match_rate_of_customers(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_lead_match_rate_of_customers(self, month: Database) -> None:
+        with month.connect() as conn:
             customers = [row[0] for row in conn.execute("SELECT lower(trim(email)) FROM raw_shop.customers")]
             leads = {row[0] for row in conn.execute("SELECT lower(trim(email)) FROM raw_crm.leads")}
 
@@ -36,8 +36,8 @@ class TestCrmActivitySimulator:
         assert 0.25 <= rate <= 0.45
 
     @pytest.mark.integration
-    def test_lifecycle_never_moves_backwards(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_lifecycle_never_moves_backwards(self, month: Database) -> None:
+        with month.connect() as conn:
             leads = conn.execute(
                 "SELECT l.id, l.lifecycle_stage, l.created_at, l.updated_at,"
                 " bool_or(s.opened_at IS NOT NULL), bool_or(s.clicked_at IS NOT NULL),"
@@ -66,16 +66,16 @@ class TestCrmActivitySimulator:
         assert {LifecycleStage.SUBSCRIBER, LifecycleStage.LEAD, LifecycleStage.CUSTOMER} <= stages
 
     @pytest.mark.integration
-    def test_newsletter_only_on_tuesdays(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_newsletter_only_on_tuesdays(self, month: Database) -> None:
+        with month.connect() as conn:
             sent = [row[0] for row in conn.execute("SELECT sent_at FROM raw_crm.email_sends WHERE campaign_id IS NULL")]
 
         assert {instant.weekday() for instant in sent} == {TUESDAY_WEEKDAY}
         assert len({instant.date() for instant in sent}) == 4
 
     @pytest.mark.integration
-    def test_email_engagement_is_ordered_rated_and_never_after_the_last_day(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_email_engagement_is_ordered_rated_and_never_after_the_last_day(self, month: Database) -> None:
+        with month.connect() as conn:
             sends = conn.execute("SELECT sent_at, opened_at, clicked_at FROM raw_crm.email_sends").fetchall()
 
         settled = [opened for sent, opened, _ in sends if sent < END_OF_RUN - timedelta(days=3)]

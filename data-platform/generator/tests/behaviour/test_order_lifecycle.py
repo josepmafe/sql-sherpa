@@ -6,7 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from helpers import SIMULATION_SEED, TRAFFIC_MONTH_END, make_customer
+from helpers import MONTH_END, SIMULATION_SEED, make_customer
 from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
 from sherpa_generator.behaviour.order_lifecycle import (
     PAID_CANCELLATION_PURPOSE,
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 DAY = date(2025, 3, 12)
 DAY_START = datetime(2025, 3, 12, tzinfo=UTC)
-END_OF_RUN = datetime(TRAFFIC_MONTH_END.year, TRAFFIC_MONTH_END.month, TRAFFIC_MONTH_END.day, tzinfo=UTC)
+END_OF_RUN = datetime(MONTH_END.year, MONTH_END.month, MONTH_END.day, tzinfo=UTC)
 CENT = Decimal("0.01")
 MAX_SESSION_SECONDS = EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS  # the longest a session runs, add_to_cart to purchase
 LINE_ORDERS = 400  # enough web orders to see every line count of LINE_COUNT_WEIGHTS
@@ -160,8 +160,8 @@ class TestOrderPricing:
 
 class TestOrderLifecycleSimulator:
     @pytest.mark.integration
-    def test_order_totals_are_consistent_with_items_and_discounts(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_order_totals_are_consistent_with_items_and_discounts(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _ORDER_TOTALS)
 
         assert rows
@@ -177,8 +177,8 @@ class TestOrderLifecycleSimulator:
             assert total == subtotal - discount + shipping + tax
 
     @pytest.mark.integration
-    def test_captured_payments_equal_total_for_paid_orders(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_captured_payments_equal_total_for_paid_orders(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _PAYMENTS_BY_ORDER)
 
         paid = [row for row in rows if row[1]]
@@ -189,8 +189,8 @@ class TestOrderLifecycleSimulator:
         assert any(failed_rows > 0 for *_, failed_rows in paid)  # R7 failed attempts
 
     @pytest.mark.integration
-    def test_status_history_is_monotonic_and_matches_current_status(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_status_history_is_monotonic_and_matches_current_status(self, month: Database) -> None:
+        with month.connect() as conn:
             orders = {
                 row[0]: row[1:] for row in _rows(conn, "SELECT id, status, placed_at, updated_at FROM raw_shop.orders")
             }
@@ -213,8 +213,8 @@ class TestOrderLifecycleSimulator:
             assert times[-1] < END_OF_RUN
 
     @pytest.mark.integration
-    def test_discount_share(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_discount_share(self, month: Database) -> None:
+        with month.connect() as conn:
             [(orders, discounted)] = _rows(
                 conn,
                 "SELECT count(*), count(*) FILTER (WHERE id IN (SELECT order_id FROM raw_shop.order_discounts))"
@@ -224,8 +224,8 @@ class TestOrderLifecycleSimulator:
         assert 0.18 <= discounted / orders <= 0.32
 
     @pytest.mark.integration
-    def test_r8_orders_stack_a_coupon_of_another_promotion(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_r8_orders_stack_a_coupon_of_another_promotion(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _STACKED_DISCOUNTS)
 
         assert rows
@@ -239,8 +239,8 @@ class TestOrderLifecycleSimulator:
             assert discount_total <= subtotal
 
     @pytest.mark.integration
-    def test_app_share(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_app_share(self, month: Database) -> None:
+        with month.connect() as conn:
             [(orders, app)] = _rows(
                 conn, "SELECT count(*), count(*) FILTER (WHERE sales_channel = 'app') FROM raw_shop.orders"
             )
@@ -248,8 +248,8 @@ class TestOrderLifecycleSimulator:
         assert 0.28 <= app / orders <= 0.42
 
     @pytest.mark.integration
-    def test_every_web_order_has_exactly_one_purchase_event(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_every_web_order_has_exactly_one_purchase_event(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _PURCHASE_EVENTS_BY_ORDER)
             [(untagged,)] = _rows(conn, f"SELECT count(*) FROM ({_PURCHASE_EVENTS}) e WHERE order_id IS NULL")
 
@@ -258,10 +258,8 @@ class TestOrderLifecycleSimulator:
         assert untagged == 0
 
     @pytest.mark.integration
-    def test_web_order_matches_its_purchase_event_and_leads_with_the_carted_variant(
-        self, order_month: Database
-    ) -> None:
-        with order_month.connect() as conn:
+    def test_web_order_matches_its_purchase_event_and_leads_with_the_carted_variant(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = conn.execute(_WEB_ORDER_PURCHASES, [MAX_SESSION_SECONDS]).fetchall()
             [(web_orders,)] = _rows(conn, "SELECT count(*) FROM raw_shop.orders WHERE sales_channel = 'web'")
 
@@ -272,8 +270,8 @@ class TestOrderLifecycleSimulator:
             assert item_variants[0] in carted_variants
 
     @pytest.mark.integration
-    def test_never_paid_orders_are_cancelled_next_day_without_refund(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_never_paid_orders_are_cancelled_next_day_without_refund(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _NEVER_PAID_ORDERS)
 
         cancelled = [row for row in rows if row[1] == "cancelled"]
@@ -287,8 +285,8 @@ class TestOrderLifecycleSimulator:
                 assert cancelled_at == placed_at + timedelta(days=1)
 
     @pytest.mark.integration
-    def test_paid_cancellations_refund_the_captured_amount_on_the_largest_payment(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_paid_cancellations_refund_the_captured_amount_on_the_largest_payment(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _PAID_CANCELLATIONS)
 
         assert rows
@@ -298,8 +296,8 @@ class TestOrderLifecycleSimulator:
             assert (payment_id, amount, reason, refunded_at) == (largest_id, captured, "cancellation", cancelled_at)
 
     @pytest.mark.integration
-    def test_shipments_follow_shipped_and_delivered_orders(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_shipments_follow_shipped_and_delivered_orders(self, month: Database) -> None:
+        with month.connect() as conn:
             rows = _rows(conn, _SHIPMENTS_BY_ORDER)
 
         assert any(row[0] == "delivered" for row in rows)
