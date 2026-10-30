@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, KeysView, Mapping
@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 _FQN_GROUP_PARTS = 2  # dbt's bare-name match reads fqn[0] and fqn[1] (and the leaf)
 MODEL_FOLDER_INDEX = 1  # a model's fqn is [package, folder under models/, ...]
 DEFAULT_SEVERITY = "error"
+EPHEMERAL = "ephemeral"
 _NODE_SECTIONS = ("nodes", "sources", "exposures")
 _GRAPH_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot", "source", "exposure"})
 _MATERIALIZED_TYPES = frozenset({"model", "seed", "snapshot"})
@@ -50,6 +51,16 @@ class NodeColumn(BaseModel):
     description: str
 
 
+class Relation(BaseModel):
+    """Where a node lives in the warehouse: how a table in compiled SQL maps back to its node."""
+
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
+    database: str
+    schema_name: str = Field(alias="schema")  # `schema` itself would shadow a BaseModel attribute
+    identifier: str
+
+
 class GraphNode(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -67,6 +78,7 @@ class GraphNode(BaseModel):
     contract_enforced: bool
     columns: tuple[NodeColumn, ...]
     parents: tuple[str, ...]
+    relation: Relation | None = None  # None for an ephemeral model, which is never a table
 
 
 class NodeTest(BaseModel):
@@ -154,7 +166,17 @@ def _build_node(raw: dict[str, Any], graph_ids: KeysView[str]) -> GraphNode:
             for name, column in raw.get("columns", {}).items()
         ),
         parents=tuple(dict.fromkeys(unique_id for unique_id in depends_on if unique_id in graph_ids)),
+        relation=_relation(raw),
     )
+
+
+def _relation(raw: dict[str, Any]) -> Relation | None:
+    identifier = raw.get("identifier") if raw["resource_type"] == "source" else raw.get("alias")
+    database, schema = raw.get("database"), raw.get("schema")
+    if raw.get("config", {}).get("materialized") == EPHEMERAL or not (database and schema and identifier):
+        return None
+
+    return Relation(database=database, schema_name=schema, identifier=identifier)
 
 
 def _reserved_names(manifest: dict[str, Any], graph_names: set[str]) -> frozenset[str]:

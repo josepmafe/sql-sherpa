@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sherpa_ui.lineage.manifest_graph import Layer, ManifestGraph
+from sherpa_ui.lineage.manifest_graph import Layer, ManifestGraph, Relation
 
 
 class TestManifestGraph:
@@ -25,6 +25,25 @@ class TestManifestGraph:
             Layer.MARTS,
             Layer.EXPOSURE,
         )
+
+    def test_relation_from_database_schema_and_alias(self, manifest: dict[str, Any]) -> None:
+        manifest["nodes"]["model.p.fct_orders"]["alias"] = "fct_orders_v2"
+
+        graph = ManifestGraph.from_manifest(manifest)
+
+        assert graph.nodes["model.p.fct_orders"].relation == Relation(
+            database="warehouse", schema="analytics", identifier="fct_orders_v2"
+        )
+        assert graph.nodes["source.p.shop.orders"].relation == Relation(
+            database="warehouse", schema="raw_shop", identifier="orders"
+        )
+
+    def test_ephemeral_model_has_no_relation(self, manifest: dict[str, Any]) -> None:
+        manifest["nodes"]["model.p.int_orders__enriched"]["config"]["materialized"] = "ephemeral"
+
+        graph = ManifestGraph.from_manifest(manifest)
+
+        assert graph.nodes["model.p.int_orders__enriched"].relation is None
 
     def test_a_source_node_keeps_its_source_name(self, manifest: dict[str, Any]) -> None:
         graph = ManifestGraph.from_manifest(manifest)
