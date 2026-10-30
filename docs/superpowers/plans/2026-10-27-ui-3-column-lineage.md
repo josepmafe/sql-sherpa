@@ -15,7 +15,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`: §4 (the lineage endpoints), §6.5 (Lineage: layout, column lineage, node panel, URL), §8 and the ui-3 row of §10. This plan's commit writes the decisions into the spec and renumbers the UI milestones (Home ui-4, Ask ui-5, demo ui-6). **`CLAUDE.md` is binding.**
 
-**Base:** `main` with ui-2 (#14). The column-lineage research prototype (`%TEMP%/collin/collin.py` on the owner's machine) proved the approach on this project:
+**Base:** `main` with ui-2 (#14), and from Task 4 on the UI test audit (the `ui-test-audit` plan: typed API builders in `ui/frontend/tests/fixtures/api.ts`, `renderWithProviders`, explicit Vitest timeouts, and the ELK entry point mocked outside layout tests). Rebase onto it before Task 4; its ELK mock then targets `orderNodes`, which replaced `layoutGraph` in Task 3. The column-lineage research prototype (`%TEMP%/collin/collin.py` on the owner's machine) proved the approach on this project:
 - 0 parse errors over 41 nodes
 - all 377 columns traced
 - about 2 s for the whole project
@@ -217,6 +217,7 @@ ui/frontend/tests/lineage/, ui/frontend/e2e/lineage.spec.ts
   - **SQL:** raw and compiled, as in ui-2.
 - **State:** the tab persists while switching nodes. Closing the selection (Esc, the panel's clear button, a background click) keeps the panel with its empty state.
 - **Cleanup:** remove the "the panel narrows the canvas" reveal trigger. The keyboard-focus reveal stays.
+- **Minimap:** it no longer hides while a node is selected (it did, to give the panel beside the graph room; `LineageCanvas.tsx` still has `selected === undefined` in its condition). It still appears only above `MINIMAP_ABOVE_NODES`.
 
 - [ ] **Step 1: Vitest first.**
   - `selecting a node does not change the canvas size` (the canvas container's style height and width are unchanged)
@@ -224,8 +225,10 @@ ui/frontend/tests/lineage/, ui/frontend/e2e/lineage.spec.ts
   - `the tab persists across node selections`
   - `Esc clears the selection and keeps the panel`
   - `the Columns tab lists kind and resolution`
+  - `focus returns to the node after a background click clears the selection` (a gap the UI test audit found)
+  - `the minimap appears above the node threshold, whether or not a node is selected, and not below it` (audit mutant F27)
 
-  Adapt the ui-2 panel tests to the tabs.
+  Adapt the ui-2 panel tests to the tabs, and move the lineage tests that build payloads by hand (`LineageScreen`, `SelectorBar`, `NodePanel`) to the typed builders (`lineageNode`, `lineageGraph`, `nodeDetails`). Their mocks omit required fields today (`selector`, `materialization`, `status`, `failing_tests`).
 - [ ] **Step 2:** Run (FAIL) → implement → run (PASS) → `make lint`. Commit `feat: Lineage node panel below the graph, always present`.
 
 ---
@@ -272,6 +275,11 @@ ui/frontend/tests/lineage/, ui/frontend/e2e/lineage.spec.ts
     - `column= in the URL restores the focus after a reload`
     - `Expand all expands the nodes shown`
     - `unavailable column lineage disables expanding and says why`
+  - **Limits the UI test audit found unasserted** (each must fail under its mutant):
+    - `the initial fit never zooms past 1x` (F26)
+    - `an empty node= is no selection` (`url.ts`, F08)
+    - `useGraphLayout: a superseded order that fails leaves the newer positions and state alone` (F07b)
+    - move the canvas and node tests to the typed builders as well
 - [ ] **Step 2:** Run (FAIL) → implement → run (PASS). In the browser: focus `fct_orders.net_revenue` and check it by eye against Task 2's pinned trace. `make lint`. Commit `feat: expandable lineage nodes and column focus`.
 
 ---
@@ -287,7 +295,9 @@ ui/frontend/tests/lineage/, ui/frontend/e2e/lineage.spec.ts
   - **panel below:** the canvas bounding box is the same before and after selecting `fct_orders`, and the panel's empty state shows before any selection
   - **column focus:** expanding `fct_orders` and clicking `net_revenue` highlights exactly the pinned upstream source columns (the warehouse test's list) and dims a node outside the chain; Esc twice clears both
   - **out of view:** under the selector `fct_orders` alone, focusing `net_revenue` shows the "outside this view" note, and its link opens `+fct_orders+`
-- [ ] **Step 2:** `offline.spec.ts`: a column focus with every request outside the origin blocked. `layout.spec.ts`: at 1280 px, the bands and the panel don't overflow horizontally (the canvas pans; the page doesn't scroll sideways).
+  - **expectations from the warehouse,** not from the last build's luck: read the expected status of `fct_orders` and whether a build is recorded from `ops.dbt_run_results` through `adminScalar`, instead of asserting "ok" (the spec otherwise fails after any real warning or failing build)
+  - **the Table-path depth controls** driven once end to end (the audit found them undriven)
+- [ ] **Step 2:** `offline.spec.ts`: a column focus with every request outside the origin blocked, through the shared `blockForeignRequests` helper of the UI test audit. `layout.spec.ts`: at 1280 px, the bands and the panel don't overflow horizontally (the canvas pans; the page doesn't scroll sideways).
 - [ ] **Step 3: Acceptance** (UI spec §10): `make e2e`. Commit `test: column lineage end-to-end flows`.
 
 ---
