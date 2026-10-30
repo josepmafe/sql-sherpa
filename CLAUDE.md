@@ -176,7 +176,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:
-  - `integration`: needs Postgres. A test that needs only Postgres and the `sherpa_agent` role (no marts) is `integration`, not `warehouse`, so it runs in the default suite
+  - `integration`: needs Postgres. A test that needs only Postgres and the `sherpa_agent` role (no marts) is `integration`, not `warehouse`, so it runs in the default suite; slow subprocess tests of the MCP server stay `warehouse`
   - `warehouse`: needs the built warehouses (`make build-prod`; the `dev_marts` test also needs `make build`, the eval database tests `make eval-db`). The MCP server tests over the compose container also need `SHERPA_TEST_MCP_CONTAINER=1` and the `mcp` service up; without it they are skipped. The UI's `e2e` Playwright specs need the compose stack up and the prod warehouse built; they run with `make e2e`, not pytest
   - `slow`: full-year runs
   - `live`: real Bedrock calls; costs money, never in CI
