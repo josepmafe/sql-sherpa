@@ -6,12 +6,12 @@ import json
 import time
 import uuid
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import psycopg
 import pytest
 from psycopg import errors
-from psycopg_pool import PoolTimeout
+from psycopg_pool import ConnectionPool, PoolTimeout
 from pydantic import SecretStr
 from sherpa_mcp.database import (
     AgentDatabase,
@@ -235,13 +235,54 @@ def fetch_sizes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return sizes
 
 
-@pytest.mark.warehouse
-class TestAgentDatabase:
+class TestPoolWaits:
+    """The waits for a connection and for a fetch slot, with no database: the pool is a stand-in."""
+
+    @pytest.fixture
+    def offline_database(self, closed_port: int, monkeypatch: pytest.MonkeyPatch) -> tuple[AgentDatabase, MagicMock]:
+        pool_class = create_autospec(ConnectionPool)
+        monkeypatch.setattr("sherpa_mcp.database.ConnectionPool", pool_class)
+        settings = McpSettings(
+            _env_file=None,  # type: ignore[call-arg]
+            db_host="127.0.0.1",
+            db_port=closed_port,
+            db_name="sherpa",
+            agent_user="sherpa_agent",
+            agent_password=SecretStr("x"),
+        )
+        return AgentDatabase(settings), pool_class
+
+    def test_the_wait_for_a_connection_is_10_seconds(self, offline_database: tuple[AgentDatabase, MagicMock]) -> None:
+        _, pool_class = offline_database
+
+        assert pool_class.call_args.kwargs["timeout"] == 10.0
+
+    def test_the_wait_for_a_fetch_slot_is_10_seconds(self, offline_database: tuple[AgentDatabase, MagicMock]) -> None:
+        database, _ = offline_database
+        slots = MagicMock()
+        slots.acquire.return_value = False
+        database._heavy_fetches = slots
+
+        with pytest.raises(WarehouseToolError, match="busy with other queries"):
+            database.fetch_for_model("select 1")
+
+        slots.acquire.assert_called_once_with(timeout=10.0)
+        slots.release.assert_not_called()
+
+
+@pytest.mark.integration
+class TestAgentDatabaseOnPostgres:
+    """Needs Postgres and the agent role only, not the built marts."""
+
     def test_set_local_timeout_is_enforced_on_its_own(
         self, warehouse_settings: McpSettings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The session default is made 60 s, so only `set local` can make the timeout 5 s.
-        monkeypatch.setattr("sherpa_mcp.settings.AGENT_SESSION_OPTIONS", "-c statement_timeout=60s")
+        monkeypatch.setattr(
+            "sherpa_mcp.settings.AGENT_SESSION_OPTIONS", "-c default_transaction_read_only=on -c statement_timeout=60s"
+        )
+        with psycopg.connect(warehouse_settings.agent_conninfo()) as raw:
+            assert raw.execute("show statement_timeout").fetchone() == ("1min",)
         database = AgentDatabase(warehouse_settings)
         seen: list[object] = []
         begin = AgentDatabase._begin
@@ -263,6 +304,69 @@ class TestAgentDatabase:
     def test_session_is_read_only(self, agent_database: AgentDatabase) -> None:
         assert agent_database.scalar("select current_setting('transaction_read_only')") == "on"
 
+    def test_a_row_of_exactly_50000_characters_is_kept_and_one_of_50001_is_truncated(
+        self, agent_database: AgentDatabase
+    ) -> None:
+        full = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(5))
+
+        at_budget = agent_database.fetch_for_model(f"select {full}")
+        over_budget = agent_database.fetch_for_model(f"select {full}, 'x' as extra")
+
+        assert at_budget.returned_rows == 1
+        assert not at_budget.truncated
+        assert over_budget.rows == ()
+        assert over_budget.truncated
+
+    def test_a_two_million_character_cell_is_cut(self, agent_database: AgentDatabase) -> None:
+        # Above the 1,000,000-character large-row threshold and far past the 10,000-character cell cap.
+        result = agent_database.fetch_for_model("select lpad('a', 2000000, 'b') as n")
+
+        assert result.rows == (("b" * 10_000 + CUT,),)
+
+    def test_fetching_stops_between_5_and_7_seconds(self, agent_database: AgentDatabase) -> None:
+        started = time.monotonic()
+
+        # Each FETCH of 20 rows sleeps 1.75 s, well inside the statement timeout, so only the fetch deadline stops it:
+        # the check before the 4th FETCH (at 5.25 s) is the first past 5 s. A 6 s deadline would stop it at 7 s.
+        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
+            agent_database.fetch_for_model("select pg_sleep(0.0875), n from generate_series(1, 1000) n")
+        elapsed = time.monotonic() - started
+
+        assert 5 <= elapsed < 7
+        assert agent_database.scalar("select 1") == 1
+
+    def test_timeout_is_reported_and_connection_reusable(self, agent_database: AgentDatabase) -> None:
+        started = time.monotonic()
+
+        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
+            agent_database.fetch("select pg_sleep(30)")
+
+        assert time.monotonic() - started < 7
+        assert agent_database.scalar("select 1") == 1
+
+    def test_a_write_is_refused_by_the_read_only_session(self, agent_database: AgentDatabase) -> None:
+        # `for update` is valid inside DECLARE CURSOR, so the refusal comes from the read-only transaction.
+        with pytest.raises(WarehouseToolError) as error:
+            agent_database.fetch("select * from pg_class limit 1 for update")
+
+        assert str(error.value) == "[sql] cannot execute SELECT FOR UPDATE in a read-only transaction"
+
+    def test_explain_refuses_several_statements(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as error:
+            agent_database.explain("select 1; select 2")
+
+        assert str(error.value) == "[sql] cannot insert multiple commands into a prepared statement"
+
+    def test_multiple_statements_are_rejected_by_postgres(self, agent_database: AgentDatabase) -> None:
+        with pytest.raises(WarehouseToolError) as error:
+            agent_database.fetch("select 1; select 2")
+
+        assert str(error.value) == "[sql] cannot insert multiple commands into a prepared statement"
+        assert agent_database.scalar("select 1") == 1
+
+
+@pytest.mark.warehouse
+class TestAgentDatabase:
     def test_fetch_caps_and_flags_truncation(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch("select * from marts.fct_order_items")
 
@@ -298,19 +402,6 @@ class TestAgentDatabase:
         assert over.returned_rows == 5
         assert over.truncated
 
-    def test_a_row_of_exactly_50000_characters_is_kept_and_one_of_50001_is_truncated(
-        self, agent_database: AgentDatabase
-    ) -> None:
-        full = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(5))
-
-        at_budget = agent_database.fetch_for_model(f"select {full}")
-        over_budget = agent_database.fetch_for_model(f"select {full}, 'x' as extra")
-
-        assert at_budget.returned_rows == 1
-        assert not at_budget.truncated
-        assert over_budget.rows == ()
-        assert over_budget.truncated
-
     def test_a_first_row_over_the_budget_returns_no_rows(self, agent_database: AgentDatabase) -> None:
         columns = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(6))
 
@@ -318,14 +409,6 @@ class TestAgentDatabase:
 
         assert result.rows == ()
         assert result.truncated
-
-    def test_a_two_million_character_cell_is_cut(self, agent_database: AgentDatabase) -> None:
-        # Above the 1,000,000-character large-row threshold and far past the 10,000-character cell cap.
-        result = agent_database.fetch_for_model(
-            "select lpad('a', 2000000, 'b') as n from marts.fct_order_items limit 1"
-        )
-
-        assert result.rows == (("b" * 10_000 + CUT,),)
 
     def test_rows_come_in_batches_and_one_past_the_cap(
         self, agent_database: AgentDatabase, fetch_sizes: list[int]
@@ -347,18 +430,6 @@ class TestAgentDatabase:
 
         assert result.returned_rows == 30
         assert fetch_sizes == [20, *[1] * 11]  # 10 more rows, then the empty fetch that ends the result
-
-    def test_fetching_stops_between_5_and_7_seconds(self, agent_database: AgentDatabase) -> None:
-        started = time.monotonic()
-
-        # Each FETCH of 20 rows sleeps 1.4 s, well inside the statement timeout, so only the fetch deadline stops it:
-        # the check before the 5th FETCH (at 5.6 s) is the first past 5 s. A 6 s deadline would stop it at 7 s.
-        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
-            agent_database.fetch_for_model("select pg_sleep(0.07), n from generate_series(1, 1000) n")
-        elapsed = time.monotonic() - started
-
-        assert 5 <= elapsed < 7
-        assert agent_database.scalar("select 1") == 1
 
     def test_deeply_nested_value_is_a_tool_error(self, agent_database: AgentDatabase) -> None:
         with pytest.raises(WarehouseToolError, match="nested too deeply"):
@@ -382,46 +453,20 @@ class TestAgentDatabase:
 
         assert agent_database.fetch_for_model("select 1").rows == ((1,),)
 
-    def test_the_wait_for_a_fetch_slot_is_10_seconds(
-        self, agent_database: AgentDatabase, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        slots = MagicMock()
-        slots.acquire.return_value = False
-        monkeypatch.setattr(agent_database, "_heavy_fetches", slots)
-
-        with pytest.raises(WarehouseToolError, match="busy with other queries"):
-            agent_database.fetch_for_model("select 1")
-
-        slots.acquire.assert_called_once_with(timeout=10.0)
-        slots.release.assert_not_called()
-
-    def test_the_wait_for_a_connection_is_10_seconds(self, agent_database: AgentDatabase) -> None:
-        assert agent_database._pool.timeout == 10.0
-
-    def test_timeout_is_reported_and_connection_reusable(self, agent_database: AgentDatabase) -> None:
-        started = time.monotonic()
-
-        with pytest.raises(WarehouseToolError, match="took longer than 5 s"):
-            agent_database.fetch("select pg_sleep(30)")
-
-        assert time.monotonic() - started < 7
-        assert agent_database.scalar("select 1") == 1
-
-    def test_a_write_is_refused_by_the_read_only_session(self, agent_database: AgentDatabase) -> None:
-        # `for update` is valid inside DECLARE CURSOR, so the refusal comes from the read-only transaction.
-        with pytest.raises(WarehouseToolError) as error:
-            agent_database.fetch("select * from marts.fct_orders for update")
-
-        assert str(error.value) == "[sql] cannot execute SELECT FOR UPDATE in a read-only transaction"
-
     def test_the_role_has_no_write_privilege_even_in_a_read_write_session(self, agent_database: AgentDatabase) -> None:
         # A session can switch itself to read write (the role setting is only a default); the grants still refuse.
         with agent_database._pool.connection() as conn:
             conn.execute("set transaction read write")
-            with pytest.raises(errors.InsufficientPrivilege) as error:
-                conn.execute("select * from marts.fct_orders for update")
+            with pytest.raises(errors.InsufficientPrivilege) as locked:
+                conn.execute("select * from marts.fct_orders limit 1 for update")
+            conn.rollback()
+            conn.execute("set transaction read write")
+            with pytest.raises(errors.InsufficientPrivilege) as created:
+                conn.execute("create table marts.x(i int)")
+            conn.rollback()
 
-        assert str(error.value).startswith("permission denied for table fct_orders")
+        assert str(locked.value).startswith("permission denied for table fct_orders")
+        assert str(created.value).startswith("permission denied for schema marts")
 
     def test_unreadable_relation_is_refused_by_the_role(self, agent_database: AgentDatabase) -> None:
         with pytest.raises(WarehouseToolError, match="permission denied"):
@@ -432,18 +477,6 @@ class TestAgentDatabase:
             agent_database.explain("analyze select 1")
         with pytest.raises(WarehouseToolError):
             agent_database.explain("(analyze) select 1")
-
-    def test_explain_refuses_several_statements(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError) as error:
-            agent_database.explain("select 1; select 2")
-
-        assert str(error.value) == "[sql] cannot insert multiple commands into a prepared statement"
-
-    def test_multiple_statements_are_rejected_by_postgres(self, agent_database: AgentDatabase) -> None:
-        with pytest.raises(WarehouseToolError):
-            agent_database.fetch("select 1; select 2")
-
-        assert agent_database.scalar("select 1") == 1
 
     def test_values_are_json_safe(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch_for_model(
