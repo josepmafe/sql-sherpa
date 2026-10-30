@@ -151,6 +151,9 @@ REJECTED_QUERIES = [
     ("select pg_catalog.pg_sleep(1)", "function", "function pg_catalog.pg_sleep is not allowed"),
     ("select pg_catalog.lower('a') from marts.fct_orders", "function", "function pg_catalog.lower is not allowed"),
     ("select marts.lower('a') from marts.fct_orders", "function", "function marts.lower is not allowed"),
+    ("select * from public.lower('a')", "function", "function public.lower is not allowed"),
+    ("select * from marts.upper('a') u", "function", "function marts.upper is not allowed"),
+    ("select * from sherpa.public.lower('a')", "function", "function sherpa.public.lower is not allowed"),
     # tables outside the visible marts
     ("select * from pg_catalog.pg_roles", "table", "table pg_catalog.pg_roles is outside marts"),
     ("select * from information_schema.tables", "table", "table information_schema.tables is outside marts"),
@@ -514,6 +517,7 @@ REMEDY_HINTS = [
     ),
     ("(select 1 from marts.fct_orders)", "not_select", "remove the outer parentheses"),
     ("select * from generate_series(1, 3)", "function", "use marts.dim_date for a series of dates"),
+    ("select * from public.lower('a')", "function", "call functions without a schema"),
     ("select to_timestamp(0) from marts.fct_orders", "function", "use to_char, make_date or date_trunc"),
     ("select json_agg(order_id) from marts.fct_orders", "function", "aggregate with string_agg, or select the columns"),
     (

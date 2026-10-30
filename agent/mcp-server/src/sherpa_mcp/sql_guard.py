@@ -286,7 +286,18 @@ class SqlGuard:
     def _table_errors(self, table: exp.Table, tables: list[str]) -> list[str]:
         source = table.this
         if isinstance(source, exp.Func):
-            return []  # a table function: checked as a function
+            # A table function is checked as a function; with a schema it is refused, as in a select list.
+            qualifier = ".".join(part.name for part in (table.args.get("catalog"), table.args.get("db")) if part)
+            if not qualifier:
+                return []
+
+            return [
+                _error(
+                    "function",
+                    f"function {qualifier}.{_written_name(source)} is not allowed",
+                    "call functions without a schema",
+                )
+            ]
 
         if not isinstance(source, exp.Identifier) or table.args.get("catalog") is not None:
             return [_error("table", f"table {table.sql(dialect=DIALECT)} is not allowed", "use marts.<name>")]
