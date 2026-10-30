@@ -1,9 +1,9 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiRequestError, useCatalog, useHealth } from "../src/api/queries";
+import { ApiRequestError, useCatalog, useHealth, useTableDetails } from "../src/api/queries";
 import { apiFailure, health, ok, proxyFailure } from "./fixtures/api";
-import { queryClientWrapper } from "./fixtures/render";
+import { createTestQueryClient, queryClientWrapper } from "./fixtures/render";
 
 const get = vi.fn();
 vi.mock("../src/api/client", async (importOriginal) => ({
@@ -69,5 +69,23 @@ describe("API hooks", () => {
 
     await waitFor(() => expect(result.current.data?.database).toBe("down"));
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  // UI spec §2: data is never stale for long and comes back when the window regains focus. The options sit on the
+  // observer the hook registers.
+  it.each<[string, () => { isSuccess: boolean }, string[]]>([
+    ["health", () => useHealth(), ["health"]],
+    ["the catalog", () => useCatalog(), ["catalog"]],
+    ["a table", () => useTableDetails("fct_orders"), ["catalog", "tables", "fct_orders"]],
+  ])("%s is stale after at most 30 seconds and refetches on window focus", async (_name, hook, key) => {
+    get.mockResolvedValue(ok(health()));
+    const client = createTestQueryClient();
+
+    const { result } = renderHook(hook, { wrapper: queryClientWrapper(client) });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const options = client.getQueryCache().find({ queryKey: key })?.observers[0]?.options;
+    expect(options?.staleTime).toBeLessThanOrEqual(30_000);
+    expect(options?.refetchOnWindowFocus).toBe(true);
   });
 });

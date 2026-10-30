@@ -262,6 +262,18 @@ describe("CatalogTree", () => {
   });
 });
 
+describe("Copy name", () => {
+  it("copies the table's qualified name", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Copy name" }));
+
+    expect(await navigator.clipboard.readText()).toBe("marts.dim_products");
+  });
+});
+
 describe("Inspector", () => {
   it("a table that fails to load shows the API's message and code, and Retry fetches it again", async () => {
     const user = userEvent.setup();

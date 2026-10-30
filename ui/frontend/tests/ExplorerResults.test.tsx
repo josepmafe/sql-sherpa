@@ -4,7 +4,7 @@ import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExplorerScreen } from "../src/screens/explorer/ExplorerScreen";
-import { freshState, saveExplorerState, updateWorksheet } from "../src/screens/explorer/worksheetStore";
+import { freshState, saveExplorerState, STORAGE_KEY, updateWorksheet } from "../src/screens/explorer/worksheetStore";
 import { apiFailure, catalog, columnSummary, noContent, ok, queryResponse, table } from "./fixtures/api";
 import { firstColumn, renderWithProviders, shownEditor } from "./fixtures/render";
 
@@ -97,6 +97,22 @@ describe("Explorer results", () => {
 
     expect(await screen.findByText(title)).toBeInTheDocument();
     expect(screen.getByText("the server's reason")).toBeInTheDocument();
+  });
+
+  it("keeps no result row in the stored state, only the SQL and a row count (UI spec §7)", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue(
+      ok(queryResponse({ columns: ["name"], column_types: ["text"], rows: [["cell-7731-zq"]], returned_rows: 1 })),
+    );
+    renderScreen("select name from marts.fct_orders");
+
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("cell-7731-zq")).toBeInTheDocument();
+    const stored = localStorage.getItem(STORAGE_KEY)!;
+    expect(stored).toContain("select name from marts.fct_orders");
+    expect(JSON.parse(stored).history).toHaveLength(1);
+    expect(stored).not.toContain("cell-7731-zq");
   });
 
   it("truncated results sort on the server", async () => {
