@@ -205,6 +205,10 @@ class _Run:
             logger.warning("column lineage of %s: the compiled SQL is nested too deeply", node.unique_id)
             self._fail(node, NOTE_SQL_UNPARSED)
             return
+        except SqlglotError as exc:
+            logger.warning("column lineage of %s: sqlglot could not trace the compiled SQL: %s", node.unique_id, exc)
+            self._fail(node, NOTE_SQL_UNPARSED)
+            return
 
         if node.materialization == EPHEMERAL:
             self._learn_ephemeral(node, infos)

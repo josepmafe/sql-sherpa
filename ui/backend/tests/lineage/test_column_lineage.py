@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlglot
+from sherpa_ui.lineage import column_lineage
 from sherpa_ui.lineage.column_lineage import (
     ColumnEdge,
     ColumnInfo,
@@ -15,6 +16,8 @@ from sherpa_ui.lineage.column_lineage import (
     Resolution,
 )
 from sherpa_ui.lineage.manifest_graph import GraphNode, Layer, ManifestGraph, Relation
+from sqlglot import exp
+from sqlglot.errors import OptimizeError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -328,6 +331,25 @@ class TestColumnLineageBuilder:
         lineage = _lineage(
             [_src(), _stg("id"), mart], {STG: f"select id from {SRC_SQL}", MART: f"select id from {STG_SQL}"}
         )
+
+        assert lineage.columns_of(STG)[0].resolution is Resolution.UNRESOLVED
+        assert lineage.node_note(STG) == DID_NOT_PARSE
+        assert lineage.columns_of(MART)[0].resolution is Resolution.FULL
+        assert lineage.node_note(MART) is None
+
+    def test_a_trace_time_sqlglot_error_marks_only_its_node_unresolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        real_lineage = column_lineage.lineage
+
+        def fail_for_stg(column: object, tree: exp.Query, *args: object, **kwargs: object) -> object:
+            if "raw" in tree.sql():  # only the staging node reads straight from the source
+                raise OptimizeError("Ambiguous column: id")
+            return real_lineage(column, tree, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(column_lineage, "lineage", fail_for_stg)
+        mart = _Spec("mart", ("id",), parents=(STG,))
+        sql = {STG: f"select id from {SRC_SQL}", MART: f"select id from {STG_SQL}"}
+
+        lineage = _lineage([_src(), _stg("id"), mart], sql)
 
         assert lineage.columns_of(STG)[0].resolution is Resolution.UNRESOLVED
         assert lineage.node_note(STG) == DID_NOT_PARSE
