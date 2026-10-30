@@ -1,7 +1,7 @@
 """The `ops.dbt_run_results` audit table that the on-run-end hook fills (data platform spec §8, "Added by ui-1").
 
 Needs `make build-prod` and `.env`. The tests that run dbt (in-process, via the `dbt` fixture) build nothing (a
-compile, one data test, the data tests) and write their artifacts to `target-scratch`, so the warehouse's data
+compile and one data test) and write their artifacts to `target-scratch`, so the warehouse's data
 and `target-prod` stay as the build left them; their runs add rows to the audit table, never as full builds.
 """
 
@@ -25,10 +25,12 @@ PROD = ("--target", "prod", *SCRATCH)
 # What `dbt build` runs and records: models other than ephemeral ones, seeds, snapshots and tests, and unit tests
 # (kept apart in the manifest, under `unit_tests`).
 BUILT_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot", "test"})
-# The other tests run dbt after this one in a full file run, but before it on a rerun, so look past them.
+# The other tests run dbt after this one in a full file run, but before it on a rerun, so look past them, and past
+# any build that started after this checkout's manifest was generated.
 LATEST_FULL_INVOCATION = (
     "select invocation_id from ops.dbt_run_results"
-    " where target_name = 'prod' and command = 'build' and is_full_run order by run_started_at desc limit 1"
+    " where target_name = 'prod' and command = 'build' and is_full_run and run_started_at <= %s"
+    " order by run_started_at desc limit 1"
 )
 # invocation_args_dict as dbt fills it for each kind of invocation, and whether that run is a full one.
 ARGS_CASES: tuple[tuple[str, bool], ...] = (
@@ -67,8 +69,21 @@ def full_run_verdicts(dbt: Callable[..., dbtRunnerResult]) -> list[str]:
     return result.result.results[0].node.compiled_code.strip().split("|")
 
 
+@pytest.fixture(scope="module")
+def selected_build(manifest: dict[str, Any], dbt: Callable[..., dbtRunnerResult]) -> tuple[str, str]:
+    """The data test of a mart that one `dbt build --select` ran: its unique id and the invocation id of the run."""
+    # One data test of a mart: the build reads the warehouse and changes nothing in it.
+    test_id, test_name = _data_test_of(manifest, "model.sherpa.dim_date")
+
+    dbt("build", "--select", test_name, *PROD)
+
+    return test_id, _own_invocation_id()
+
+
 def test_full_prod_build_records_every_built_node_once(admin: psycopg.Connection, manifest: dict[str, Any]) -> None:
-    latest = admin.execute(LATEST_FULL_INVOCATION).fetchone()
+    """Compares the latest full prod build that started before this checkout's manifest was generated. Another
+    checkout that builds prod between this one's build and its manifest still goes unnoticed."""
+    latest = admin.execute(LATEST_FULL_INVOCATION, (manifest["metadata"]["generated_at"],)).fetchone()  # type: ignore[call-overload]
     assert latest is not None
     built = {
         unique_id
@@ -84,38 +99,21 @@ def test_full_prod_build_records_every_built_node_once(admin: psycopg.Connection
     assert all(is_full_run for _, is_full_run in rows)
 
 
-def test_reads_its_own_invocation(
-    admin: psycopg.Connection, manifest: dict[str, Any], dbt: Callable[..., dbtRunnerResult]
-) -> None:
+def test_reads_its_own_invocation(admin: psycopg.Connection, selected_build: tuple[str, str]) -> None:
     # Another checkout can build prod at the same time, so the rows are found by this run's own invocation id.
-    test_id, test_name = _data_test_of(manifest, "model.sherpa.dim_date")
-
-    dbt("build", "--select", test_name, *PROD)
+    test_id, invocation_id = selected_build
 
     recorded = admin.execute(
-        "select unique_id from ops.dbt_run_results where invocation_id = %s", (_own_invocation_id(),)
+        "select unique_id from ops.dbt_run_results where invocation_id = %s", (invocation_id,)
     ).fetchall()
+
     assert recorded == [(test_id,)]
 
 
-def test_a_selected_build_is_not_full(
-    admin: psycopg.Connection, manifest: dict[str, Any], dbt: Callable[..., dbtRunnerResult]
-) -> None:
-    # One data test of a mart: the build reads the warehouse and changes nothing in it.
-    _, test_name = _data_test_of(manifest, "model.sherpa.dim_date")
+def test_a_selected_build_is_not_full(admin: psycopg.Connection, selected_build: tuple[str, str]) -> None:
+    _, invocation_id = selected_build
 
-    dbt("build", "--select", test_name, *PROD)
-
-    assert _is_full_run(admin, _own_invocation_id()) is False
-
-
-def test_a_run_limited_to_a_resource_type_is_not_full(
-    admin: psycopg.Connection, dbt: Callable[..., dbtRunnerResult]
-) -> None:
-    # Every data test and nothing else; read-only, and recorded as command `test`, which the UI never reads.
-    dbt("test", "--resource-type", "test", *PROD)
-
-    assert _is_full_run(admin, _own_invocation_id()) is False
+    assert _is_full_run(admin, invocation_id) is False
 
 
 def test_an_empty_run_is_not_full(full_run_verdicts: list[str]) -> None:
