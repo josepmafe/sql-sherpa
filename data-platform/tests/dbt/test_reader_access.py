@@ -29,6 +29,20 @@ LARGE_OBJECT_FUNCTIONS = (
     "lowrite(integer, bytea)",
     "lo_put(oid, bigint, bytea)",
 )
+# Spec §6.5: the marts built so far. Hard-coded on purpose: the MCP server and UI suites import it, and a list read
+# from the same manifest as their catalogs would pass when a mart disappears.
+MARTS = (
+    "dim_customers",
+    "dim_date",
+    "dim_products",
+    "dim_promotions",
+    "fct_order_discounts",
+    "fct_order_items",
+    "fct_orders",
+    "fct_refunds",
+    "fct_returns",
+    "fct_sessions",
+)
 NOT_EXPOSED = (
     ("staging", "stg_shop__orders"),
     ("intermediate", "int_order_items__discount_allocated"),
@@ -46,17 +60,6 @@ TRIGRAM_INDEXES = [
 ]
 
 pytestmark = pytest.mark.warehouse
-
-
-def _marts() -> list[str]:
-    # Empty without a manifest, so collection works before a build; test_manifest_lists_the_marts then fails.
-    if not MANIFEST.exists():
-        return []
-    nodes = json.loads(MANIFEST.read_text(encoding="utf-8"))["nodes"].values()
-    return sorted(node["name"] for node in nodes if node["resource_type"] == "model" and node["schema"] == "marts")
-
-
-MARTS = _marts()
 
 
 @pytest.fixture(params=["main", "eval"])
@@ -87,8 +90,13 @@ def agent(settings: WarehouseSettings, database: Database) -> Iterator[psycopg.C
     yield from _login(settings, database, "agent")
 
 
-def test_manifest_lists_the_marts() -> None:
-    assert MARTS, f"no mart models in {MANIFEST}; run make build-prod"
+def test_manifest_marts_are_the_expected_marts() -> None:
+    assert MANIFEST.exists(), f"no manifest at {MANIFEST}; run make build-prod"
+    nodes = json.loads(MANIFEST.read_text(encoding="utf-8"))["nodes"].values()
+
+    built = sorted(node["name"] for node in nodes if node["resource_type"] == "model" and node["schema"] == "marts")
+
+    assert built == sorted(MARTS)
 
 
 class TestReaderAccess:
@@ -125,6 +133,29 @@ class TestReaderAccess:
 
         with pytest.raises(errors.InsufficientPrivilege):
             reader.execute(query)
+
+    def test_cannot_write_to_any_mart_or_ops_relation_or_create_in_the_exposed_schemas(
+        self, admin: psycopg.Connection, reader: psycopg.Connection
+    ) -> None:
+        # One query per reader: INSERT/UPDATE/DELETE/TRUNCATE on every relation of marts and ops, and CREATE on the
+        # schemas the reader can see or whose objects (extensions) it uses. The read-only options are defence in depth.
+        query = """
+            SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname IN ('marts', 'ops') AND c.relkind IN ('r', 'v', 'm', 'p', 'f')),
+                   (SELECT coalesce(array_agg(n.nspname || '.' || c.relname ORDER BY c.relname), '{}')
+                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname IN ('marts', 'ops') AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
+                      AND has_table_privilege(%(role)s, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE')),
+                   (SELECT coalesce(array_agg(nspname ORDER BY nspname), '{}') FROM pg_namespace
+                    WHERE nspname IN ('marts', 'extensions', 'ops') AND has_schema_privilege(%(role)s, oid, 'CREATE'))
+        """
+
+        row = admin.execute(query, {"role": _current_user(reader)}).fetchone()  # type: ignore[call-overload]
+
+        assert row is not None
+        inspected, writable, creatable = row
+        assert inspected >= len(MARTS)
+        assert (writable, creatable) == ([], [])
 
     def test_has_no_usage_on_public(self, reader: psycopg.Connection) -> None:
         query = "select has_schema_privilege('public', 'USAGE')"

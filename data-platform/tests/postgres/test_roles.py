@@ -43,22 +43,20 @@ def reader(settings: WarehouseSettings, role: str) -> Iterator[psycopg.Connectio
 
 
 class TestReaderSessions:
-    def test_a_reader_cannot_create_even_with_read_only_off(self, reader: psycopg.Connection) -> None:
+    def test_a_reader_cannot_create_temporary_tables_even_with_read_only_off(self, reader: psycopg.Connection) -> None:
+        # The TEMPORARY revoke on the database; a temp table leaves nothing behind if it were allowed.
         reader.execute("SET default_transaction_read_only = off")
 
         with pytest.raises(errors.InsufficientPrivilege):
-            reader.execute("CREATE TABLE public.x(i int)")
+            reader.execute("CREATE TEMP TABLE x(i int)")
 
-    def test_a_new_session_is_read_only_again_after_a_set(self, settings: WarehouseSettings, role: str) -> None:
-        conninfo = settings.conninfo("main", role)  # type: ignore[arg-type]
-        with psycopg.connect(conninfo) as first:
-            first.execute("SET default_transaction_read_only = off")
-            first.commit()
+    def test_a_reader_has_no_usage_or_create_on_public(self, reader: psycopg.Connection) -> None:
+        row = reader.execute(
+            "SELECT has_schema_privilege(current_user, 'public', 'USAGE'),"
+            " has_schema_privilege(current_user, 'public', 'CREATE')"
+        ).fetchone()
 
-        with psycopg.connect(conninfo) as second:
-            read_only = second.execute("SHOW default_transaction_read_only").fetchone()
-
-        assert read_only == ("on",)
+        assert row == (False, False)
 
     def test_readers_cannot_connect_to_the_postgres_database(self, settings: WarehouseSettings, role: str) -> None:
         conninfo = make_conninfo(settings.conninfo("main", role), dbname="postgres")  # type: ignore[arg-type]
