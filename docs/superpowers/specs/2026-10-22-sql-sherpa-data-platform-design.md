@@ -231,6 +231,7 @@ Changing `seed` or `scale` against existing state is an error (use `reset`).
 - Ad spend is budget-driven, so cost per click is not realistic; ROAS and CAC (data-platform-4) reflect the budgets, not click prices.
 - `remove_from_cart` events are never generated.
 - All coupon codes are unlimited: none is single-use.
+- R8 (stacked discounts) reaches about 0.7% of orders, not 3%: only email-campaign promotions carry coupons, so few orders qualify for a promotion plus another promotion's coupon. The generator is to be changed to meet 3% before the agent's gold answers are frozen on `sherpa_eval` (agent-design-2); until then the R8 test measures the draw on a synthetic shop where every order qualifies, not the rate on the generator's output.
 - A visitor who is not a customer gets a fresh `anonymous_id` every session, so anonymous visitors never return: every such session is a first session and `fct_sessions.is_first_session` counts them as new visitors. Only customers (whose devices are stitched through logins) have returning sessions.
 
 ---
