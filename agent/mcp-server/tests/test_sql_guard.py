@@ -328,6 +328,41 @@ REJECTED_QUERIES = [
     ),
     ("with x as (select 1 as a) select x from x", "whole_row", "whole-row reference `x` is not allowed"),
     (
+        "select c from (marts.fct_orders o join marts.dim_customers c on c.customer_id = o.customer_id) limit 1",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c::text as t from (marts.dim_customers c cross join marts.fct_order_items d)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from marts.fct_orders o join (marts.dim_customers c join marts.fct_order_items d on true) on true",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from (marts.fct_orders o join (marts.dim_customers c join marts.fct_order_items d on true) on true)",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select c from ((marts.dim_customers c join marts.fct_order_items d on true))",
+        "whole_row",
+        "whole-row reference `c` is not allowed",
+    ),
+    (
+        "select d from (marts.dim_customers c join marts.fct_order_items d on true)",
+        "whole_row",
+        "whole-row reference `d` is not allowed",
+    ),
+    (
+        "select c.*::text from (marts.dim_customers c join marts.fct_order_items d on true)",
+        "whole_row",
+        "whole-row reference `c.*` inside an expression is not allowed",
+    ),
+    (
         "with x as (select email from marts.dim_customers) select x from (marts.fct_orders o join x on true)",
         "whole_row",
         "whole-row reference `x` is not allowed",
@@ -1138,6 +1173,10 @@ class TestWholeRowReferences:
             "with revenue as (select sum(net_revenue) as revenue from marts.fct_orders) "
             "select r.revenue from revenue r",
             "select s.email from (select email from marts.dim_customers) s",
+            "select c.customer_id, o.order_id from (marts.fct_orders o join marts.dim_customers c on true) limit 1",
+            "select c.customer_id from marts.fct_orders o join "
+            "(marts.dim_customers c join marts.fct_order_items d on true) on true",
+            "select c.customer_id from ((marts.dim_customers c join marts.fct_order_items d on true))",
         ],
     )
     def test_ordinary_queries_still_pass(self, guard: SqlGuard, sql: str) -> None:

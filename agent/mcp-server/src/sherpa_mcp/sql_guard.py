@@ -640,8 +640,25 @@ def _is_whole_row(column: exp.Column) -> bool:
         if isinstance(scope, exp.Select):
             sources = [scope.args.get("from_") or scope.args.get("from"), *scope.args.get("joins", [])]
             for source in sources:
-                relation = source.this if source is not None else None
-                if relation is not None and relation.alias_or_name.lower() == name:
+                if source is not None and any(r.alias_or_name.lower() == name for r in _relations(source.this)):
                     return True
         scope = scope.parent
     return False
+
+
+def _relations(relation: exp.Expr) -> list[exp.Expr]:
+    """The relation and, for an unaliased parenthesized join, the relations joined inside it (to any depth).
+
+    `from (a join b c on ...)` parses as a Subquery around a Table that carries the joins, so `c` is only visible here.
+    """
+    found = [relation]
+    if (
+        isinstance(relation, exp.Subquery)
+        and not relation.alias
+        and isinstance(relation.this, exp.Subquery | exp.Table)
+    ):
+        found.extend(_relations(relation.this))
+    if isinstance(relation, exp.Table):
+        for join in relation.args.get("joins", []):
+            found.extend(_relations(join.this))
+    return found
