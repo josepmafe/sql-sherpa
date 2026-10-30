@@ -15,7 +15,7 @@
 
 **Source:** the read-only test audit of 2026-10-30: backend 323 tests at 98% coverage (35 of 40 mutants caught), Vitest 235 tests (42 of 54 caught), Playwright 24 tests (not run, because `ui` and `mcp` were down).
 
-**Base:** `main`. **Order against ui-3:** Tasks 1, 2 and 4 touch files ui-3 does not. Tasks 3, 5 and 6 touch the lineage tests that ui-3 rewrites from its Task 3 on, so run them after ui-3's Task 3 and rebase onto it first.
+**Base:** `main`. **Order against ui-3:** run this whole plan after ui-3's Task 3 and before its Task 4, then rebase ui-3 onto it. ui-3 rewrites the lineage tests from Task 4 on, so this plan leaves `ui/frontend/tests/lineage/` and the lineage e2e spec alone, and the audit's lineage findings are items of ui-3's plan (Tasks 4 to 6): the minimap and fit rules, `node=`, a superseded layout that fails, focus after a background click, the lineage e2e expectations, and the lineage tests' drifted mocks. The builders of Task 3 include the lineage ones for it.
 
 **Model selection:** every task names its implementer and reviewer models. Dispatch exactly those. Fix rounds 4–5 go one tier up. The final whole-branch review is Task 7's panel.
 
@@ -65,7 +65,7 @@ ui/frontend/e2e/{lineage,explorer,offline}.spec.ts, e2e/helpers.ts
   - `pyproject.toml`: set `norecursedirs` explicitly to pytest's defaults without `build` (`*.egg`, `.*`, `_darcs`, `CVS`, `dist`, `node_modules`, `venv`, `{arch}`). Comment why. The 7 build-status tests now run and must pass; fix any that have rotted.
   - `test_health_api.py` (3 tests): simulate the unreachable database by monkeypatching `psycopg.connect` to raise `OperationalError`, not by connecting to port 1 (30 s today).
   - `test_query_runner.py`: the wide-result test (1,000 × 1,000 cells, 6.4 s) and the real 0.4 s delays use a finite fake cursor and an injectable clock or event.
-  - Vitest: in `vite.config.ts` set `testTimeout` (20 s) and `restoreMocks: true`; in `setup.ts` call Testing Library's `configure({ asyncUtilTimeout: 5000 })` and stub `Range.prototype.getClientRects` (CodeMirror logs a TypeError in jsdom). Mock `layoutGraph` with `vi.mock` in every test that is not about layout, so no component test runs the real ELK. Replace the fixed sleeps with fake timers or a positive signal: `LineageScreen.test.tsx:174,179`; the 1 s real retry delay in `queries.test.tsx:49`; `ExplorerScreen.test.tsx:275,283` (unrestored `matchMedia`) and the exact render count at `:324` become a bound.
+  - Vitest: in `vite.config.ts` set `testTimeout` (20 s) and `restoreMocks: true`; in `setup.ts` call Testing Library's `configure({ asyncUtilTimeout: 5000 })` and stub `Range.prototype.getClientRects` (CodeMirror logs a TypeError in jsdom). Mock the ELK entry point (`layoutGraph` on `main`; ui-3 replaces it with `orderNodes`, so its rebase retargets the mock) with `vi.mock` in every test that is not about layout, so no component test runs the real ELK. Replace the fixed sleeps with fake timers or a positive signal: `LineageScreen.test.tsx:174,179`; the 1 s real retry delay in `queries.test.tsx:49`; `ExplorerScreen.test.tsx:275,283` (unrestored `matchMedia`) and the exact render count at `:324` become a bound.
 - [ ] **Step 3: Verify.** `uv run --env-file .env pytest ui/backend --co -q | grep build_status` lists the tests. The backend suite is at least 30 s faster (record before and after). `cd ui/frontend && npm test` passes three times in a row while `pytest ui/backend` runs in another terminal (Review Focus 4). Commit `test: collect the build-status tests, fix the slow and flaky ones`.
 
 ---
@@ -101,15 +101,15 @@ ui/frontend/e2e/{lineage,explorer,offline}.spec.ts, e2e/helpers.ts
 
 **Model:** implementer `sonnet` · reviewer `sonnet`
 
-**Files:** `ui/frontend/tests/fixtures/api.ts` and `render.tsx` (new), and the test files that build payloads by hand: `Explorer`, `ExplorerScreen`, `ExplorerResults`, `SqlEditor`, `ResultGrid`, `useWorksheetRun`, `HealthBanner`, `AppShell`, `queries`, `lineage/*`.
+**Files:** `ui/frontend/tests/fixtures/api.ts` and `render.tsx` (new), and the test files that build payloads by hand: `Explorer`, `ExplorerScreen`, `ExplorerResults`, `SqlEditor`, `ResultGrid`, `useWorksheetRun`, `HealthBanner`, `AppShell`, `queries`. The lineage tests (`ui/frontend/tests/lineage/`) are ui-3's: it rewrites them, and uses these builders when it does.
 
 **Interfaces — Produces:**
 - **`api.ts`:** builders that return the full generated schema type (`components["schemas"][…]`), each taking `Partial<…>` overrides over complete defaults: `queryResponse`, `catalog`, `table`, `lineageNode`, `lineageGraph`, `nodeDetails`, `health`, `apiFailure(code, message, status, position?)`, and `ok(data)`.
 - **`render.tsx`:** `renderWithProviders(ui, { path?, queryClient? })`: Mantine `env="test"`, `MemoryRouter`, a `QueryClientProvider` with retries off. It also exports the one `deferred()`, one `firstColumn()`, the editor lookups and the `wideScreen` stub that today exist in several copies.
 
 - [ ] **Step 1:** Write the builders. A deliberate missing field in a test must fail `npm run typecheck`: add a type-level check (`// @ts-expect-error` on a literal missing `selector`).
-- [ ] **Step 2:** Migrate every file that passes a literal to a mocked `api`, hook or component to the builders. This fixes the drift the audit found: `LineageScreen.test.tsx` and `SelectorBar.test.tsx` omit the required `selector`, `materialization`, `status` and `failing_tests`; `HealthBanner` has a hand-written `Health` type.
-- [ ] **Step 3:** Run `npm test` and `npm run typecheck`. A review sweep: `git grep -n "mockResolvedValue({"` in `ui/frontend/tests` returns nothing. Commit `test: typed API builders and one render helper for the Vitest suite`.
+- [ ] **Step 2:** Migrate every file that passes a literal to a mocked `api`, hook or component to the builders. This fixes the drift the audit found in `HealthBanner` (a hand-written `Health` type) and the untyped literals elsewhere. The lineage tests' drift (`LineageScreen` and `SelectorBar` omit the required `selector`, `materialization`, `status` and `failing_tests`) is fixed by ui-3 with `lineageNode`, `lineageGraph` and `nodeDetails`.
+- [ ] **Step 3:** Run `npm test` and `npm run typecheck`. A review sweep: `git grep -n "mockResolvedValue({"` in `ui/frontend/tests`, outside `lineage/`, returns nothing. Commit `test: typed API builders and one render helper for the Vitest suite`.
 
 ---
 
@@ -135,8 +135,8 @@ ui/frontend/e2e/{lineage,explorer,offline}.spec.ts, e2e/helpers.ts
 
 - [ ] **Step 1: Generate the case file from Postgres.** Write the tables first, run each case's server query through `build_wrapped_query` on the real database as `sherpa_ui` (read-only `values` queries) and record the ids it returns as `expected_ids`. Review the file by hand against Postgres's documented input rules; it is the reference.
 - [ ] **Step 2: Tests first.**
-  - **Backend,** marker `integration`: `test_every_case_matches_postgres` runs every case's wrapped query and compares to `expected_ids`; `test_the_tables_are_what_the_api_returns` runs each table's `sql` through `QueryRunner` in client mode and asserts the `rows` and `column_types` equal the file (pinning the API's form).
-  - **Vitest:** `resultViewParity.test.ts` runs `applyView` over every table's rows and types for each case without `route: "server"` and compares to `expected_ids` (or `client_expected_ids` for an accepted difference). `needsServer(view, types)` is asserted `true` for each `route: "server"` case and `false` for every other case.
+  - **Backend,** marker `integration`: `test_every_case_matches_postgres` runs every case's wrapped query and compares to `expected_ids`; `test_the_tables_are_what_the_api_returns` runs each table's `sql` through `QueryRunner` in client mode (the guard accepts a `values` query with no relation, checked) and asserts the `rows` and `column_types` equal the file (pinning the API's form).
+  - **Vitest:** `resultViewParity.test.ts` loads the case file with a relative import; if Vite refuses a file outside `ui/frontend`, it reads it with `node:fs` instead. It runs `applyView` over every table's rows and types for each case without `route: "server"` and compares to `expected_ids` (or `client_expected_ids` for an accepted difference). `needsServer(view, types)` is asserted `true` for each `route: "server"` case and `false` for every other case.
   - Run them. Expected: the Vitest test FAILS for the six known disagreements below and passes for the rest, including the seventh, which is the recorded accepted difference.
 - [ ] **Step 3: Implement** in `resultView.ts`:
   - **Exact digits** (int8 above 2^53, numeric): compare two numeric strings as digits (integers through `BigInt`, decimals by aligned digit strings). Keep `Number` for values that arrive as JSON numbers within the safe range.
@@ -157,12 +157,9 @@ ui/frontend/e2e/{lineage,explorer,offline}.spec.ts, e2e/helpers.ts
 
 - [ ] **Step 1: Tests first**, each failing under its audit mutant:
   - `api/queries.ts`: `staleTime` is at most 30 s and data refetches on window focus (F18b, F18c), asserted through the query client's defaults.
-  - `LineageCanvas`: the initial fit never zooms past 1× (F26), and the minimap appears above the node threshold and not below (F27).
-  - `useGraphLayout`: a superseded layout that fails keeps the new positions (F07b).
-  - `url.ts`: an empty `node=` is no selection (F08).
   - `resultView.ts`: invalid dates and times are refused, `2025-02-30` and `10:75` (F16b, F16c); the boolean word `of` (F15); UTF-16 against code-point order for an emoji (F38).
   - Spec §7: the Explorer's stored state never holds result rows (serialise the state after a run and assert no cell value is present).
-  - Focus returns to the node after a background click clears the selection; the tree's "Copy name" copies the table name.
+  - The tree's "Copy name" copies the table name.
 - [ ] **Step 2:** `npm test` (three runs). Commit `test: pin the frontend limits and details the audit's mutants showed`.
 
 ---
@@ -171,14 +168,12 @@ ui/frontend/e2e/{lineage,explorer,offline}.spec.ts, e2e/helpers.ts
 
 **Model:** implementer `sonnet` · reviewer `sonnet`
 
-**Files:** `ui/frontend/e2e/lineage.spec.ts`, `explorer.spec.ts`, `offline.spec.ts`, `layout.spec.ts`, `warehouse.ts`, and a new `helpers.ts`.
+**Files:** `ui/frontend/e2e/explorer.spec.ts`, `offline.spec.ts`, `layout.spec.ts`, `warehouse.ts`, and a new `helpers.ts`. `lineage.spec.ts` is ui-3's (Task 6).
 
 - [ ] **Step 1:**
-  - `lineage.spec.ts:71-73,161`: read the expected status of `fct_orders` and whether a build is recorded from `ops.dbt_run_results` through `adminScalar`, instead of asserting "ok", so the spec holds after a real warning or failing build.
   - `explorer.spec.ts:88-101`: the cancel check looks for the cancelled statement by its own query text in `pg_stat_activity`, not by counting every `sherpa_ui` session.
   - `helpers.ts::blockForeignRequests(page, baseURL)`, used by every offline case (it is copy-pasted today).
   - The `MARTS` list comes from `GET /api/catalog` at run time, not a hard-coded copy of the data platform's list.
-  - Drive the Table-path depth controls once end to end (the audit found them undriven).
 - [ ] **Step 2: Run the whole suite** once: `make up && make build-prod`, then `make e2e`. The audit could not run Playwright because `ui` and `mcp` were down. Record the result and fix what it shows. The two opt-in specs stay opt-in. Commit `test: end-to-end specs read their expectations from the warehouse`.
 
 ---
