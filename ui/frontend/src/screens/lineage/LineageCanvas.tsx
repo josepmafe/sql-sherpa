@@ -15,9 +15,10 @@ import {
 import { useEffect, useMemo } from "react";
 
 import type { components } from "../../api/schema";
+import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
 import { edgeAppearance, edgeId, relatedNodes } from "./highlight";
-import { type LayoutEdge, type LayoutNode, NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { type BandNode, type LayoutEdge, NODE_HEIGHT, NODE_WIDTH } from "./layout";
 import { useRevealNode } from "./reveal";
 import { useGraphLayout } from "./useGraphLayout";
 
@@ -27,7 +28,9 @@ type ApiEdge = components["schemas"]["LineageEdge"];
 const MINIMAP_ABOVE_NODES = 60;
 // A whole-project fit would zoom a one-node graph to 2x.
 const FIT_MAX_ZOOM = 1;
-const NODE_TYPES = { graph: GraphNode };
+const NODE_TYPES = { graph: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
+// No node reports a height yet: every node is NODE_HEIGHT.
+const NO_HEIGHTS = new Map<string, number>();
 
 interface LineageCanvasProps {
   nodes: ApiNode[];
@@ -57,50 +60,45 @@ export function LineageCanvas(props: LineageCanvasProps) {
 
 function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
   const { layoutNodes, layoutEdges } = useTopology(nodes, edges);
-  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges);
+  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, NO_HEIGHTS);
   const { fitView } = useReactFlow();
   const reveal = useRevealNode();
   const canvasWidth = useStore((flow) => flow.width);
   const canvasHeight = useStore((flow) => flow.height);
   const related = useMemo(() => (selected === undefined ? undefined : relatedNodes(edges, selected)), [edges, selected]);
 
-  // Fit after each layout, not after a selection.
+  // Fit after each new order of the nodes, not after a selection or a restack.
   useEffect(() => {
     if (state === "ready") void fitView({ maxZoom: FIT_MAX_ZOOM });
-  }, [state, positions, fitView]);
+  }, [state, layoutNodes, layoutEdges, fitView]);
 
   // The panel opening narrows the canvas under the viewport: keep the selected node in sight.
   useEffect(() => {
     if (selected !== undefined) reveal(selected);
   }, [selected, canvasWidth, canvasHeight, reveal]);
 
-  // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (ELK splits a layer into
-  // sub-columns, so the layer alone does not give the order).
-  const flowNodes: Node<GraphNodeData>[] = useMemo(
-    () =>
-      nodes
-        .flatMap((node) => {
-          const position = positions?.get(node.unique_id);
-          return position === undefined ? [] : [{ node, position }];
-        })
-        .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y)
-        .map(({ node, position }) => ({
-          id: node.unique_id,
-          type: "graph",
-          position,
-          width: NODE_WIDTH,
-          height: NODE_HEIGHT,
-          data: {
-            name: node.name,
-            layer: node.layer,
-            materialization: node.materialization,
-            status: node.status,
-            failingTests: node.failing_tests,
-            selected: node.unique_id === selected,
-            dimmed: related !== undefined && !related.nodes.has(node.unique_id),
-          },
-        })),
-    [nodes, positions, selected, related],
+  // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (a band splits into sub-columns,
+  // so the band alone does not give the order). A band label sorts before its band's first node.
+  const flowNodes: Node[] = useMemo(
+    () => {
+      const graphNodes: Node[] = nodes.flatMap((node) => {
+        const position = positions?.get(node.unique_id);
+        if (position === undefined) return [];
+        const data: GraphNodeData = {
+          name: node.name,
+          layer: node.layer,
+          materialization: node.materialization,
+          status: node.status,
+          failingTests: node.failing_tests,
+          selected: node.unique_id === selected,
+          dimmed: related !== undefined && !related.nodes.has(node.unique_id),
+        };
+        return [{ id: node.unique_id, type: "graph", position, width: NODE_WIDTH, height: NODE_HEIGHT, data }];
+      });
+      const labels = positions === undefined ? [] : bandLabelNodes(layoutNodes, positions);
+      return [...labels, ...graphNodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
+    },
+    [nodes, layoutNodes, positions, selected, related],
   );
   const flowEdges: Edge[] = useMemo(
     () =>
@@ -140,7 +138,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
         selectionKeyCode={null}
         minZoom={0.1}
         // A click or Enter on a node button bubbles up to here (and gives the node wrapper its pointer events).
-        onNodeClick={(_, node) => onSelect(node.id)}
+        onNodeClick={(_, node) => node.type === "graph" && onSelect(node.id)}
         onPaneClick={() => onSelect(undefined)}
         proOptions={{ hideAttribution: true }}
       >
@@ -153,18 +151,23 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
 
 // The layout depends on the nodes' ids and layers and on the edges, not on their statuses: a refetch that only
 // changes a status keeps the same arrays, so ELK does not run again and the viewport stays.
-function useTopology(nodes: ApiNode[], edges: ApiEdge[]): { layoutNodes: LayoutNode[]; layoutEdges: LayoutEdge[] } {
+function useTopology(nodes: ApiNode[], edges: ApiEdge[]): { layoutNodes: BandNode[]; layoutEdges: LayoutEdge[] } {
   const key = JSON.stringify([
-    nodes.map((node) => [node.unique_id, node.layer]),
+    nodes.map((node) => [node.unique_id, node.layer, sourceName(node)]),
     edges.map((edge) => [edge.source, edge.target]),
   ]);
   return useMemo(() => {
-    const [ns, es] = JSON.parse(key) as [[string, ApiNode["layer"]][], [string, string][]];
+    const [ns, es] = JSON.parse(key) as [[string, ApiNode["layer"], string | null][], [string, string][]];
     return {
-      layoutNodes: ns.map(([id, layer]) => ({ id, layer })),
+      layoutNodes: ns.map(([id, layer, source]) => ({ id, layer, sourceName: source ?? undefined })),
       layoutEdges: es.map(([source, target]) => ({ source, target })),
     };
   }, [key]);
+}
+
+// "source.<project>.<source name>.<table>": a source system's tables are kept together.
+function sourceName(node: ApiNode): string | null {
+  return node.unique_id.startsWith("source.") ? (node.unique_id.split(".")[2] ?? null) : null;
 }
 
 function emptyText({ failingOnly, layersFiltered, buildState }: LineageCanvasProps): string {

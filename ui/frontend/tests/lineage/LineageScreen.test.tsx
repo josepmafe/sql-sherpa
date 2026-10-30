@@ -10,8 +10,8 @@ import { LineageScreen } from "../../src/screens/lineage/LineageScreen";
 // No test here reads a position, and the real ELK layout is slow under load.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
-  layoutGraph: (nodes: { id: string }[]) =>
-    Promise.resolve(new Map(nodes.map((node, index) => [node.id, { x: index * 300, y: 0 }]))),
+  orderNodes: (nodes: { id: string }[]) =>
+    Promise.resolve(new Map(nodes.map((node, index) => [node.id, index]))),
 }));
 
 const get = vi.fn();

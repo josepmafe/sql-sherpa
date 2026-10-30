@@ -6,12 +6,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { components } from "../../src/api/schema";
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
-import { layoutGraph } from "../../src/screens/lineage/layout";
+import { orderNodes } from "../../src/screens/lineage/layout";
 
 // The real layout, with its calls counted.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../src/screens/lineage/layout")>();
-  return { ...original, layoutGraph: vi.fn(original.layoutGraph) };
+  return { ...original, orderNodes: vi.fn(original.orderNodes) };
 });
 
 type Node = components["schemas"]["LineageNode"];
@@ -57,7 +57,7 @@ const item = (name: string) => screen.findByRole("button", { name: new RegExp(`^
 describe("LineageCanvas", () => {
   // The first ELK load takes longer than findBy's default timeout under load; pay it once here.
   beforeAll(async () => {
-    await layoutGraph([{ id: "warm", layer: "marts" }], []);
+    await orderNodes([{ id: "warm", layer: "marts", sourceName: undefined }], []);
   });
 
   it("renders a node per graph node with its status label", async () => {
@@ -198,12 +198,12 @@ describe("LineageCanvas", () => {
   it("a status-only refetch keeps the layout, so the zoom stays", async () => {
     const view = render(<Harness />);
     await item("x");
-    const runs = vi.mocked(layoutGraph).mock.calls.length;
+    const runs = vi.mocked(orderNodes).mock.calls.length;
 
     view.rerender(<Harness nodes={NODES.map((node) => (node.name === "x" ? { ...node, status: "ok" as const } : node))} />);
 
     expect(await screen.findByText("ok")).toBeInTheDocument();
-    expect(layoutGraph).toHaveBeenCalledTimes(runs);
+    expect(orderNodes).toHaveBeenCalledTimes(runs);
   });
 
   it("the minimap of a large graph is hidden while the panel is open", async () => {
