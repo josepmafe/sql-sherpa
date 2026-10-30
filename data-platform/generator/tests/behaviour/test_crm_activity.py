@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import MONTH_END, SIMULATION_SEED, assert_rate, make_customer
+from helpers import MONTH_END_AT, SIMULATION_SEED, assert_rate, make_campaign, make_customer, shop_snapshot
 from sherpa_generator.behaviour.crm_activity import CrmActivitySimulator
 from sherpa_generator.records import Campaign, CampaignChannel, EmailSend, Lead, LeadSource, LifecycleStage
 from sherpa_generator.simulation.day_changes import DayChanges
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.primary_keys import PrimaryKeyAllocator
 from sherpa_generator.simulation.realism_rules import RealismRules
-from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
     from sherpa_generator.records import Customer
+    from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
-END_OF_RUN = datetime(MONTH_END.year, MONTH_END.month, MONTH_END.day, tzinfo=UTC)
 TUESDAY = date(2025, 3, 11)
 SATURDAY = date(2025, 3, 15)
 STAGE_RANK = {stage: rank for rank, stage in enumerate(LifecycleStage)}
@@ -51,7 +51,7 @@ class TestCrmActivitySimulator:
                 " GROUP BY l.id, l.lifecycle_stage, l.created_at, l.updated_at"
             ).fetchall()
 
-        converted_by = END_OF_RUN - timedelta(days=2)
+        converted_by = MONTH_END_AT - timedelta(days=2)
         stages = {row[1] for row in leads}
         for _, stage, created_at, updated_at, opened, clicked, signed_up_at in leads:
             evidence = LifecycleStage.SUBSCRIBER
@@ -65,7 +65,7 @@ class TestCrmActivitySimulator:
             assert stage != LifecycleStage.CUSTOMER or signed_up_at is not None
             assert stage != LifecycleStage.MQL or clicked
             assert stage != LifecycleStage.LEAD or opened
-            assert created_at <= updated_at < END_OF_RUN
+            assert created_at <= updated_at < MONTH_END_AT
         assert {LifecycleStage.SUBSCRIBER, LifecycleStage.LEAD, LifecycleStage.CUSTOMER} <= stages
 
     @pytest.mark.integration
@@ -81,13 +81,13 @@ class TestCrmActivitySimulator:
         with month.connect() as conn:
             sends = conn.execute("SELECT sent_at, opened_at, clicked_at FROM raw_crm.email_sends").fetchall()
 
-        settled = [opened for sent, opened, _ in sends if sent < END_OF_RUN - timedelta(days=3)]
+        settled = [opened for sent, opened, _ in sends if sent < MONTH_END_AT - timedelta(days=3)]
         open_rate = sum(1 for opened in settled if opened is not None) / len(settled)
 
         for sent, opened, clicked in sends:
             assert opened is None or sent <= opened <= sent + timedelta(hours=48)
             assert clicked is None or (opened is not None and opened <= clicked)
-            assert max(t for t in (sent, opened, clicked) if t is not None) < END_OF_RUN
+            assert max(t for t in (sent, opened, clicked) if t is not None) < MONTH_END_AT
         assert 0.17 <= open_rate <= 0.33
 
     def test_email_noise_hits_ten_percent_of_new_leads_and_normalizes_back(self) -> None:
@@ -218,29 +218,11 @@ def _snapshot(
     customers: list[Customer] | None = None,
     campaign: Campaign | None = None,
 ) -> StoreSnapshot:
-    customers = customers or []
-    return StoreSnapshot(
-        day=day,
-        variants=[],
-        variant_popularity={},
-        customers=customers,
-        customer_propensity={c.id: 1.0 for c in customers},
-        customer_devices={},
+    return shop_snapshot(
+        day,
+        customers=customers or [],
         leads=leads or [],
         active_campaigns={CampaignChannel.EMAIL: [campaign]} if campaign else {},
-        recent_email_sends=[],
-        active_promotions=[],
-        coupon_codes=[],
-        shipping_address_ids={},
-        open_orders=[],
-        open_shipments=[],
-        captured_payments=[],
-        products=[],
-        product_category_l1={},
-        recently_delivered_orders=[],
-        recently_delivered_items=[],
-        recently_delivered_payments=[],
-        open_returns=[],
     )
 
 
@@ -258,12 +240,12 @@ def _lead(lead_id: int, email: str | None = None, stage: LifecycleStage = Lifecy
 
 def _email_campaign(starts: date) -> Campaign:
     starts_at = datetime(starts.year, starts.month, starts.day, tzinfo=UTC)
-    return Campaign(
-        id=9,
+    return make_campaign(
+        9,
         name="Spring Newsletter 2025",
         utm_campaign="spring-newsletter-2025",
         channel=CampaignChannel.EMAIL,
         starts_at=starts_at,
         ends_at=starts_at + timedelta(days=30),
-        budget=5000,
+        budget=Decimal(5000),
     )

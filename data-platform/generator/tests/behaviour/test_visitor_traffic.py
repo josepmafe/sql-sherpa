@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import MONTH_END, SIMULATION_SEED, assert_rate, make_customer
+from helpers import MONTH_END_AT, SIMULATION_SEED, assert_rate, make_campaign, make_customer, scalar, shop_snapshot
 from sherpa_generator.behaviour import visitor_traffic
-from sherpa_generator.behaviour.catalog_setup import CatalogBuilder
 from sherpa_generator.behaviour.visitor_traffic import (
     EVENT_GAP_SECONDS,
     MAX_SESSION_GAPS,
@@ -21,7 +20,6 @@ from sherpa_generator.records import (
     CampaignChannel,
     EventType,
     PendingEvent,
-    ProductVariant,
     SalesChannel,
     TrackedEvent,
 )
@@ -30,14 +28,13 @@ from sherpa_generator.simulation.day_changes import DayChanges
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.primary_keys import PrimaryKeyAllocator
 from sherpa_generator.simulation.realism_rules import RealismRules
-from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 if TYPE_CHECKING:
     import psycopg
     from sherpa_generator.database.connection import Database
+    from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 DAY = date(2025, 3, 12)  # a Wednesday: seasonality 1.0
-END_OF_RUN = datetime(MONTH_END.year, MONTH_END.month, MONTH_END.day, tzinfo=UTC)
 PAID_MEDIUMS = {"cpc", "paid_social", "affiliate"}
 MAX_SESSION = timedelta(seconds=EVENT_GAP_SECONDS[1] * MAX_SESSION_GAPS)  # the longest a session runs
 PURCHASE_RATE_SCALE = 20.0  # one day with enough signups and returning checkouts to measure both purchase rates
@@ -69,21 +66,21 @@ class TestVisitorTrafficSimulator:
     @pytest.mark.integration
     def test_no_received_at_beyond_last_simulated_day_and_pending_events_are_future(self, month: Database) -> None:
         with month.connect() as conn:
-            landed_max = _scalar(conn, "SELECT max(received_at) FROM raw_events.events")
-            pending_min = _scalar(conn, "SELECT min(received_at) FROM raw_meta.pending_events")
+            landed_max = scalar(conn, "SELECT max(received_at) FROM raw_events.events")
+            pending_min = scalar(conn, "SELECT min(received_at) FROM raw_meta.pending_events")
             occurred = [datetime.fromisoformat(row[0]) for row in conn.execute(_ALL_EVENTS_OCCURRED).fetchall()]
-            customer_max = _scalar(conn, "SELECT max(created_at) FROM raw_shop.customers")
+            customer_max = scalar(conn, "SELECT max(created_at) FROM raw_shop.customers")
 
-        assert landed_max < END_OF_RUN
-        assert pending_min >= END_OF_RUN
-        assert max(occurred) < END_OF_RUN
-        assert customer_max < END_OF_RUN
+        assert landed_max < MONTH_END_AT
+        assert pending_min >= MONTH_END_AT
+        assert max(occurred) < MONTH_END_AT
+        assert customer_max < MONTH_END_AT
 
     @pytest.mark.integration
     def test_new_visitor_events_are_anonymous_until_login_or_signup(self, month: Database) -> None:
         with month.connect() as conn:
             events = _distinct_events(conn)
-            customer_count = _scalar(conn, "SELECT count(*) FROM raw_shop.customers")
+            customer_count = scalar(conn, "SELECT count(*) FROM raw_shop.customers")
 
         by_device: dict[str, list[EventRow]] = defaultdict(list)
         for row in events:
@@ -304,12 +301,6 @@ def _distinct_events(conn: psycopg.Connection) -> list[EventRow]:
     return sorted(events, key=lambda row: row[4])
 
 
-def _scalar(conn: psycopg.Connection, query: str) -> datetime | int:
-    row = conn.execute(query).fetchone()  # type: ignore[arg-type]
-    assert row is not None
-    return row[0]
-
-
 def _simulator(scale: float = 1.0) -> VisitorTrafficSimulator:
     return VisitorTrafficSimulator(
         DeterministicRandom(SIMULATION_SEED),
@@ -321,52 +312,22 @@ def _simulator(scale: float = 1.0) -> VisitorTrafficSimulator:
 
 
 def _snapshot(customers: int = 50, campaigns: dict[CampaignChannel, list[Campaign]] | None = None) -> StoreSnapshot:
-    catalog = DayChanges()
-    CatalogBuilder(DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({})).build(catalog, DAY, DAY)
-    variants = catalog.inserted(ProductVariant)
     people = [make_customer(customer_id) for customer_id in range(1, customers + 1)]
-    return StoreSnapshot(
-        day=DAY,
-        variants=variants,
-        variant_popularity={v.id: 1 / len(variants) for v in variants},
+    return shop_snapshot(
+        DAY,
         customers=people,
         customer_propensity={c.id: 1.0 + c.id % 5 for c in people},
         customer_devices={c.id: [f"device-{c.id}"] for c in people},
-        leads=[],
         active_campaigns=_campaigns() if campaigns is None else campaigns,
-        recent_email_sends=[],
-        active_promotions=[],
-        coupon_codes=[],
-        shipping_address_ids={},
-        open_orders=[],
-        open_shipments=[],
-        captured_payments=[],
-        products=[],
-        product_category_l1={},
-        recently_delivered_orders=[],
-        recently_delivered_items=[],
-        recently_delivered_payments=[],
-        open_returns=[],
     )
 
 
 def _campaigns() -> dict[CampaignChannel, list[Campaign]]:
-    start = datetime(2025, 3, 1, tzinfo=UTC)
     channels = (CampaignChannel.PAID_SEARCH, CampaignChannel.PAID_SOCIAL, CampaignChannel.AFFILIATE)
-    campaigns: dict[CampaignChannel, list[Campaign]] = {}
-    for index, channel in enumerate((*channels, CampaignChannel.EMAIL), start=1):
-        campaigns[channel] = [
-            Campaign(
-                id=index,
-                name=f"Campaign {index}",
-                utm_campaign=f"campaign-{index}",
-                channel=channel,
-                starts_at=start,
-                ends_at=start + timedelta(days=30),
-                budget=1000,
-            )
-        ]
-    return campaigns
+    return {
+        channel: [make_campaign(index, channel=channel)]
+        for index, channel in enumerate((*channels, CampaignChannel.EMAIL), start=1)
+    }
 
 
 def _events(changes: DayChanges) -> list[TrackedEvent]:

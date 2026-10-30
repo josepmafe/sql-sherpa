@@ -4,10 +4,19 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
-from helpers import SIMULATION_SEED, assert_rate, make_snapshot
+from helpers import (
+    SIMULATION_SEED,
+    assert_rate,
+    fetch_all,
+    make_item,
+    make_order,
+    make_payment,
+    make_snapshot,
+    run_days,
+)
 from sherpa_generator.behaviour.after_sales import OUTCOME_PURPOSE, REJECTION_PURPOSE, AfterSalesSimulator
 from sherpa_generator.records import (
     Order,
@@ -15,7 +24,6 @@ from sherpa_generator.records import (
     OrderStatus,
     Payment,
     PaymentMethod,
-    PaymentStatus,
     ProductVariant,
     Refund,
     RefundReason,
@@ -23,18 +31,16 @@ from sherpa_generator.records import (
     ReturnItem,
     ReturnReason,
     ReturnStatus,
-    SalesChannel,
 )
 from sherpa_generator.simulation.calendar import SimulationCalendar
-from sherpa_generator.simulation.day_changes import DayChanges
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
 from sherpa_generator.simulation.primary_keys import PrimaryKeyAllocator
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import psycopg
     from sherpa_generator.database.connection import Database
+    from sherpa_generator.simulation.day_changes import DayChanges
     from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 DELIVERED_AT = datetime(2025, 3, 1, 15, 30, tzinfo=UTC)
@@ -101,7 +107,7 @@ class TestAfterSalesSimulator:
     def test_returning_order_is_requested_once_within_thirty_days_of_delivery(self) -> None:
         order = _order(_order_id_where(lambda outcome, _: outcome < RETURN_RATE))
 
-        changes_by_day = _run_days(_delivered_snapshot(order), first=DELIVERY_DAY, days=40)
+        changes_by_day = run_days(_simulator().simulate_day, _delivered_snapshot(order), first=DELIVERY_DAY, days=40)
 
         [(day, changes)] = [(day, c) for day, c in changes_by_day if c.inserted(Return)]
         [request] = changes.inserted(Return)
@@ -121,7 +127,9 @@ class TestAfterSalesSimulator:
         order = _order(_order_id_where(lambda outcome, _: outcome < RETURN_RATE))
         items = [_item(10, 1, "89.99", order_id=order.id, variant_id=101)]
 
-        changes_by_day = _run_days(_delivered_snapshot(order, items), first=DELIVERY_DAY, days=31)
+        changes_by_day = run_days(
+            _simulator().simulate_day, _delivered_snapshot(order, items), first=DELIVERY_DAY, days=31
+        )
 
         [request] = [r for _, c in changes_by_day for r in c.inserted(Return)]
         assert request.reason == ReturnReason.SIZE
@@ -154,8 +162,11 @@ class TestAfterSalesSimulator:
         request, returned = _requested_return(order)
         open_return = request.model_copy(update={"status": ReturnStatus.APPROVED})
 
-        changes_by_day = _run_days(
-            _delivered_snapshot(order, open_returns=[open_return]), first=request.requested_at.date(), days=12
+        changes_by_day = run_days(
+            _simulator().simulate_day,
+            _delivered_snapshot(order, open_returns=[open_return]),
+            first=request.requested_at.date(),
+            days=12,
         )
 
         [(_, changes)] = [(day, c) for day, c in changes_by_day if c.updates]
@@ -179,8 +190,11 @@ class TestAfterSalesSimulator:
         order = _order(_order_id_where(lambda outcome, rejection: outcome < RETURN_RATE and rejection >= 0.10))
         request, _ = _requested_return(order)
 
-        changes_by_day = _run_days(
-            _delivered_snapshot(order, open_returns=[request]), first=request.requested_at.date(), days=12
+        changes_by_day = run_days(
+            _simulator().simulate_day,
+            _delivered_snapshot(order, open_returns=[request]),
+            first=request.requested_at.date(),
+            days=12,
         )
 
         [(_, changes)] = [(day, c) for day, c in changes_by_day if c.updates]
@@ -195,8 +209,11 @@ class TestAfterSalesSimulator:
         order = _order(_order_id_where(lambda outcome, rejection: outcome < RETURN_RATE and rejection < 0.10))
         request, _ = _requested_return(order)
 
-        changes_by_day = _run_days(
-            _delivered_snapshot(order, open_returns=[request]), first=request.requested_at.date(), days=12
+        changes_by_day = run_days(
+            _simulator().simulate_day,
+            _delivered_snapshot(order, open_returns=[request]),
+            first=request.requested_at.date(),
+            days=12,
         )
 
         [update] = [u for _, c in changes_by_day for u in c.updates]
@@ -212,7 +229,7 @@ class TestAfterSalesSimulator:
             tax="18.00",
         )
 
-        changes_by_day = _run_days(_delivered_snapshot(order), first=DELIVERY_DAY, days=40)
+        changes_by_day = run_days(_simulator().simulate_day, _delivered_snapshot(order), first=DELIVERY_DAY, days=40)
 
         [refund] = [r for _, c in changes_by_day for r in c.inserted(Refund)]
         assert (refund.order_id, refund.return_id, refund.payment_id) == (order.id, None, 21)
@@ -238,14 +255,14 @@ class TestAfterSalesSimulator:
     def test_order_without_after_sales_writes_nothing(self) -> None:
         order = _order(_order_id_where(lambda outcome, _: outcome >= RETURN_RATE + GOODWILL_RATE))
 
-        changes_by_day = _run_days(_delivered_snapshot(order), first=DELIVERY_DAY, days=45)
+        changes_by_day = run_days(_simulator().simulate_day, _delivered_snapshot(order), first=DELIVERY_DAY, days=45)
 
         assert all(c.insert_counts() == {} and c.updates == [] for _, c in changes_by_day)
 
     @pytest.mark.integration
     def test_refunds_never_exceed_captured_per_order(self, after_sales_season: Database) -> None:
         with after_sales_season.connect() as conn:
-            rows = _rows(conn, _REFUNDS_VS_CAPTURED)
+            rows = fetch_all(conn, _REFUNDS_VS_CAPTURED)
 
         reasons = {reason for _, _, reasons in rows for reason in reasons}
         assert reasons == {"cancellation", "return", "goodwill"}
@@ -254,7 +271,7 @@ class TestAfterSalesSimulator:
     @pytest.mark.integration
     def test_rejected_returns_get_no_refund(self, after_sales_season: Database) -> None:
         with after_sales_season.connect() as conn:
-            rows = _rows(conn, _REFUNDS_BY_RETURN)
+            rows = fetch_all(conn, _REFUNDS_BY_RETURN)
 
         statuses = {status for status, _, _ in rows}
         # "requested" is transient: it only exists for returns raised at the very end of the season.
@@ -266,7 +283,7 @@ class TestAfterSalesSimulator:
     @pytest.mark.integration
     def test_return_requested_only_after_delivery(self, after_sales_season: Database) -> None:
         with after_sales_season.connect() as conn:
-            rows = _rows(conn, _RETURN_TIMING)
+            rows = fetch_all(conn, _RETURN_TIMING)
 
         assert rows
         for order_status, requested_at, delivered_at, items, items_of_order, over_returned in rows:
@@ -294,7 +311,7 @@ def season() -> _Season:
     snapshot = _delivered_snapshot(orders[0], items).model_copy(
         update={"recently_delivered_orders": orders, "recently_delivered_payments": payments}
     )
-    first_run = _run_days(snapshot, first=DELIVERY_DAY, days=31)
+    first_run = run_days(_simulator().simulate_day, snapshot, first=DELIVERY_DAY, days=31)
     requests = [r for _, c in first_run for r in c.inserted(Return)]
     returned_items = [r for _, c in first_run for r in c.inserted(ReturnItem)]
     requested = {r.order_id for r in requests}
@@ -306,7 +323,7 @@ def season() -> _Season:
             "recently_delivered_payments": [p for p in payments if p.order_id in requested],
         }
     )
-    decision_run = _run_days(decision_snapshot, DELIVERY_DAY, DECISION_DAYS)
+    decision_run = run_days(_simulator().simulate_day, decision_snapshot, DELIVERY_DAY, DECISION_DAYS)
     return _Season(first_run, decision_run, requests, returned_items)
 
 
@@ -314,20 +331,8 @@ def _simulator() -> AfterSalesSimulator:
     return AfterSalesSimulator(DeterministicRandom(SIMULATION_SEED), PrimaryKeyAllocator({}), SimulationCalendar())
 
 
-def _run_days(snapshot: StoreSnapshot, first: date, days: int) -> list[tuple[date, DayChanges]]:
-    """The same shop on consecutive days, each with fresh changes (the shop itself does not move on)."""
-    simulator = _simulator()
-    result: list[tuple[date, DayChanges]] = []
-    for offset in range(days):
-        day = first + timedelta(days=offset)
-        changes = DayChanges()
-        simulator.simulate_day(snapshot.model_copy(update={"day": day}), changes)
-        result.append((day, changes))
-    return result
-
-
 def _requested_return(order: Order) -> tuple[Return, list[ReturnItem]]:
-    changes_by_day = _run_days(_delivered_snapshot(order), first=DELIVERY_DAY, days=31)
+    changes_by_day = run_days(_simulator().simulate_day, _delivered_snapshot(order), first=DELIVERY_DAY, days=31)
     [changes] = [c for _, c in changes_by_day if c.inserted(Return)]
     [request] = changes.inserted(Return)
     return request, changes.inserted(ReturnItem)
@@ -340,7 +345,7 @@ def _requests(orders: list[Order], variant_id: int) -> tuple[list[Return], list[
     snapshot = _delivered_snapshot(orders[0], items).model_copy(
         update={"recently_delivered_orders": orders, "recently_delivered_payments": payments}
     )
-    changes_by_day = _run_days(snapshot, first=DELIVERY_DAY, days=31)
+    changes_by_day = run_days(_simulator().simulate_day, snapshot, first=DELIVERY_DAY, days=31)
     return [r for _, c in changes_by_day for r in c.inserted(Return)], [
         r for _, c in changes_by_day for r in c.inserted(ReturnItem)
     ]
@@ -382,18 +387,14 @@ def _order(
     tax: str = "18.00",
 ) -> Order:
     total = Decimal(subtotal) - Decimal(discount) + Decimal(shipping) + Decimal(tax)
-    return Order(
-        id=order_id,
-        order_number=f"SS-{order_id:06d}",
-        customer_id=1,
-        shipping_address_id=1,
+    return make_order(
+        order_id,
         status=OrderStatus.DELIVERED,
         subtotal=Decimal(subtotal),
         discount_total=Decimal(discount),
         shipping_amount=Decimal(shipping),
         tax_amount=Decimal(tax),
         order_total=total,
-        sales_channel=SalesChannel.WEB,
         placed_at=DELIVERED_AT - timedelta(days=5),
         updated_at=DELIVERED_AT,
     )
@@ -408,18 +409,17 @@ def _items(order_id: int) -> list[OrderItem]:
 
 
 def _item(item_id: int, quantity: int, unit_price: str, order_id: int = 1, variant_id: int = 201) -> OrderItem:
-    return OrderItem(
-        id=item_id, order_id=order_id, variant_id=variant_id, quantity=quantity, unit_price=Decimal(unit_price)
+    return make_item(
+        item_id, order_id=order_id, variant_id=variant_id, quantity=quantity, unit_price=Decimal(unit_price)
     )
 
 
 def _payment(payment_id: int, order_id: int, method: PaymentMethod, amount: str) -> Payment:
-    return Payment(
-        id=payment_id,
+    return make_payment(
+        payment_id,
         order_id=order_id,
         method=method,
         amount=Decimal(amount),
-        status=PaymentStatus.CAPTURED,
         created_at=DELIVERED_AT - timedelta(days=5),
     )
 
@@ -436,10 +436,6 @@ def _variant(variant_id: int, product_id: int) -> ProductVariant:
         created_at=DELIVERED_AT - timedelta(days=60),
         updated_at=DELIVERED_AT - timedelta(days=60),
     )
-
-
-def _rows(conn: psycopg.Connection, query: str) -> list[tuple[Any, ...]]:
-    return conn.execute(query).fetchall()  # type: ignore[arg-type]  # static SQL only
 
 
 _REFUNDS_VS_CAPTURED = """

@@ -6,15 +6,11 @@ from typing import TYPE_CHECKING
 
 import psycopg
 import pytest
-from helpers import NOW, make_customer, make_order
+from helpers import NOW, make_customer, make_event, make_order
 from sherpa_generator.database.record_writer import RecordWriter
 from sherpa_generator.records import (
     AdSpendDay,
     Customer,
-    DeviceType,
-    EventContext,
-    EventProperties,
-    EventType,
     Order,
     OrderStatus,
     PendingEvent,
@@ -26,18 +22,6 @@ if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
 
 pytestmark = pytest.mark.integration
-
-
-def make_event(event_id: str, cls: type[TrackedEvent] = TrackedEvent) -> TrackedEvent:
-    return cls(
-        event_id=event_id,
-        anonymous_id="anon-1",
-        event_type=EventType.PURCHASE,
-        occurred_at="2025-01-01T13:00:00+01:00",
-        received_at=NOW,
-        context=EventContext(device_type=DeviceType.MOBILE, utm_source="google"),
-        properties=EventProperties(order_id=7, cart_value=Decimal("20.00")),
-    )
 
 
 class TestRecordWriter:
@@ -87,7 +71,7 @@ class TestRecordWriter:
         changes = DayChanges()
         changes.update(Order, 1, status="paid")
         changes.insert(make_order(1))
-        changes.insert(make_order(2))
+        changes.insert(make_order(2, status=OrderStatus.PLACED, updated_at=NOW))
         changes.update(Order, 1, status="shipped", updated_at=datetime(2025, 1, 3, tzinfo=UTC))
 
         with temp_database.transaction() as conn:
@@ -115,7 +99,7 @@ class TestRecordWriter:
     def test_write_update_keeps_exact_values_and_nulls(self, temp_database: Database) -> None:
         updated_at = datetime(2025, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
         changes = DayChanges()
-        changes.insert(make_order(1))
+        changes.insert(make_order(1, status=OrderStatus.PLACED, discount_total=Decimal("0.00"), updated_at=NOW))
         changes.insert(make_customer(1).model_copy(update={"deleted_at": NOW}))
         changes.update(Order, 1, status=OrderStatus.PAID, discount_total=Decimal("1.10"), updated_at=updated_at)
         changes.update(Customer, 1, deleted_at=None, marketing_opt_in=False)

@@ -5,17 +5,25 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from helpers import RUN_DAYS, RUN_SCALE, RUN_SEED, RUN_START, RUN_TODAY, STATE_TABLE, fingerprint
+from helpers import (
+    RUN_DAYS,
+    RUN_SCALE,
+    RUN_SEED,
+    RUN_START,
+    RUN_TODAY,
+    assert_empty,
+    fingerprint,
+    scalar,
+    stored_state,
+)
 from sherpa_generator.behaviour.catalog_setup import ALWAYS_ON_CHANNELS
 from sherpa_generator.behaviour.customer_deletions import CustomerDeletionSimulator
 from sherpa_generator.database.raw_schema import RawSchema
-from sherpa_generator.simulation.simulation_state import SimulationStateStore
 from sherpa_generator.simulation.simulator import GeneratorError, RunResult, Simulator
 
 if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
     from sherpa_generator.simulation.day_changes import DayChanges
-    from sherpa_generator.simulation.simulation_state import SimulationState
     from sherpa_generator.simulation.store_snapshot import StoreSnapshot
 
 pytestmark = pytest.mark.integration
@@ -37,7 +45,8 @@ class TestSimulator:
     def test_resume_equals_single_run(self, temp_database: Database, simulator_reference: dict[str, object]) -> None:
         simulator = make_simulator(temp_database)
         simulator.run(4, RUN_START)
-        pending_after_four_days = row_count(temp_database, "raw_meta.pending_events")
+        with temp_database.connect() as conn:
+            pending_after_four_days = scalar(conn, "SELECT count(*) FROM raw_meta.pending_events")
 
         simulator.run(6)
 
@@ -71,8 +80,9 @@ class TestSimulator:
 
         state = stored_state(temp_database)
         assert (state.start_date, state.last_simulated_date) == (RUN_START, None)
-        assert row_count(temp_database, "raw_shop.products") > 0
-        assert row_count(temp_database, "raw_shop.orders") == 0
+        with temp_database.connect() as conn:
+            assert scalar(conn, "SELECT count(*) FROM raw_shop.products") > 0
+            assert scalar(conn, "SELECT count(*) FROM raw_shop.orders") == 0
         monkeypatch.undo()
         simulator.run(RUN_DAYS)
         assert fingerprint(temp_database) == simulator_reference
@@ -81,8 +91,9 @@ class TestSimulator:
         result = make_simulator(temp_database).run(2, date(2025, 3, 10))
 
         assert (result.first_day, result.last_day) == (date(2025, 3, 10), date(2025, 3, 11))
-        assert result.rows_written["raw_shop.orders"] == row_count(temp_database, "raw_shop.orders")
-        assert result.rows_written["raw_shop.products"] == row_count(temp_database, "raw_shop.products")
+        with temp_database.connect() as conn:
+            assert result.rows_written["raw_shop.orders"] == scalar(conn, "SELECT count(*) FROM raw_shop.orders")
+            assert result.rows_written["raw_shop.products"] == scalar(conn, "SELECT count(*) FROM raw_shop.products")
 
     def test_first_run_defaults_to_ending_yesterday(self, temp_database: Database) -> None:
         result = make_simulator(temp_database).run(2)
@@ -234,22 +245,6 @@ def always_on_campaign_ends(db: Database) -> set[datetime]:
     return {row[0] for row in rows}
 
 
-def stored_state(db: Database) -> SimulationState:
-    with db.connect() as conn:
-        state = SimulationStateStore(conn).load()
-
-    assert state is not None
-    return state
-
-
-def row_count(db: Database, table: str) -> int:
-    with db.connect() as conn:
-        row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
-
-    assert row is not None
-    return int(row[0])
-
-
 def latest_activity(db: Database) -> datetime:
     """The latest timestamp a simulated day writes, across events, orders, CRM and ad spend."""
     with db.connect() as conn:
@@ -263,9 +258,3 @@ def latest_activity(db: Database) -> datetime:
 
     assert row is not None
     return row[0]
-
-
-def assert_empty(db: Database) -> None:
-    tables = fingerprint(db)
-    assert tables.pop(STATE_TABLE) is None
-    assert all(count == 0 for count, _ in tables.values())
