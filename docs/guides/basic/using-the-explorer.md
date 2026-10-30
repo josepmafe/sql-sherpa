@@ -58,7 +58,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 - **Not truncated:** the browser sorts and filters the rows it has. Nothing is sent to the server.
 - **Truncated:** the grid holds only the first rows, so the Explorer re-sends your SQL wrapped with the sort and filters, and the server applies them over all rows. The same guarded, read-only path runs it, and these re-runs are not history entries.
 - **Masked columns** (`email`, `first_name`, `last_name`) are never sorted or filtered, in either mode, because the order or matches would reveal the hidden values. The filter bar lists them as `email (masked)`, disabled.
-- **Duplicate column names** (`select o.order_id, i.order_id ...`) cannot be wrapped, so sorting and filtering stay in the browser. Alias the columns to get server-side back.
+- **Duplicate column names** (`select o.order_id, i.order_id ...`) cannot be wrapped, so sorting and filtering stay in the browser, under a yellow banner. Alias the columns to get server-side back.
 
 ## What you can't do, and why
 
@@ -75,6 +75,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 | Symptom | Fix |
 |---|---|
 | "The SQL Sherpa server is unreachable" | The `ui` container is down: `docker compose ps`, then `make up` |
+| Sorting an interval, uuid or json column, or filtering a number with "contains", re-runs the query (blue "on the server" note) | Expected: the browser cannot reproduce Postgres's order or text for those, so the server applies them |
 | "Database unavailable" banner | Start Postgres (`docker compose up -d --wait postgres`) and check `SHERPA_UI_PASSWORD` in `.env`; `make up` re-applies the roles |
 | "dbt artifacts missing" / `catalog_unavailable` in the tree | `make build-prod`, then reload or Retry |
 | "Query not allowed: ..." | The guard rejected it: write one `SELECT` over `marts.<table>` |
