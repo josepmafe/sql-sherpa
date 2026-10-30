@@ -1,8 +1,5 @@
-import { EditorView } from "@codemirror/view";
-import { MantineProvider } from "@mantine/core";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cellText } from "../src/components/resultView";
@@ -16,6 +13,8 @@ import {
   STORAGE_KEY,
   updateWorksheet,
 } from "../src/screens/explorer/worksheetStore";
+import { catalog, health, noContent, ok, queryResponse, table } from "./fixtures/api";
+import { editors, isShown, renderWithProviders, wideScreen } from "./fixtures/render";
 
 const post = vi.fn();
 vi.mock("../src/api/client", async (importOriginal) => ({
@@ -38,56 +37,20 @@ vi.mock("../src/components/resultView", async (importOriginal) => {
   return { ...actual, cellText: vi.fn(actual.cellText) };
 });
 
-const ORDERS = { name: "fct_orders", domain: "sales", description: "", grain: "", primary_key: [], columns: [] };
-const CATALOG = { database: "sherpa", schema_name: "marts", domains: [{ name: "sales", tables: [ORDERS] }] };
-const RESPONSE = {
-  query_id: "q",
-  columns: ["n"],
-  column_types: ["number"],
-  rows: [["1"], ["2"]],
-  returned_rows: 2,
-  truncated: false,
-  elapsed_ms: 5,
-  mode: "client",
-};
+const CATALOG = catalog({ domains: [{ name: "sales", tables: [table()] }] });
+const RESPONSE = queryResponse();
 
 function renderScreen(path = "/explorer") {
-  return render(
-    <MantineProvider env="test">
-      <MemoryRouter initialEntries={[path]}>
-        <ExplorerScreen />
-      </MemoryRouter>
-    </MantineProvider>,
-  );
+  return renderWithProviders(<ExplorerScreen />, { path });
 }
-
-const health = (database: "ok" | "down") => ({ database, artifacts: { status: "ok", generated_at: null } });
-
-// A screen at least 1280 px wide; the setup's stub matches no query.
-const wideScreen = (query: string) =>
-  ({
-    matches: query === "(min-width: 80em)",
-    media: query,
-    onchange: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    addListener: () => {},
-    removeListener: () => {},
-    dispatchEvent: () => false,
-  }) as MediaQueryList;
-
-// Hidden worksheets stay mounted under a `display: none` box.
-const isShown = (element: HTMLElement) => element.closest('[style*="display: none"]') === null;
-const editors = () =>
-  Array.from(document.querySelectorAll<HTMLElement>(".cm-editor")).map((element) => EditorView.findFromDOM(element)!);
 
 describe("ExplorerScreen", () => {
   beforeEach(() => {
     localStorage.clear();
-    useHealth.mockReset().mockReturnValue({ data: health("ok") });
+    useHealth.mockReset().mockReturnValue({ data: health() });
     post.mockReset();
     post.mockImplementation((path: string) =>
-      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
+      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve(noContent()),
     );
   });
 
@@ -235,7 +198,7 @@ describe("ExplorerScreen", () => {
     const user = userEvent.setup();
     const seeded = freshState();
     saveExplorerState(updateWorksheet(seeded, seeded.activeId, { sql: "select 1" }));
-    useHealth.mockReturnValue({ data: health("down") });
+    useHealth.mockReturnValue({ data: health({ database: "down" }) });
     const view = renderScreen();
 
     const run = screen.getByRole("button", { name: "Run" });
@@ -245,14 +208,8 @@ describe("ExplorerScreen", () => {
     expect(await screen.findByRole("menuitem", { name: "Preview 100 rows" })).toBeDisabled();
     await user.keyboard("{Escape}");
 
-    useHealth.mockReturnValue({ data: health("ok") });
-    view.rerender(
-      <MantineProvider env="test">
-        <MemoryRouter>
-          <ExplorerScreen />
-        </MemoryRouter>
-      </MantineProvider>,
-    );
+    useHealth.mockReturnValue({ data: health() });
+    view.rerender(<ExplorerScreen />);
 
     expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Run" })).toHaveAccessibleDescription("Ctrl/Cmd+Enter runs");
@@ -301,7 +258,7 @@ describe("ExplorerScreen", () => {
 
   it("typing in one worksheet re-renders neither the other worksheets nor any result grid", async () => {
     const user = userEvent.setup();
-    post.mockImplementation(() => Promise.resolve({ data: RESPONSE, response: { status: 200 } }));
+    post.mockImplementation(() => Promise.resolve(ok(RESPONSE)));
     const one = freshState();
     const two = addWorksheet(updateWorksheet(one, one.activeId, { sql: "select 1" }));
     saveExplorerState(updateWorksheet(two, two.activeId, { sql: "select 2" }));

@@ -1,15 +1,16 @@
-import { MantineProvider } from "@mantine/core";
-import { render, screen, within } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
 import { MASKED_HINT, ResultGrid } from "../src/components/ResultGrid";
-import { EMPTY_VIEW, type QueryResponse, type ResultView } from "../src/components/resultView";
+import { EMPTY_VIEW, type ResultView } from "../src/components/resultView";
+import { type QueryResponse, queryResponse } from "./fixtures/api";
+import { firstColumn, renderWithProviders } from "./fixtures/render";
 
+// Three rows of a name and an amount.
 function response(overrides: Partial<QueryResponse> = {}): QueryResponse {
-  return {
-    query_id: "q",
+  return queryResponse({
     columns: ["name", "amount"],
     column_types: ["text", "number"],
     rows: [
@@ -18,32 +19,20 @@ function response(overrides: Partial<QueryResponse> = {}): QueryResponse {
       ["c", "2.5"],
     ],
     returned_rows: 3,
-    truncated: false,
     elapsed_ms: 12,
-    mode: "client",
     ...overrides,
-  };
+  });
 }
 
 function Harness({ data, masked = new Set() }: { data: QueryResponse; masked?: ReadonlySet<string> }) {
   const [view, setView] = useState<ResultView>(EMPTY_VIEW);
-  return (
-    <MantineProvider env="test">
-      <ResultGrid response={data} view={view} onViewChange={setView} masked={masked} />
-    </MantineProvider>
-  );
+  return <ResultGrid response={data} view={view} onViewChange={setView} masked={masked} />;
 }
-
-const firstColumn = () =>
-  screen
-    .getAllByRole("row")
-    .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
 
 describe("ResultGrid", () => {
   it("sorts by one column at a time, also on shift-click", async () => {
     const user = userEvent.setup();
-    render(<Harness data={response()} />);
+    renderWithProviders(<Harness data={response()} />);
     await user.click(screen.getByRole("button", { name: "amount" }));
 
     await user.keyboard("{Shift>}");
@@ -56,7 +45,7 @@ describe("ResultGrid", () => {
 
   it("sorts from the keyboard: each header holds a button", async () => {
     const user = userEvent.setup();
-    render(<Harness data={response()} />);
+    renderWithProviders(<Harness data={response()} />);
 
     screen.getByRole("button", { name: "amount" }).focus();
     await user.keyboard("{Enter}");
@@ -68,7 +57,7 @@ describe("ResultGrid", () => {
   });
 
   it("says 1 row, not 1 rows", () => {
-    render(<Harness data={response({ rows: [["a", "10"]], returned_rows: 1 })} />);
+    renderWithProviders(<Harness data={response({ rows: [["a", "10"]], returned_rows: 1 })} />);
 
     expect(screen.getByText("1 row in 12 ms")).toBeInTheDocument();
   });
@@ -79,7 +68,7 @@ describe("ResultGrid", () => {
       [null, null],
       [longText, "1"],
     ];
-    render(<Harness data={response({ rows, returned_rows: 2 })} />);
+    renderWithProviders(<Harness data={response({ rows, returned_rows: 2 })} />);
 
     expect(screen.getAllByText("null")).toHaveLength(2);
     expect(screen.getByTitle(longText)).toHaveTextContent(/^x{200}…$/);
@@ -87,7 +76,7 @@ describe("ResultGrid", () => {
   });
 
   it("shows timestamps and JSON as Postgres's text form, which contains matches", () => {
-    render(
+    renderWithProviders(
       <Harness
         data={response({
           columns: ["at", "doc"],
@@ -103,16 +92,16 @@ describe("ResultGrid", () => {
   });
 
   it("renders zero rows and zero columns without crashing", () => {
-    const { unmount } = render(<Harness data={response({ rows: [], returned_rows: 0 })} />);
+    const { unmount } = renderWithProviders(<Harness data={response({ rows: [], returned_rows: 0 })} />);
     expect(screen.getByText("No rows.")).toBeInTheDocument();
     unmount();
 
-    render(<Harness data={response({ columns: [], column_types: [], rows: [], returned_rows: 0 })} />);
+    renderWithProviders(<Harness data={response({ columns: [], column_types: [], rows: [], returned_rows: 0 })} />);
     expect(screen.getByText("The query returned no columns.")).toBeInTheDocument();
   });
 
   it("shows read-only, and truncated with the server banner", () => {
-    render(<Harness data={response({ truncated: true, returned_rows: 1000 })} />);
+    renderWithProviders(<Harness data={response({ truncated: true, returned_rows: 1000 })} />);
 
     expect(screen.getByText("read-only")).toBeInTheDocument();
     expect(screen.getByText("truncated")).toBeInTheDocument();
@@ -122,7 +111,7 @@ describe("ResultGrid", () => {
   });
 
   it("duplicate-columns warning is shown", () => {
-    render(
+    renderWithProviders(
       <Harness
         data={response({
           columns: ["id", "id"],
@@ -140,7 +129,7 @@ describe("ResultGrid", () => {
 
   it("does not allow a filter with an empty value", async () => {
     const user = userEvent.setup();
-    render(<Harness data={response()} />);
+    renderWithProviders(<Harness data={response()} />);
 
     await user.click(screen.getByRole("combobox", { name: "Filter column" }));
     await user.click(await screen.findByRole("option", { name: "amount" }));
@@ -157,7 +146,7 @@ describe("ResultGrid", () => {
       rows: [["10", "2025-01-15", true, "a"]],
       returned_rows: 1,
     });
-    render(<Harness data={typed} />);
+    renderWithProviders(<Harness data={typed} />);
     const tryValue = async (column: string, value: string) => {
       await user.click(screen.getByRole("combobox", { name: "Filter column" }));
       await user.click(await screen.findByRole("option", { name: column }));
@@ -187,7 +176,7 @@ describe("ResultGrid", () => {
 
   it("does not check the value of a contains filter, which matches text", async () => {
     const user = userEvent.setup();
-    render(<Harness data={response()} />);
+    renderWithProviders(<Harness data={response()} />);
 
     await user.click(screen.getByRole("combobox", { name: "Filter column" }));
     await user.click(await screen.findByRole("option", { name: "amount" }));
@@ -209,7 +198,7 @@ describe("ResultGrid", () => {
       ],
       returned_rows: 2,
     });
-    render(<Harness data={masked} masked={new Set(["email"])} />);
+    renderWithProviders(<Harness data={masked} masked={new Set(["email"])} />);
 
     await user.click(screen.getByRole("columnheader", { name: "Email" }));
     await user.click(screen.getByRole("combobox", { name: "Filter column" }));
@@ -223,7 +212,7 @@ describe("ResultGrid", () => {
 
   it("renders only a window of 1,000 rows", () => {
     const rows = Array.from({ length: 1000 }, (_, i) => [`row${i}`, String(i)]);
-    render(<Harness data={response({ rows, returned_rows: 1000, truncated: true })} />);
+    renderWithProviders(<Harness data={response({ rows, returned_rows: 1000, truncated: true })} />);
 
     const rendered = screen.getAllByRole("row").length;
 
@@ -233,7 +222,7 @@ describe("ResultGrid", () => {
 
   it("filters rows in the browser and reports the shown count", async () => {
     const user = userEvent.setup();
-    render(<Harness data={response()} />);
+    renderWithProviders(<Harness data={response()} />);
 
     await user.click(screen.getByRole("combobox", { name: "Filter column" }));
     await user.click(await screen.findByRole("option", { name: "name" }));

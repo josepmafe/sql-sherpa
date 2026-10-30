@@ -1,46 +1,41 @@
-import { MantineProvider } from "@mantine/core";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HealthBanner } from "../src/app/HealthBanner";
-
-type Health = { database: "ok" | "down"; artifacts: { status: "ok" | "missing"; generated_at: string | null } };
+import { type Health, health } from "./fixtures/api";
+import { renderWithProviders } from "./fixtures/render";
 
 const useHealth = vi.fn<() => { data: Health | undefined; isError?: boolean }>();
 vi.mock("../src/api/queries", () => ({ useHealth: () => useHealth() }));
 
-const HEALTHY: Health = { database: "ok", artifacts: { status: "ok", generated_at: "2026-10-24T10:00:00Z" } };
+const DOWN_AND_MISSING = health({ database: "down", artifacts: { status: "missing", generated_at: null } });
 
 function renderBanner() {
-  return render(
-    <MantineProvider>
-      <HealthBanner />
-    </MantineProvider>,
-  );
+  return renderWithProviders(<HealthBanner />);
 }
 
 describe("HealthBanner", () => {
   beforeEach(() => useHealth.mockReset());
 
   it("shows one banner per down dependency and none when healthy", () => {
-    useHealth.mockReturnValue({ data: HEALTHY });
+    useHealth.mockReturnValue({ data: health() });
     const healthy = renderBanner();
     expect(screen.queryAllByRole("alert")).toHaveLength(0);
     healthy.unmount();
 
-    useHealth.mockReturnValue({ data: { ...HEALTHY, database: "down" } });
+    useHealth.mockReturnValue({ data: health({ database: "down" }) });
     const databaseDown = renderBanner();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByText(/database/i)).toBeInTheDocument();
     databaseDown.unmount();
 
-    useHealth.mockReturnValue({ data: { database: "down", artifacts: { status: "missing", generated_at: null } } });
+    useHealth.mockReturnValue({ data: DOWN_AND_MISSING });
     renderBanner();
     expect(screen.getAllByRole("alert")).toHaveLength(2);
   });
 
   it("a down database and missing dbt artifacts each get their own banner", () => {
-    useHealth.mockReturnValue({ data: { database: "down", artifacts: { status: "missing", generated_at: null } } });
+    useHealth.mockReturnValue({ data: DOWN_AND_MISSING });
 
     renderBanner();
 

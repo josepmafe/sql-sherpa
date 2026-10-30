@@ -1,17 +1,17 @@
-import { MantineProvider } from "@mantine/core";
-import { render, screen } from "@testing-library/react";
-import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { routes } from "../src/app/routes";
+import { catalog, health, lineageGraph } from "./fixtures/api";
+import { renderRoutes } from "./fixtures/render";
 
 const useCatalog = vi.fn();
 vi.mock("../src/api/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/api/queries")>()),
-  useHealth: () => ({ data: { database: "ok", artifacts: { status: "ok", generated_at: null } } }),
+  useHealth: () => ({ data: health() }),
   useCatalog: () => useCatalog(),
   useTableDetails: () => ({ data: undefined }),
-  useLineage: () => ({ error: null, data: { nodes: [], edges: [], layers_available: [], build: { state: "ok" } } }),
+  useLineage: () => ({ error: null, data: lineageGraph() }),
 }));
 
 vi.mock("../src/screens/lineage/layout", async (importOriginal) => ({
@@ -20,17 +20,12 @@ vi.mock("../src/screens/lineage/layout", async (importOriginal) => ({
 }));
 
 function renderAt(path: string) {
-  const router = createMemoryRouter(routes, { initialEntries: [path] });
-  return render(
-    <MantineProvider>
-      <RouterProvider router={router} />
-    </MantineProvider>,
-  );
+  return renderRoutes(routes, { path });
 }
 
 describe("AppShell", () => {
   beforeEach(() => {
-    useCatalog.mockReset().mockReturnValue({ data: { database: "sherpa", schema_name: "marts", domains: [] } });
+    useCatalog.mockReset().mockReturnValue({ data: catalog() });
   });
 
   it("shows Lineage", () => {

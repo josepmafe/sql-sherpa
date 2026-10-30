@@ -1,79 +1,76 @@
-import { MantineProvider } from "@mantine/core";
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogTree } from "../src/screens/explorer/CatalogTree";
 import { Inspector } from "../src/screens/explorer/Inspector";
+import {
+  type CatalogTree as CatalogPayload,
+  catalog,
+  columnDetails,
+  columnSummary,
+  type TableSummary,
+  table,
+  tableDetails,
+} from "./fixtures/api";
+import { renderWithProviders } from "./fixtures/render";
 
-const CATALOG = {
-  database: "sherpa",
-  schema_name: "marts",
+const CATALOG = catalog({
   domains: [
     {
       name: "sales",
       tables: [
-        {
+        table({
           name: "fct_orders",
           domain: "sales",
           description: "One row per order.",
           grain: "one row per order",
           primary_key: ["order_id"],
           columns: [
-            { name: "order_id", data_type: "bigint", description: "Order key.", is_primary_key: true, is_pii: false },
-            { name: "customer_email", data_type: "text", description: "Email.", is_primary_key: false, is_pii: true },
+            columnSummary({ name: "order_id", data_type: "bigint", description: "Order key.", is_primary_key: true }),
+            columnSummary({ name: "customer_email", description: "Email.", is_pii: true }),
           ],
-        },
+        }),
       ],
     },
     {
       name: "product",
       tables: [
-        {
+        table({
           name: "dim_products",
           domain: "product",
           description: "One row per product.",
           grain: "one row per product",
           primary_key: ["product_id"],
-          columns: [
-            { name: "sku", data_type: "text", description: "Stock keeping unit.", is_primary_key: false, is_pii: false },
-          ],
-        },
+          columns: [columnSummary({ name: "sku", description: "Stock keeping unit." })],
+        }),
       ],
     },
   ],
-};
+});
 
 // The catalog with fct_orders changed.
-function withOrders(change: object) {
+function withOrders(change: Partial<TableSummary>): CatalogPayload {
   const [sales, ...others] = CATALOG.domains;
   const [orders, ...rest] = sales!.tables;
   return { ...CATALOG, domains: [{ ...sales!, tables: [{ ...orders!, ...change }, ...rest] }, ...others] };
 }
 
-const DETAILS = {
-  name: "fct_orders",
-  domain: "sales",
+const DETAILS = tableDetails({
   description: "One row per order.",
   grain: "one row per order",
   primary_key: ["order_id"],
   synonyms: ["purchases"],
   tests: ["unique_fct_orders_order_id"],
   columns: [
-    {
-      name: "status",
-      data_type: "text",
+    columnDetails({
       description: "Order status.",
-      is_primary_key: false,
-      is_pii: false,
       accepted_values: ["placed", "shipped"],
       synonyms: ["state"],
       metric_refs: [{ name: "net_revenue", definition: "Revenue after refunds." }],
-    },
+    }),
   ],
-};
+});
 
 const useCatalog = vi.fn();
 const useTableDetails = vi.fn();
@@ -85,14 +82,6 @@ vi.mock("../src/api/queries", () => ({
 // What the hooks throw for an API error answer (ApiRequestError): an Error with the API's code.
 const apiError = (code: string, message: string) => Object.assign(new Error(message), { code, status: 503 });
 
-function renderWithMantine(ui: ReactNode) {
-  return render(
-    <MantineProvider env="test">
-      <MemoryRouter>{ui}</MemoryRouter>
-    </MantineProvider>,
-  );
-}
-
 describe("CatalogTree", () => {
   beforeEach(() => {
     useCatalog.mockReset().mockReturnValue({ data: CATALOG });
@@ -103,7 +92,7 @@ describe("CatalogTree", () => {
     const refetch = vi.fn();
     const error = apiError("catalog_unavailable", "the dbt artifacts are missing; run make build-prod");
     useCatalog.mockReturnValue({ isError: true, error, refetch });
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Could not load the catalog");
@@ -116,7 +105,7 @@ describe("CatalogTree", () => {
 
   it("a catalog request that got no answer says the server is unreachable", () => {
     useCatalog.mockReturnValue({ isError: true, error: new TypeError("Failed to fetch"), refetch: () => {} });
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Could not reach the server.");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Failed to fetch");
@@ -124,7 +113,7 @@ describe("CatalogTree", () => {
 
   it("groups by domain and shows badges", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     expect(screen.getByText("sales")).toBeInTheDocument();
     expect(screen.getByText("product")).toBeInTheDocument();
@@ -138,7 +127,7 @@ describe("CatalogTree", () => {
   it("the chevron opens and closes a table's columns without selecting it; the name does both", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
-    renderWithMantine(<CatalogTree onSelect={onSelect} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={onSelect} onPreview={() => {}} onInsertSelect={() => {}} />);
     const name = screen.getByRole("button", { name: "fct_orders" });
 
     await user.click(screen.getByRole("button", { name: "Show the columns of fct_orders" }));
@@ -156,7 +145,7 @@ describe("CatalogTree", () => {
 
   it("search keeps parents of matching columns", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.type(screen.getByLabelText("Search tables and columns"), "EMAIL");
 
@@ -169,7 +158,7 @@ describe("CatalogTree", () => {
 
   it("a search that matches nothing says so, and the clear button brings every table back", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
     expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Search tables and columns"), " zzz ");
@@ -187,7 +176,7 @@ describe("CatalogTree", () => {
     const user = userEvent.setup();
     const description = "One row per order.\nCancelled orders are kept and flagged. Metrics filter on them.";
     useCatalog.mockReturnValue({ data: withOrders({ description }) });
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.hover(screen.getByRole("button", { name: "fct_orders" }));
 
@@ -199,7 +188,7 @@ describe("CatalogTree", () => {
   it("hover cuts a long first sentence at 200 characters", async () => {
     const user = userEvent.setup();
     useCatalog.mockReturnValue({ data: withOrders({ description: `${"word ".repeat(60)}end. Next.` }) });
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.hover(screen.getByRole("button", { name: "fct_orders" }));
 
@@ -210,7 +199,7 @@ describe("CatalogTree", () => {
 
   it("the tooltip closes when the table menu opens", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
     const name = screen.getByRole("button", { name: "fct_orders" });
     await user.hover(name);
     await screen.findByRole("tooltip");
@@ -224,7 +213,7 @@ describe("CatalogTree", () => {
   it("menu opens from right-click and runs the editor action", async () => {
     const user = userEvent.setup();
     const onPreview = vi.fn();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={onPreview} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={onPreview} onInsertSelect={() => {}} />);
 
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "fct_orders" }) });
     await user.click(await screen.findByRole("menuitem", { name: "Preview 100 rows" }));
@@ -235,7 +224,7 @@ describe("CatalogTree", () => {
   it("a blocked preview is disabled in the menu and says why", async () => {
     const user = userEvent.setup();
     const onPreview = vi.fn();
-    renderWithMantine(
+    renderWithProviders(
       <CatalogTree onSelect={() => {}} onPreview={onPreview} onInsertSelect={() => {}} previewBlocked="Database unavailable" />,
     );
 
@@ -250,7 +239,7 @@ describe("CatalogTree", () => {
   it("Insert SELECT in the ⋯ menu reports the qualified name", async () => {
     const user = userEvent.setup();
     const onInsertSelect = vi.fn();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={onInsertSelect} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={onInsertSelect} />);
 
     await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
     await user.click(await screen.findByRole("menuitem", { name: "Insert SELECT" }));
@@ -260,7 +249,7 @@ describe("CatalogTree", () => {
 
   it("Open in Lineage links to the table path", async () => {
     const user = userEvent.setup();
-    renderWithMantine(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
 
     await user.click(screen.getByRole("button", { name: "Actions for dim_products" }));
 
@@ -279,7 +268,7 @@ describe("Inspector", () => {
     const refetch = vi.fn();
     const error = apiError("table_not_found", "no mart named fct_orders");
     useTableDetails.mockReset().mockReturnValue({ isError: true, error, refetch });
-    renderWithMantine(<Inspector table="fct_orders" />);
+    renderWithProviders(<Inspector table="fct_orders" />);
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Could not load fct_orders");
@@ -292,7 +281,7 @@ describe("Inspector", () => {
 
   it("shows accepted values, synonyms, metric definitions and tests", () => {
     useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
-    renderWithMantine(<Inspector table="fct_orders" />);
+    renderWithProviders(<Inspector table="fct_orders" />);
 
     expect(screen.getByText(/Accepted values: placed, shipped/)).toBeInTheDocument();
     expect(screen.getByText(/Synonyms: state/)).toBeInTheDocument();
@@ -302,7 +291,7 @@ describe("Inspector", () => {
 
   it("Open in Lineage links to the table path", () => {
     useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
-    renderWithMantine(<Inspector table="fct_orders" />);
+    renderWithProviders(<Inspector table="fct_orders" />);
 
     expect(screen.getByRole("link", { name: "Open in Lineage" })).toHaveAttribute(
       "href",
