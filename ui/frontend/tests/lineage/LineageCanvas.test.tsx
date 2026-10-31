@@ -2,21 +2,19 @@ import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
-import { orderNodes } from "../../src/screens/lineage/layout";
-import { type LineageNode, lineageNode } from "../fixtures/api";
+import { NODE_HEIGHT, NODE_WIDTH, orderNodes } from "../../src/screens/lineage/layout";
+import { type LineageEdge, type LineageNode, lineageNode } from "../fixtures/api";
 
-// The real layout, with its calls counted.
-vi.mock("../../src/screens/lineage/layout", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../src/screens/lineage/layout")>();
-  return { ...original, orderNodes: vi.fn(original.orderNodes) };
-});
+// A quick order in place of ELK (the layout tests run the real one), with its calls counted.
+vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
+  orderNodes: vi.fn(),
+}));
 
-type Node = LineageNode;
-
-function node(name: string, patch: Partial<Node> = {}): Node {
+function node(name: string, patch: Partial<LineageNode> = {}): LineageNode {
   return lineageNode({
     unique_id: `model.s.${name}`,
     name,
@@ -27,6 +25,9 @@ function node(name: string, patch: Partial<Node> = {}): Node {
   });
 }
 
+const CANVAS_WIDTH = 1200;
+const CANVAS_HEIGHT = 800;
+
 // a -> b -> c, and an unrelated x
 const NODES = [
   node("a", { layer: "source", resource_type: "source", materialization: null, status: "none" }),
@@ -34,12 +35,12 @@ const NODES = [
   node("c", { layer: "marts", materialization: "table", status: "warned" }),
   node("x", { status: "not_in_build" }),
 ];
-const EDGES = [
+const EDGES: LineageEdge[] = [
   { source: "model.s.a", target: "model.s.b" },
   { source: "model.s.b", target: "model.s.c" },
 ];
 
-function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; nodes?: Node[]; edges?: typeof EDGES }) {
+function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; nodes?: LineageNode[]; edges?: LineageEdge[] }) {
   const [selected, setSelected] = useState(initial);
   return (
     <MantineProvider env="test">
@@ -52,9 +53,13 @@ function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; 
 const item = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}\\b`) });
 
 describe("LineageCanvas", () => {
-  // The first ELK load takes longer than findBy's default timeout under load; pay it once here.
-  beforeAll(async () => {
-    await orderNodes([{ id: "warm", layer: "marts", sourceName: undefined }], []);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // restoreMocks restores spies only: the module-level vi.fn needs its implementation again.
+  beforeEach(() => {
+    vi.mocked(orderNodes).mockReset().mockImplementation((nodes) => Promise.resolve(new Map(nodes.map((n, index) => [n.id, index]))));
   });
 
   it("renders a node per graph node with its status label", async () => {
@@ -224,6 +229,36 @@ describe("LineageCanvas", () => {
     expect(minimap()).toBeNull();
   }, 40_000);
 
+  it("the initial fit never zooms past 1x", async () => {
+    // jsdom has no layout. Give the canvas 1200x800 and each node its size, and let a ResizeObserver report them once,
+    // so React Flow can fit one small node to the canvas (it would zoom to 2x).
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("react-flow__node") ? NODE_WIDTH : CANVAS_WIDTH;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("react-flow__node") ? NODE_HEIGHT : CANVAS_HEIGHT;
+    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe(target: Element): void {
+          this.callback([{ target, contentRect: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+        }
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+    render(<Harness nodes={[NODES[1]!]} edges={[]} />);
+    await item("b");
+    const viewport = () => (document.querySelector(".react-flow__viewport") as HTMLElement).style.transform;
+
+    // The fit moves the viewport off its origin.
+    await waitFor(() => expect(viewport()).not.toMatch(/translate\(0px,0px\)/));
+
+    expect(zoomOf(viewport())).toBeLessThanOrEqual(1);
+  });
+
   it("node= in the URL restores the highlight after a reload", async () => {
     render(<Harness initial="model.s.b" />);
 
@@ -231,3 +266,7 @@ describe("LineageCanvas", () => {
     expect(await item("b")).toHaveAttribute("aria-pressed", "true");
   });
 });
+
+function zoomOf(transform: string): number {
+  return Number(/scale\(([\d.]+)\)/.exec(transform)?.[1] ?? 0);
+}

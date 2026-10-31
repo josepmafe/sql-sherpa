@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLocation, useNavigate } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LineageScreen } from "../../src/screens/lineage/LineageScreen";
 import { apiFailure, type LineageGraph, lineageGraph, lineageNode, nodeDetails, ok } from "../fixtures/api";
@@ -74,6 +74,11 @@ const nodeButton = (name: string) => screen.findByRole("button", { name: new Reg
 const panel = () => screen.getByRole("complementary", { name: "Node details" });
 
 describe("LineageScreen", () => {
+  // restoreMocks restores spies only: a module-level vi.fn keeps its calls and implementation.
+  beforeEach(() => {
+    get.mockReset();
+  });
+
   it("an unsupported selector keeps the previous graph and shows the supported forms", async () => {
     get.mockImplementation((_, options) =>
       Promise.resolve(

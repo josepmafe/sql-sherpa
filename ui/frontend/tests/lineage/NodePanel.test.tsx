@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodePanel } from "../../src/screens/lineage/NodePanel";
-import { nodeDetails } from "../fixtures/api";
+import { columnDetail, nodeDetails } from "../fixtures/api";
 import { renderWithProviders } from "../fixtures/render";
 
 const useLineageNode = vi.fn();
@@ -17,33 +17,16 @@ const DETAILS = nodeDetails({
   failing_tests: 1,
   build: { status: "success", execution_time_s: 2.5, message: "SELECT 100" },
   columns: [
-    {
-      name: "order_id",
-      data_type: "bigint",
-      description: "Order key.",
-      kind: "source",
-      resolution: "full",
-      notes: [],
-      counts: null,
-    },
-    {
+    columnDetail({ name: "order_id", data_type: "bigint", description: "Order key.", kind: "source" }),
+    columnDetail({
       name: "total",
       data_type: "numeric(12,2)",
       description: "Order total.",
       kind: "transformed",
       resolution: "partial",
       notes: ["cast to numeric(12,2)"],
-      counts: null,
-    },
-    {
-      name: "orders",
-      data_type: null,
-      description: "",
-      kind: "row_count",
-      resolution: "full",
-      notes: [],
-      counts: "stg_orders",
-    },
+    }),
+    columnDetail({ name: "orders", data_type: null, kind: "row_count", counts: "stg_orders" }),
   ],
   tests: [
     { name: "unique_order_id", kind: "generic", severity: "error", column: "order_id", outcome: "passed" },

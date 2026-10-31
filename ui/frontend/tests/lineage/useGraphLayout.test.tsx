@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NODE_HEIGHT, orderNodes } from "../../src/screens/lineage/layout";
 import { useGraphLayout } from "../../src/screens/lineage/useGraphLayout";
+import { deferred } from "../fixtures/render";
 
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
@@ -16,14 +17,6 @@ const SECOND = marts("b");
 const NO_EDGES: { source: string; target: string }[] = [];
 const NO_HEIGHTS = new Map<string, number>();
 const ROW_GAP = 24;
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
 
 describe("useGraphLayout", () => {
   beforeEach(() => {
@@ -43,6 +36,23 @@ describe("useGraphLayout", () => {
 
     expect([...result.current.positions!.keys()]).toEqual(["b"]);
     expect(result.current.state).toBe("ready");
+  });
+
+  it("a superseded order that fails leaves the newer positions and state alone", async () => {
+    const slow = deferred<Map<string, number>>();
+    order.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(new Map([["b", 0]]));
+    const { result, rerender } = renderHook(({ nodes }) => useGraphLayout(nodes, NO_EDGES, NO_HEIGHTS), {
+      initialProps: { nodes: FIRST },
+    });
+    rerender({ nodes: SECOND });
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+    const newer = result.current.positions;
+
+    await act(async () => slow.reject(new Error("elk")));
+
+    expect(result.current.state).toBe("ready");
+    expect(result.current.positions).toBe(newer);
+    expect([...result.current.positions!.keys()]).toEqual(["b"]);
   });
 
   it("keeps the previous positions when an order fails", async () => {

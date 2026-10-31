@@ -42,6 +42,12 @@ describe("lineage URL state", () => {
     expect(onlyInvalid.layers).toBeUndefined();
   });
 
+  it("an empty node= is no selection", () => {
+    const parsed = parseLineageSearch(new URLSearchParams("select=fct_orders&node="));
+
+    expect(parsed.node).toBeUndefined();
+  });
+
   describe("useLineageParams", () => {
     it("selecting a node replaces the history entry", () => {
       const { router, hook } = renderProbe();
