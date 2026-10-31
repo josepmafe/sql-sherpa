@@ -15,6 +15,7 @@ export type LineageGraph = Schemas["LineageGraph"];
 export type NodeDetails = Schemas["NodeDetails"];
 export type Health = Schemas["Health"];
 export type ApiError = Schemas["ApiError"];
+export type FormatResponse = Schemas["FormatResponse"];
 
 /** What openapi-fetch resolves with for a 2xx answer. */
 export type OkResult<T> = { data: T; response: { status: number } };
@@ -33,6 +34,10 @@ export function queryResponse(overrides: Partial<QueryResponse> = {}): QueryResp
     mode: "client",
     ...overrides,
   };
+}
+
+export function formatResponse(overrides: Partial<FormatResponse> = {}): FormatResponse {
+  return { sql: "SELECT 1", ...overrides };
 }
 
 export function catalog(overrides: Partial<CatalogTree> = {}): CatalogTree {

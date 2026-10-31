@@ -229,7 +229,7 @@ class TestQueriesApi:
     def test_the_largest_valid_request_is_accepted(self, client: TestClient, runner: MagicMock) -> None:
         # Every character of a control-character SQL is escaped to 6 bytes of JSON (UI spec §4: about 600,000 bytes).
         runner.run.return_value = outcome()
-        content = json.dumps(body(sql="" * MAX_SQL_CHARS)).encode()
+        content = json.dumps(body(sql="\x01" * MAX_SQL_CHARS)).encode()
 
         response = client.post("/api/queries", content=content, headers={"content-type": "application/json"})
 

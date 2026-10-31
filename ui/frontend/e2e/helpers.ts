@@ -14,10 +14,11 @@ export async function martNames(request: APIRequestContext): Promise<string[]> {
   const catalog = (await response.json()) as CatalogResponse;
   const names = catalog.domains.flatMap((domain) => domain.tables.map((table) => table.name));
   const inWarehouse = adminScalar(
-    "select string_agg(table_name, ',' order by table_name) from information_schema.tables where table_schema = 'marts'",
+    "select string_agg(table_name, ',' order by table_name collate \"C\") from information_schema.tables where table_schema = 'marts'",
   );
 
   expect(names.length).toBeGreaterThan(0);
+  // Both sides sort by code point: JS's default sort and the "C" collation.
   expect([...names].sort().join(",")).toBe(inWarehouse);
   return names;
 }

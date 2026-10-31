@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { errorHighlight, sqlExtension } from "../src/components/SqlEditor";
 import { WorksheetPanel } from "../src/screens/explorer/WorksheetPanel";
-import { apiFailure, catalog, columnSummary, noContent, ok, table } from "./fixtures/api";
+import { apiFailure, catalog, columnSummary, formatResponse, noContent, ok, table } from "./fixtures/api";
 import { renderWithProviders, shownEditor } from "./fixtures/render";
 
 const CATALOG = catalog({
@@ -170,7 +170,7 @@ describe("WorksheetPanel", () => {
 
   it("Format replaces the text with the formatted SQL", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue(ok({ sql: "SELECT 1" }));
+    post.mockResolvedValue(ok(formatResponse({ sql: "SELECT 1" })));
     renderWithProviders(<Harness initial="select    1" />);
 
     await user.click(screen.getByRole("button", { name: "Format" }));

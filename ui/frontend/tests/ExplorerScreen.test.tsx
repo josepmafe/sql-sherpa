@@ -278,7 +278,8 @@ describe("ExplorerScreen", () => {
 
     expect(editors()[0]!.state.doc.toString()).toBe("x-- note\nselect 1");
     expect(panelRenders(first!.id)).toBeGreaterThan(before.first);
-    expect(panelRenders(first!.id)).toBeLessThanOrEqual(before.first + 4); // a bound, not React's exact count
+    // Two edits, each re-rendering the edited panel a small number of times (2 allowed): a bound, not React's exact count.
+    expect(panelRenders(first!.id)).toBeLessThanOrEqual(before.first + 4);
     expect(panelRenders(second!.id)).toBe(before.second);
     expect(cellText).not.toHaveBeenCalled();
   });
