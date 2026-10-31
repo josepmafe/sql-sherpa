@@ -58,6 +58,21 @@ describe("focusView", () => {
   });
 });
 
+describe("focusView with several related columns in a node", () => {
+  it("collects every related column of the node, not only the first", () => {
+    const focus = columnFocusView({
+      focus: { node: FCT, column: "total" },
+      columns: [
+        focusColumn({ node: FCT, name: "total", direction: "focus" }),
+        focusColumn({ node: STG, name: "amount", direction: "upstream" }),
+        focusColumn({ node: STG, name: "tax", direction: "upstream" }),
+      ],
+    });
+
+    expect(focusView(focus, new Set([FCT, STG])).expanded.get(STG)).toEqual(new Set(["amount", "tax"]));
+  });
+});
+
 describe("nodeRows", () => {
   const COLUMNS = [
     columnView({ name: "net_revenue" }),

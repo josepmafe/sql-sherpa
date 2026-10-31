@@ -91,6 +91,30 @@ describe("GraphNode", () => {
     expect(stg.getByRole("button", { name: "Hide the other 2 columns of stg_orders" })).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("a focused node grows by its related rows and the +k more row", async () => {
+    render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+
+    await screen.findByRole("button", { name: /^amount\b/ });
+
+    expect(card(STG).style.height).toBe(`${NODE_HEIGHT + 2 * COLUMN_ROW_HEIGHT}px`);
+  });
+
+  it("only the focused node's row is marked, not a same-named column of another node", async () => {
+    const focus = columnFocusView({
+      focus: { node: FCT, column: "order_id" },
+      columns: [
+        focusColumn({ node: FCT, name: "order_id", direction: "focus" }),
+        focusColumn({ node: STG, name: "order_id", direction: "upstream" }),
+      ],
+      edges: [{ parent: { node: STG, column: "order_id" }, child: { node: FCT, column: "order_id" } }],
+    });
+    render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="order_id" focusData={focus} />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^order_id\b/ })).toHaveLength(2));
+
+    expect(within(card(FCT)).getByRole("button", { name: /^order_id\b/ })).toHaveAttribute("aria-pressed", "true");
+    expect(within(card(STG)).getByRole("button", { name: /^order_id\b/ })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("during a focus a reached node's chevron says whether the rest is shown", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
     await screen.findByRole("button", { name: /^amount\b/ });
