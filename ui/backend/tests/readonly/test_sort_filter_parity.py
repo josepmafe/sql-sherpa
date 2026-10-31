@@ -7,13 +7,17 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
+import psycopg
 import pytest
 from pydantic import BaseModel, ConfigDict
+from sherpa_mcp.masking import PiiMasker
 from sherpa_ui.readonly.query_runner import COLUMN_TYPES, QueryRunner, UiQueryError
-from sherpa_ui.readonly.sort_filter import FilterOperator, FilterSpec, SortSpec
+from sherpa_ui.readonly.sort_filter import FilterOperator, FilterSpec, SortSpec, build_wrapped_query
 from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sherpa_mcp.catalog import MartCatalogLoader
     from sherpa_ui.settings import UiSettings
 
@@ -22,7 +26,7 @@ QUERY_ID = "parity"
 
 
 class ParityTable(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     sql: str
@@ -32,14 +36,14 @@ class ParityTable(BaseModel):
 
 
 class ParitySort(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     index: int
     direction: Literal["asc", "desc"]
 
 
 class ParityFilter(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     index: int
     operator: FilterOperator
@@ -47,7 +51,7 @@ class ParityFilter(BaseModel):
 
 
 class ParityCase(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     table: str
@@ -61,7 +65,7 @@ class ParityCase(BaseModel):
 
 
 class ParityFile(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     tables: list[ParityTable]
     cases: list[ParityCase]
@@ -77,26 +81,33 @@ def values_runner(ui_settings: UiSettings, empty_catalog_loader: MartCatalogLoad
     return QueryRunner(ui_settings, empty_catalog_loader)
 
 
+@pytest.fixture(scope="module")
+def ui_connection(ui_settings: UiSettings) -> Iterator[psycopg.Connection]:
+    """One read-only connection for the ~560 cases that run the wrapper: a connection per case costs ~20 s."""
+    with psycopg.connect(ui_settings.ui_conninfo(), autocommit=True) as conn:
+        yield conn
+
+
 @pytest.mark.integration
-@pytest.mark.parametrize("case", PARITY.cases, ids=lambda case: case.name)
-def test_every_case_matches_postgres(values_runner: QueryRunner, case: ParityCase) -> None:
+@pytest.mark.parametrize("case", [case for case in PARITY.cases if not case.expected_error], ids=lambda case: case.name)
+def test_every_case_matches_postgres(ui_connection: psycopg.Connection, case: ParityCase) -> None:
     table = TABLES[case.table]
-    sort = [SortSpec(column=table.columns[case.sort.index], direction=case.sort.direction)] if case.sort else []
-    filters = [
-        FilterSpec(column=table.columns[spec.index], operator=spec.operator, value=spec.value) for spec in case.filters
-    ]
+    wrapped = build_wrapped_query(table.sql, table.columns, PiiMasker(frozenset()), *_specs(case, table))
 
-    if case.expected_error:
-        with pytest.raises(UiQueryError) as error:
-            values_runner.run(QUERY_ID, table.sql, sort, filters)
+    rows = ui_connection.execute(wrapped.query, wrapped.params).fetchall()
 
-        assert error.value.code == "sql_error"
-        return
+    assert [row[0] for row in rows] == case.expected_ids
 
-    outcome = values_runner.run(QUERY_ID, table.sql, sort, filters)
 
-    assert outcome.mode == "server"
-    assert [row[0] for row in outcome.rows] == case.expected_ids
+@pytest.mark.integration
+@pytest.mark.parametrize("case", [case for case in PARITY.cases if case.expected_error], ids=lambda case: case.name)
+def test_a_value_postgres_refuses_is_a_sql_error(values_runner: QueryRunner, case: ParityCase) -> None:
+    table = TABLES[case.table]
+
+    with pytest.raises(UiQueryError) as error:
+        values_runner.run(QUERY_ID, table.sql, *_specs(case, table))
+
+    assert error.value.code == "sql_error"
 
 
 @pytest.mark.integration
@@ -128,21 +139,26 @@ def test_the_case_file_covers_every_operator_and_direction_on_every_column_type(
     assert {kind: sorted(every - what) for kind, what in used.items()} == {kind: [] for kind in grid_types}
 
 
-def test_a_table_with_tied_keys_has_at_most_six_rows() -> None:
+def test_every_table_has_at_most_six_rows() -> None:
     # Postgres's sort is stable below 7 rows (insertion sort) and not above, while the browser's is always stable: a
-    # larger table with ties would make the expected order depend on Postgres's quicksort.
-    for table in PARITY.tables:
-        keys = [json.dumps(row[1]) for row in table.rows if row[1] is not None]
-        nulls = sum(row[1] is None for row in table.rows)
-        has_ties = len(set(keys)) != len(keys) or nulls > 1
-
-        assert not has_ties or len(table.rows) <= 6, table.name
+    # larger table with tied keys would make the expected order depend on Postgres's quicksort.
+    assert {table.name: len(table.rows) for table in PARITY.tables if len(table.rows) > 6} == {}
 
 
 def test_an_accepted_difference_in_the_file_names_what_the_browser_answers() -> None:
     accepted = [case for case in PARITY.cases if case.accepted_difference]
 
     assert accepted
+    # A new acceptance must change the spec's section 5 and this line.
+    assert {case.table for case in accepted} == {"timestamps_naive"}
     assert all(
         case.client_expected_ids is not None and case.client_expected_ids != case.expected_ids for case in accepted
     )
+
+
+def _specs(case: ParityCase, table: ParityTable) -> tuple[list[SortSpec], list[FilterSpec]]:
+    sort = [SortSpec(column=table.columns[case.sort.index], direction=case.sort.direction)] if case.sort else []
+    filters = [
+        FilterSpec(column=table.columns[spec.index], operator=spec.operator, value=spec.value) for spec in case.filters
+    ]
+    return sort, filters
