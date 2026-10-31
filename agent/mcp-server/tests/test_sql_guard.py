@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sherpa_mcp.sql_guard import ALLOWED_FUNCTIONS, SqlGuard
+from sqlglot.dialects.postgres import Postgres
 
 if TYPE_CHECKING:
     import psycopg
@@ -681,7 +682,7 @@ REMEDY_HINTS = [
     ("select * from generate_series(1, 3)", "function", "use marts.dim_date for a series of dates"),
     ("select * from public.lower('a')", "function", "call functions without a schema"),
     ('select U&"c" from marts.dim_customers c', "unicode_escape", "write the name without escapes"),
-    (f"select 1 as {LONG_NAME} from marts.dim_customers", "identifier_length", "identifiers are at most 63 bytes"),
+    (f"select 1 as {LONG_NAME} from marts.dim_customers", "identifier_length", "use a name of at most 63 bytes"),
     ("select to_timestamp(0) from marts.fct_orders", "function", "use to_char, make_date or date_trunc"),
     ("select json_agg(order_id) from marts.fct_orders", "function", "aggregate with string_agg, or select the columns"),
     (
@@ -1274,6 +1275,19 @@ class TestSqlGuard:
         assert not result.ok
         assert result.errors[0].startswith("[guard:parse] could not parse the query")
         assert result.tables == ()
+
+
+class TestEscapedIdentifierTokens:
+    def test_sqlglot_still_tokenizes_a_unicode_escape_name_in_three_tokens(self) -> None:
+        # The guard's `unicode_escape` rule matches this shape; a sqlglot bump that changes it must fail here.
+        tokens = Postgres().tokenize('U&"x"')
+
+        assert [(token.token_type.name, token.text) for token in tokens] == [
+            ("VAR", "U"),
+            ("AMP", "&"),
+            ("IDENTIFIER", "x"),
+        ]
+        assert [token.token_type.name for token in Postgres().tokenize("U&'x'")] == ["UNICODE_STRING"]
 
 
 def _scopes(count: int) -> str:

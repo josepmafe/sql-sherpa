@@ -255,7 +255,7 @@ class SqlGuard:
                     _error(
                         "identifier_length",
                         f"identifier longer than {MAX_IDENTIFIER_BYTES} bytes is not allowed",
-                        f"identifiers are at most {MAX_IDENTIFIER_BYTES} bytes",
+                        f"use a name of at most {MAX_IDENTIFIER_BYTES} bytes",
                     )
                 ]
             case exp.Operator():
