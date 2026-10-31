@@ -70,8 +70,17 @@ JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_jso
 JSON_HINT: Final = "aggregate with string_agg, or select the columns"
 DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
 DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
+WHOLE_ROW_NAME_HINT: Final = (
+    "select named columns, or qualify a column that shares a table, alias or CTE name (`t.name`)"
+)
 PARAMETER_MESSAGE: Final = "query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
 PARAMETER_HINT: Final = "write the values into the query, and abs(x) for an absolute value"
+# Each SELECT (CTE body, subquery, union arm) is a planning step: a few hundred chained CTEs outrun the 5 s timeout
+# in the planner, before any row (agent spec §4.2 item 3).
+MAX_QUERY_SCOPES: Final = 50
+MAX_IDENTIFIER_BYTES: Final = 63  # Postgres cuts longer names, so two names that differ later are one name to it
+ESCAPED_IDENTIFIER_MESSAGE: Final = 'escaped identifier U&"..." is not allowed'
+ESCAPED_IDENTIFIER_HINT: Final = "write the name without escapes"
 NUMBER_HINT: Final = "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix"
 _MARTS_HINT: Final = "query only the marts that list_tables returns"
 _ALIAS_LIST_HINT: Final = (
@@ -102,6 +111,8 @@ _CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
 _OPERATOR_NODES: Final = (exp.Connector, exp.Exists)
+# The SQL keyword for the statements whose sqlglot node is named otherwise (the model reads this name in the error).
+_STATEMENT_KEYWORDS: Final = {"transaction": "BEGIN", "truncatetable": "TRUNCATE"}
 _QUERY_NODES: Final = (exp.Select, exp.Union, exp.Intersect, exp.Except)
 _WRITE_NODES: Final = (
     exp.Insert,
@@ -147,6 +158,11 @@ class SqlGuard:
             # sqlglot misreads these numbers, so its view of the rest of the query cannot be trusted either.
             return GuardResult(ok=False, errors=number_errors, tables=())
 
+        escaped_errors = _escaped_identifier_errors(sql)
+        if escaped_errors:
+            # sqlglot reads `U&"x"` as the column U, an `&` and a name, so its view of the query cannot be trusted.
+            return GuardResult(ok=False, errors=escaped_errors, tables=())
+
         try:
             parsed = sqlglot.parse(sql, read=DIALECT)
         except (SqlglotError, RecursionError) as exc:
@@ -165,6 +181,16 @@ class SqlGuard:
             hint = "remove the outer parentheses" if isinstance(statement, exp.Subquery) else "write one SELECT"
             return _rejected(
                 _error("not_select", f"the statement must be a SELECT query, not {_statement_kind(statement)}", hint)
+            )
+
+        scopes = sum(1 for _ in statement.find_all(exp.Select))
+        if scopes > MAX_QUERY_SCOPES:
+            return _rejected(
+                _error(
+                    "complexity",
+                    f"the query has {scopes} SELECTs, at most {MAX_QUERY_SCOPES} are allowed",
+                    "split the question or use fewer CTEs and subqueries",
+                )
             )
 
         errors: list[str] = []
@@ -224,6 +250,14 @@ class SqlGuard:
                         f"use lengths up to {MAX_PAD_LENGTH:,}, or cast to text",
                     )
                 ]
+            case exp.Identifier() if len(node.name.encode()) > MAX_IDENTIFIER_BYTES:
+                return [
+                    _error(
+                        "identifier_length",
+                        f"identifier longer than {MAX_IDENTIFIER_BYTES} bytes is not allowed",
+                        f"use a name of at most {MAX_IDENTIFIER_BYTES} bytes",
+                    )
+                ]
             case exp.Operator():
                 # `a OPERATOR(pg_catalog.~) b` names any operator by its schema, past the rules for written ones.
                 return [
@@ -276,7 +310,11 @@ class SqlGuard:
                 ]
             case exp.Column(table="") if _is_whole_row(node):
                 return [
-                    _error("whole_row", f"whole-row reference `{node.name}` is not allowed", "select named columns")
+                    _error(
+                        "whole_row",
+                        f"whole-row reference `{node.name}` is not allowed",
+                        WHOLE_ROW_NAME_HINT,
+                    )
                 ]
             case _:
                 return []
@@ -284,7 +322,18 @@ class SqlGuard:
     def _table_errors(self, table: exp.Table, tables: list[str]) -> list[str]:
         source = table.this
         if isinstance(source, exp.Func):
-            return []  # a table function: checked as a function
+            # A table function is checked as a function; with a schema it is refused, as in a select list.
+            qualifier = ".".join(part.name for part in (table.args.get("catalog"), table.args.get("db")) if part)
+            if not qualifier:
+                return []
+
+            return [
+                _error(
+                    "function",
+                    f"function {qualifier}.{_written_name(source)} is not allowed",
+                    "call functions without a schema",
+                )
+            ]
 
         if not isinstance(source, exp.Identifier) or table.args.get("catalog") is not None:
             return [_error("table", f"table {table.sql(dialect=DIALECT)} is not allowed", "use marts.<name>")]
@@ -420,6 +469,30 @@ def _number_errors(sql: str) -> tuple[str, ...]:
     )
 
 
+def _escaped_identifier_errors(sql: str) -> tuple[str, ...]:
+    """A Unicode-escape name (U&, then a quoted name) is one name to Postgres; sqlglot tokenizes `U`, `&` and a name.
+
+    Checked on the tokens, so `U&'...'` strings (one UNICODE_STRING token) and text inside strings pass.
+    """
+    try:
+        tokens = _POSTGRES.tokenize(sql)
+    except SqlglotError:
+        return ()  # the parser reports it
+
+    for first, amp, name in zip(tokens, tokens[1:], tokens[2:], strict=False):
+        if (
+            first.token_type == TokenType.VAR
+            and first.text.upper() == "U"
+            and amp.token_type == TokenType.AMP
+            and amp.start == first.end + 1
+            and name.token_type == TokenType.IDENTIFIER
+            and name.start == amp.end + 1
+        ):
+            return (_error("unicode_escape", ESCAPED_IDENTIFIER_MESSAGE, ESCAPED_IDENTIFIER_HINT),)
+
+    return ()
+
+
 def _is_word_char(char: str) -> bool:
     return char.isalnum() or char == "_"
 
@@ -518,10 +591,15 @@ def _rejected(error: str) -> GuardResult:
 
 
 def _statement_kind(statement: exp.Expr) -> str:
-    if isinstance(statement, exp.Command):
-        return str(statement.this).upper()
-
-    return statement.key.upper()
+    match statement:
+        case exp.Command():
+            return str(statement.this).upper()
+        case exp.Alias():
+            return _statement_kind(statement.this)  # `listen x` parses as the column `listen` aliased `x`
+        case exp.Column():
+            return statement.name.upper()  # a lone keyword (`checkpoint`) parses as a column
+        case _:
+            return _STATEMENT_KEYWORDS.get(statement.key, statement.key.upper())
 
 
 def _function_name(func: exp.Func) -> str:
@@ -538,7 +616,7 @@ def _written_name(func: exp.Func) -> str:
 
     rendered = func.sql(dialect=DIALECT)
     head = _CALL_HEAD.match(rendered)
-    if head is not None:
+    if head is not None and not _starts_with_operand(func, rendered):
         return head.group(1).lower()
 
     if _WRITTEN_NAME.fullmatch(rendered):
@@ -548,6 +626,11 @@ def _written_name(func: exp.Func) -> str:
         return f"{rendered[:ERROR_SNIPPET_LENGTH]}..."
 
     return rendered
+
+
+def _starts_with_operand(func: exp.Func, rendered: str) -> bool:
+    """An infix operator on a call (`lower(x) ~ 'a'`) renders the operand first, so its first call is not its name."""
+    return isinstance(func, exp.Binary) and rendered.startswith(func.this.sql(dialect=DIALECT))
 
 
 def _is_built_in_type(data_type: exp.DataType) -> bool:
@@ -600,23 +683,33 @@ def _is_projection_item(column: exp.Column) -> bool:
 
 
 def _is_whole_row(column: exp.Column) -> bool:
-    """An unqualified name that is a table alias, table name or CTE name in scope reads the whole record as one value.
+    """An unqualified name that is a table alias, table name or CTE name listed in a FROM reads the whole record.
 
     Postgres resolves a real column first, so this also rejects a column that shares such a name; that is rare and the
     model can qualify it (`alias.column`).
     """
     # Fails closed: compared case-insensitively on both sides, so `"C"`, `C` and `c` all count as the same name.
     name = _identifier_value(column.this).lower()
-    if name in {cte.lower() for cte in _ctes_in_scope(column)}:
-        return True
-
     scope = column.parent
     while scope is not None:
         if isinstance(scope, exp.Select):
             sources = [scope.args.get("from_") or scope.args.get("from"), *scope.args.get("joins", [])]
             for source in sources:
-                relation = source.this if source is not None else None
-                if relation is not None and relation.alias_or_name.lower() == name:
+                if source is not None and any(r.alias_or_name.lower() == name for r in _relations(source.this)):
                     return True
         scope = scope.parent
     return False
+
+
+def _relations(relation: exp.Expr) -> list[exp.Expr]:
+    """The relation and, for a parenthesized join, the relations joined inside it (to any depth).
+
+    `from (a join b c on ...)` parses as a Subquery around the first relation, and that relation (a Table, a derived
+    table or an inner parenthesized join) carries the joins, so `c` is only visible here.
+    """
+    found = [relation]
+    if isinstance(relation, exp.Subquery) and isinstance(relation.this, exp.Subquery | exp.Table):
+        found.extend(_relations(relation.this))
+    for join in relation.args.get("joins") or []:
+        found.extend(_relations(join.this))
+    return found

@@ -42,3 +42,8 @@ class TestMcpSettings:
         settings = McpSettings(_env_file=None)
 
         assert settings.transport == "stdio"
+
+    def test_pool_holds_4_connections_by_default(self) -> None:
+        settings = McpSettings(_env_file=None)
+
+        assert settings.mcp_pool_size == 4

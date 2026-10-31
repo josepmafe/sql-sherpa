@@ -107,8 +107,10 @@ List the sqlglot name (and the Postgres one if both can appear) and extend the m
 
 **2. `test_sql_guard.py`.** The list is the safety boundary and nothing else checks it:
 
+- update the literal set in `TestAllowedFunctions::test_the_allow_list_is_exactly_the_specs`: it is the allow-list copied by the spec §4.2 categories (the spec names categories, not every function) and is compared with `ALLOWED_FUNCTIONS`, so an addition fails it until you list the name there under its category. `TestFunctionsThePostgresRoleCanRun` (integration) runs every function the `sherpa_agent` role can execute through the guard and compares the accepted names with its own literal set, so a Postgres function you allow goes there too;
+- check the rejected-family rows (the parameters of `test_a_rejected_family_member_is_refused_by_name`): your function must not belong to a family the spec rejects (`pg_*` admin and file functions, `dblink*`, `lo_*`, `*_to_xml`, `setval`/`nextval`/`currval`, `current_setting`/`set_config`), and a new rejected family needs at least three members there;
 - add the call, written as a model would, to the `test_accepts_every_allowed_function` parameters;
-- add any abusable form (subquery argument, schema-qualified spelling, table-valued form, unbounded size) to `test_rejects_hostile_inputs` with the expected error fragment.
+- add any abusable form (subquery argument, schema-qualified spelling, table-valued form, unbounded size) as a row of `REJECTED_QUERIES` (`(sql, rule, message)`, checked by `test_rejects_with_its_rule_code_and_message`).
 
 **3. Mutation check.** Remove your name from `ALLOWED_FUNCTIONS` and confirm a test fails; allow a function that must stay rejected and confirm a hostile-input test fails. Restore the line (`git diff` shows only your change). A mutation no test notices means a missing test.
 
@@ -122,7 +124,7 @@ The spec (§4.2) names categories, not functions; update it only for a new categ
 
 Every rejection is `[guard:<rule>] <message>; <hint>`. Hints live in `sql_guard.py`: `FUNCTION_HINTS` (named functions), `JSON_HINT`, `_OPERATOR_HINTS`, and the defaults `DEFAULT_FUNCTION_HINT` / `DEFAULT_OPERATOR_HINT`. A hint says what to write instead, in a few words, and never repeats the query. The `<rule>` codes are stable: `tools._rule_class` reads them for the `sherpa.guard` trace, so add a rule only for a new kind of check.
 
-Tests in `test_sql_guard.py`: `test_rejection_carries_a_remedy_hint` (one case per hint) and `test_every_error_starts_with_its_rule_code`.
+Tests in `test_sql_guard.py`: `REMEDY_HINTS` (one row per hint, checked by `test_rejection_ends_with_its_remedy_hint`) and `test_rejects_with_its_rule_code_and_message` over `REJECTED_QUERIES`, which also checks that every error starts with its rule code.
 
 ## 4. Upgrade sqlglot
 

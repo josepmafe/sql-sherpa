@@ -8,6 +8,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import create_autospec
 
 import psycopg
 import pytest
@@ -17,16 +18,31 @@ from psycopg.conninfo import make_conninfo
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sherpa_mcp.catalog import MartCatalogLoader
-from sherpa_mcp.database import AgentDatabase
+from sherpa_mcp.database import AgentDatabase, QueryResult
 from sherpa_mcp.examples import ExampleIndex
 from sherpa_mcp.settings import McpSettings
 from sherpa_mcp.tools import WarehouseTools
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
+    from unittest.mock import Mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "examples.yaml"
+FIXTURES = Path(__file__).parent / "fixtures"
+# Data platform spec §6.5: the ten marts.
+MARTS = (
+    "dim_customers",
+    "dim_date",
+    "dim_products",
+    "dim_promotions",
+    "fct_order_discounts",
+    "fct_order_items",
+    "fct_orders",
+    "fct_refunds",
+    "fct_returns",
+    "fct_sessions",
+)
 LOCALHOST = "127.0.0.1"
 ALL_INTERFACES = "0.0.0.0"  # what the server binds in the container
 CONTAINER_URL = "http://127.0.0.1:8765/mcp"  # the compose `mcp` service
@@ -57,6 +73,50 @@ class AdminSettings(BaseSettings):
             user=self.admin_user,
             password=self.admin_password.get_secret_value(),
         )
+
+
+@pytest.fixture(scope="session")
+def repo_root() -> Path:
+    return REPO_ROOT
+
+
+@pytest.fixture(scope="session")
+def examples_path() -> Path:
+    return EXAMPLES_PATH
+
+
+@pytest.fixture(scope="session")
+def marts() -> tuple[str, ...]:
+    """The ten marts of data platform spec §6.5."""
+    return MARTS
+
+
+@pytest.fixture
+def fixture_target(tmp_path: Path) -> Path:
+    """A dbt target folder with copies of `fixtures/*.json`: three marts, one of them with its primary key in the
+    middle of its columns, two with a PII text column. The manifest has the shape of dbt 1.12.6 (checked against
+    `make build-prod`'s on 2026-10-30): columns and models carry `meta` and `config.meta`."""
+    shutil.copy(FIXTURES / "manifest.json", tmp_path)
+    shutil.copy(FIXTURES / "catalog.json", tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+def fake_database() -> Mock:
+    """An `AgentDatabase` that answers nothing until a test sets the canned `QueryResult`s of `fetch` and
+    `fetch_for_model`; a call with the wrong signature fails (autospec). `scalar` raises until a test sets its
+    `side_effect`, so a test that reaches the database unexpectedly fails."""
+    database = create_autospec(AgentDatabase, instance=True)
+    empty = QueryResult(columns=(), rows=(), returned_rows=0, truncated=False, elapsed_ms=0)
+    database.fetch.return_value = empty
+    database.fetch_for_model.return_value = empty
+    database.scalar.side_effect = AssertionError("set fake_database.scalar.side_effect for this test")
+    return database
+
+
+@pytest.fixture
+def fake_tools(fixture_target: Path, fake_database: Mock) -> WarehouseTools:
+    return WarehouseTools(MartCatalogLoader(fixture_target), fake_database, ExampleIndex([]))
 
 
 @pytest.fixture(scope="session")

@@ -3,18 +3,21 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
 import urllib.error
 import urllib.request
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import create_autospec
 
 import pytest
 from mcp import Client
 from mcp.client.stdio import get_default_environment
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from mcp.types import TextContent
 from sherpa_mcp.database import WarehouseToolError
-from sherpa_mcp.server import build_server, configure_logging
+from sherpa_mcp.server import STARTUP_WAIT_SECONDS, _transport_security, build_server, configure_logging
 from sherpa_mcp.tools import WarehouseTools
+from starlette.requests import Request
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -39,6 +42,8 @@ PARITY_CALLS: tuple[tuple[str, dict[str, object]], ...] = (
 )
 VOLATILE_FIELDS = frozenset({"elapsed_ms"})
 STDIO_TIMEOUT_SECONDS = 120
+TOOLS_LIST_ID = 2
+STARTUP_FAILURE_TIMEOUT_SECONDS = 60  # the 15 s startup wait plus process start; it took 25 s once
 LEGACY_PROTOCOL_VERSION = "2025-06-18"  # the initialize handshake a pre-2026 client sends
 HTTP_TIMEOUT_SECONDS = 30
 INITIALIZE = {
@@ -217,28 +222,45 @@ def test_stdio_stdout_carries_only_protocol(stdio_server: StdioServerParameters)
     requests = (
         INITIALIZE,
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": TOOLS_LIST_ID, "method": "tools/list"},
     )
-    stdin = "".join(json.dumps(request) + "\n" for request in requests)
-
-    # Ending stdin is the stdio shutdown signal; the server answers what it read, then exits.
-    completed = subprocess.run(
+    server = subprocess.Popen(
         [stdio_server.command, *stdio_server.args],
-        input=stdin,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         cwd=stdio_server.cwd,
         env=get_default_environment() | (stdio_server.env or {}),
-        timeout=STDIO_TIMEOUT_SECONDS,
-        check=False,
     )
+    assert server.stdin is not None
+    assert server.stdout is not None
+    watchdog = threading.Timer(STDIO_TIMEOUT_SECONDS, server.kill)
+    watchdog.start()
+    try:
+        server.stdin.write("".join(json.dumps(request) + "\n" for request in requests))
+        server.stdin.flush()
 
-    messages = [json.loads(line) for line in completed.stdout.splitlines()]
-    assert messages, completed.stderr
+        # stdin stays open until the tools/list answer arrives: closing it earlier ends the server before it answers.
+        messages: list[dict[str, Any]] = []
+        for line in server.stdout:
+            messages.append(json.loads(line))
+            if messages[-1].get("id") == TOOLS_LIST_ID:
+                break
+
+        # Ending stdin is the stdio shutdown signal; whatever the server still prints must be protocol too.
+        server.stdin.close()
+        messages += [json.loads(line) for line in server.stdout]
+        server.wait(timeout=STDIO_TIMEOUT_SECONDS)
+    finally:
+        watchdog.cancel()
+        server.kill()
+
+    assert messages
     assert all(message["jsonrpc"] == "2.0" for message in messages)
     responses = {message["id"]: message for message in messages if "id" in message}
-    assert {tool["name"] for tool in responses[2]["result"]["tools"]} == TOOL_NAMES
+    assert {tool["name"] for tool in responses[TOOLS_LIST_ID]["result"]["tools"]} == TOOL_NAMES
 
 
 @pytest.mark.warehouse
@@ -247,6 +269,7 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
 ) -> None:
     env = get_default_environment() | (stdio_server.env or {}) | {"SHERPA_DB_PORT": str(closed_port)}
 
+    # The server gives up after its 15 s wait; this bound fails the test if it hangs instead.
     completed = subprocess.run(
         [stdio_server.command, *stdio_server.args],
         input="",
@@ -255,7 +278,7 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
         encoding="utf-8",
         cwd=stdio_server.cwd,
         env=env,
-        timeout=STDIO_TIMEOUT_SECONDS,
+        timeout=STARTUP_FAILURE_TIMEOUT_SECONDS,
         check=False,
     )
 
@@ -264,6 +287,52 @@ def test_server_exits_at_startup_when_the_warehouse_is_unreachable(
     assert "cannot connect to the warehouse at" in completed.stderr
     assert completed.stdout == ""
     assert env["SHERPA_AGENT_PASSWORD"] not in completed.stderr
+
+
+def test_startup_waits_15_seconds_for_the_warehouse() -> None:
+    assert STARTUP_WAIT_SECONDS == 15
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_loopback_bind_leaves_the_sdks_own_protection(host: str) -> None:
+    assert _transport_security(host) is None
+
+
+def test_other_binds_allow_loopback_and_the_compose_service_name() -> None:
+    assert _transport_security("0.0.0.0") == TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "mcp:*"],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", "http://mcp:*"],
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("host", "origin", "status"),
+    [
+        ("127.0.0.1:8765", None, None),
+        ("localhost:8765", None, None),
+        ("[::1]:8765", None, None),
+        ("mcp:8765", None, None),
+        ("evil.example:8765", None, 421),
+        ("127.0.0.1.evil.example:8765", None, 421),
+        ("mcp", None, 421),
+        ("localhost:8765", "http://localhost:5173", None),
+        ("localhost:8765", "http://evil.example:5173", 403),
+    ],
+)
+async def test_other_binds_check_host_and_origin_as_the_sdk_does(
+    host: str, origin: str | None, status: int | None
+) -> None:
+    headers = [(b"host", host.encode()), (b"content-type", b"application/json")]
+    if origin is not None:
+        headers.append((b"origin", origin.encode()))
+    request = Request({"type": "http", "method": "POST", "headers": headers})
+    middleware = TransportSecurityMiddleware(_transport_security("0.0.0.0"))
+
+    response = await middleware.validate_request(request, is_post=True)
+
+    assert (response.status_code if response is not None else None) == status
 
 
 @pytest.mark.warehouse
