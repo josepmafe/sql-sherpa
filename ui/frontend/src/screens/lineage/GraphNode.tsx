@@ -183,10 +183,11 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
           <button
             type="button"
             aria-expanded={data.open}
+            // The name starts with the visible text (WCAG 2.5.3).
             aria-label={
               data.open
-                ? `Hide the other ${data.more} ${data.more === 1 ? "column" : "columns"} of ${data.name}`
-                : `Show ${data.more} more ${data.more === 1 ? "column" : "columns"} of ${data.name}`
+                ? `Show related only: hide the other ${data.more} ${data.more === 1 ? "column" : "columns"} of ${data.name}`
+                : `+${data.more} more ${data.more === 1 ? "column" : "columns"} of ${data.name}`
             }
             onClick={(event) => stop(event, data.onToggle)}
             style={ROW_BUTTON}

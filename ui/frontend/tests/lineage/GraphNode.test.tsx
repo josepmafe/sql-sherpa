@@ -73,22 +73,22 @@ describe("GraphNode", () => {
 
     const fct = within(card(FCT));
     expect(fct.queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument();
-    expect(fct.getByRole("button", { name: /^Show 2 more columns of / })).toBeVisible();
+    expect(fct.getByRole("button", { name: /^[+]2 more columns of / })).toBeVisible();
     const stg = within(card(STG));
     expect(stg.getByRole("button", { name: /^amount\b/ })).toHaveAttribute("aria-pressed", "false");
     expect(stg.queryByRole("button", { name: /^quantity\b/ })).not.toBeInTheDocument();
-    expect(stg.getByRole("button", { name: /^Show 2 more columns of / })).toBeVisible();
+    expect(stg.getByRole("button", { name: /^[+]2 more columns of / })).toBeVisible();
   });
 
   it("+k more shows the rest of the columns, the related ones still marked", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
 
     await screen.findByRole("button", { name: /^amount\b/ });
-    fireEvent.click(within(card(STG)).getByRole("button", { name: /^Show 2 more columns of / }));
+    fireEvent.click(within(card(STG)).getByRole("button", { name: /^[+]2 more columns of / }));
 
     const stg = within(card(STG));
     expect(stg.getAllByRole("button", { name: /^(amount|quantity|order_id)\b/ })).toHaveLength(3);
-    expect(stg.getByRole("button", { name: "Hide the other 2 columns of stg_orders" })).toHaveAttribute("aria-expanded", "true");
+    expect(stg.getByRole("button", { name: "Show related only: hide the other 2 columns of stg_orders" })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("a focused node grows by its related rows and the +k more row", async () => {
@@ -132,7 +132,7 @@ describe("GraphNode", () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
     await screen.findByRole("button", { name: /^amount\b/ });
 
-    const more = await within(card(STG)).findByRole("button", { name: "Show 2 more columns of stg_orders" });
+    const more = await within(card(STG)).findByRole("button", { name: "+2 more columns of stg_orders" });
 
     expect(more).toHaveAttribute("aria-expanded", "false");
     expect(more).toHaveTextContent("+2 more");
@@ -141,7 +141,7 @@ describe("GraphNode", () => {
   it("Enter on +k more keeps the keyboard focus on a button of the node", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
     await screen.findByRole("button", { name: /^amount\b/ });
-    const more = await within(card(STG)).findByRole("button", { name: /^Show 2 more columns of / });
+    const more = await within(card(STG)).findByRole("button", { name: /^[+]2 more columns of / });
     more.focus();
 
     await userEvent.keyboard("{Enter}");
@@ -190,7 +190,7 @@ describe("GraphNode", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
 
     await waitFor(() => expect(within(card(FCT)).queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument());
-    expect(within(card(FCT)).getByRole("button", { name: /^Show 2 more columns of / })).toBeVisible();
+    expect(within(card(FCT)).getByRole("button", { name: /^[+]2 more columns of / })).toBeVisible();
 
     fireEvent.click(document.querySelector(".react-flow__pane")!);
 
@@ -201,7 +201,7 @@ describe("GraphNode", () => {
   it("the rest shown during a focus ends with the focus", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
     await screen.findByRole("button", { name: /^net_revenue\b/ });
-    fireEvent.click(within(card(STG)).getByRole("button", { name: /^Show 2 more columns of / }));
+    fireEvent.click(within(card(STG)).getByRole("button", { name: /^[+]2 more columns of / }));
     expect(await within(card(STG)).findByRole("button", { name: /^quantity\b/ })).toBeVisible();
 
     fireEvent.click(document.querySelector(".react-flow__pane")!);

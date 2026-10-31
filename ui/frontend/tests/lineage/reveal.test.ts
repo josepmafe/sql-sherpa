@@ -69,6 +69,20 @@ describe("useRevealOnKeyboardFocus", () => {
     expect(reveal).not.toHaveBeenCalled();
   });
 
+  it.each(["onMouseUp", "onPointerCancel"] as const)(
+    "a keyboard focus after a press that %s ended is revealed even when no blur came in between",
+    (end) => {
+      const { reveal, props } = mount();
+      props.onPointerDown();
+      props.onFocus();
+      props[end]();
+
+      props.onFocus();
+
+      expect(reveal).toHaveBeenCalledOnce();
+    },
+  );
+
   it("a keyboard focus after a click that left the button is revealed again", () => {
     const { reveal, props } = mount();
     props.onPointerDown();

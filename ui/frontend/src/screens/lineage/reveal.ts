@@ -54,10 +54,15 @@ export function useRevealNode(): (id: string, row?: number) => void {
   );
 }
 
+type RevealOnKeyboardFocusProps = Record<"onPointerDown" | "onMouseUp" | "onPointerCancel" | "onFocus" | "onBlur", () => void>;
+
 // The handlers of a button that reveals itself when the keyboard focuses it. A press focuses the button too (in
 // Chromium on mousedown): moving the viewport then would put the click on whatever lands under the pointer.
-export function useRevealOnKeyboardFocus(reveal: () => void): { onPointerDown: () => void; onFocus: () => void; onBlur: () => void } {
+export function useRevealOnKeyboardFocus(reveal: () => void): RevealOnKeyboardFocusProps {
   const pressed = useRef(false);
+  const release = () => {
+    pressed.current = false;
+  };
   return {
     onPointerDown: () => {
       pressed.current = true;
@@ -65,9 +70,10 @@ export function useRevealOnKeyboardFocus(reveal: () => void): { onPointerDown: (
     onFocus: () => {
       if (!pressed.current) reveal();
     },
-    // Every focus arrives after a blur, so the flag cannot outlive the press that set it.
-    onBlur: () => {
-      pressed.current = false;
-    },
+    // The press ends the flag: Safari and Firefox on macOS do not focus a button on click, so no blur would. mouseup,
+    // not pointerup: a touch tap focuses the button after its pointerup, between mousedown and mouseup.
+    onMouseUp: release,
+    onPointerCancel: release,
+    onBlur: release,
   };
 }

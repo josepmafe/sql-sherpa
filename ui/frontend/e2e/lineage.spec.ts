@@ -92,18 +92,26 @@ async function focusColumn(page: Page, uniqueId: string, column: string): Promis
   await expect(row).toHaveAttribute("aria-pressed", "true");
 }
 
-// The box of an element once it has stopped moving (a layout or a pan still running moves it between two reads).
+const SETTLE_INTERVAL_MS = 100;
+
+// The box of an element once it has stopped moving: two reads SETTLE_INTERVAL_MS apart agree (a layout or a pan
+// still running moves it between reads; the first read has nothing to agree with).
 async function settledBox(locator: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
-  let last = await locator.boundingBox();
+  let previous: string | undefined;
+  let box = await locator.boundingBox();
   await expect
-    .poll(async () => {
-      const now = await locator.boundingBox();
-      const same = JSON.stringify(now) === JSON.stringify(last);
-      last = now;
-      return same;
-    })
+    .poll(
+      async () => {
+        box = await locator.boundingBox();
+        const current = JSON.stringify(box);
+        const same = current === previous;
+        previous = current;
+        return same;
+      },
+      { intervals: [SETTLE_INTERVAL_MS] },
+    )
     .toBe(true);
-  return last!;
+  return box!;
 }
 
 async function ordersColumns(page: Page): Promise<string[]> {
