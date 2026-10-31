@@ -89,7 +89,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
 - **Repository layout, grouped by spec:**
   - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt (`dbt/`, `scripts/`) and the SQL tests of `postgres/`.
-  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
+  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright), `parity/` (`sort_filter_cases.json`, the sort/filter case file that pytest and Vitest both run) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
   - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
@@ -171,6 +171,18 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - **Tests don't write data to `sherpa` or `sherpa_eval`.** Tests that need a database use `temp_database`, and a dbt-running test identifies its own invocation rather than reading "the latest build". The exception is `data-platform/tests/dbt/test_run_results_audit.py`: its dbt runs add rows to `ops.dbt_run_results`, refresh `test_failures` and re-run `grant_read_access` on prod.
 - **Mark by need:** `integration` when Postgres is enough, `warehouse` only for built relations or artifacts. Tests of `data-platform/postgres/*.sql` live in `data-platform/tests/postgres/`.
 - **Don't test a constant against what defines it** (a rate against the constant it is read from); test it against the spec's value.
+- UI test rules:
+  - No test directory matches the effective `norecursedirs`: pytest's default list skips `build` and `dist`, so `pyproject.toml` lists the defaults without `build`. `ui/backend/tests/test_layout.py` checks that every `test_*.py` under `ui/backend/tests` is collected.
+  - Every Vitest API payload comes from a typed builder over the generated schema (`ui/frontend/tests/fixtures/api.ts`); no literal is passed to a mocked `api`.
+  - Sort and filter semantics live in the one shared case file (`ui/parity/sort_filter_cases.json`) that pytest and Vitest both run; a new operator or column type adds cases first.
+  - A value sent to Postgres (`set local`, session options) is asserted on the fake connection in the default suite.
+  - Every limit or default the spec names has a behaviour test that fails when the value changes.
+  - An unreachable database is simulated by making `psycopg.connect` raise, never by connecting to a closed port.
+  - No sleep proves that something did not happen: use fake timers or a positive signal.
+  - Vitest's `restoreMocks` restores `vi.spyOn` spies after each test; a module-level `vi.fn()` is reset in its file's `beforeEach`. Timeouts are set explicitly, and ELK is mocked outside layout tests.
+  - Assert what the user sees or what goes over the wire, not a render count or a library's CSS variable.
+  - E2E specs read expected values from the warehouse at run time.
+  - A fixture must be able to tell the rule it tests apart from the default.
 - Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
 - UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:

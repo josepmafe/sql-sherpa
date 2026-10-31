@@ -130,11 +130,9 @@ class TestBuildStatusReaderOnScratchDatabase:
 
 
 class TestBuildStatusReaderOffline:
-    def test_unavailable_when_the_database_is_down(self, settings: UiSettings, closed_port: int) -> None:
-        unreachable = settings.model_copy(update={"db_port": closed_port})
-
+    def test_unavailable_when_the_database_is_down(self, offline_settings: UiSettings) -> None:
         with pytest.raises(BuildStatusUnavailable):
-            BuildStatusReader(unreachable).last_full_build()
+            BuildStatusReader(offline_settings).last_full_build()
 
     def test_unavailable_when_the_statement_timeout_cancels_the_read(
         self, settings: UiSettings, monkeypatch: pytest.MonkeyPatch

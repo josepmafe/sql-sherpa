@@ -3,22 +3,8 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useWorksheetRun } from "../src/screens/explorer/useWorksheetRun";
-
-type Deferred = {
-  resolve: (value: unknown) => void;
-  reject: (reason: unknown) => void;
-  promise: Promise<unknown>;
-};
-
-function deferred(): Deferred {
-  let resolve!: Deferred["resolve"];
-  let reject!: Deferred["reject"];
-  const promise = new Promise<unknown>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { resolve, reject, promise };
-}
+import { apiFailure, noContent, ok, proxyFailure, queryResponse as buildQueryResponse } from "./fixtures/api";
+import { type Deferred, deferred } from "./fixtures/render";
 
 const post = vi.fn();
 vi.mock("../src/api/client", async (importOriginal) => ({
@@ -40,19 +26,7 @@ function calls(path: string): Call[] {
 }
 
 function queryResponse(queryId: string, rows: number) {
-  return {
-    data: {
-      query_id: queryId,
-      columns: ["n"],
-      column_types: ["number"],
-      rows: [],
-      returned_rows: rows,
-      truncated: false,
-      mode: "client",
-      elapsed_ms: 5,
-    },
-    response: { status: 200 },
-  };
+  return ok(buildQueryResponse({ query_id: queryId, returned_rows: rows }));
 }
 
 describe("useWorksheetRun", () => {
@@ -67,7 +41,7 @@ describe("useWorksheetRun", () => {
         pending.push(d);
         return d.promise;
       }
-      return Promise.resolve({ response: { status: 204 } });
+      return Promise.resolve(noContent());
     });
   });
   afterEach(() => vi.useRealTimers());
@@ -157,14 +131,7 @@ describe("useWorksheetRun", () => {
 
     act(() => void result.current.run("selec 1"));
     await act(async () =>
-      pending[0]!.resolve({
-        error: {
-          code: "sql_error",
-          message: 'syntax error at or near "selec"',
-          detail: { position: 0 },
-        },
-        response: { status: 422 },
-      }),
+      pending[0]!.resolve(apiFailure("sql_error", 'syntax error at or near "selec"', 422, 0)),
     );
 
     expect(result.current.status).toBe("error");
@@ -185,10 +152,7 @@ describe("useWorksheetRun", () => {
 
     act(() => void result.current.run("select 1"));
     await act(async () =>
-      pending[0]!.resolve({
-        error: { code: "cancelled", message: "Query cancelled." },
-        response: { status: 409 },
-      }),
+      pending[0]!.resolve(apiFailure("cancelled", "Query cancelled.", 409)),
     );
 
     expect(result.current.status).toBe("cancelled");
@@ -203,10 +167,7 @@ describe("useWorksheetRun", () => {
 
     act(() => void result.current.run("select 1"));
     await act(async () =>
-      pending[1]!.resolve({
-        error: "<html>bad gateway</html>",
-        response: { status: 502 },
-      }),
+      pending[1]!.resolve(proxyFailure("<html>bad gateway</html>", 502)),
     );
     expect(result.current.error).toEqual({
       code: "http_error",
@@ -234,7 +195,7 @@ describe("useWorksheetRun", () => {
       expect(result.current.status).toBe("running");
       expect(result.current.response?.returned_rows).toBe(1);
       await act(async () =>
-        pending[1]!.resolve({ error: { code: "sql_error", message: "bad value" }, response: { status: 422 } }),
+        pending[1]!.resolve(apiFailure("sql_error", "bad value", 422)),
       );
 
       expect(result.current.status).toBe("error");
@@ -287,7 +248,7 @@ describe("useWorksheetRun", () => {
 
       act(() => void result.current.run("select 2"));
       await act(async () =>
-        pending[1]!.resolve({ error: { code: "sql_error", message: "bad value" }, response: { status: 422 } }),
+        pending[1]!.resolve(apiFailure("sql_error", "bad value", 422)),
       );
 
       expect(result.current.status).toBe("error");

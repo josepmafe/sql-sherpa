@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from dbt.cli.main import dbtRunner
 from sherpa_ui.lineage.manifest_graph import ManifestGraph
 from sherpa_ui.lineage.selector import SelectorEvaluator
+from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
     from dbt.contracts.graph.manifest import Manifest
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 DBT_PROJECT = REPO_ROOT / "data-platform" / "dbt"
 GRAPH_RESOURCE_TYPES = ("model", "seed", "snapshot", "source", "exposure")
 SELECTORS = [

@@ -32,6 +32,7 @@ import {
   filterValueProblem,
   hasDuplicateColumns,
   isServerSide,
+  needsServer,
   type Operator,
   type QueryResponse,
   type ResultView,
@@ -55,6 +56,9 @@ const COLUMN_WIDTH = 160;
 const DISPLAY_MAX_CHARS = 200; // Long text is cut in the display only; the full value is the hover title.
 export const MASKED_HINT = "Masked personal data (shown as ***): not sortable or filterable";
 const DUPLICATE_WARNING = "duplicate column names: sorting and filtering apply only to the rows shown";
+// A complete result sorts in the browser; for this view Postgres's order or text may differ (UI spec §5).
+const DUPLICATE_COMPLETE_WARNING =
+  "duplicate column names: this sort or filter runs in the browser and may differ from Postgres; alias the columns to run it on the server";
 const OPERATORS: { value: Operator; label: string }[] = [
   { value: "=", label: "=" },
   { value: "!=", label: "!=" },
@@ -70,7 +74,7 @@ const OPERATORS: { value: Operator; label: string }[] = [
 // Memoized: a worksheet's editor re-renders its panel on every keystroke, and the grid's props stay the same.
 export const ResultGrid = memo(function ResultGrid({ response, view, onViewChange, masked }: GridProps) {
   const { columns, column_types: types } = response;
-  const serverSide = isServerSide(response);
+  const serverSide = isServerSide(response, view);
   // In server mode the rows already are the sorted and filtered ones.
   const rows = useMemo(
     () => (serverSide ? (response.rows as Row[]) : applyView(response.rows as Row[], types, view)),
@@ -129,9 +133,9 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
     <Stack gap="xs">
       <StatusLine response={response} shown={tableRows.length} filtered={filtered} />
       {/* One-line notes, so the grid stays in view on a 900 px high screen. */}
-      {response.truncated && hasDuplicateColumns(columns) && (
+      {hasDuplicateColumns(columns) && (response.truncated || needsServer(view, types, response.rows as Row[])) && (
         <Alert color="yellow" py={6} px="sm">
-          <b>Duplicate column names:</b> {response.warning ?? DUPLICATE_WARNING}
+          {response.truncated ? (response.warning ?? DUPLICATE_WARNING) : DUPLICATE_COMPLETE_WARNING}
         </Alert>
       )}
       {serverSide && (

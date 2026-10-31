@@ -1,30 +1,21 @@
 import { expect, test } from "@playwright/test";
 
-import { adminScalar, runQuery } from "./warehouse";
+import { martNames } from "./helpers";
+import { adminScalar, LONG_AGGREGATE, runQuery, superuserScalar } from "./warehouse";
 
 // The UI's login, which `make e2e` passes from .env (compose's default otherwise).
 const UI_USER = process.env.SHERPA_UI_USER ?? "sherpa_ui";
 const SESSION_GONE_MS = 5_000;
 
-const MARTS = [
-  "dim_customers",
-  "dim_date",
-  "dim_products",
-  "dim_promotions",
-  "fct_order_discounts",
-  "fct_order_items",
-  "fct_orders",
-  "fct_refunds",
-  "fct_returns",
-  "fct_sessions",
-];
-
 test.beforeEach(async ({ page }) => {
   await page.goto("/explorer");
 });
 
-test("tree lists every mart and the Inspector shows the grain", async ({ page }) => {
-  for (const mart of MARTS) {
+test("tree lists every mart and the Inspector shows the grain", async ({ page, request }) => {
+  const marts = await martNames(request);
+  expect(marts.length).toBeGreaterThan(0);
+
+  for (const mart of marts) {
     await expect(page.getByRole("button", { name: mart, exact: true })).toBeVisible();
   }
 
@@ -86,18 +77,15 @@ test("a small result sorts in the browser without another request", async ({ pag
 });
 
 test("a long aggregate is cancelled with the button and its session ends", async ({ page }) => {
-  // The health checks' short sessions come and go, so the baseline is the lowest of a few counts.
-  const before = Math.min(uiSessions(), uiSessions(), uiSessions());
-  await runQuery(
-    page,
-    "select count(*) from marts.fct_order_items a cross join marts.fct_order_items b cross join marts.fct_order_items c",
-  );
-  await expect.poll(uiSessions).toBeGreaterThan(before); // the query holds a connection
+  const before = new Set(fetchingPids());
+  await runQuery(page, LONG_AGGREGATE);
+  await expect.poll(() => fetchingPids().filter((pid) => !before.has(pid))).toHaveLength(1); // running in Postgres
+  const pid = fetchingPids().find((candidate) => !before.has(candidate)) as number;
 
   await page.getByRole("button", { name: "Cancel" }).first().click();
 
   await expect(page.getByText(/Cancelled after/)).toBeVisible();
-  await expect.poll(uiSessions, { timeout: SESSION_GONE_MS }).toBeLessThanOrEqual(before);
+  await expect.poll(() => sessionCount(pid), { timeout: SESSION_GONE_MS }).toBe(0);
 });
 
 test("Preview 100 rows runs from the table menu", async ({ page }) => {
@@ -107,7 +95,18 @@ test("Preview 100 rows runs from the table menu", async ({ page }) => {
   await expect(page.getByText(/^100 rows in /)).toBeVisible();
 });
 
-// By user name only: Postgres shows the admin the state and query of another role's sessions as NULL.
-function uiSessions(): number {
-  return Number(adminScalar(`select count(*) from pg_stat_activity where usename = '${UI_USER.replaceAll("'", "''")}'`));
+// The UI runs a query through a server-side cursor, so while it computes pg_stat_activity shows `FETCH FORWARD n FROM
+// <cursor>`, never the user's text. The test follows the backend pid of its own query: the pids that appear after it
+// ran the query, so other sessions (health checks, another suite) do not count.
+function fetchingPids(): number[] {
+  const rows = superuserScalar(
+    `select coalesce(string_agg(pid::text, ',' order by pid), '') from pg_stat_activity
+     where usename = '${UI_USER.replaceAll("'", "''")}' and datname = current_database()
+       and state = 'active' and query like 'FETCH FORWARD%'`,
+  );
+  return rows === "" ? [] : rows.split(",").map(Number);
+}
+
+function sessionCount(pid: number): number {
+  return Number(superuserScalar(`select count(*) from pg_stat_activity where pid = ${Number(pid)}`));
 }

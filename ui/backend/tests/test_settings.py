@@ -8,17 +8,6 @@ from pydantic import ValidationError
 from sherpa_ui.settings import UiSettings
 
 
-@pytest.fixture
-def ui_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SHERPA_DB_HOST", "db.example")
-    monkeypatch.setenv("SHERPA_DB_PORT", "5433")
-    monkeypatch.setenv("SHERPA_DB_NAME", "sherpa")
-    monkeypatch.setenv("SHERPA_UI_USER", "sherpa_ui")
-    monkeypatch.setenv("SHERPA_UI_PASSWORD", "s3cret pw")
-    monkeypatch.delenv("SHERPA_UI_STATEMENT_TIMEOUT_S", raising=False)
-    monkeypatch.delenv("SHERPA_UI_DBT_TARGET_PATH", raising=False)
-
-
 @pytest.mark.usefixtures("ui_env")
 class TestUiSettings:
     def test_ui_conninfo_forces_read_only_and_the_ui_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,10 +37,3 @@ class TestUiSettings:
         settings = UiSettings(_env_file=None)
 
         assert settings.ui_dbt_target_path == Path("data-platform/dbt/target-prod")
-
-    def test_target_path_reads_its_own_variable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SHERPA_UI_DBT_TARGET_PATH", "/app/dbt/target-prod")
-
-        settings = UiSettings(_env_file=None)
-
-        assert settings.ui_dbt_target_path == Path("/app/dbt/target-prod")

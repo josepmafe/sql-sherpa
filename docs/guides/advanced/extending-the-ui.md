@@ -20,7 +20,7 @@ The backend is the Python package `sherpa_ui` (`ui/backend/src/sherpa_ui/`). The
 | `ui/frontend/src/screens/<screen>/` | One folder per screen (`explorer/`, `lineage/`) |
 | `ui/frontend/src/components/` | Components shared between screens (`ResultGrid`, `SqlEditor`) |
 
-Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds Vitest, `ui/frontend/e2e/` holds Playwright.
+Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds Vitest, `ui/frontend/e2e/` holds Playwright, `ui/parity/` holds the sort/filter case file that pytest and Vitest both run.
 
 ## 1. Add an endpoint
 
@@ -117,7 +117,7 @@ To loosen or tighten a rule:
 ```bash
 (cd ui/frontend && npm ci)                                # once (Node 22+)
 
-uv run --env-file .env pytest ui                          # 1. backend, no database needed
+uv run --env-file .env pytest ui                          # 1. backend; the `integration` tests need Postgres (`docker compose up -d --wait postgres`)
 uv run --env-file .env pytest ui -m warehouse             #    against the built prod marts (make build-prod first)
 
 (cd ui/frontend && npm test)                              # 2. Vitest + Testing Library, mocked API
@@ -129,9 +129,31 @@ make e2e
 ```
 
 - Mock the API at `src/api/client` partially (`vi.mock(..., async (importOriginal) => ({ ...(await importOriginal()), api: { POST: ... } }))`), so `apiError` stays real. Give `beforeEach` a block body: Vitest treats a returned function as teardown.
+- Vitest payloads come from the typed builders in `ui/frontend/tests/fixtures/api.ts` (`queryResponse`, `tableDetails`, `ok`, `apiFailure`, ...), which return the generated schema types, so a field the API adds breaks `npm run typecheck` in one place. Never pass a literal to a mocked `api`. `renderWithProviders` (`fixtures/render.tsx`) wraps a component in Mantine, a router and a QueryClient that never retries.
+- E2E specs read their expected values from the warehouse at run time, not from constants.
 - `make e2e` uses one worker and `http://127.0.0.1:${SHERPA_UI_PORT:-8090}`. For another port run `SHERPA_UI_PORT=8091 make e2e` or set it in `.env`; `make ui-dev` follows the same variable.
 - Specs: `explorer.spec.ts`, `lineage.spec.ts`, `layout.spec.ts`, `offline.spec.ts`, `freshness.spec.ts`. Scrollbar overlap and layout widths show only in a real browser, hence Playwright.
 - `make lint` covers ruff, mypy, sqlfluff, the docs coverage, ESLint, `tsc`, the npm lockfile and the stale-client check.
+
+### The shared sort/filter case file
+
+`ui/parity/sort_filter_cases.json` pins what a sort or filter means (UI spec §5). Two tests run it: `ui/backend/tests/readonly/test_sort_filter_parity.py` (real Postgres, through the server wrapper) and `ui/frontend/tests/resultViewParity.test.ts` (the browser's code, reading the file at test time).
+
+- `tables`: `name`, `sql` (a `values` list), `columns`, `column_types` (grid types), `rows` (exactly what the API returns for `sql`, int8 above 2^53 as strings). Column 0 is the integer `id`; column 1 is the one sorted and filtered.
+- `cases`: `name`, `table`, `sort` and `filters` (by column index), then `expected_ids`. Optional fields: `route: "server"` (the browser must send this one to the server), `expected_error` (Postgres refuses it; the browser must refuse too), `accepted_difference` with `client_expected_ids` (a documented place where the browser answers differently).
+- Every table has at most 6 rows: Postgres sorts stably only below 7 rows, so a larger table with tied keys would make the expected order depend on its quicksort.
+
+To add a case, or a new operator or column type (cases first):
+
+1. Write the table and the case in the file. Take `expected_ids` from real Postgres through `build_wrapped_query` (`sherpa_ui.readonly.sort_filter`), never from the browser code.
+2. Run both sides:
+
+```bash
+uv run --env-file .env pytest ui/backend -k parity
+(cd ui/frontend && npm test)
+```
+
+3. A failing Vitest case is a browser difference: fix `components/resultView.ts`, or route that case to the server with `route`. A coverage test requires every operator and direction on every column type.
 
 **`freshness.spec.ts` changes your warehouse.** It runs `make advance DAYS=1` and `make build-prod`, adding a simulated day to the warehouse every checkout shares; only `make reset` and a full rebuild undo it. `make e2e` skips it. Run it deliberately:
 
@@ -151,6 +173,7 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | `TestOpenapiErrors` fails for a new route | Add the route and its statuses to its table |
 | A new error shows "Query failed" | Add its code to `ERROR_TITLES` |
 | The memoization test fails after adding a prop | Make the prop stable (`useCallback`, a string) |
+| A parity case fails in Vitest only | The browser differs from Postgres: fix `resultView.ts` or route the case to the server; never edit `expected_ids` to match the browser |
 | Playwright cannot connect | `make up && make build-prod`, and match `SHERPA_UI_PORT` |
 | `unsupported_selector` for a form you added | `SelectorEvaluator._match_atom` has no branch for it |
 | The oracle test fails for one selector | The atom differs from `dbt ls`: fix the evaluator, not the list |
