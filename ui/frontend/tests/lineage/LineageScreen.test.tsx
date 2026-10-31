@@ -484,7 +484,7 @@ describe("LineageScreen", () => {
       await row("net_revenue");
       expect(screen.queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument();
 
-      fireEvent.click(within(await screen.findByLabelText("Lineage graph")).getAllByRole("button", { name: "+1 more" })[0]!);
+      fireEvent.click(within(await screen.findByLabelText("Lineage graph")).getAllByRole("button", { name: /^Show 1 more column of / })[0]!);
       expect(await row("units")).toBeVisible();
       await userEvent.keyboard("{Escape}");
 
@@ -511,7 +511,7 @@ describe("LineageScreen", () => {
       get.mockImplementation(answerScene());
       mount(`/lineage?node=${B}&column=net_revenue`);
       await row("net_revenue");
-      fireEvent.click(within(await screen.findByLabelText("Lineage graph")).getByRole("button", { name: "+1 more" }));
+      fireEvent.click(within(await screen.findByLabelText("Lineage graph")).getByRole("button", { name: /^Show 1 more column of / }));
       expect(await row("units")).toBeVisible();
       await userEvent.keyboard("{Escape}");
       await waitFor(() => expect(here()).not.toHaveTextContent("column="));
@@ -520,7 +520,7 @@ describe("LineageScreen", () => {
 
       expect(await row("net_revenue")).toHaveAttribute("aria-pressed", "true");
       expect(within(screen.getByLabelText("Lineage graph")).queryByRole("button", { name: /^units/ })).not.toBeInTheDocument();
-      expect(within(screen.getByLabelText("Lineage graph")).getByRole("button", { name: "+1 more" })).toBeVisible();
+      expect(within(screen.getByLabelText("Lineage graph")).getByRole("button", { name: /^Show 1 more column of / })).toBeVisible();
     });
 
     it("columns are still asked for after a focus from a column= URL ends", async () => {

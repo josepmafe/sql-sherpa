@@ -34,9 +34,11 @@ export interface GraphNodeData extends Record<string, unknown> {
   // Column rows, from the node's columns: none while collapsed. `more` counts the columns a focus leaves out.
   rows: RowView[];
   more: number;
-  // The chevron: shown for a node with columns; `open` when the user (or a focus) opened it; disabled, with the
-  // reason as its description, while column lineage is unavailable.
+  // The chevron: shown for a node with columns; `open` when the node lists all its columns; disabled, with the reason
+  // as its description, while column lineage is unavailable. A focus `reached` node lists its related columns
+  // otherwise, and has nothing to open when none is left out.
   hasColumns: boolean;
+  reached: boolean;
   open: boolean;
   unavailable: string | undefined;
   onToggle: () => void;
@@ -178,9 +180,19 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
           <ColumnRow key={row.column.name} row={row} index={index} nodeId={id} onFocusColumn={data.onFocusColumn} />
         ))}
         {data.more > 0 && (
-          <button type="button" onClick={(event) => stop(event, data.onToggle)} style={ROW_BUTTON}>
+          <button
+            type="button"
+            aria-expanded={data.open}
+            aria-label={
+              data.open
+                ? `Hide the other ${data.more} ${data.more === 1 ? "column" : "columns"} of ${data.name}`
+                : `Show ${data.more} more ${data.more === 1 ? "column" : "columns"} of ${data.name}`
+            }
+            onClick={(event) => stop(event, data.onToggle)}
+            style={ROW_BUTTON}
+          >
             <Text component="span" size="xs" c="dimmed">
-              +{data.more} more
+              {data.open ? "show related only" : `+${data.more} more`}
             </Text>
           </button>
         )}
@@ -193,14 +205,19 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
 function Chevron({ data }: { data: GraphNodeData }) {
   const why = useId();
   const Icon = data.open ? IconChevronDown : IconChevronRight;
+  const label = !data.reached
+    ? `Columns of ${data.name}`
+    : data.open
+      ? `Show related columns only of ${data.name}`
+      : `Show all columns of ${data.name}`;
   return (
     <>
       <button
         type="button"
-        aria-label={`Columns of ${data.name}`}
+        aria-label={label}
         aria-expanded={data.open}
         aria-describedby={data.unavailable === undefined ? undefined : why}
-        disabled={data.unavailable !== undefined}
+        disabled={data.unavailable !== undefined || (data.reached && data.more === 0)}
         title={data.unavailable}
         onClick={(event) => stop(event, data.onToggle)}
         style={{

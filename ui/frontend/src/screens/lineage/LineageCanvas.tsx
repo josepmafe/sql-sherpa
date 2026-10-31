@@ -135,6 +135,7 @@ function Canvas({
         const shown = rows.get(node.unique_id);
         if (position === undefined || shown === undefined) return [];
         const height = heights.get(node.unique_id)!;
+        const reached = focus?.expanded.has(node.unique_id) === true;
         const data: GraphNodeData = {
           name: node.name,
           layer: node.layer,
@@ -147,7 +148,8 @@ function Canvas({
           rows: shown.rows,
           more: shown.more,
           hasColumns: node.columns == null || node.columns.length > 0,
-          open: expanded.has(node.unique_id) || focus?.expanded.has(node.unique_id) === true,
+          reached,
+          open: reached ? rest.has(node.unique_id) : expanded.has(node.unique_id),
           unavailable: columnsUnavailable,
           onToggle: () => onToggle(node.unique_id),
           onFocusColumn: (name) => onFocusColumn(node.unique_id, name),
@@ -157,7 +159,7 @@ function Canvas({
       const labels = positions === undefined ? [] : bandLabelNodes(layoutNodes, positions);
       return [...labels, ...graphNodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
     },
-    [nodes, layoutNodes, positions, rows, heights, selected, related, expanded, focus, columnsUnavailable, onToggle, onFocusColumn],
+    [nodes, layoutNodes, positions, rows, heights, selected, related, expanded, rest, focus, columnsUnavailable, onToggle, onFocusColumn],
   );
   const flowEdges: Edge[] = useMemo(
     () => [

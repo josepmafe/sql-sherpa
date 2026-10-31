@@ -86,7 +86,7 @@ describe("nodeRows", () => {
     expect(more).toBe(2);
   });
 
-  it("the focused column is marked, and so is each related one when the rest is shown too", () => {
+  it("the focused column is marked, and so is each related one when the rest is shown too, still counted", () => {
     const { rows, more } = nodeRows(COLUMNS, {
       expanded: true,
       related: new Set(["net_revenue", "order_id"]),
@@ -94,7 +94,7 @@ describe("nodeRows", () => {
     });
 
     expect(rows.map((r) => r.role)).toEqual(["focus", "other", "related"]);
-    expect(more).toBe(0);
+    expect(more).toBe(1);
   });
 
   it("a related column the node's columns lack is not invented", () => {

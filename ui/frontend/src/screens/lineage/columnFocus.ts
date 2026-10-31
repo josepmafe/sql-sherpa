@@ -43,13 +43,14 @@ interface RowOptions {
   focused: string | undefined;
 }
 
-// The rows a node lists: all its columns when expanded, otherwise only the related ones, with the count of the rest.
+// The rows a node lists: all its columns when expanded, otherwise only the related ones. `more` counts the columns a
+// focus leaves out, listed or not.
 export function nodeRows(columns: ColumnView[], { expanded, related, focused }: RowOptions): { rows: RowView[]; more: number } {
   if (related === undefined) {
     return { rows: expanded ? columns.map((column) => ({ column, role: undefined })) : [], more: 0 };
   }
   const role = (column: ColumnView): RowRole =>
     column.name === focused ? "focus" : related.has(column.name) ? "related" : "other";
-  const rows = columns.map((column) => ({ column, role: role(column) })).filter((row) => expanded || row.role !== "other");
-  return { rows, more: columns.length - rows.length };
+  const all = columns.map((column) => ({ column, role: role(column) }));
+  return { rows: all.filter((row) => expanded || row.role !== "other"), more: all.filter((row) => row.role === "other").length };
 }

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { COLUMN_ROW_HEIGHT, NODE_HEIGHT } from "../../src/screens/lineage/layout";
 
 import { CanvasHarness, COLUMN_EDGES, COLUMN_FOCUS, COLUMN_NODES, FCT, node, rankInInputOrder, STG } from "./canvasHarness";
-import { columnView } from "../fixtures/api";
+import { columnFocusView, columnView, focusColumn } from "../fixtures/api";
 
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
@@ -73,22 +73,76 @@ describe("GraphNode", () => {
 
     const fct = within(card(FCT));
     expect(fct.queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument();
-    expect(fct.getByRole("button", { name: "+2 more" })).toBeVisible();
+    expect(fct.getByRole("button", { name: /^Show 2 more columns of / })).toBeVisible();
     const stg = within(card(STG));
     expect(stg.getByRole("button", { name: /^amount\b/ })).toHaveAttribute("aria-pressed", "false");
     expect(stg.queryByRole("button", { name: /^quantity\b/ })).not.toBeInTheDocument();
-    expect(stg.getByRole("button", { name: "+2 more" })).toBeVisible();
+    expect(stg.getByRole("button", { name: /^Show 2 more columns of / })).toBeVisible();
   });
 
   it("+k more shows the rest of the columns, the related ones still marked", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
 
     await screen.findByRole("button", { name: /^amount\b/ });
-    fireEvent.click(within(card(STG)).getByRole("button", { name: "+2 more" }));
+    fireEvent.click(within(card(STG)).getByRole("button", { name: /^Show 2 more columns of / }));
 
     const stg = within(card(STG));
     expect(stg.getAllByRole("button", { name: /^(amount|quantity|order_id)\b/ })).toHaveLength(3);
-    expect(stg.queryByRole("button", { name: /more$/ })).not.toBeInTheDocument();
+    expect(stg.getByRole("button", { name: "Hide the other 2 columns of stg_orders" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("during a focus a reached node's chevron says whether the rest is shown", async () => {
+    render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+    await screen.findByRole("button", { name: /^amount\b/ });
+    const show = await within(card(STG)).findByRole("button", { name: "Show all columns of stg_orders" });
+    expect(show).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(show);
+
+    const hide = await within(card(STG)).findByRole("button", { name: "Show related columns only of stg_orders" });
+    expect(hide).toHaveAttribute("aria-expanded", "true");
+    expect(within(card(FCT)).getByRole("button", { name: "Show all columns of fct_orders" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("+k more names its node and says it is collapsed", async () => {
+    render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+    await screen.findByRole("button", { name: /^amount\b/ });
+
+    const more = await within(card(STG)).findByRole("button", { name: "Show 2 more columns of stg_orders" });
+
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(more).toHaveTextContent("+2 more");
+  });
+
+  it("Enter on +k more keeps the keyboard focus on a button of the node", async () => {
+    render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+    await screen.findByRole("button", { name: /^amount\b/ });
+    const more = await within(card(STG)).findByRole("button", { name: /^Show 2 more columns of / });
+    more.focus();
+
+    await userEvent.keyboard("{Enter}");
+
+    expect(await within(card(STG)).findByRole("button", { name: /^quantity\b/ })).toBeVisible();
+    expect(document.activeElement).toBeInstanceOf(HTMLButtonElement);
+    expect(card(STG)).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("during a focus the chevron of a node whose columns are all related is disabled", async () => {
+    const nodes = [node("up", { columns: [columnView({ name: "k" })] }), node("down", { columns: [columnView({ name: "k" }), columnView({ name: "v" })] })];
+    const focus = columnFocusView({
+      focus: { node: "model.s.down", column: "k" },
+      columns: [
+        focusColumn({ node: "model.s.down", name: "k", direction: "focus" }),
+        focusColumn({ node: "model.s.up", name: "k", direction: "upstream" }),
+      ],
+      edges: [{ parent: { node: "model.s.up", column: "k" }, child: { node: "model.s.down", column: "k" } }],
+    });
+    render(<CanvasHarness nodes={nodes} edges={[{ source: "model.s.up", target: "model.s.down" }]} initial="model.s.down" initialColumn="k" focusData={focus} />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^k\b/ })).toHaveLength(2));
+
+    expect(await within(card("model.s.up")).findByRole("button", { name: "Show all columns of up" })).toBeDisabled();
+    expect(within(card("model.s.down")).getByRole("button", { name: "Show all columns of down" })).toBeEnabled();
+    expect(within(card("model.s.up")).queryByRole("button", { name: /more column/ })).not.toBeInTheDocument();
   });
 
   it("unavailable column lineage disables expanding and says why", async () => {
@@ -112,7 +166,7 @@ describe("GraphNode", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
 
     await waitFor(() => expect(within(card(FCT)).queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument());
-    expect(within(card(FCT)).getByRole("button", { name: "+2 more" })).toBeVisible();
+    expect(within(card(FCT)).getByRole("button", { name: /^Show 2 more columns of / })).toBeVisible();
 
     fireEvent.click(document.querySelector(".react-flow__pane")!);
 
@@ -123,7 +177,7 @@ describe("GraphNode", () => {
   it("the rest shown during a focus ends with the focus", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
     await screen.findByRole("button", { name: /^net_revenue\b/ });
-    fireEvent.click(within(card(STG)).getByRole("button", { name: "+2 more" }));
+    fireEvent.click(within(card(STG)).getByRole("button", { name: /^Show 2 more columns of / }));
     expect(await within(card(STG)).findByRole("button", { name: /^quantity\b/ })).toBeVisible();
 
     fireEvent.click(document.querySelector(".react-flow__pane")!);
