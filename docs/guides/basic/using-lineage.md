@@ -60,27 +60,32 @@ Click a node (or focus it and press Enter) to emphasise it, draw its ancestors a
 
 ## Columns
 
-Every node has a chevron that expands it into its columns; **Expand all** and **Collapse all** (beside the layer chips) act on the nodes shown. Each row shows the column name, its **kind** and its **resolution**, each as an icon and a word. Columns come from `catalog.json` (the YAML columns when the catalog lacks a node), so `make build-prod` is what fills them.
+Every node has a chevron that expands it into its columns; **Expand all** and **Collapse all** (beside the layer chips) act on the nodes shown. Each row shows the column name, its **kind** and its **resolution**, each as an icon and a word. Columns come from `catalog.json` (the YAML columns when the catalog lacks a node, or when there is no catalog, with a note), so `make build-prod` is what fills them.
 
 | Kind | Means |
 |---|---|
 | `passthrough` | one input column, unchanged or only cast, same name |
 | `rename` | the same under another name |
 | `transformed` | any other expression of one or more columns |
-| `row count` | a `count(*)` that reads no column; it names the relation it counts |
-| `constant` | no input at all: a literal, the date spine |
-| `generated` | a column dbt adds to a snapshot (`dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id`, `dbt_updated_at`) |
+| `row count` | a pure `count(*)`, which reads no column; it names the relation it counts ("counts fct_orders") |
+| `constant` | reads no column: a literal, or values the SQL makes itself such as the date spine (`dim_date`'s columns still vary row by row) |
+| `generated` | a column dbt adds to a snapshot (`dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id`, `dbt_updated_at`; with the timestamp strategy `dbt_valid_from` copies `updated_at` and is not linked) |
 | `source` | a source or seed column, where every chain starts |
 
 | Resolution | Means |
 |---|---|
 | `full` | every input was found |
-| `partial` | some inputs were found |
-| `unresolved` | none was found; a note says why ("the compiled SQL did not parse", "the compiled SQL is not in the dbt target", "reads an unknown relation <name>") |
+| `partial` | some inputs were found and linked and the notes name the rest: the trace is incomplete |
+| `unresolved` | none was found; a note says why |
 
-Notes also say "cast to numeric(12,2)" and "also reads its own previous rows (incremental)"; both are information, not failures.
+Notes that explain a gap: "reads an unknown relation <name>", "column <c> not found in <node>", "* is not expanded: ...", "not in the compiled SQL's output", "the compiled SQL did not parse", "the compiled SQL is not in the dbt target". "cast to numeric(12,2)" and "also reads its own previous rows (incremental)" are information, not failures. A note about the node as a whole (no catalog, no compiled SQL) shows above the panel's Columns table.
 
-**Select list only.** A column edge exists when the child's select expression reads the parent column, as in dbt Catalog. A column used only in a `join`, `where` or `group by` is not linked, and a fixed legend on the canvas says so. For example `fct_orders.customer_segment` does not show the columns the segment was filtered by; read the compiled SQL in the panel for those.
+**Select list only.** A column edge exists when the child's select expression reads the parent column, as in dbt Catalog. Not linked: a column used only in a `join`, `where` or `group by`, the partition or order of a *named* window (`WINDOW w AS (...)`), and a `count(*)` inside a larger expression (only a pure `count(*)` is a `row count`). A fixed legend on the canvas says so. Examples on the real project, read the compiled SQL in the panel for the rest:
+
+- `stg_shop__customers.is_test_account` has no downstream column, though `dim_customers`, `fct_orders`, `fct_sessions` and `dim_promotions` all drop test accounts: it is a filter.
+- `fct_orders.is_cancelled` reaches `fct_order_items` but nothing in `dim_customers`, though `order_count`, the `lifetime_*` columns and `customer_segment` count only non-cancelled orders.
+- `fct_orders.has_discount` links `stg_shop__order_discounts.order_id` but not the `amount > 0` that defines it.
+- `dim_customers.avg_order_value` traces only to `fct_orders.net_revenue`: the denominator is a `count(*)` of orders, which reads no column.
 
 ### Focusing a column
 
@@ -90,7 +95,7 @@ Click a column row (or a column in the panel's Columns tab). The canvas then:
 - draws the column edges row to row in the accent colour (table edges fade) and dims everything else;
 - opens the Columns tab of the panel with the column marked.
 
-"+k more" and that node's chevron show or hide the node's other columns **for this focus only**. Esc (then Esc again for the node), a click on the background, selecting another node or focusing another column ends the focus, and your own expansions are back. Nodes the focus does not reach keep your expansion. A related column in a node that is not shown (another selector, a hidden layer) is counted in a note under the panel's header with a link to `+<node>+`, which always holds it. `column=` is in the URL; a column the node does not have is dropped from it.
+"+k more" and that node's chevron show or hide the node's other columns **for this focus only** ("+k more" stays on screen as a toggle, "Hide the other k columns"). A mouse click does not move the canvas; keyboard focus scrolls the row into view. Esc (then Esc again for the node), a click on the background, selecting another node or focusing another column ends the focus, and your own expansions are back. Nodes the focus does not reach keep your expansion. A related column in a node that is not shown (another selector, a hidden layer) is counted in a note under the panel's header with a link to `+<node>+`, which always holds it. `column=` is in the URL; a column the node does not have is dropped from it.
 
 ## The node panel
 
@@ -112,9 +117,9 @@ Actions: **Copy dbt selector** copies the selector that selects the node (its na
 | "No full build recorded: run make build-prod" | No full prod build is recorded: `make build-prod` |
 | A node reads "not in the last build" | The last full build did not include it: `make build-prod` |
 | "Build status unavailable (could not read the build record; see the ui log)" | `make build-prod` (it re-applies the grants); else see the `ui` log (`docker compose logs ui`) |
-| The chevron is disabled (its tooltip says "Column lineage is unavailable" and why) | `catalog.json` is missing or unreadable: `make build-prod`, then Retry |
-| A node's columns are all `unresolved` | Its note says why: usually its compiled SQL is not in `target-prod/compiled/` (`make build-prod`) or did not parse |
-| A column you expect to be linked is not | Column lineage is select-list only; a join or filter use is not an edge. Check the compiled SQL |
+| The chevron is disabled (its tooltip says "Column lineage is unavailable" and why) | `manifest.json` or `catalog.json` cannot be read or parsed, or the first build of the lineage failed: `make build-prod`, then Retry (a missing `catalog.json` only adds a node note) |
+| A node's columns are all `unresolved` | Its note (panel, above the Columns table) says why: usually its compiled SQL is not in `target-prod/compiled/` (`make build-prod`) or did not parse |
+| A column you expect to be linked is not | Column lineage is select-list only; a join, filter, group by, named-window or `count(*)`-in-an-expression use is not an edge. Check the compiled SQL |
 | The panel shows a note instead of compiled SQL | `make build-prod` writes `target-prod/compiled/`; then reselect the node |
 
 ## Next

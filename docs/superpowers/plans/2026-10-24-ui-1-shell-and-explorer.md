@@ -217,7 +217,7 @@ ui/
   - routers under `/api`
   - when `static_dir` exists: static files plus an **SPA fallback** (any GET outside `/api` and `/assets` returns `index.html`, with `Cache-Control: no-cache`; a missing file under `/assets` is a JSON 404)
   - `/api/*` unknown routes return a JSON 404
-- **`GET /api/health`:** `{database: ok|down, artifacts: {status: ok|missing, generated_at}}`. Only these two in ui-1; the tool server and model come with ui-4.
+- **`GET /api/health`:** `{database: ok|down, artifacts: {status: ok|missing, generated_at}}`. Only these two in ui-1; the tool server and model come with ui-5.
 - **`GET /api/catalog`:** the tree database → `marts` → domain → tables → columns (UI spec §4).
   - `CatalogService(loader)` maps `MartCatalog` into API models.
   - Domains are sorted alphabetically, with `shared` last; tables alphabetically.
@@ -266,7 +266,7 @@ ui/
 - `src/api/queries.ts`: TanStack Query hooks `useHealth()`, `useCatalog()`, `useTableDetails(name)`. `staleTime` 30 s; `refetchOnWindowFocus: true`.
 - `AppShell`:
   - a Mantine `AppShell` with a left nav rail listing **only the screens that exist** (Explorer in ui-1)
-  - routes from `routes.tsx` (`/explorer`; `/` redirects there until ui-3 adds Home)
+  - routes from `routes.tsx` (`/explorer`; `/` redirects there until ui-4 adds Home)
   - light/dark theme from the OS
 - `HealthBanner`: a banner per down dependency from `useHealth()`.
 

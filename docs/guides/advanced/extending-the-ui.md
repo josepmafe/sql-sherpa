@@ -195,7 +195,7 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | The oracle test fails for one selector | The atom differs from `dbt ls`: fix the evaluator, not the list |
 | A new status draws nothing in the graph | Add it to `STATUS` in `GraphNode.tsx` |
 | A new column kind renders blank, or `tsc` fails after `make ui-client` | Add it to `KIND` in `ColumnLabels.tsx` |
-| A warehouse trace gains or loses a source column | The kind rule changed what the column reads: re-derive the set by hand from the compiled SQL |
+| A warehouse trace gains or loses a source column | A sqlglot bump, or a change to `_leaves` or `_classify`, changed what the column reads (kinds never add or remove edges): re-derive the set by hand from the compiled SQL |
 | `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next
