@@ -93,7 +93,10 @@ R1-R12 are a fixed list, each paired with the dbt technique that handles it (spe
 
 - **Rate**: a constant on `RealismRules` (`simulation/realism_rules.py`) with the rule number, e.g. `EMAIL_NOISE_RATE: Final = 0.10  # R3`.
 - **Noise**: a `RealismRules` method when the rule changes a value (`noisy_email`, `noisy_country`, `duplicate_events`, `late_delivery_delay`, `is_test_account`, `ad_clicks`), or in the owning simulator when it changes what happens (split and failed payments in `OrderLifecycleSimulator._insert_payments`, soft deletes in `CustomerDeletionSimulator`).
-- **Rate test**: `tests/simulation/test_realism_rules.py` draws 20,000 times from a seeded `random.Random` and uses `assert_rate` (±20 % of the spec rate). Change the constant and the test's expected value together, then run it plus the simulators using the rule.
+- **Two tests per rule**:
+  - *Pure*: `tests/simulation/test_realism_rules.py` draws from a seeded `random.Random` and checks the rule's method against its constant (its own `assert_rate`, a relative tolerance).
+  - *Rate on generator output*: a row of `RATE_ROWS` in `tests/simulation/test_generator_rates.py` (SQL counting hits and trials on the shared `month` run), or, when the month is too small to separate the rate from 0, a test next to the owning simulator's behaviour tests on a larger run. Both use `assert_rate(hits, trials, expected)` from `tests/helpers.py`: a `z = 4` binomial bound from the trial count, which refuses a sample too small to tell the rate from 0.
+  - Change the constant and both tests' expected values together, then run them plus the simulators using the rule.
 - **Cleanup**: in staging (R3 `lower(trim(email))`, R4 the `country_code_variants` seed, R1 the `row_number()` dedupe in `stg_events__events`, R5 `is_test_account`). A new kind of noise needs new cleanup and a dbt test proving it.
 
 ## Change volumes or rates

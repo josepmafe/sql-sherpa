@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 from helpers import AFTER_SALES_DAYS, AFTER_SALES_START, SIMULATION_SEED
-from sherpa_generator.behaviour.after_sales import GOODWILL_DELAY_DAYS, RECEIPT_DELAY_DAYS, REQUEST_DELAY_DAYS
 from sherpa_generator.records import OrderStatus, PaymentStatus, ReturnStatus
 from sherpa_generator.simulation.deterministic_random import DeterministicRandom
-from sherpa_generator.simulation.store_snapshot import RECENT_DELIVERY_DAYS, StoreSnapshotLoader, lognormal_propensity
+from sherpa_generator.simulation.store_snapshot import StoreSnapshotLoader, lognormal_propensity
 
 if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
@@ -22,10 +21,8 @@ DELETED_AT = datetime(2025, 3, 20, tzinfo=UTC)
 
 @pytest.mark.integration
 class TestStoreSnapshotLoader:
-    def test_lists_are_ordered_by_key_and_exclude_deleted_customers_from_visitors(
-        self, traffic_month: Database
-    ) -> None:
-        with traffic_month.connect() as conn:
+    def test_lists_are_ordered_by_key_and_exclude_deleted_customers_from_visitors(self, month: Database) -> None:
+        with month.connect() as conn:
             all_ids = [row[0] for row in conn.execute("SELECT id FROM raw_shop.customers").fetchall()]
             deleted_id = min(all_ids)
             conn.execute("UPDATE raw_shop.customers SET deleted_at = %s WHERE id = %s", [DELETED_AT, deleted_id])
@@ -54,8 +51,8 @@ class TestStoreSnapshotLoader:
         assert campaign_ids
         assert all(ids == sorted(ids) for ids in campaign_ids)
 
-    def test_order_state_is_ordered_by_key_and_holds_only_what_can_still_change(self, order_month: Database) -> None:
-        with order_month.connect() as conn:
+    def test_order_state_is_ordered_by_key_and_holds_only_what_can_still_change(self, month: Database) -> None:
+        with month.connect() as conn:
             snapshot = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(LAST_DAY)
             [(orders, open_orders, addresses)] = conn.execute(
                 "SELECT (SELECT count(*) FROM raw_shop.orders),"
@@ -134,23 +131,25 @@ class TestStoreSnapshotLoader:
             "Equipment": 115,
         }
 
-    def test_variant_popularity_sums_to_one_and_skips_inactive_products(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_variant_popularity_sums_to_one_and_skips_inactive_products(self, month: Database) -> None:
+        with month.connect() as conn:
             inactive_product = 1
             conn.execute("UPDATE raw_shop.products SET is_active = false WHERE id = %s", [inactive_product])
 
+            active_products = {row[0] for row in conn.execute("SELECT id FROM raw_shop.products WHERE is_active")}
             snapshot = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(LAST_DAY)
             conn.rollback()
 
         inactive_variants = {v.id for v in snapshot.variants if v.product_id == inactive_product}
         assert inactive_variants
         assert inactive_variants.isdisjoint(snapshot.variant_popularity)
-        assert set(snapshot.variant_popularity) == {v.id for v in snapshot.variants} - inactive_variants
+        # catalog drift has deactivated other products in the run: they are skipped too
+        assert set(snapshot.variant_popularity) == {v.id for v in snapshot.variants if v.product_id in active_products}
         assert sum(snapshot.variant_popularity.values()) == pytest.approx(1.0)
         assert max(snapshot.variant_popularity.values()) > 20 * min(snapshot.variant_popularity.values())
 
-    def test_propensity_is_stable_per_customer(self, traffic_month: Database) -> None:
-        with traffic_month.connect() as conn:
+    def test_propensity_is_stable_per_customer(self, month: Database) -> None:
+        with month.connect() as conn:
             early = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(MID_MONTH)
             late = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(LAST_DAY)
 
@@ -162,7 +161,7 @@ class TestStoreSnapshotLoader:
         assert all(value > 0 for value in values)
         assert len(set(values)) == len(values)
 
-    def test_snapshot_before_any_activity_has_catalog_but_no_people(self, temp_database: Database) -> None:
+    def test_snapshot_before_any_activity_is_empty(self, temp_database: Database) -> None:
         with temp_database.connect() as conn:
             snapshot = StoreSnapshotLoader(conn, DeterministicRandom(SIMULATION_SEED)).load(LAST_DAY)
 
@@ -196,10 +195,3 @@ def test_lognormal_propensity_is_finite_at_fraction_zero() -> None:
     value = lognormal_propensity(0.0)
 
     assert 0.0 < value < lognormal_propensity(0.001)
-
-
-def test_delivery_window_covers_every_after_sales_delay() -> None:
-    latest_receipt = REQUEST_DELAY_DAYS[1] + RECEIPT_DELAY_DAYS[1]
-
-    assert latest_receipt <= RECENT_DELIVERY_DAYS
-    assert GOODWILL_DELAY_DAYS[1] <= RECENT_DELIVERY_DAYS

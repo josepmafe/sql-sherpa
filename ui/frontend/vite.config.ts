@@ -12,5 +12,7 @@ export default defineConfig({
     environment: "jsdom",
     include: ["tests/**/*.test.{ts,tsx}"],
     setupFiles: ["tests/setup.ts"],
+    testTimeout: 20_000, // a loaded machine (the backend suite running beside) slows the first render of a screen
+    restoreMocks: true, // a vi.spyOn on a global does not leak into the next test
   },
 });

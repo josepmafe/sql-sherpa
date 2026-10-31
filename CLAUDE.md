@@ -88,8 +88,8 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 ## Conventions
 
 - **Repository layout, grouped by spec:**
-  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt.
-  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
+  - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt (`dbt/`, `scripts/`) and the SQL tests of `postgres/`.
+  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright), `parity/` (`sort_filter_cases.json`, the sort/filter case file that pytest and Vitest both run) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
   - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
@@ -163,6 +163,26 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
   Each failure mode the specs name gets a test asserting the documented behaviour (error type, message, no partial writes).
 - **Regression tests.** When fixing a bug, first write a test that reproduces it and watch it fail, then fix the bug. Name the test after the behaviour, not the ticket (`test_late_event_lands_in_existing_session`), and keep it forever.
+- **Shared builders.** Generator test builders live in `data-platform/generator/tests/helpers.py` as `make_<record>(id, **overrides)`; a test asserts only values it passes at the call site. Snapshots are built only through `make_snapshot` / `shop_snapshot`.
+- **Parametrize** when tests share arrange and act and differ in data or the assertion.
+- **Slow arrange becomes a fixture.** Arrange over about 1 s that tests only read is a module or session fixture, read-only; a fixture that holds a database compares a fingerprint in its teardown (`month`, `after_sales_season` in `data-platform/generator/tests/conftest.py`).
+- **Statistics come from the simulator, never a copy of its day loop.** A rate is measured on the shared month run where its sample suffices (R1, R2, R12), otherwise on a larger run of the simulator that applies the rule (`run_days` in `helpers.py`).
+- **Each realism rule gets a pure test and a rate test on generator output.** Where the rule is a per-trial probability the test uses `assert_rate` in `helpers.py` (a `z = 4` binomial bound from the trial count); a rule that is a per-day rounded share (R12) gets a loose bound with a comment.
+- **Tests don't write data to `sherpa` or `sherpa_eval`.** Tests that need a database use `temp_database`, and a dbt-running test identifies its own invocation rather than reading "the latest build". The exception is `data-platform/tests/dbt/test_run_results_audit.py`: its dbt runs add rows to `ops.dbt_run_results`, refresh `test_failures` and re-run `grant_read_access` on prod.
+- **Mark by need:** `integration` when Postgres is enough, `warehouse` only for built relations or artifacts. Tests of `data-platform/postgres/*.sql` live in `data-platform/tests/postgres/`.
+- **Don't test a constant against what defines it** (a rate against the constant it is read from); test it against the spec's value.
+- UI test rules:
+  - No test directory matches the effective `norecursedirs`: pytest's default list skips `build` and `dist`, so `pyproject.toml` lists the defaults without `build`. `ui/backend/tests/test_layout.py` checks that every `test_*.py` under `ui/backend/tests` is collected.
+  - Every Vitest API payload comes from a typed builder over the generated schema (`ui/frontend/tests/fixtures/api.ts`); no literal is passed to a mocked `api`.
+  - Sort and filter semantics live in the one shared case file (`ui/parity/sort_filter_cases.json`) that pytest and Vitest both run; a new operator or column type adds cases first.
+  - A value sent to Postgres (`set local`, session options) is asserted on the fake connection in the default suite.
+  - Every limit or default the spec names has a behaviour test that fails when the value changes.
+  - An unreachable database is simulated by making `psycopg.connect` raise, never by connecting to a closed port.
+  - No sleep proves that something did not happen: use fake timers or a positive signal.
+  - Vitest's `restoreMocks` restores `vi.spyOn` spies after each test; a module-level `vi.fn()` is reset in its file's `beforeEach`. Timeouts are set explicitly, and ELK is mocked outside layout tests.
+  - Assert what the user sees or what goes over the wire, not a render count or a library's CSS variable.
+  - E2E specs read expected values from the warehouse at run time.
+  - A fixture must be able to tell the rule it tests apart from the default.
 - **MCP server tests** (`agent/mcp-server/tests/`):
   - Every limit the spec names gets a boundary test on both sides, asserting the spec's literal value, never the module constant.
   - A security allow-list is pinned by an exact-set test, and each rejected family the spec names has at least three members in the rejection table.

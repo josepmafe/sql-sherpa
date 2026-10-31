@@ -49,6 +49,24 @@ class TestDocsCoverageChecker:
 
         assert result == []
 
+    def test_ignores_nodes_that_are_not_models(self) -> None:
+        test_node = {**_model("not_null_orders_order_id", "", {"order_id": ""}), "resource_type": "test"}
+        seed = {**_model("country_codes", "", {}), "resource_type": "seed"}
+        manifest = _manifest(test_node, seed)
+        catalog = _catalog({})
+
+        result = DocsCoverageChecker(manifest, catalog).undocumented(STAGING)
+
+        assert result == []
+
+    def test_a_sibling_prefix_is_not_under_the_path(self) -> None:
+        manifest = _manifest(_model("stg_x", "", {}, path="models/stagingx/stg_x.sql"))
+        catalog = _catalog({"stg_x": []})
+
+        result = DocsCoverageChecker(manifest, catalog).undocumented(STAGING)
+
+        assert result == []
+
     def test_matches_prefix_in_windows_manifest_paths(self) -> None:
         manifest = _manifest(_model("stg_shop__orders", "", {}, path="models\\staging\\shop\\stg_shop__orders.sql"))
         catalog = _catalog({"stg_shop__orders": []})
@@ -92,6 +110,20 @@ class TestMain:
 
         assert exit_info.value.code == 1
         assert capsys.readouterr().out == "Missing descriptions:\n  stg_shop__orders\n  stg_shop__orders.placed_at\n"
+
+    def test_missing_catalog_is_an_error_message(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        (tmp_path / "manifest.json").write_text(json.dumps(_manifest()), encoding="utf-8")
+        monkeypatch.setattr(sys, "argv", ["check_docs_coverage", "--target-path", str(tmp_path)])
+
+        with pytest.raises(SystemExit) as exit_info:
+            main()
+
+        assert exit_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "catalog.json" in err
+        assert "dbt docs generate" in err
 
     def test_clean_project_prints_nothing_and_does_not_exit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

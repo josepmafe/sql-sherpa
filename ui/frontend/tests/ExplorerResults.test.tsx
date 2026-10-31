@@ -1,75 +1,51 @@
-import { MantineProvider } from "@mantine/core";
-import { EditorView } from "@codemirror/view";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExplorerScreen } from "../src/screens/explorer/ExplorerScreen";
-import { freshState, saveExplorerState, updateWorksheet } from "../src/screens/explorer/worksheetStore";
+import { freshState, saveExplorerState, STORAGE_KEY, updateWorksheet } from "../src/screens/explorer/worksheetStore";
+import { apiFailure, catalog, columnSummary, noContent, ok, queryResponse, table } from "./fixtures/api";
+import { firstColumn, renderWithProviders, shownEditor } from "./fixtures/render";
 
 const post = vi.fn();
 vi.mock("../src/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/api/client")>()),
   api: { POST: (...args: unknown[]) => post(...args) },
 }));
-const EMAIL = { name: "email", data_type: "text", description: "", is_primary_key: false, is_pii: true };
-const CATALOG = {
-  database: "sherpa",
-  schema_name: "marts",
+const CATALOG = catalog({
   domains: [
     {
       name: "sales",
       tables: [
-        { name: "fct_orders", domain: "sales", description: "", grain: "", primary_key: [], columns: [] },
-        { name: "dim_customers", domain: "sales", description: "", grain: "", primary_key: [], columns: [EMAIL] },
+        table({ name: "fct_orders" }),
+        table({ name: "dim_customers", columns: [columnSummary({ name: "email", is_pii: true })] }),
       ],
     },
   ],
-};
+});
 vi.mock("../src/api/queries", () => ({
   useCatalog: () => ({ data: CATALOG }),
   useTableDetails: () => ({ data: undefined }),
   useHealth: () => ({ data: undefined }),
 }));
 
-const RESPONSE = {
-  query_id: "q",
+const RESPONSE = queryResponse({
   columns: ["name", "amount"],
   column_types: ["text", "number"],
   rows: [
     ["a", "10"],
     ["b", "9"],
   ],
-  returned_rows: 2,
-  truncated: false,
-  elapsed_ms: 5,
-  mode: "client",
-};
+});
 
 const queryCalls = () => post.mock.calls.filter(([path]) => path === "/api/queries");
-const firstColumn = () =>
-  screen
-    .getAllByRole("row")
-    .slice(1)
-    .map((row) => row.querySelector("td")?.textContent);
-const shownEditor = () =>
-  Array.from(document.querySelectorAll<HTMLElement>(".cm-editor"))
-    .filter((element) => element.closest('[style*="display: none"]') === null)
-    .map((element) => EditorView.findFromDOM(element)!)[0]!;
 
 function renderScreen(sql: string, strict = false) {
   const seeded = freshState();
   saveExplorerState(updateWorksheet(seeded, seeded.activeId, { sql }));
-  const screenUnderTest = (
-    <MantineProvider env="test">
-      <MemoryRouter>
-        <ExplorerScreen />
-      </MemoryRouter>
-    </MantineProvider>
-  );
-  render(strict ? <StrictMode>{screenUnderTest}</StrictMode> : screenUnderTest);
+  const screenUnderTest = <ExplorerScreen />;
+  renderWithProviders(strict ? <StrictMode>{screenUnderTest}</StrictMode> : screenUnderTest);
 }
 
 describe("Explorer results", () => {
@@ -80,13 +56,13 @@ describe("Explorer results", () => {
 
   it("guard rejection shows the reason without the rule's code, and what is allowed", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({
-      error: {
-        code: "guard_rejected",
-        message: "[guard:not_select] the statement must be a SELECT query, not DELETE; write one SELECT",
-      },
-      response: { status: 422 },
-    });
+    post.mockResolvedValue(
+      apiFailure(
+        "guard_rejected",
+        "[guard:not_select] the statement must be a SELECT query, not DELETE; write one SELECT",
+        422,
+      ),
+    );
     renderScreen("delete from marts.fct_orders");
 
     await user.click(screen.getByRole("button", { name: "Run" }));
@@ -99,10 +75,7 @@ describe("Explorer results", () => {
 
   it("a timeout shows its hint", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({
-      error: { code: "timeout", message: "Query exceeded 30 s." },
-      response: { status: 504 },
-    });
+    post.mockResolvedValue(apiFailure("timeout", "Query exceeded 30 s.", 504));
     renderScreen("select 1");
 
     await user.click(screen.getByRole("button", { name: "Run" }));
@@ -117,7 +90,7 @@ describe("Explorer results", () => {
     ["pii_column", 422, "Masked column"],
   ])("a %s error has its own title", async (code, status, title) => {
     const user = userEvent.setup();
-    post.mockResolvedValue({ error: { code, message: "the server's reason" }, response: { status } });
+    post.mockResolvedValue(apiFailure(code, "the server's reason", status));
     renderScreen("select 1");
 
     await user.click(screen.getByRole("button", { name: "Run" }));
@@ -126,20 +99,30 @@ describe("Explorer results", () => {
     expect(screen.getByText("the server's reason")).toBeInTheDocument();
   });
 
+  it("keeps no result row in the stored state, only the SQL and a row count (UI spec §7)", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue(
+      ok(queryResponse({ columns: ["name"], column_types: ["text"], rows: [["cell-7731-zq"]], returned_rows: 1 })),
+    );
+    renderScreen("select name from marts.fct_orders");
+
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("cell-7731-zq")).toBeInTheDocument();
+    const stored = localStorage.getItem(STORAGE_KEY)!;
+    expect(stored).toContain("select name from marts.fct_orders");
+    expect(JSON.parse(stored).history).toHaveLength(1);
+    expect(stored).not.toContain("cell-7731-zq");
+  });
+
   it("truncated results sort on the server", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValueOnce({
-      data: { ...RESPONSE, truncated: true, returned_rows: 1000 },
-      response: { status: 200 },
-    });
-    post.mockResolvedValueOnce({
-      data: { ...RESPONSE, mode: "server", truncated: true, returned_rows: 1000 },
-      response: { status: 200 },
-    });
+    post.mockResolvedValueOnce(ok(queryResponse({ ...RESPONSE, truncated: true, returned_rows: 1000 })));
+    post.mockResolvedValueOnce(ok(queryResponse({ ...RESPONSE, mode: "server", truncated: true, returned_rows: 1000 })));
     renderScreen("select * from marts.fct_orders");
     await user.click(screen.getByRole("button", { name: "Run" }));
     const header = await screen.findByRole("button", { name: "amount" });
-    const editor = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+    const editor = shownEditor();
     act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: "select 99" } }));
 
     await user.click(header);
@@ -156,10 +139,11 @@ describe("Explorer results", () => {
   });
 
   describe("a server re-run", () => {
-    const TRUNCATED = { data: { ...RESPONSE, truncated: true, returned_rows: 1000 }, response: { status: 200 } };
+    const TRUNCATED_DATA = queryResponse({ ...RESPONSE, truncated: true, returned_rows: 1000 });
+    const TRUNCATED = ok(TRUNCATED_DATA);
 
     // Unmounting a worksheet with a query in flight cancels it.
-    beforeEach(() => post.mockImplementation(() => Promise.resolve({ response: { status: 204 } })));
+    beforeEach(() => post.mockImplementation(() => Promise.resolve(noContent())));
 
     async function runTruncated(user: ReturnType<typeof userEvent.setup>, column = "amount") {
       renderScreen("select * from marts.fct_orders");
@@ -189,8 +173,14 @@ describe("Explorer results", () => {
       expect(screen.getByRole("table").closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
       expect(screen.getByRole("combobox", { name: "Filter column" })).toHaveValue("name");
       expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
-      const sorted = { ...RESPONSE, mode: "server", truncated: true, returned_rows: 1000, rows: [["b", "9"], ["a", "10"]] };
-      await act(async () => answer({ data: sorted, response: { status: 200 } }));
+      const sorted = queryResponse({
+        ...RESPONSE,
+        mode: "server",
+        truncated: true,
+        returned_rows: 1000,
+        rows: [["b", "9"], ["a", "10"]],
+      });
+      await act(async () => answer(ok(sorted)));
       expect(firstColumn()).toEqual(["b", "a"]);
       expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
     });
@@ -199,7 +189,7 @@ describe("Explorer results", () => {
       const user = userEvent.setup();
       const message = "a value could not be converted or computed (InvalidTextRepresentation); check the literal format";
       post.mockResolvedValueOnce(TRUNCATED);
-      post.mockResolvedValueOnce({ error: { code: "sql_error", message }, response: { status: 422 } });
+      post.mockResolvedValueOnce(apiFailure("sql_error", message, 422));
       await runTruncated(user);
 
       await addFilter(user, "name", "zzz");
@@ -212,8 +202,8 @@ describe("Explorer results", () => {
 
     it("is never sent for a column the catalog marks as PII", async () => {
       const user = userEvent.setup();
-      const withEmail = { ...TRUNCATED.data, columns: ["name", "EMAIL"], column_types: ["text", "text"] };
-      post.mockResolvedValueOnce({ data: withEmail, response: { status: 200 } });
+      const withEmail = queryResponse({ ...TRUNCATED_DATA, columns: ["name", "EMAIL"], column_types: ["text", "text"] });
+      post.mockResolvedValueOnce(ok(withEmail));
       await runTruncated(user, "EMAIL");
 
       await user.click(screen.getByRole("columnheader", { name: "EMAIL" }));
@@ -226,7 +216,7 @@ describe("Explorer results", () => {
     it("is not a history entry: history records Runs", async () => {
       const user = userEvent.setup();
       post.mockResolvedValueOnce(TRUNCATED);
-      post.mockResolvedValueOnce({ data: { ...TRUNCATED.data, mode: "server" }, response: { status: 200 } });
+      post.mockResolvedValueOnce(ok(queryResponse({ ...TRUNCATED_DATA, mode: "server" })));
       await runTruncated(user);
 
       await user.click(screen.getByRole("button", { name: "amount" }));
@@ -236,17 +226,82 @@ describe("Explorer results", () => {
     });
   });
 
+  describe("a view change while a server re-run of a complete result is in flight", () => {
+    const COLUMNS = ["name", "amount", "span"];
+    const A = ["a", "10", "1:00:00"];
+    const B = ["b", "9", "2:00:00"];
+    const AB = [A, B];
+    const BA = [B, A];
+    const answer = (rows: string[][], mode: "server" | "client" = "server") =>
+      ok(queryResponse({ columns: COLUMNS, column_types: ["text", "number", "other"], rows, mode }));
+
+    // The query requests, in order, as functions so one can stay pending; the cancel call every abandoned query
+    // makes gets 204.
+    function answerQueries(...answers: Array<() => Promise<unknown>>) {
+      post.mockImplementation((path: string) => (path === "/api/queries" ? answers.shift()!() : Promise.resolve(noContent())));
+    }
+
+    it("goes to the server too, so the last click wins over the stale answer", async () => {
+      const user = userEvent.setup();
+      let stale!: (value: unknown) => void;
+      answerQueries(
+        () => Promise.resolve(answer(AB, "client")),
+        () => new Promise((resolve) => (stale = resolve)),
+        () => Promise.resolve(answer(BA)),
+      );
+      renderScreen("select 1");
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await user.click(await screen.findByRole("button", { name: "span" }));
+
+      await user.click(screen.getByRole("button", { name: "amount" }));
+
+      await waitFor(() => expect(queryCalls()).toHaveLength(3));
+      expect(queryCalls()[2]?.[1].body).toMatchObject({ sort: [{ column: "amount", direction: "asc" }] });
+      await act(async () => stale(answer(AB)));
+      await waitFor(() => expect(firstColumn()).toEqual(["b", "a"]));
+      expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
+      expect(screen.getByRole("columnheader", { name: "span" })).toHaveAttribute("aria-sort", "none");
+    });
+
+    it("removing the filter that needed the server goes to the server too", async () => {
+      const user = userEvent.setup();
+      let stale!: (value: unknown) => void;
+      answerQueries(
+        () => Promise.resolve(answer(AB, "client")),
+        () => new Promise((resolve) => (stale = resolve)),
+        () => Promise.resolve(answer(AB, "client")),
+      );
+      renderScreen("select 1");
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await user.click(await screen.findByRole("combobox", { name: "Filter column" }));
+      await user.click(await screen.findByRole("option", { name: "amount" }));
+      await user.click(screen.getByRole("combobox", { name: "Filter operator" }));
+      await user.click(await screen.findByRole("option", { name: "contains" }));
+      await user.type(screen.getByRole("textbox", { name: "Filter value" }), "1");
+      await user.click(screen.getByRole("button", { name: "Add filter" }));
+      await waitFor(() => expect(queryCalls()).toHaveLength(2));
+
+      await user.click(screen.getByRole("button", { name: "Remove filter on amount" }));
+
+      await waitFor(() => expect(queryCalls()).toHaveLength(3));
+      expect(queryCalls()[2]?.[1].body.filters).toEqual([]);
+      await act(async () => stale(answer([A])));
+      await waitFor(() => expect(firstColumn()).toEqual(["a", "b"]));
+      expect(screen.queryByRole("button", { name: "Remove filter on amount" })).not.toBeInTheDocument();
+    });
+  });
+
   describe("a Run after a result", () => {
-    const OTHER = { ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] };
+    const OTHER = queryResponse({ ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] });
 
     beforeEach(() =>
       post.mockImplementation((path: string) =>
-        path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
+        path === "/api/queries" ? new Promise(() => {}) : Promise.resolve(noContent()),
       ),
     );
 
     async function runTwice(user: ReturnType<typeof userEvent.setup>, second: Promise<unknown> = new Promise(() => {})) {
-      post.mockResolvedValueOnce({ data: RESPONSE, response: { status: 200 } });
+      post.mockResolvedValueOnce(ok(RESPONSE));
       post.mockReturnValueOnce(second);
       renderScreen("select 1");
       await user.click(screen.getByRole("button", { name: "Run" }));
@@ -270,7 +325,7 @@ describe("Explorer results", () => {
     it("shows its answer with no sort, in a fresh grid", async () => {
       const user = userEvent.setup();
 
-      await runTwice(user, Promise.resolve({ data: OTHER, response: { status: 200 } }));
+      await runTwice(user, Promise.resolve(ok(OTHER)));
 
       expect(await screen.findByRole("columnheader", { name: "code" })).toHaveAttribute("aria-sort", "none");
       expect(screen.getByRole("table").closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
@@ -291,9 +346,9 @@ describe("Explorer results", () => {
 
   it("a new Run starts with no sort or filter, which point at columns by position", async () => {
     const user = userEvent.setup();
-    const other = { ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] };
-    post.mockResolvedValueOnce({ data: RESPONSE, response: { status: 200 } });
-    post.mockResolvedValueOnce({ data: other, response: { status: 200 } });
+    const other = queryResponse({ ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] });
+    post.mockResolvedValueOnce(ok(RESPONSE));
+    post.mockResolvedValueOnce(ok(other));
     renderScreen("select 1");
     await user.click(screen.getByRole("button", { name: "Run" }));
     await user.click(await screen.findByRole("combobox", { name: "Filter column" }));
@@ -312,7 +367,7 @@ describe("Explorer results", () => {
 
   it("history records a Run, and picking it puts its SQL into the active worksheet", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({ data: RESPONSE, response: { status: 200 } });
+    post.mockResolvedValue(ok(RESPONSE));
     renderScreen("select 1");
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByText("2 rows in 5 ms");
@@ -327,7 +382,7 @@ describe("Explorer results", () => {
 
   it("an untruncated result sorts in the browser without a request", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({ data: RESPONSE, response: { status: 200 } });
+    post.mockResolvedValue(ok(RESPONSE));
     renderScreen("select 1");
     await user.click(screen.getByRole("button", { name: "Run" }));
 
@@ -336,12 +391,80 @@ describe("Explorer results", () => {
     expect(queryCalls()).toHaveLength(1);
   });
 
+  it("a complete result is sorted in the browser for the exact types", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue(
+      ok(
+        queryResponse({
+          columns: ["n", "t", "d", "ts", "b"],
+          column_types: ["number", "text", "date", "timestamp", "boolean"],
+          rows: [
+            ["9007199254740993", "b", "2025-01-16", "2025-01-15T10:30:00+00:00", true],
+            ["9007199254740992", "a", "2025-01-15", "2025-01-15T10:00:00+00:00", false],
+          ],
+        }),
+      ),
+    );
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    for (const name of ["n", "t", "d", "ts", "b"]) {
+      await user.click(await screen.findByRole("button", { name }));
+      expect(screen.getByRole("columnheader", { name })).toHaveAttribute("aria-sort", "ascending");
+      expect(firstColumn()).toEqual(["9007199254740992", "9007199254740993"]);
+    }
+
+    expect(queryCalls()).toHaveLength(1);
+  });
+
+  it("an interval column is sorted on the server", async () => {
+    const user = userEvent.setup();
+    const columns = ["name", "span"];
+    const day = ["a", "1 day, 1:00:00"];
+    const hours = ["b", "2:00:00"];
+    post.mockResolvedValueOnce(ok(queryResponse({ columns, column_types: ["text", "other"], rows: [day, hours] })));
+    post.mockResolvedValueOnce(
+      ok(queryResponse({ columns, column_types: ["text", "other"], rows: [hours, day], mode: "server" })),
+    );
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    await user.click(await screen.findByRole("button", { name: "span" }));
+
+    await waitFor(() => expect(queryCalls()).toHaveLength(2));
+    expect(queryCalls()[1]?.[1].body).toMatchObject({ sql: "select 1", sort: [{ column: "span", direction: "asc" }] });
+    expect(await screen.findByText("Sorting and filtering run on the server over all rows")).toBeInTheDocument();
+    expect(firstColumn()).toEqual(["b", "a"]);
+  });
+
+  it("a column with a cell cut at 10,000 characters is sorted on the server, another text column is not", async () => {
+    const user = userEvent.setup();
+    const columns = ["name", "body"];
+    const cut = "x".repeat(10_000) + " …[cut at 10000 chars]";
+    const rows = [
+      ["b", cut],
+      ["a", "short"],
+    ];
+    post.mockResolvedValueOnce(ok(queryResponse({ columns, column_types: ["text", "text"], rows })));
+    post.mockResolvedValueOnce(
+      ok(queryResponse({ columns, column_types: ["text", "text"], rows: [...rows].reverse(), mode: "server" })),
+    );
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    await user.click(await screen.findByRole("button", { name: "name" }));
+
+    expect(firstColumn()).toEqual(["a", "b"]);
+    expect(queryCalls()).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "body" }));
+    await waitFor(() => expect(queryCalls()).toHaveLength(2));
+    expect(queryCalls()[1]?.[1].body).toMatchObject({ sql: "select 1", sort: [{ column: "body", direction: "asc" }] });
+  });
+
   it("Preview opens a worksheet and runs", async () => {
     const user = userEvent.setup();
     post.mockImplementation((path: string) =>
-      path === "/api/queries"
-        ? Promise.resolve({ data: RESPONSE, response: { status: 200 } })
-        : Promise.resolve({ response: { status: 204 } }),
+      path === "/api/queries" ? Promise.resolve(ok(RESPONSE)) : Promise.resolve(noContent()),
     );
     renderScreen("", true);
 

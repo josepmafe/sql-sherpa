@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
 
@@ -10,6 +9,7 @@ from fastapi.testclient import TestClient
 from sherpa_mcp.catalog import Mart, MartCatalog, MartCatalogLoader, MartColumn, MetricDefinition
 from sherpa_ui.app import create_app
 from sherpa_ui.readonly.query_runner import QueryRunner
+from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from sherpa_ui.settings import UiSettings
 
 LOCAL_URL = "http://localhost"
-REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def make_column(name: str, *, pk: bool = False, pii: bool = False, metric_refs: tuple[str, ...] = ()) -> MartColumn:
@@ -56,6 +55,7 @@ def catalog() -> MartCatalog:
             make_mart("dim_customers", "customers"),
             make_mart("dim_products", "sales"),
             make_mart("dim_agents", "shared"),
+            make_mart("dim_tickets", "support"),  # sorts after `shared`, which the tree still lists last
         ),
         metrics=(MetricDefinition(name="revenue", definition="sum of net item amounts"),),
         generated_at=datetime(2026, 10, 1, tzinfo=UTC),

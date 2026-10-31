@@ -6,7 +6,6 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
@@ -14,9 +13,9 @@ from unittest.mock import create_autospec
 import psycopg
 import pytest
 from psycopg.postgres import types as postgres_types
-from pydantic import SecretStr
 from sherpa_mcp.catalog import MartCatalog, MartCatalogLoader
 from sherpa_ui.health.health_service import HealthService
+from sherpa_ui.readonly import query_runner
 from sherpa_ui.readonly.query_runner import MAX_CONCURRENT_QUERIES, QueryRunner, UiQueryError, user_position
 from sherpa_ui.readonly.sort_filter import (
     FilterSpec,
@@ -24,18 +23,15 @@ from sherpa_ui.readonly.sort_filter import (
     SortSpec,
     UnknownColumnError,
 )
-from sherpa_ui.settings import UiSettings
+from ui_helpers import LONG_AGGREGATE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
     from unittest.mock import MagicMock
 
-# An aggregate, so no row comes back before the whole cross join is counted (UI spec §8): far longer than any test.
-LONG_AGGREGATE = (
-    "select count(*) as n from marts.fct_order_items a "
-    "cross join marts.fct_order_items b cross join marts.fct_order_items c"
-)
+    from sherpa_ui.settings import UiSettings
+
 REGISTER_WAIT_SECONDS = 10.0
 SETTLE_SECONDS = 0.5
 DECLARE_OFFSET = len('DECLARE "sherpa_ui" CURSOR FOR ')
@@ -46,28 +42,78 @@ RUNNER_LOGGER = "sherpa_ui.readonly.query_runner"
 
 
 @pytest.fixture
-def offline_settings(closed_port: int) -> UiSettings:
-    return UiSettings(
-        _env_file=None,  # type: ignore[call-arg]
-        db_host="127.0.0.1",
-        db_port=closed_port,
-        db_name="sherpa",
-        ui_user="sherpa_ui",
-        ui_password=SecretStr("x"),
-    )
-
-
-@pytest.fixture
-def empty_catalog_loader() -> MartCatalogLoader:
-    """A loader whose catalog has no marts: enough for SQL that reads no table."""
-    loader = create_autospec(MartCatalogLoader, instance=True)
-    loader.load.return_value = MartCatalog(marts=(), metrics=(), generated_at=datetime(2026, 10, 1, tzinfo=UTC))
-    return loader
-
-
-@pytest.fixture
 def offline_runner(offline_settings: UiSettings, empty_catalog_loader: MartCatalogLoader) -> QueryRunner:
     return QueryRunner(offline_settings, empty_catalog_loader)
+
+
+# One function per way a run can end. Each makes every run of `runner` end that way and returns the SQL and sort to run
+# (defined here, above the tests, because the parametrization below needs them at import time).
+def _arrange_succeeds(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    _connect_to(monkeypatch, _fake_connection(rows=[(1,)]))
+    return "select 1 as a", ()
+
+
+def _arrange_guard_rejected(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    return "delete from marts.fct_orders", ()
+
+
+def _arrange_cancelled_before_connecting(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    catalog = loader.load.return_value
+
+    def load_then_cancel() -> MartCatalog:
+        runner.cancel("q1")
+        return catalog
+
+    loader.load.side_effect = load_then_cancel
+    return "select 1 as a", ()
+
+
+def _arrange_connect_fails(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    return "select 1 as a", ()  # the `offline_settings` of the runner refuse every connection
+
+
+def _arrange_cancelled_while_connecting(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    connection = _fake_connection(rows=[(1,)])
+
+    def connect(*args: object, **kwargs: object) -> MagicMock:
+        runner.cancel("q1")
+        return connection
+
+    monkeypatch.setattr(psycopg, "connect", connect)
+    return "select 1 as a", ()
+
+
+def _arrange_sql_error(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    connection = _fake_connection(rows=[(1,)])
+    connection.execute.side_effect = psycopg.errors.InsufficientPrivilege("permission denied for schema ops")
+    _connect_to(monkeypatch, connection)
+    return "select 1 as a", ()
+
+
+def _arrange_duplicate_columns(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    _connect_to(monkeypatch, _fake_connection(rows=[(1, 1)], columns=("a", "a")))
+    return "select 1 as a, 1 as a", (SortSpec(column="a", direction="asc"),)
+
+
+def _arrange_unknown_column(
+    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, tuple[SortSpec, ...]]:
+    _connect_to(monkeypatch, _fake_connection(rows=[(1,)]))
+    return "select 1 as a", (SortSpec(column="b", direction="asc"),)
 
 
 @pytest.mark.parametrize(
@@ -174,13 +220,8 @@ class TestQueryRunnerOffline:
         )
 
     def test_an_unreachable_warehouse_is_a_warning_with_its_reason(
-        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, offline_runner: QueryRunner, caplog: pytest.LogCaptureFixture
     ) -> None:
-        def refused(*args: object, **kwargs: object) -> None:
-            raise psycopg.OperationalError("connection failed: connection refused")
-
-        monkeypatch.setattr(psycopg, "connect", refused)
-
         with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
             offline_runner.run("q1", "select 1 as a")
 
@@ -191,6 +232,65 @@ class TestQueryRunnerOffline:
             r"the warehouse is unreachable \(connection failed: connection refused\); is `make up` running\?",
             record.getMessage(),
         )
+
+    @pytest.mark.parametrize(
+        "code", ["timeout", "busy", "catalog_unavailable", "database_unavailable", "too_many_connections"]
+    )
+    def test_a_failure_of_the_warehouse_or_server_is_a_warning_with_its_message(
+        self,
+        offline_runner: QueryRunner,
+        empty_catalog_loader: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        code: str,
+    ) -> None:
+        empty_catalog_loader.load.side_effect = UiQueryError(code, "the reason")  # type: ignore[arg-type]
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
+            offline_runner.run("q1", "select 1 as a")
+
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert re.fullmatch(
+            rf"query q1 failed \({code}\) after \d+ ms, sql 13 chars sha256 [0-9a-f]{{12}}: the reason",
+            record.getMessage(),
+        )
+
+    @pytest.mark.parametrize("code", ["guard_rejected", "sql_error", "cancelled", "duplicate_query_id"])
+    def test_a_failure_of_the_query_itself_is_logged_by_code_alone(
+        self,
+        offline_runner: QueryRunner,
+        empty_catalog_loader: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+        code: str,
+    ) -> None:
+        empty_catalog_loader.load.side_effect = UiQueryError(code, "quotes jurre931@hotmail.com")  # type: ignore[arg-type]
+
+        with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER), pytest.raises(UiQueryError):
+            offline_runner.run("q1", "select 1 as a")
+
+        [record] = caplog.records
+        assert record.levelno == logging.INFO
+        assert "jurre931" not in record.getMessage()
+
+    @pytest.mark.parametrize(
+        ("update", "expected"), [({}, "'30s'"), ({"ui_statement_timeout_s": 1}, "'1s'")], ids=["default", "one_second"]
+    )
+    def test_sets_the_statement_timeout_of_the_settings(
+        self,
+        offline_settings: UiSettings,
+        empty_catalog_loader: MartCatalogLoader,
+        monkeypatch: pytest.MonkeyPatch,
+        update: dict[str, int],
+        expected: str,
+    ) -> None:
+        runner = QueryRunner(offline_settings.model_copy(update=update), empty_catalog_loader)
+        connection = _fake_connection(rows=[(1,)])
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        runner.run("q1", "select 1 as a")
+
+        [call] = connection.execute.call_args_list  # the only statement the connection itself executes
+        assert call.args[0].as_string() == f"set local statement_timeout = {expected}"
 
     def test_a_successful_run_is_logged_with_its_digest(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -365,34 +465,34 @@ class TestQueryRunnerOffline:
         assert offline_runner.running_query_ids() == frozenset()
 
     @pytest.mark.parametrize(
-        "path",
+        "arrange",
         [
-            "succeeds",
-            "guard_rejected",
-            "cancelled_before_connecting",
-            "connect_fails",
-            "cancelled_while_connecting",
-            "sql_error",
-            "duplicate_columns",
-            "unknown_column",
+            _arrange_succeeds,
+            _arrange_guard_rejected,
+            _arrange_cancelled_before_connecting,
+            _arrange_connect_fails,
+            _arrange_cancelled_while_connecting,
+            _arrange_sql_error,
+            _arrange_duplicate_columns,
+            _arrange_unknown_column,
         ],
+        ids=lambda arrange: arrange.__name__.removeprefix("_arrange_"),
     )
     def test_every_way_a_run_ends_gives_its_slot_back(
         self,
-        offline_settings: UiSettings,
+        offline_runner: QueryRunner,
         empty_catalog_loader: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
-        path: str,
+        arrange: Callable[[QueryRunner, MagicMock, pytest.MonkeyPatch], tuple[str, tuple[SortSpec, ...]]],
     ) -> None:
-        runner = QueryRunner(offline_settings, empty_catalog_loader)
-        sql_text, sort = _arrange_exit_path(runner, empty_catalog_loader, monkeypatch, path)
+        sql_text, sort = arrange(offline_runner, empty_catalog_loader, monkeypatch)
 
         # One run more than there are slots: a slot kept by each run would make the last one `busy`.
-        endings = [_ending(runner, sql_text, sort) for _ in range(MAX_CONCURRENT_QUERIES + 1)]
+        endings = [_ending(offline_runner, sql_text, sort) for _ in range(MAX_CONCURRENT_QUERIES + 1)]
 
         assert "busy" not in endings
         assert len(set(endings)) == 1
-        assert runner.running_query_ids() == frozenset()
+        assert offline_runner.running_query_ids() == frozenset()
 
     @pytest.mark.parametrize(
         "refusal",
@@ -622,7 +722,7 @@ class TestQueryRunnerOffline:
     ) -> None:
         connection = _fake_connection()
         fetch_sizes: list[int] = []
-        _endless_rows(connection, width=1000, fetch_sizes=fetch_sizes)
+        _endless_rows(connection, width=1000, fetch_sizes=fetch_sizes, total_rows=10)
         monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
 
         offline_runner.run("q1", "select 1 as a")
@@ -635,16 +735,17 @@ class TestQueryRunnerOffline:
         # Postgres times each FETCH on its own, so a slow FETCH after slow FETCH would never reach its timeout.
         runner = QueryRunner(offline_settings.model_copy(update={"ui_statement_timeout_s": 1}), empty_catalog_loader)
         connection = _fake_connection()
-        _endless_rows(connection, width=1, fetch_sizes=[], delay=0.4)
+        clock = _FakeClock()
+        _endless_rows(connection, width=1, fetch_sizes=[], on_fetch=lambda: clock.advance(0.4))
         monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
-        started = time.monotonic()
+        monkeypatch.setattr(query_runner, "time", clock)  # the runner's only use of `time` is the monotonic clock
 
         with pytest.raises(UiQueryError) as error:
             runner.run("q1", "select 1 as a")
 
         assert error.value.code == "timeout"
         assert error.value.message == "the query ran longer than 1 s and was stopped; filter or aggregate more narrowly"
-        assert time.monotonic() - started < 2
+        assert clock.now == pytest.approx(1.2)  # three fetches: the third ends past the 1 s timeout
         connection.close.assert_called_once_with()
 
     def test_format_pretty_prints_postgres(self, offline_runner: QueryRunner) -> None:
@@ -1191,55 +1292,44 @@ def _fake_connection(rows: list[tuple[object, ...]] | None = None, columns: tupl
     return connection
 
 
-def _endless_rows(connection: MagicMock, width: int, fetch_sizes: list[int], delay: float = 0.0) -> None:
-    """Make the cursor of `connection` return as many rows of `width` int4 columns as each FETCH asks for."""
+class _FakeClock:
+    """Stands in for the `time` module of the runner: time passes only when a test advances it."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _endless_rows(
+    connection: MagicMock,
+    width: int,
+    fetch_sizes: list[int],
+    on_fetch: Callable[[], None] | None = None,
+    total_rows: int | None = None,
+) -> None:
+    """Make the cursor of `connection` return as many rows of `width` int4 columns as each FETCH asks for, up to
+    `total_rows` when given; `on_fetch` runs at every FETCH."""
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.description = [SimpleNamespace(name=f"c{index}", type_code=INT4_OID) for index in range(width)]
+    left = [total_rows]
 
     def fetchmany(size: int) -> list[tuple[object, ...]]:
         fetch_sizes.append(size)
-        time.sleep(delay)
-        return [(0,) * width] * size
+        if on_fetch is not None:
+            on_fetch()
+
+        count = size if left[0] is None else min(size, left[0])
+        if left[0] is not None:
+            left[0] -= count
+
+        return [(0,) * width] * count
 
     cursor.fetchmany.side_effect = fetchmany
-
-
-def _arrange_exit_path(
-    runner: QueryRunner, loader: MagicMock, monkeypatch: pytest.MonkeyPatch, path: str
-) -> tuple[str, tuple[SortSpec, ...]]:
-    """Make every run of `runner` end the way `path` names; returns the SQL and sort to run."""
-    columns = ("a", "a") if path == "duplicate_columns" else ("a",)
-    connection = _fake_connection(rows=[(1,) * len(columns)], columns=columns)
-    sql_text, sort = "select 1 as a", ()
-    catalog = loader.load.return_value
-
-    def connect(*args: object, **kwargs: object) -> MagicMock:
-        match path:
-            case "connect_fails":
-                raise psycopg.OperationalError("connection failed: connection refused")
-            case "cancelled_while_connecting":
-                runner.cancel("q1")
-
-        return connection
-
-    def load_then_cancel() -> MartCatalog:
-        runner.cancel("q1")
-        return catalog
-
-    match path:
-        case "guard_rejected":
-            sql_text = "delete from marts.fct_orders"
-        case "cancelled_before_connecting":
-            loader.load.side_effect = load_then_cancel
-        case "sql_error":
-            connection.execute.side_effect = psycopg.errors.InsufficientPrivilege("permission denied for schema ops")
-        case "duplicate_columns":
-            sort = (SortSpec(column="a", direction="asc"),)
-        case "unknown_column":
-            sort = (SortSpec(column="b", direction="asc"),)
-
-    monkeypatch.setattr(psycopg, "connect", connect)
-    return sql_text, sort
 
 
 def _ending(runner: QueryRunner, sql_text: str, sort: tuple[SortSpec, ...]) -> str:
@@ -1294,3 +1384,7 @@ def _wait_until_running(runner: QueryRunner, query_id: str) -> None:
     while query_id not in runner.running_query_ids():
         assert time.monotonic() < deadline, f"{query_id} never started running"
         time.sleep(0.01)
+
+
+def _connect_to(monkeypatch: pytest.MonkeyPatch, connection: MagicMock) -> None:
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)

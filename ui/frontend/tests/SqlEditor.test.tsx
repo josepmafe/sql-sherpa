@@ -1,65 +1,33 @@
 import { CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
-import { MantineProvider } from "@mantine/core";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { errorHighlight, sqlExtension } from "../src/components/SqlEditor";
 import { WorksheetPanel } from "../src/screens/explorer/WorksheetPanel";
+import { apiFailure, catalog, columnSummary, formatResponse, noContent, ok, table } from "./fixtures/api";
+import { renderWithProviders, shownEditor } from "./fixtures/render";
 
-const CATALOG = {
-  database: "sherpa",
-  schema_name: "marts",
+const CATALOG = catalog({
   domains: [
     {
       name: "sales",
       tables: [
-        {
+        table({
           name: "fct_orders",
-          domain: "sales",
-          description: "",
-          grain: "",
           primary_key: ["order_id"],
           columns: [
-            {
-              name: "order_id",
-              data_type: "bigint",
-              description: "",
-              is_primary_key: true,
-              is_pii: false,
-            },
-            {
-              name: "order_status",
-              data_type: "text",
-              description: "",
-              is_primary_key: false,
-              is_pii: false,
-            },
+            columnSummary({ name: "order_id", data_type: "bigint", is_primary_key: true }),
+            columnSummary({ name: "order_status" }),
           ],
-        },
-        {
-          name: "dim_products",
-          domain: "sales",
-          description: "",
-          grain: "",
-          primary_key: ["product_id"],
-          columns: [
-            {
-              name: "sku",
-              data_type: "text",
-              description: "",
-              is_primary_key: false,
-              is_pii: false,
-            },
-          ],
-        },
+        }),
+        table({ name: "dim_products", primary_key: ["product_id"], columns: [columnSummary({ name: "sku" })] }),
       ],
     },
   ],
-};
+});
 
 const post = vi.fn();
 vi.mock("../src/api/client", async (importOriginal) => ({
@@ -123,22 +91,14 @@ type HarnessProps = { initial: string; onSettled?: () => void; blockedReason?: s
 function Harness({ initial, onSettled = () => {}, blockedReason }: HarnessProps) {
   const [sql, setSql] = useState(initial);
   return (
-    <MantineProvider env="test">
-      <WorksheetPanel
-        worksheet={{ id: "w1", name: "Worksheet 1", sql }}
-        blockedReason={blockedReason}
-        onSqlChange={(_, next) => setSql(next)}
-        onSettled={onSettled}
-        onRunStarted={() => {}}
-      />
-    </MantineProvider>
+    <WorksheetPanel
+      worksheet={{ id: "w1", name: "Worksheet 1", sql }}
+      blockedReason={blockedReason}
+      onSqlChange={(_, next) => setSql(next)}
+      onSettled={onSettled}
+      onRunStarted={() => {}}
+    />
   );
-}
-
-function editorView(): EditorView {
-  const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
-  if (!view) throw new Error("no editor");
-  return view;
 }
 
 describe("WorksheetPanel", () => {
@@ -149,9 +109,9 @@ describe("WorksheetPanel", () => {
   it("Run becomes Cancel while running", async () => {
     const user = userEvent.setup();
     post.mockImplementation((path: string) =>
-      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
+      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve(noContent()),
     );
-    render(<Harness initial="select 1" />);
+    renderWithProviders(<Harness initial="select 1" />);
 
     await user.click(screen.getByRole("button", { name: "Run" }));
 
@@ -164,16 +124,9 @@ describe("WorksheetPanel", () => {
 
   it("error position is highlighted, offset by the selection", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({
-      error: {
-        code: "sql_error",
-        message: 'syntax error at or near "selec"',
-        detail: { position: 0 },
-      },
-      response: { status: 422 },
-    });
-    render(<Harness initial={"selec 2;\nselec 2"} />);
-    act(() => editorView().dispatch({ selection: { anchor: 9, head: 16 } }));
+    post.mockResolvedValue(apiFailure("sql_error", 'syntax error at or near "selec"', 422, 0));
+    renderWithProviders(<Harness initial={"selec 2;\nselec 2"} />);
+    act(() => shownEditor().dispatch({ selection: { anchor: 9, head: 16 } }));
 
     await user.click(await screen.findByRole("button", { name: "Run selection" }));
 
@@ -187,15 +140,15 @@ describe("WorksheetPanel", () => {
     const mark = document.querySelector(".cm-error-position") as HTMLElement;
     expect(mark.textContent).toBe("selec");
     // The second statement, not the first: the selection's start offset (9) is added to the position (0).
-    expect(editorView().posAtDOM(mark)).toBe(9);
+    expect(shownEditor().posAtDOM(mark)).toBe(9);
     expect(screen.getByText('syntax error at or near "selec"')).toBeInTheDocument();
     expect(screen.getByText("Postgres stopped at the highlighted spot in the editor.")).toBeInTheDocument();
   });
 
   it("an error without a position has no highlight hint", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({ error: { code: "sql_error", message: "boom" }, response: { status: 422 } });
-    render(<Harness initial="select 1" />);
+    post.mockResolvedValue(apiFailure("sql_error", "boom", 422));
+    renderWithProviders(<Harness initial="select 1" />);
 
     await user.click(screen.getByRole("button", { name: "Run" }));
 
@@ -205,30 +158,24 @@ describe("WorksheetPanel", () => {
 
   it("clears the highlight when the text changes", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({
-      error: { code: "sql_error", message: "boom", detail: { position: 0 } },
-      response: { status: 422 },
-    });
-    render(<Harness initial="selec 1" />);
+    post.mockResolvedValue(apiFailure("sql_error", "boom", 422, 0));
+    renderWithProviders(<Harness initial="selec 1" />);
     await user.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(document.querySelector(".cm-error-position")).not.toBeNull());
 
-    act(() => editorView().dispatch({ changes: { from: 0, insert: "x" } }));
+    act(() => shownEditor().dispatch({ changes: { from: 0, insert: "x" } }));
 
     expect(document.querySelector(".cm-error-position")).toBeNull();
   });
 
   it("Format replaces the text with the formatted SQL", async () => {
     const user = userEvent.setup();
-    post.mockResolvedValue({
-      data: { sql: "SELECT 1" },
-      response: { status: 200 },
-    });
-    render(<Harness initial="select    1" />);
+    post.mockResolvedValue(ok(formatResponse({ sql: "SELECT 1" })));
+    renderWithProviders(<Harness initial="select    1" />);
 
     await user.click(screen.getByRole("button", { name: "Format" }));
 
-    await waitFor(() => expect(editorView().state.doc.toString()).toBe("SELECT 1"));
+    await waitFor(() => expect(shownEditor().state.doc.toString()).toBe("SELECT 1"));
     expect(post).toHaveBeenCalledWith("/api/queries/format", {
       body: { sql: "select    1" },
     });
@@ -237,16 +184,16 @@ describe("WorksheetPanel", () => {
   it("Ctrl+Enter and Cmd+Enter run the worksheet without adding a line; Enter alone does not run", async () => {
     const user = userEvent.setup();
     post.mockImplementation((path: string) =>
-      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve({ response: { status: 204 } }),
+      path === "/api/queries" ? new Promise(() => {}) : Promise.resolve(noContent()),
     );
-    render(<Harness initial="select 1" />);
+    renderWithProviders(<Harness initial="select 1" />);
     const runs = () => post.mock.calls.filter(([path]) => path === "/api/queries");
     const content = document.querySelector(".cm-content") as HTMLElement;
 
     fireEvent.keyDown(content, { key: "Enter", ctrlKey: true });
     expect(runs()).toHaveLength(1);
     expect(runs()[0]?.[1].body.sql).toBe("select 1");
-    expect(editorView().state.doc.toString()).toBe("select 1");
+    expect(shownEditor().state.doc.toString()).toBe("select 1");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.keyDown(content, { key: "Enter", metaKey: true });
     expect(runs()).toHaveLength(2);
@@ -257,7 +204,7 @@ describe("WorksheetPanel", () => {
   });
 
   it("Run is disabled for an empty worksheet, and says why", () => {
-    render(<Harness initial="  " />);
+    renderWithProviders(<Harness initial="  " />);
 
     const run = screen.getByRole("button", { name: "Run" });
     expect(run).toBeDisabled();
@@ -268,8 +215,8 @@ describe("WorksheetPanel", () => {
 
   it("a blocked worksheet disables Run, Run selection and Ctrl+Enter, says why, and still formats", async () => {
     const user = userEvent.setup();
-    render(<Harness initial={"select 1"} blockedReason="Database unavailable" />);
-    act(() => editorView().dispatch({ selection: { anchor: 0, head: 6 } }));
+    renderWithProviders(<Harness initial={"select 1"} blockedReason="Database unavailable" />);
+    act(() => shownEditor().dispatch({ selection: { anchor: 0, head: 6 } }));
 
     fireEvent.keyDown(document.querySelector(".cm-content") as HTMLElement, { key: "Enter", ctrlKey: true });
 

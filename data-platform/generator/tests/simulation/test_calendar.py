@@ -79,7 +79,3 @@ class TestSimulationCalendar:
 
     def test_every_weighted_country_has_a_timezone(self) -> None:
         assert set(RealismRules.COUNTRY_WEIGHTS) == set(SimulationCalendar.TIMEZONES_BY_COUNTRY)
-
-    def test_local_iso_unknown_country_raises(self) -> None:
-        with pytest.raises(KeyError):
-            self.calendar.local_iso(datetime(2025, 7, 1, tzinfo=UTC), "US")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from helpers import SIMULATION_SEED, make_snapshot
+from helpers import SIMULATION_SEED, make_campaign, make_snapshot, run_days
 from sherpa_generator.behaviour.ad_spend import AdSpendSimulator
 from sherpa_generator.records import AdSpendDay, Campaign, CampaignChannel
 from sherpa_generator.simulation.day_changes import DayChanges
@@ -62,14 +62,11 @@ class TestAdSpendSimulator:
 
     def test_spend_varies_by_day_and_averages_the_daily_budget(self) -> None:
         campaign = _campaign(1, CampaignChannel.PAID_SEARCH, budget="3000", days=30)
-        spends: list[Decimal] = []
-        for offset in range(30):
-            changes = DayChanges()
-            snapshot = make_snapshot(
-                DAY + timedelta(days=offset), active_campaigns={CampaignChannel.PAID_SEARCH: [campaign]}
-            )
-            _simulator().simulate_day(snapshot, changes, {1: 10})
-            spends.extend(r.spend for r in changes.inserted(AdSpendDay))
+        snapshot = make_snapshot(DAY, active_campaigns={CampaignChannel.PAID_SEARCH: [campaign]})
+
+        days = run_days(lambda s, c: _simulator().simulate_day(s, c, {1: 10}), snapshot, DAY, 30)
+
+        spends = [r.spend for _, changes in days for r in changes.inserted(AdSpendDay)]
 
         assert len(set(spends)) == len(spends)
         assert Decimal("2700") <= sum(spends, Decimal(0)) <= Decimal("3300")
@@ -80,12 +77,6 @@ def _simulator() -> AdSpendSimulator:
 
 
 def _campaign(campaign_id: int, channel: CampaignChannel, budget: str, days: int) -> Campaign:
-    return Campaign(
-        id=campaign_id,
-        name=f"Campaign {campaign_id}",
-        utm_campaign=f"campaign-{campaign_id}",
-        channel=channel,
-        starts_at=CAMPAIGN_START,
-        ends_at=CAMPAIGN_START + timedelta(days=days),
-        budget=Decimal(budget),
+    return make_campaign(
+        campaign_id, channel=channel, budget=Decimal(budget), ends_at=CAMPAIGN_START + timedelta(days=days)
     )

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
 // Mantine reads these browser APIs, which jsdom does not provide.
@@ -31,5 +31,10 @@ class DOMMatrixReadOnlyStub {
 globalThis.DOMMatrixReadOnly ??= DOMMatrixReadOnlyStub as unknown as typeof DOMMatrixReadOnly;
 // A Select's dropdown scrolls its selected option into view.
 Element.prototype.scrollIntoView ??= () => {};
+
+// CodeMirror measures text with this, which jsdom lacks (it logs a TypeError otherwise).
+Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList;
+// A wait that outlasts a slow machine still fails well inside the test timeout.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(cleanup);

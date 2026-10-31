@@ -40,6 +40,8 @@ class TestApp:
             response = client.get("/api/catalog", headers={"Host": "evil.example"})
 
         assert response.status_code == 400
+        assert response.headers["content-type"].startswith("text/plain")  # Starlette's, before any route (UI spec §4)
+        assert response.text == "Invalid host header"
 
     @pytest.mark.parametrize("host", ["localhost", "localhost:8090", "127.0.0.1:8090"])
     def test_loopback_hosts_accepted(self, settings: UiSettings, host: str) -> None:
@@ -189,16 +191,8 @@ class TestOpenapiErrors:
 
 
 class TestDevApp:
-    def test_is_built_from_the_environment_without_static_files(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        for key, value in {
-            "SHERPA_DB_HOST": "unused",
-            "SHERPA_DB_PORT": "1",
-            "SHERPA_DB_NAME": "unused",
-            "SHERPA_UI_USER": "unused",
-            "SHERPA_UI_PASSWORD": "unused",
-        }.items():
-            monkeypatch.setenv(key, value)
-
+    @pytest.mark.usefixtures("ui_env")
+    def test_is_built_from_the_environment_without_static_files(self) -> None:
         import sherpa_ui.app as app_module
 
         dev_app = app_module.dev_app  # type: ignore[attr-defined]
@@ -217,18 +211,10 @@ class TestDevApp:
 
 
 class TestContainerApp:
+    @pytest.mark.usefixtures("ui_env")
     def test_serves_the_frontend_from_the_image_static_dir(
         self, monkeypatch: pytest.MonkeyPatch, static_dir: Path
     ) -> None:
-        for key, value in {
-            "SHERPA_DB_HOST": "unused",
-            "SHERPA_DB_PORT": "1",
-            "SHERPA_DB_NAME": "unused",
-            "SHERPA_UI_USER": "unused",
-            "SHERPA_UI_PASSWORD": "unused",
-        }.items():
-            monkeypatch.setenv(key, value)
-
         import sherpa_ui.app as app_module
 
         monkeypatch.setattr(app_module, "CONTAINER_STATIC_DIR", str(static_dir))

@@ -4,14 +4,15 @@ import logging
 from typing import TYPE_CHECKING
 
 import psycopg
+import pytest
 from sherpa_mcp.catalog import CatalogUnavailable
 
 if TYPE_CHECKING:
-    import pytest
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
 
 
+@pytest.mark.usefixtures("offline_settings")  # the app is built from these settings, and no connection works
 class TestHealthApi:
     def test_artifacts_missing_reported(self, client: TestClient, loader: MartCatalogLoader) -> None:
         loader.load.side_effect = CatalogUnavailable("not built")  # type: ignore[attr-defined]
@@ -27,7 +28,6 @@ class TestHealthApi:
         assert body["artifacts"]["generated_at"].startswith("2026-10-01T00:00:00")
 
     def test_unreachable_database_reported_down(self, client: TestClient) -> None:
-        # The settings point at port 1, where nothing listens.
         body = client.get("/api/health").json()
 
         assert body["database"] == "down"
@@ -54,3 +54,15 @@ class TestHealthApi:
         assert [record.getMessage() for record in caplog.records] == [
             f"health: the database is up but refuses more connections for the UI's login: {refusal}"
         ]
+
+
+@pytest.mark.warehouse
+class TestHealthApiWarehouse:
+    def test_the_real_warehouse_and_artifacts_are_up(self, warehouse_client: TestClient) -> None:
+        response = warehouse_client.get("/api/health")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["database"] == "ok"
+        assert body["artifacts"]["status"] == "ok"
+        assert body["artifacts"]["generated_at"] is not None

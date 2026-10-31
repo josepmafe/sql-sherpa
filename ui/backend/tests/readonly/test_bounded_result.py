@@ -27,6 +27,14 @@ class TestBoundedResult:
 
         assert result.rows == ((9007199254740991, "9007199254740992", -9007199254740991, "-9007199254740993", True),)
 
+    def test_integers_inside_json_and_arrays_are_left_as_they_are(self) -> None:
+        # Only a cell's own integer is sent as a string; JSON is a value of its own, and a client reads it as it is.
+        result = BoundedResult(("j", "a"), NO_PII, row_cap=10)
+
+        result.extend([({"k": [2**53 + 1], "n": 2**53 + 1}, [2**53 + 1])])
+
+        assert result.rows == (({"k": [9007199254740993], "n": 9007199254740993}, [9007199254740993]),)
+
     def test_a_cell_over_the_cap_is_cut_with_a_visible_marker(self) -> None:
         result = BoundedResult(("at_cap", "over"), NO_PII, row_cap=10)
 

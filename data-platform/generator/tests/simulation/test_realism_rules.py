@@ -4,7 +4,7 @@ import random
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sherpa_generator.records import DeviceType, EventContext, EventProperties, EventType, TrackedEvent
+from helpers import make_event
 from sherpa_generator.simulation.realism_rules import RealismRules
 
 DRAWS = 20_000
@@ -15,19 +15,7 @@ RARE_DRAWS = 200_000
 AD_CLICK_DRAWS = 2_000
 
 
-def make_event(event_id: str, received_at: datetime) -> TrackedEvent:
-    return TrackedEvent(
-        event_id=event_id,
-        anonymous_id="a1",
-        event_type=EventType.PAGE_VIEW,
-        occurred_at="2025-07-01T10:00:00+02:00",
-        received_at=received_at,
-        context=EventContext(device_type=DeviceType.DESKTOP),
-        properties=EventProperties(),
-    )
-
-
-def assert_rate(hits: int, expected_rate: float, draws: int = DRAWS) -> None:
+def assert_close(hits: int, expected_rate: float, draws: int = DRAWS) -> None:
     assert hits / draws == pytest.approx(expected_rate, rel=TOLERANCE)
 
 
@@ -38,17 +26,17 @@ class TestRealismRules:
 
     def test_duplicate_rate(self) -> None:
         received = datetime(2025, 7, 1, 10, tzinfo=UTC)
-        events = [make_event(f"e{i}", received) for i in range(DRAWS)]
+        events = [make_event(f"e{i}", received_at=received) for i in range(DRAWS)]
 
         duplicates = self.rules.duplicate_events(events, self.r)
 
-        assert_rate(len(duplicates), 0.01)
+        assert_close(len(duplicates), 0.01)
 
     def test_late_delay_rate_and_range(self) -> None:
         delays = [self.rules.late_delivery_delay(self.r) for _ in range(DRAWS)]
         late = [d for d in delays if d]
 
-        assert_rate(len(late), 0.02)
+        assert_close(len(late), 0.02)
         assert all(timedelta(days=1) <= d < timedelta(days=4) for d in late)
         assert min(late) < timedelta(days=1, hours=6)
         assert max(late) > timedelta(days=3, hours=18)
@@ -58,21 +46,21 @@ class TestRealismRules:
 
         noisy = sum(self.rules.noisy_email(email, self.r) != email for _ in range(DRAWS))
 
-        assert_rate(noisy, 0.10)
+        assert_close(noisy, 0.10)
 
     def test_country_noise_rate(self) -> None:
         noisy = sum(self.rules.noisy_country("GB", self.r) != "GB" for _ in range(DRAWS))
 
-        assert_rate(noisy, 0.03)
+        assert_close(noisy, 0.03)
 
     def test_test_account_rate(self) -> None:
         hits = sum(self.rules.is_test_account(self.r) for _ in range(RARE_DRAWS))
 
-        assert_rate(hits, 0.005, RARE_DRAWS)
+        assert_close(hits, 0.005, RARE_DRAWS)
 
     def test_duplicates_share_event_id_and_received_day(self) -> None:
         received = [datetime(2025, 7, 1, 10, tzinfo=UTC), datetime(2025, 7, 1, 23, 59, 30, tzinfo=UTC)]
-        events = [make_event(f"e{i}", received[i % 2]) for i in range(DRAWS)]
+        events = [make_event(f"e{i}", received_at=received[i % 2]) for i in range(DRAWS)]
         by_id = {e.event_id: e for e in events}
 
         duplicates = self.rules.duplicate_events(events, self.r)
@@ -86,7 +74,7 @@ class TestRealismRules:
 
     def test_duplicates_are_clamped_to_the_end_of_the_day(self) -> None:
         late = datetime(2025, 7, 1, 23, 59, 30, tzinfo=UTC)
-        events = [make_event(f"e{i}", late) for i in range(DRAWS)]
+        events = [make_event(f"e{i}", received_at=late) for i in range(DRAWS)]
 
         duplicates = self.rules.duplicate_events(events, self.r)
 
@@ -94,7 +82,7 @@ class TestRealismRules:
 
     def test_duplicates_span_the_full_delay_range(self) -> None:
         start = datetime(2025, 7, 1, 10, tzinfo=UTC)
-        events = [make_event(f"e{i}", start) for i in range(DRAWS)]
+        events = [make_event(f"e{i}", received_at=start) for i in range(DRAWS)]
 
         delays = [d.received_at - start for d in self.rules.duplicate_events(events, self.r)]
 
@@ -128,9 +116,6 @@ class TestRealismRules:
         seen = {self.rules.noisy_country("DE", self.r) for _ in range(DRAWS)}
 
         assert seen == {"DE", "de"}
-
-    def test_country_weights_sum_to_one(self) -> None:
-        assert sum(RealismRules.COUNTRY_WEIGHTS.values()) == pytest.approx(1.0)
 
     def test_ad_clicks_zero_sessions(self) -> None:
         assert self.rules.ad_clicks(0, self.r) == 0

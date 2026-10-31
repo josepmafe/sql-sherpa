@@ -1,39 +1,23 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import create_autospec
 
 import pytest
-from sherpa_ui.build.build_status import BuildStatusReader, BuildStatusUnavailable, LastFullBuild, NodeResult
+from sherpa_ui.build.build_status import BuildStatusReader, BuildStatusUnavailable
 from sherpa_ui.lineage.lineage_service import LineageService
 from sherpa_ui.lineage.manifest_graph import Layer, ManifestGraph
 from sherpa_ui.lineage.manifest_loader import ManifestLoader
 from sherpa_ui.lineage.node_sql import NodeSql
 from sherpa_ui.lineage.node_status import NodeStatus, TestOutcome
 from sherpa_ui.lineage.selector import UnsupportedSelector
+from ui_helpers import STARTED_AT, make_last_full_build, make_node_result
 
 if TYPE_CHECKING:
     from sherpa_ui.lineage.lineage_service import LineageGraph
 
-STARTED = datetime(2026, 10, 27, 10, 0, tzinfo=UTC)
 PROJECT_NODE_COUNT = 12  # the conftest project: 6 models, seed, snapshot, 3 sources, exposure
-
-
-def _result(unique_id: str, status: str, resource_type: str = "model") -> NodeResult:
-    return NodeResult(
-        unique_id=unique_id,
-        resource_type=resource_type,
-        status=status,
-        failures=None,
-        execution_time_s=2.5,
-        message="done",
-    )
-
-
-def _build(*results: NodeResult) -> LastFullBuild:
-    return LastFullBuild(invocation_id="i1", started_at=STARTED, results={r.unique_id: r for r in results})
 
 
 @pytest.fixture
@@ -116,13 +100,13 @@ class TestLineageServiceGraph:
     def test_failing_only_keeps_failed_nodes_and_their_mutual_edges(
         self, service: LineageService, builds: BuildStatusReader
     ) -> None:
-        builds.last_full_build.return_value = _build(  # type: ignore[attr-defined]
-            _result("model.p.stg_shop__orders", "success"),
-            _result("model.p.int_orders__enriched", "success"),
-            _result("model.p.fct_orders", "error"),
-            _result("model.p.dim_customers", "success"),
-            _result("test.p.unique_dim_customers_id", "fail", "test"),
-            _result("test.p.not_null_fct_orders_order_id", "pass", "test"),
+        builds.last_full_build.return_value = make_last_full_build(  # type: ignore[attr-defined]
+            make_node_result("model.p.stg_shop__orders", "success"),
+            make_node_result("model.p.int_orders__enriched", "success"),
+            make_node_result("model.p.fct_orders", "error"),
+            make_node_result("model.p.dim_customers", "success"),
+            make_node_result("test.p.unique_dim_customers_id", "fail"),
+            make_node_result("test.p.not_null_fct_orders_order_id", "pass"),
         )
 
         result = service.graph("", None, failing_only=True)
@@ -136,9 +120,9 @@ class TestLineageServiceGraph:
         }
 
     def test_failing_only_ignores_warned_nodes(self, service: LineageService, builds: BuildStatusReader) -> None:
-        builds.last_full_build.return_value = _build(  # type: ignore[attr-defined]
-            _result("model.p.dim_customers", "success"),
-            _result("test.p.unique_dim_customers_id", "warn", "test"),
+        builds.last_full_build.return_value = make_last_full_build(  # type: ignore[attr-defined]
+            make_node_result("model.p.dim_customers", "success"),
+            make_node_result("test.p.unique_dim_customers_id", "warn"),
         )
 
         result = service.graph("", None, failing_only=True)
@@ -147,11 +131,11 @@ class TestLineageServiceGraph:
         assert result.edges == []
 
     def test_build_info_of_a_recorded_build(self, service: LineageService, builds: BuildStatusReader) -> None:
-        builds.last_full_build.return_value = _build(_result("model.p.fct_orders", "success"))  # type: ignore[attr-defined]
+        builds.last_full_build.return_value = make_last_full_build(make_node_result("model.p.fct_orders", "success"))  # type: ignore[attr-defined]
 
         result = service.graph("fct_orders", None, failing_only=False)
 
-        assert (result.build.state, result.build.started_at, result.build.node_count) == ("ok", STARTED, 1)
+        assert (result.build.state, result.build.started_at, result.build.node_count) == ("ok", STARTED_AT, 1)
         assert result.nodes[0].status == NodeStatus.OK
 
     def test_without_a_build_every_model_has_no_build(self, service: LineageService) -> None:
@@ -195,10 +179,10 @@ class TestLineageServiceNode:
         assert service.node("test.p.not_null_fct_orders_order_id") is None
 
     def test_panel_of_a_mart_with_its_build_and_tests(self, service: LineageService, builds: BuildStatusReader) -> None:
-        builds.last_full_build.return_value = _build(  # type: ignore[attr-defined]
-            _result("model.p.fct_orders", "success"),
-            _result("test.p.not_null_fct_orders_order_id", "pass", "test"),
-            _result("test.p.assert_orders_match_customers", "warn", "test"),
+        builds.last_full_build.return_value = make_last_full_build(  # type: ignore[attr-defined]
+            make_node_result("model.p.fct_orders", "success", execution_time_s=2.5, message="done"),
+            make_node_result("test.p.not_null_fct_orders_order_id", "pass"),
+            make_node_result("test.p.assert_orders_match_customers", "warn"),
         )
 
         details = service.node("model.p.fct_orders")
@@ -237,8 +221,8 @@ class TestLineageServiceNode:
         message = (
             "Database Error in model fct_orders\nDETAIL: Failing row contains (null, ana@example.com, 42)\nCONTEXT: x"
         )
-        recorded = _result("model.p.fct_orders", "error").model_copy(update={"message": message})
-        builds.last_full_build.return_value = _build(recorded)  # type: ignore[attr-defined]
+        recorded = make_node_result("model.p.fct_orders", "error", message=message)
+        builds.last_full_build.return_value = make_last_full_build(recorded)  # type: ignore[attr-defined]
 
         details = service.node("model.p.fct_orders")
 
