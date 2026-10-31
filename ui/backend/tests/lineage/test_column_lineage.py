@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlglot
+from pydantic import ValidationError
 from sherpa_ui.lineage import column_lineage
 from sherpa_ui.lineage.column_lineage import (
     ColumnEdge,
@@ -378,6 +379,17 @@ class TestColumnLineageBuilder:
         assert lineage.node_note(STG) == DID_NOT_PARSE
         assert lineage.columns_of(MART)[0].resolution is Resolution.FULL
         assert lineage.node_note(MART) is None
+
+    def test_a_validation_error_of_our_own_code_is_not_swallowed_as_unparsed_sql(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def invalid(*args: object) -> ColumnInfo:
+            ColumnRef.model_validate({})  # a pydantic ValidationError, which is a ValueError
+
+        monkeypatch.setattr(column_lineage._Run, "_classify", invalid)
+
+        with pytest.raises(ValidationError):
+            _lineage([_src(), _stg("id")], {STG: f"select id from {SRC_SQL}"})
 
     def test_missing_sql_marks_the_node_unresolved_with_its_note(self) -> None:
         lineage = _lineage([_src(), _stg("id", "amount")], {STG: None})

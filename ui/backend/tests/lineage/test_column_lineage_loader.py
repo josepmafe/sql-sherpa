@@ -149,6 +149,44 @@ class TestColumnLineageLoader:
         assert columns[FCT] == ["b", "a"]
         assert columns[ENRICHED] == ["id"]
 
+    def test_an_ephemeral_model_takes_no_yaml_columns_when_the_catalog_exists(
+        self,
+        tmp_path: Path,
+        manifest: dict[str, Any],
+        manifests: ManifestLoader,
+        node_sql: NodeSql,
+        fake_builder: type[_FakeBuilder],
+    ) -> None:
+        manifest["nodes"][ENRICHED]["config"]["materialized"] = "ephemeral"
+        manifests.load.return_value = ManifestGraph.from_manifest(manifest)  # type: ignore[attr-defined]
+        (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "catalog.json").write_text(json.dumps(_catalog(fct_orders=_node("a"))), encoding="utf-8")
+
+        ColumnLineageLoader(tmp_path, manifests, node_sql).load()
+
+        assert fake_builder.seen is not None
+        columns, _ = fake_builder.seen
+        assert ENRICHED not in columns
+        assert columns[FCT] == ["a"]
+
+    def test_an_ephemeral_model_keeps_its_yaml_columns_without_a_catalog(
+        self,
+        tmp_path: Path,
+        manifest: dict[str, Any],
+        manifests: ManifestLoader,
+        node_sql: NodeSql,
+        fake_builder: type[_FakeBuilder],
+    ) -> None:
+        manifest["nodes"][ENRICHED]["config"]["materialized"] = "ephemeral"
+        manifests.load.return_value = ManifestGraph.from_manifest(manifest)  # type: ignore[attr-defined]
+        (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
+
+        ColumnLineageLoader(tmp_path, manifests, node_sql).load()
+
+        assert fake_builder.seen is not None
+        columns, _ = fake_builder.seen
+        assert columns[ENRICHED] == ["id"]
+
     def test_an_artifact_rewritten_while_the_graph_loads_is_built_again(
         self,
         tmp_path: Path,
@@ -160,6 +198,7 @@ class TestColumnLineageLoader:
         def rewrite_during_the_first_load() -> ManifestGraph:
             if fake_builder.builds == 0:
                 _bump_mtime(tmp_path / "catalog.json")
+
             return graph
 
         manifests.load.side_effect = rewrite_during_the_first_load  # type: ignore[attr-defined]

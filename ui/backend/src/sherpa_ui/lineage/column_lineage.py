@@ -208,7 +208,7 @@ class _Run:
                 self._fail(node, NOTE_SQL_UNPARSED)
                 return
 
-            infos = self._describe(node, self._trace(tree))
+            roots = self._trace(tree)
         except RecursionError:
             logger.warning("column lineage of %s: the compiled SQL is nested too deeply", node.unique_id)
             self._fail(node, NOTE_SQL_UNPARSED)
@@ -217,12 +217,8 @@ class _Run:
             logger.warning("column lineage of %s: sqlglot could not trace the compiled SQL: %s", node.unique_id, exc)
             self._fail(node, NOTE_SQL_UNPARSED)
             return
-        except ValueError as exc:
-            # sqlglot/lineage.py:291 raises a plain ValueError when a select reads a column that a UNION lacks
-            logger.warning("column lineage of %s: sqlglot could not find a column: %s", node.unique_id, exc)
-            self._fail(node, NOTE_SQL_UNPARSED)
-            return
 
+        infos = self._describe(node, roots)
         self._learn(node, infos)
         self.columns[node.unique_id] = tuple(infos)
 
@@ -239,9 +235,15 @@ class _Run:
     def _trace(self, tree: exp.Query) -> dict[str, Node]:
         """The lineage root of every output column. `trim_selects=False` keeps the CTEs reachable from a node's
         source; partial qualification lets a column the parent lacks fail alone instead of failing the query."""
-        traced = lineage(
-            None, tree, schema=self._schema, dialect=DIALECT, trim_selects=False, allow_partial_qualification=True
-        )
+        try:
+            traced = lineage(
+                None, tree, schema=self._schema, dialect=DIALECT, trim_selects=False, allow_partial_qualification=True
+            )
+        except ValueError as exc:
+            # sqlglot/lineage.py:291 raises a plain ValueError when a select reads a column that a UNION lacks;
+            # only the trace is caught, so a ValueError of our own code (a pydantic ValidationError) propagates
+            raise SqlglotError(f"could not find a column: {exc}") from exc
+
         return {name.lower(): root for name, root in traced.items()}
 
     def _describe(self, node: GraphNode, roots: dict[str, Node]) -> list[ColumnInfo]:

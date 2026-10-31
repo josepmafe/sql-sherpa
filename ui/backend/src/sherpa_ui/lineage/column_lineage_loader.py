@@ -9,6 +9,7 @@ from sherpa_mcp.catalog import CATALOG_FILE, MANIFEST_FILE, CatalogUnavailable
 from sqlglot.errors import SqlglotError
 
 from sherpa_ui.lineage.column_lineage import ColumnLineage, ColumnLineageBuilder
+from sherpa_ui.lineage.manifest_graph import EPHEMERAL
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,6 +72,11 @@ class ColumnLineageLoader:
         if catalog is None:
             note = NOTE_NO_CATALOG
         else:
+            # An ephemeral model is never in the catalog, and its YAML may be incomplete: its SQL tells its columns.
+            for unique_id, node in graph.nodes.items():
+                if node.materialization == EPHEMERAL:
+                    del columns[unique_id]
+
             columns.update(_catalog_columns(catalog, graph))
             note = None
 
