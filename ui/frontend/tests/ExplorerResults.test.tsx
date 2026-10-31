@@ -269,7 +269,7 @@ describe("Explorer results", () => {
       answerQueries(
         () => Promise.resolve(answer(AB, "client")),
         () => new Promise((resolve) => (stale = resolve)),
-        () => Promise.resolve(answer(AB)),
+        () => Promise.resolve(answer(AB, "client")),
       );
       renderScreen("select 1");
       await user.click(screen.getByRole("button", { name: "Run" }));

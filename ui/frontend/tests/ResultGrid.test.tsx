@@ -4,7 +4,7 @@ import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
 import { MASKED_HINT, ResultGrid } from "../src/components/ResultGrid";
-import { EMPTY_VIEW, type ResultView } from "../src/components/resultView";
+import { CUT_MARKER, EMPTY_VIEW, type ResultView } from "../src/components/resultView";
 import { type QueryResponse, queryResponse } from "./fixtures/api";
 import { firstColumn, renderWithProviders } from "./fixtures/render";
 
@@ -145,6 +145,26 @@ describe("ResultGrid", () => {
     await user.click(screen.getAllByRole("button", { name: "id" })[1] as HTMLElement);
 
     expect(screen.getByText(/duplicate column names/)).toBeInTheDocument();
+    expect(screen.getByText(/may differ from Postgres/)).toBeInTheDocument();
+  });
+
+  it("warns about duplicate column names on a complete result when the sorted column holds a cut cell", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <Harness
+        data={response({
+          columns: ["id", "id"],
+          column_types: ["text", "text"],
+          rows: [["a", `b${CUT_MARKER}`]],
+          returned_rows: 1,
+        })}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: "id" })[0] as HTMLElement);
+    expect(screen.queryByText(/duplicate column names/)).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "id" })[1] as HTMLElement);
+
     expect(screen.getByText(/may differ from Postgres/)).toBeInTheDocument();
   });
 

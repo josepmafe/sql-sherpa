@@ -18,7 +18,7 @@ export async function martNames(request: APIRequestContext): Promise<string[]> {
   );
 
   expect(names.length).toBeGreaterThan(0);
-  // Both sides sort by code point: JS's default sort and the "C" collation.
+  // Both sides sort by byte value: JS's default sort (UTF-16 code units; the names are ASCII) and the "C" collation.
   expect([...names].sort().join(",")).toBe(inWarehouse);
   return names;
 }

@@ -27,8 +27,9 @@ def test_no_test_directory_is_skipped_by_pytest_defaults(request: pytest.Fixture
 def test_every_test_file_is_collected(
     request: pytest.FixtureRequest, selected_files: frozenset[Path], deselected_files: frozenset[Path]
 ) -> None:
-    options = request.config.option
-    if options.lf or options.ignore or options.ignore_glob:
+    # The cache plugin (--lf) can be disabled with -p no:cacheprovider, which leaves its option undefined.
+    config = request.config
+    if config.getoption("lf", False) or config.getoption("ignore", None) or config.getoption("ignore_glob", None):
         pytest.skip("--lf, --ignore or --ignore-glob left some test files out on purpose")
 
     arguments = [Path(str(argument).split("::")[0]).resolve() for argument in request.config.args]
