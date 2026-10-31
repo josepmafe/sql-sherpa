@@ -172,14 +172,14 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - **Mark by need:** `integration` when Postgres is enough, `warehouse` only for built relations or artifacts. Tests of `data-platform/postgres/*.sql` live in `data-platform/tests/postgres/`.
 - **Don't test a constant against what defines it** (a rate against the constant it is read from); test it against the spec's value.
 - UI test rules:
-  - No test directory is named like one of pytest's skipped defaults (`build`, `dist`, …); a test checks the effective config (`pythonpath`, `norecursedirs`, `testpaths` in `pyproject.toml`).
+  - No test directory matches the effective `norecursedirs`: pytest's default list skips `build` and `dist`, so `pyproject.toml` lists the defaults without `build`. `ui/backend/tests/test_layout.py` checks that every `test_*.py` under `ui/backend/tests` is collected.
   - Every Vitest API payload comes from a typed builder over the generated schema (`ui/frontend/tests/fixtures/api.ts`); no literal is passed to a mocked `api`.
   - Sort and filter semantics live in the one shared case file (`ui/parity/sort_filter_cases.json`) that pytest and Vitest both run; a new operator or column type adds cases first.
   - A value sent to Postgres (`set local`, session options) is asserted on the fake connection in the default suite.
   - Every limit or default the spec names has a behaviour test that fails when the value changes.
   - An unreachable database is simulated by making `psycopg.connect` raise, never by connecting to a closed port.
   - No sleep proves that something did not happen: use fake timers or a positive signal.
-  - Vitest restores every spy after each test (config), sets its timeouts explicitly, and mocks ELK outside layout tests.
+  - Vitest's `restoreMocks` restores `vi.spyOn` spies after each test; a module-level `vi.fn()` is reset in its file's `beforeEach`. Timeouts are set explicitly, and ELK is mocked outside layout tests.
   - Assert what the user sees or what goes over the wire, not a render count or a library's CSS variable.
   - E2E specs read expected values from the warehouse at run time.
   - A fixture must be able to tell the rule it tests apart from the default.

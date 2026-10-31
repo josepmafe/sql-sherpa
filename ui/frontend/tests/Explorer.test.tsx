@@ -263,6 +263,10 @@ describe("CatalogTree", () => {
 });
 
 describe("Copy name", () => {
+  beforeEach(() => {
+    useCatalog.mockReset().mockReturnValue({ data: CATALOG });
+  });
+
   it("copies the table's qualified name", async () => {
     const user = userEvent.setup();
     renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
