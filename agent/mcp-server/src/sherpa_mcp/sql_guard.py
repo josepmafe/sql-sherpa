@@ -603,7 +603,7 @@ def _written_name(func: exp.Func) -> str:
 
     rendered = func.sql(dialect=DIALECT)
     head = _CALL_HEAD.match(rendered)
-    if head is not None:
+    if head is not None and not _starts_with_operand(func, rendered):
         return head.group(1).lower()
 
     if _WRITTEN_NAME.fullmatch(rendered):
@@ -613,6 +613,11 @@ def _written_name(func: exp.Func) -> str:
         return f"{rendered[:ERROR_SNIPPET_LENGTH]}..."
 
     return rendered
+
+
+def _starts_with_operand(func: exp.Func, rendered: str) -> bool:
+    """An infix operator on a call (`lower(x) ~ 'a'`) renders the operand first, so its first call is not its name."""
+    return isinstance(func, exp.Binary) and rendered.startswith(func.this.sql(dialect=DIALECT))
 
 
 def _is_built_in_type(data_type: exp.DataType) -> bool:

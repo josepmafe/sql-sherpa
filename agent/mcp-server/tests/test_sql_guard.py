@@ -327,6 +327,16 @@ REJECTED_QUERIES = [
         "function or operator `" + ("a ->> '" + "k" * 80)[:60] + "...` is not allowed",
     ),
     # whole-row references, record conversions and field selections
+    (
+        "select 1 from marts.fct_orders where lower(channel) ~ 'web'",
+        "function",
+        "function or operator `LOWER(channel) ~ 'web'` is not allowed",
+    ),
+    (
+        "select 1 from marts.fct_orders where order_id::text ~ '1'",
+        "function",
+        "function or operator `CAST(order_id AS TEXT) ~ '1'` is not allowed",
+    ),
     ("select c from marts.dim_customers c", "whole_row", "whole-row reference `c` is not allowed"),
     ("select c from marts.dim_customers as c", "whole_row", "whole-row reference `c` is not allowed"),
     (
@@ -624,6 +634,16 @@ REMEDY_HINTS = [
     ),
     (
         "select 1 from marts.fct_orders where channel ~* 'web'",
+        "function",
+        "use LIKE or ILIKE instead of a regular expression",
+    ),
+    (
+        "select 1 from marts.fct_orders where lower(channel) ~ 'web'",
+        "function",
+        "use LIKE or ILIKE instead of a regular expression",
+    ),
+    (
+        "select 1 from marts.fct_orders where order_id::text ~ '1'",
         "function",
         "use LIKE or ILIKE instead of a regular expression",
     ),
