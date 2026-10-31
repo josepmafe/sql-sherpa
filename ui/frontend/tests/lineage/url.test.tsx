@@ -11,18 +11,19 @@ describe("lineage URL state", () => {
       layers: ["marts", "staging"],
       failingOnly: true,
       node: "model.sherpa.fct_orders",
+      column: "net_revenue",
     };
 
     const search = toSearchParams(params);
 
     expect(search.toString()).toBe(
-      "select=%2Bfct_orders%2B2&layers=marts%2Cstaging&failing=1&node=model.sherpa.fct_orders",
+      "select=%2Bfct_orders%2B2&layers=marts%2Cstaging&failing=1&node=model.sherpa.fct_orders&column=net_revenue",
     );
     expect(parseLineageSearch(search)).toEqual(params);
   });
 
   it("omits the defaults", () => {
-    const search = toSearchParams({ select: "", layers: undefined, failingOnly: false, node: undefined });
+    const search = toSearchParams({ select: "", layers: undefined, failingOnly: false, node: undefined, column: undefined });
 
     expect(search.toString()).toBe("");
     expect(parseLineageSearch(new URLSearchParams())).toEqual({
@@ -30,6 +31,7 @@ describe("lineage URL state", () => {
       layers: undefined,
       failingOnly: false,
       node: undefined,
+      column: undefined,
     });
   });
 
@@ -48,6 +50,16 @@ describe("lineage URL state", () => {
     expect(parsed.node).toBeUndefined();
   });
 
+  it("a column without a node is no focus, and an empty column= is none either", () => {
+    const withoutNode = parseLineageSearch(new URLSearchParams("column=net_revenue"));
+    const empty = parseLineageSearch(new URLSearchParams("node=model.sherpa.fct_orders&column="));
+    const written = toSearchParams({ select: "", layers: undefined, failingOnly: false, node: undefined, column: "net_revenue" });
+
+    expect(withoutNode.column).toBeUndefined();
+    expect(empty.column).toBeUndefined();
+    expect(written.toString()).toBe("");
+  });
+
   describe("useLineageParams", () => {
     it("selecting a node replaces the history entry", () => {
       const { router, hook } = renderProbe();
@@ -56,6 +68,18 @@ describe("lineage URL state", () => {
 
       expect(router.state.historyAction).toBe("REPLACE");
       expect(router.state.location.search).toContain("node=model.sherpa.fct_orders");
+    });
+
+    it("focusing a column replaces the history entry, and clearing it does too", () => {
+      const { router, hook } = renderProbe();
+
+      act(() => hook.current[1]({ node: "model.sherpa.fct_orders", column: "net_revenue" }));
+      const focused = router.state.historyAction;
+      act(() => hook.current[1]({ column: undefined }));
+
+      expect(focused).toBe("REPLACE");
+      expect(router.state.historyAction).toBe("REPLACE");
+      expect(router.state.location.search).toBe("?select=fct_orders&node=model.sherpa.fct_orders");
     });
 
     it("applying what the URL already holds adds no history entry", () => {

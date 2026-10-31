@@ -4,7 +4,19 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LineageScreen } from "../../src/screens/lineage/LineageScreen";
-import { apiFailure, type LineageGraph, lineageGraph, lineageNode, nodeDetails, ok } from "../fixtures/api";
+import {
+  apiFailure,
+  type ColumnFocusView,
+  columnDetail,
+  columnFocusView,
+  columnView,
+  focusColumn,
+  type LineageGraph,
+  lineageGraph,
+  lineageNode,
+  nodeDetails,
+  ok,
+} from "../fixtures/api";
 import { deferred, renderWithProviders } from "../fixtures/render";
 
 // No test here reads a position, and the real ELK layout is slow under load.
@@ -13,7 +25,9 @@ vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   orderNodes: (nodes: { id: string }[]) => Promise.resolve(new Map(nodes.map((node, index) => [node.id, index]))),
 }));
 
-type Options = { params: { query?: { select?: string; layers?: string }; path?: { unique_id: string } } };
+type Options = {
+  params: { query?: { select?: string; layers?: string; columns?: boolean }; path?: { unique_id: string; column?: string } };
+};
 const get = vi.fn<(path: string, options: Options) => Promise<unknown>>();
 vi.mock("../../src/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/api/client")>()),
@@ -49,6 +63,65 @@ function answerNodes(graph: LineageGraph = GRAPH) {
   return (path: string, options: Options) =>
     path === LINEAGE ? Promise.resolve(ok(graph)) : Promise.resolve(ok(DETAILS(options.params.path?.unique_id ?? "")));
 }
+
+// Three nodes with columns: a (staging) -> b (marts), and c, which neither touches.
+const A = "model.s.a";
+const B = "model.s.b";
+const C = "model.s.c";
+const SCENE = [
+  lineageNode({
+    unique_id: A,
+    name: "a",
+    layer: "staging",
+    domain: null,
+    materialization: "view",
+    columns: [columnView({ name: "amount", kind: "rename" })],
+  }),
+  lineageNode({
+    unique_id: B,
+    name: "b",
+    layer: "marts",
+    domain: "sales",
+    columns: [columnView({ name: "net_revenue", kind: "transformed" }), columnView({ name: "units", kind: "row_count" })],
+  }),
+  lineageNode({
+    unique_id: C,
+    name: "c",
+    layer: "staging",
+    domain: null,
+    materialization: "view",
+    columns: [columnView({ name: "k" })],
+  }),
+];
+const FOCUS = columnFocusView({
+  focus: { node: B, column: "net_revenue" },
+  columns: [
+    focusColumn({ node: B, name: "net_revenue", direction: "focus", kind: "transformed" }),
+    focusColumn({ node: A, name: "amount", direction: "upstream", kind: "rename" }),
+  ],
+  edges: [{ parent: { node: A, column: "amount" }, child: { node: B, column: "net_revenue" } }],
+});
+
+// The scene's graph (its columns only once `columns=true` asks for them), a column's focus, and a node's panel.
+function answerScene(overrides: { columns?: Partial<LineageGraph>; focus?: ColumnFocusView } = {}) {
+  const base = lineageGraph({
+    build: { state: "ok", node_count: 3, started_at: null },
+    layers_available: ["staging", "marts"],
+    edges: [{ source: A, target: B }],
+  });
+  return (path: string, options: Options) => {
+    if (path === LINEAGE) {
+      const withColumns = options.params.query?.columns === true;
+      const nodes = SCENE.map(({ columns, ...bare }) => (withColumns ? { ...bare, columns } : bare));
+      return Promise.resolve(ok({ ...base, nodes, ...(withColumns ? overrides.columns : {}) }));
+    }
+    if (path.startsWith("/api/lineage/columns/")) return Promise.resolve(ok(overrides.focus ?? FOCUS));
+    return Promise.resolve(
+      ok({ ...DETAILS(options.params.path?.unique_id ?? ""), columns: [columnDetail({ name: "net_revenue" })] }),
+    );
+  };
+}
+const lineageCalls = () => get.mock.calls.filter(([path]) => path === LINEAGE).map(([, options]) => options.params.query);
 
 function Where() {
   return <output aria-label="location">{useLocation().search}</output>;
@@ -245,5 +318,125 @@ describe("LineageScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("boom");
     expect(screen.queryByText(/\d+ nodes/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Lineage graph")).not.toBeInTheDocument();
+  });
+
+  describe("column lineage", () => {
+    const row = async (name: string) =>
+      within(await screen.findByLabelText("Lineage graph")).findByRole("button", { name: new RegExp(`^${name}\\b`) });
+    const expandAll = () => userEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    const here = () => screen.getByLabelText("location");
+
+    it("columns are requested once a node is expanded, and still after Collapse all", async () => {
+      get.mockImplementation(answerScene());
+      mount("/lineage");
+      expect(await screen.findByText("3 nodes")).toBeInTheDocument();
+      expect(lineageCalls().some((query) => query?.columns === true)).toBe(false);
+
+      await expandAll();
+      await row("net_revenue");
+      await userEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+
+      await waitFor(() => expect(screen.queryByRole("button", { name: /^net_revenue\b/ })).not.toBeInTheDocument());
+      await userEvent.click(screen.getByRole("checkbox", { name: "marts" }));
+      await waitFor(() => expect(lineageCalls().at(-1)).toMatchObject({ layers: "staging", columns: true }));
+    });
+
+    it("Expand all expands the nodes shown", async () => {
+      get.mockImplementation(answerScene());
+      mount("/lineage");
+      await screen.findByText("3 nodes");
+
+      await expandAll();
+
+      for (const name of ["amount", "net_revenue", "units", "k"]) expect(await row(name)).toBeVisible();
+    });
+
+    it("unavailable column lineage disables expanding and says why", async () => {
+      const reason = "the compiled SQL is not in the dbt target";
+      get.mockImplementation(answerScene({ columns: { column_lineage: "unavailable", column_lineage_reason: reason } }));
+      mount("/lineage");
+      await screen.findByText("3 nodes");
+
+      await expandAll();
+
+      const chevron = await screen.findByRole("button", { name: "Columns of b" });
+      await waitFor(() => expect(chevron).toBeDisabled());
+      expect(chevron).toHaveAccessibleDescription(reason);
+      expect(screen.getByRole("button", { name: "Expand all" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: /^net_revenue\b/ })).not.toBeInTheDocument();
+    });
+
+    it("column= in the URL restores the focus after a reload", async () => {
+      get.mockImplementation(answerScene());
+
+      mount(`/lineage?node=${B}&column=net_revenue`);
+
+      expect(await row("net_revenue")).toHaveAttribute("aria-pressed", "true");
+      expect(await row("amount")).toHaveAttribute("aria-pressed", "false");
+      expect(get).toHaveBeenCalledWith("/api/lineage/columns/{unique_id}/{column}", {
+        params: { path: { unique_id: B, column: "net_revenue" } },
+      });
+      expect(await nodeButton("c")).toHaveAttribute("data-dimmed");
+      expect(screen.queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument();
+    });
+
+    it("clicking a column in a node focuses it", async () => {
+      get.mockImplementation(answerScene());
+      mount("/lineage");
+      await screen.findByText("3 nodes");
+      await expandAll();
+
+      fireEvent.click(await row("amount"));
+
+      await waitFor(() => expect(here()).toHaveTextContent(`node=${A}&column=amount`));
+    });
+
+    it("clicking a column in the panel's Columns tab focuses it", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}`);
+      await screen.findByText("3 nodes");
+      await userEvent.click(await screen.findByRole("tab", { name: "Columns" }));
+
+      await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
+
+      await waitFor(() => expect(here()).toHaveTextContent(`node=${B}&column=net_revenue`));
+    });
+
+    it("Esc clears the column before the node", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}&column=net_revenue`);
+      await row("net_revenue");
+
+      await userEvent.keyboard("{Escape}");
+
+      await waitFor(() => expect(here()).not.toHaveTextContent("column="));
+      expect(here()).toHaveTextContent(`node=${B}`);
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(here()).not.toHaveTextContent("node="));
+    });
+
+    it("selecting another node drops the column", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}&column=net_revenue`);
+      await row("net_revenue");
+
+      fireEvent.click(await nodeButton("c"));
+
+      await waitFor(() => expect(here()).toHaveTextContent(`node=${C}`));
+      expect(here()).not.toHaveTextContent("column=");
+    });
+
+    it("related columns in nodes that are not shown are counted in the panel", async () => {
+      const outside = columnFocusView({
+        ...FOCUS,
+        columns: [...FOCUS.columns, focusColumn({ node: "model.s.gone", name: "amount", direction: "upstream" })],
+      });
+      get.mockImplementation(answerScene({ focus: outside }));
+
+      mount(`/lineage?node=${B}&column=net_revenue`);
+
+      expect(await screen.findByRole("note")).toHaveTextContent("1 related column is outside this view");
+      expect(within(screen.getByRole("note")).getByRole("link", { name: "+b+" })).toBeVisible();
+    });
   });
 });

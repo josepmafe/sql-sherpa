@@ -1,32 +1,19 @@
 import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
-import { NODE_HEIGHT, NODE_WIDTH, orderNodes } from "../../src/screens/lineage/layout";
-import { type LineageEdge, type LineageNode, lineageNode } from "../fixtures/api";
+import { orderNodes } from "../../src/screens/lineage/layout";
+import { columnView, type LineageEdge, type LineageNode } from "../fixtures/api";
+import { stubLayout } from "../fixtures/render";
+import { CanvasHarness, canvasProps, COLUMN_EDGES, COLUMN_FOCUS, COLUMN_NODES, FCT, node, rankInInputOrder } from "./canvasHarness";
 
 // A quick order in place of ELK (the layout tests run the real one), with its calls counted.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
   orderNodes: vi.fn(),
 }));
-
-function node(name: string, patch: Partial<LineageNode> = {}): LineageNode {
-  return lineageNode({
-    unique_id: `model.s.${name}`,
-    name,
-    layer: "staging",
-    domain: null,
-    materialization: "view",
-    ...patch,
-  });
-}
-
-const CANVAS_WIDTH = 1200;
-const CANVAS_HEIGHT = 800;
 
 // a -> b -> c, and an unrelated x
 const NODES = [
@@ -41,25 +28,17 @@ const EDGES: LineageEdge[] = [
 ];
 
 function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; nodes?: LineageNode[]; edges?: LineageEdge[] }) {
-  const [selected, setSelected] = useState(initial);
-  return (
-    <MantineProvider env="test">
-      <LineageCanvas nodes={nodes} edges={edges} selected={selected} onSelect={setSelected} failingOnly={false} layersFiltered={false} buildState="ok" />
-    </MantineProvider>
-  );
+  return <CanvasHarness nodes={nodes} edges={edges} initial={initial} />;
 }
 
 // fireEvent, not userEvent.click: user-event's mousedown has no `view`, which d3-zoom (React Flow's pan) reads.
 const item = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}\\b`) });
 
 describe("LineageCanvas", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   // restoreMocks restores spies only: the module-level vi.fn needs its implementation again.
   beforeEach(() => {
-    vi.mocked(orderNodes).mockReset().mockImplementation((nodes) => Promise.resolve(new Map(nodes.map((n, index) => [n.id, index]))));
+    rankInInputOrder();
   });
 
   it("renders a node per graph node with its status label", async () => {
@@ -80,7 +59,7 @@ describe("LineageCanvas", () => {
   it("shows the empty state", () => {
     render(
       <MantineProvider env="test">
-        <LineageCanvas nodes={[]} edges={[]} selected={undefined} onSelect={() => {}} failingOnly={false} layersFiltered={false} buildState="ok" />
+        <LineageCanvas {...canvasProps()} />
       </MantineProvider>,
     );
 
@@ -99,15 +78,7 @@ describe("LineageCanvas", () => {
     (failingOnly, layersFiltered, buildState, text) => {
       render(
         <MantineProvider env="test">
-          <LineageCanvas
-            nodes={[]}
-            edges={[]}
-            selected={undefined}
-            onSelect={() => {}}
-            failingOnly={failingOnly}
-            layersFiltered={layersFiltered}
-            buildState={buildState}
-          />
+          <LineageCanvas {...canvasProps({ failingOnly, layersFiltered, buildState })} />
         </MantineProvider>,
       );
 
@@ -230,25 +201,8 @@ describe("LineageCanvas", () => {
   }, 40_000);
 
   it("the initial fit never zooms past 1x", async () => {
-    // jsdom has no layout. Give the canvas 1200x800 and each node its size, and let a ResizeObserver report them once,
-    // so React Flow can fit one small node to the canvas (it would zoom to 2x).
-    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains("react-flow__node") ? NODE_WIDTH : CANVAS_WIDTH;
-    });
-    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains("react-flow__node") ? NODE_HEIGHT : CANVAS_HEIGHT;
-    });
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(private readonly callback: ResizeObserverCallback) {}
-        observe(target: Element): void {
-          this.callback([{ target, contentRect: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT } } as ResizeObserverEntry], this as unknown as ResizeObserver);
-        }
-        unobserve(): void {}
-        disconnect(): void {}
-      },
-    );
+    // Without the cap, one small node in a 1200x800 canvas is fitted to 2x.
+    stubLayout();
     render(<Harness nodes={[NODES[1]!]} edges={[]} />);
     await item("b");
     const viewport = () => (document.querySelector(".react-flow__viewport") as HTMLElement).style.transform;
@@ -264,6 +218,68 @@ describe("LineageCanvas", () => {
 
     expect(await item("x")).toHaveAttribute("data-dimmed");
     expect(await item("b")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  describe("column focus", () => {
+    const other = node("other", { columns: [columnView({ name: "k" })] });
+    const nodes = [...COLUMN_NODES, other];
+    const mount = () =>
+      render(<CanvasHarness nodes={nodes} edges={COLUMN_EDGES} initialExpanded={[FCT]} focusData={COLUMN_FOCUS} />);
+
+    it("clicking a column focuses it and dims the unrelated nodes", async () => {
+      mount();
+      expect(await item("other")).not.toHaveAttribute("data-dimmed");
+
+      fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
+
+      expect(await item("other")).toHaveAttribute("data-dimmed");
+      expect(await item("stg_orders")).not.toHaveAttribute("data-dimmed");
+      expect(await item("fct_orders")).not.toHaveAttribute("data-dimmed");
+      expect(await screen.findByRole("button", { name: /^amount\b/ })).toBeVisible();
+      expect(screen.getByRole("button", { name: /^net_revenue\b/ })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("a dimmed node's column rows stay focusable", async () => {
+      render(<CanvasHarness nodes={nodes} edges={COLUMN_EDGES} initialExpanded={["model.s.other"]} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+      const row = await screen.findByRole("button", { name: /^k\b/ });
+
+      row.focus();
+
+      expect(row).toHaveFocus();
+      expect(await item("other")).toHaveAttribute("data-dimmed");
+    });
+
+    it("draws the column edge in the primary colour and fades the table edges", async () => {
+      stubLayout();
+      mount();
+      await waitFor(() => expect(document.querySelectorAll(".react-flow__edge")).toHaveLength(1));
+      const tableEdge = () => document.querySelector<SVGPathElement>(".react-flow__edge-path")!;
+      expect(tableEdge().style.opacity).toBe("1");
+
+      fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
+
+      await waitFor(() => expect(document.querySelectorAll(".react-flow__edge")).toHaveLength(2));
+      const strokes = [...document.querySelectorAll<SVGPathElement>(".react-flow__edge-path")].map((path) => [
+        path.style.stroke,
+        path.style.opacity,
+      ]);
+      expect(strokes).toContainEqual(["var(--mantine-primary-color-filled)", "1"]);
+      expect(strokes.filter(([, opacity]) => opacity === "0.15")).toHaveLength(1);
+    });
+
+    it("the legend says what column lineage follows, while columns are shown", async () => {
+      mount();
+      await item("fct_orders");
+      const legend = /Column lineage follows the select list: columns used only in joins or filters are not linked/;
+      expect(screen.getByText(legend)).toBeVisible();
+    });
+
+    it("no legend while every node is collapsed", async () => {
+      render(<CanvasHarness nodes={nodes} edges={COLUMN_EDGES} />);
+      await item("fct_orders");
+
+      expect(screen.queryByText(/Column lineage follows the select list/)).not.toBeInTheDocument();
+    });
   });
 });
 

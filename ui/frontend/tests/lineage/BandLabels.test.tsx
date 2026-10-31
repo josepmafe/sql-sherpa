@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
-import { type LineageNode, lineageNode } from "../fixtures/api";
+import { canvasProps, node } from "./canvasHarness";
 
 // A quick order in place of ELK: the ranks follow the input.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
@@ -11,22 +11,15 @@ vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   orderNodes: (nodes: { id: string }[]) => Promise.resolve(new Map(nodes.map((n, index) => [n.id, index]))),
 }));
 
-function node(name: string, layer: LineageNode["layer"]): LineageNode {
-  return lineageNode({ unique_id: `model.s.${name}`, name, layer, domain: null, materialization: "view" });
-}
-
 describe("BandLabels", () => {
   it("labels only the bands shown", async () => {
     render(
       <MantineProvider env="test">
         <LineageCanvas
-          nodes={[node("stg_a", "staging"), node("fct_b", "marts")]}
-          edges={[{ source: "model.s.stg_a", target: "model.s.fct_b" }]}
-          selected={undefined}
-          onSelect={() => {}}
-          failingOnly={false}
-          layersFiltered={false}
-          buildState="ok"
+          {...canvasProps({
+            nodes: [node("stg_a", { layer: "staging" }), node("fct_b", { layer: "marts" })],
+            edges: [{ source: "model.s.stg_a", target: "model.s.fct_b" }],
+          })}
         />
       </MantineProvider>,
     );

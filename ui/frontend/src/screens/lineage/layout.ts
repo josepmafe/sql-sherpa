@@ -5,6 +5,8 @@ export const NODE_HEIGHT = 84;
 const BAND_GAP = 90;
 const SUB_COLUMN_GAP = 60;
 const ROW_GAP = 24;
+// One column row of an expanded node (UI spec §6.5).
+export const COLUMN_ROW_HEIGHT = 28;
 
 export interface BandNode {
   id: string;
@@ -19,6 +21,11 @@ export interface LayoutEdge {
 export interface Point {
   x: number;
   y: number;
+}
+
+// A node lists its rows under its header; stackBands gets this height for it.
+export function nodeHeight(rows: number): number {
+  return NODE_HEIGHT + rows * COLUMN_ROW_HEIGHT;
 }
 
 // The bands, left to right (UI spec §6.5). ELK's partitioning keeps a band's nodes out of an earlier band.

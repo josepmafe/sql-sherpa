@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Alert,
   Badge,
   Box,
@@ -13,6 +14,7 @@ import {
   Tabs,
   Text,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
@@ -30,10 +32,11 @@ import { useLineageNode } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { ReadOnlySql } from "../../components/SqlEditor";
 import { LoadError } from "../explorer/LoadError";
+import { KindLabel, ResolutionLabel } from "./ColumnLabels";
 import { GREEN, GREY, ORANGE, RED, STATUS } from "./GraphNode";
+import { pathSelector } from "./selectors";
 
 type ColumnDetail = components["schemas"]["ColumnDetail"];
-type ColumnKind = components["schemas"]["ColumnKind"];
 type NodeDetails = components["schemas"]["NodeDetails"];
 type TestInfo = components["schemas"]["TestInfo"];
 type TestOutcome = components["schemas"]["TestOutcome"];
@@ -47,16 +50,6 @@ const TESTS = "tests";
 const SQL = "sql";
 const RAW = "raw";
 const COMPILED = "compiled";
-
-const KIND_LABEL: Record<ColumnKind, string> = {
-  passthrough: "passthrough",
-  rename: "rename",
-  transformed: "transformed",
-  row_count: "row count",
-  constant: "constant",
-  generated: "generated",
-  source: "source",
-};
 
 interface OutcomeView {
   Icon: ComponentType<{ size?: number; "aria-hidden"?: boolean }>;
@@ -75,24 +68,36 @@ const OUTCOMES: Record<TestOutcome, OutcomeView> = {
 interface NodePanelProps {
   uniqueId: string | undefined;
   onClose: () => void;
+  // The focused column of the node, and how many columns related to it are in nodes the graph does not show.
+  column: string | undefined;
+  outside: number;
+  onFocusColumn: (column: string | undefined) => void;
 }
 
 // Always rendered under the graph, so selecting a node never resizes the canvas.
-export function NodePanel({ uniqueId, onClose }: NodePanelProps) {
+export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }: NodePanelProps) {
   const node = useLineageNode(uniqueId);
-  // The tab stays while another node is selected, so the same tab can be read across nodes.
-  const [tab, setTab] = useState<string | null>(OVERVIEW);
+  // The tab stays while another node is selected, so the same tab can be read across nodes. A focused column opens
+  // the Columns tab, where it is marked.
+  const [tab, setTab] = useState<string | null>(column === undefined ? OVERVIEW : COLUMNS);
+  const [seenColumn, setSeenColumn] = useState(column);
+  if (column !== seenColumn) {
+    setSeenColumn(column);
+    if (column !== undefined) setTab(COLUMNS);
+  }
 
-  // Esc clears the selection, unless it was meant for a text field or a menu.
+  // Esc clears the column focus, then the selection, unless it was meant for a text field or a menu.
   useEffect(() => {
     if (uniqueId === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (event.key === "Escape" && !target.closest("input, textarea, [role=listbox]")) onClose();
+      if (event.key !== "Escape" || target.closest("input, textarea, [role=listbox]")) return;
+      if (column === undefined) onClose();
+      else onFocusColumn(undefined);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [uniqueId, onClose]);
+  }, [uniqueId, column, onClose, onFocusColumn]);
 
   return (
     <ScrollArea.Autosize mah={PANEL_MAX_HEIGHT} offsetScrollbars="y">
@@ -108,7 +113,7 @@ export function NodePanel({ uniqueId, onClose }: NodePanelProps) {
                 <IconX size={14} />
               </ActionIcon>
             </Group>
-            <Body node={node} tab={tab} onTab={setTab} />
+            <Body node={node} tab={tab} onTab={setTab} column={column} outside={outside} onFocusColumn={onFocusColumn} />
           </>
         )}
       </Stack>
@@ -120,9 +125,12 @@ interface BodyProps {
   node: ReturnType<typeof useLineageNode>;
   tab: string | null;
   onTab: (tab: string | null) => void;
+  column: string | undefined;
+  outside: number;
+  onFocusColumn: (column: string | undefined) => void;
 }
 
-function Body({ node, tab, onTab }: BodyProps) {
+function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
   if (node.isError) {
     // The graph stays: the node is simply not in the project (e.g. a stale link).
     if ("code" in node.error && node.error.code === NODE_NOT_FOUND) {
@@ -140,6 +148,7 @@ function Body({ node, tab, onTab }: BodyProps) {
   return (
     <>
       <Title order={4}>{d.name}</Title>
+      {column !== undefined && outside > 0 && <OutsideNote d={d} column={column} outside={outside} />}
       <Tabs value={tab} onChange={onTab}>
         <Tabs.List>
           <Tabs.Tab value={OVERVIEW}>Overview</Tabs.Tab>
@@ -151,7 +160,7 @@ function Body({ node, tab, onTab }: BodyProps) {
           <Overview d={d} />
         </Tabs.Panel>
         <Tabs.Panel value={COLUMNS} pt="xs">
-          <ColumnsTable columns={d.columns} />
+          <ColumnsTable columns={d.columns} focused={column} onFocusColumn={onFocusColumn} />
         </Tabs.Panel>
         <Tabs.Panel value={TESTS} pt="xs">
           <TestList tests={d.tests} />
@@ -219,7 +228,27 @@ function Overview({ d }: { d: NodeDetails }) {
   );
 }
 
-function ColumnsTable({ columns }: { columns: ColumnDetail[] }) {
+// A column edge never leaves the table edges, so +<node>+ always holds the related columns left out of the view.
+function OutsideNote({ d, column, outside }: { d: NodeDetails; column: string; outside: number }) {
+  const select = pathSelector(d.name, "all", "all");
+  const to = `/lineage?select=${encodeURIComponent(select)}&node=${encodeURIComponent(d.unique_id)}&column=${encodeURIComponent(column)}`;
+  return (
+    <Text size="sm" role="note">
+      {outside === 1 ? "1 related column is" : `${outside} related columns are`} outside this view. Show them with{" "}
+      <Anchor component={Link} to={to}>
+        {select}
+      </Anchor>
+    </Text>
+  );
+}
+
+interface ColumnsTableProps {
+  columns: ColumnDetail[];
+  focused: string | undefined;
+  onFocusColumn: (column: string) => void;
+}
+
+function ColumnsTable({ columns, focused, onFocusColumn }: ColumnsTableProps) {
   if (columns.length === 0) {
     return (
       <Text size="xs" c="dimmed">
@@ -240,13 +269,19 @@ function ColumnsTable({ columns }: { columns: ColumnDetail[] }) {
       </Table.Thead>
       <Table.Tbody>
         {columns.map((column) => (
-          <Table.Tr key={column.name}>
+          <Table.Tr
+            key={column.name}
+            aria-current={column.name === focused ? "true" : undefined}
+            bg={column.name === focused ? "var(--mantine-primary-color-light)" : undefined}
+          >
             <Table.Td>
-              <Code>{column.name}</Code>
+              <UnstyledButton onClick={() => onFocusColumn(column.name)} aria-label={column.name}>
+                <Code>{column.name}</Code>
+              </UnstyledButton>
             </Table.Td>
             <Table.Td>{column.data_type}</Table.Td>
-            <Table.Td>{column.kind === null ? null : KIND_LABEL[column.kind]}</Table.Td>
-            <Table.Td>{column.resolution}</Table.Td>
+            <Table.Td>{column.kind === null ? null : <KindLabel kind={column.kind} />}</Table.Td>
+            <Table.Td>{column.resolution === null ? null : <ResolutionLabel resolution={column.resolution} />}</Table.Td>
             <Table.Td>{columnNotes(column)}</Table.Td>
           </Table.Tr>
         ))}

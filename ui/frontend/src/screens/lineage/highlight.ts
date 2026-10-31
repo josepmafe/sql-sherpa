@@ -46,9 +46,12 @@ export interface EdgeAppearance {
   opacity: number;
 }
 
+// A column edge of the focus, and an edge of a selected node's chain.
+export const FOCUS_EDGE: EdgeAppearance = { stroke: PRIMARY_EDGE_COLOR, strokeWidth: RELATED_EDGE_WIDTH, opacity: 1 };
+
 // With a node selected its chain stands out in the primary colour and the other edges fade.
 export function edgeAppearance(related: Related | undefined, id: string): EdgeAppearance {
   if (related === undefined) return { stroke: EDGE_COLOR, strokeWidth: EDGE_WIDTH, opacity: 1 };
-  if (related.edges.has(id)) return { stroke: PRIMARY_EDGE_COLOR, strokeWidth: RELATED_EDGE_WIDTH, opacity: 1 };
+  if (related.edges.has(id)) return FOCUS_EDGE;
   return { stroke: EDGE_COLOR, strokeWidth: EDGE_WIDTH, opacity: DIMMED_EDGE_OPACITY };
 }

@@ -14,5 +14,6 @@ export default defineConfig({
     setupFiles: ["tests/setup.ts"],
     testTimeout: 20_000, // a loaded machine (the backend suite running beside) slows the first render of a screen
     restoreMocks: true, // a vi.spyOn on a global does not leak into the next test
+    unstubGlobals: true, // so does a vi.stubGlobal
   },
 });

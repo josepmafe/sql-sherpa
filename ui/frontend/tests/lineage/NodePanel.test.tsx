@@ -37,18 +37,26 @@ const DETAILS = nodeDetails({
   compiled_sql: "select * from stg_orders",
 });
 
-function panel(uniqueId: string | undefined, onClose: () => void) {
+type FocusProps = { column?: string | undefined; outside?: number; onFocusColumn?: (column: string | undefined) => void };
+
+function panel(uniqueId: string | undefined, onClose: () => void, focus: FocusProps = {}) {
   return (
     <>
-      <NodePanel uniqueId={uniqueId} onClose={onClose} />
+      <NodePanel
+        uniqueId={uniqueId}
+        onClose={onClose}
+        column={focus.column}
+        outside={focus.outside ?? 0}
+        onFocusColumn={focus.onFocusColumn ?? (() => {})}
+      />
       <input aria-label="elsewhere" />
     </>
   );
 }
 
-function mount(uniqueId: string | null = "model.sherpa.fct_orders", onClose = vi.fn()) {
-  const view = renderWithProviders(panel(uniqueId ?? undefined, onClose));
-  return { onClose, view, select: (id: string) => view.rerender(panel(id, onClose)) };
+function mount(uniqueId: string | null = "model.sherpa.fct_orders", onClose = vi.fn(), focus: FocusProps = {}) {
+  const view = renderWithProviders(panel(uniqueId ?? undefined, onClose, focus), {});
+  return { onClose, view, select: (id: string) => view.rerender(panel(id, onClose, focus)) };
 }
 
 const openTab = (name: string) => userEvent.click(screen.getByRole("tab", { name }));
@@ -240,5 +248,77 @@ describe("NodePanel", () => {
     mount();
 
     expect(screen.getByRole("alert")).toHaveTextContent("no node model.s.gone");
+  });
+
+  describe("column focus", () => {
+    it("clicking a column in the Columns tab focuses it", async () => {
+      const onFocusColumn = vi.fn();
+      mount("model.sherpa.fct_orders", vi.fn(), { onFocusColumn });
+      await openTab("Columns");
+
+      await userEvent.click(screen.getByRole("button", { name: "total" }));
+
+      expect(onFocusColumn).toHaveBeenCalledExactlyOnceWith("total");
+    });
+
+    it("the focused column is marked in the Columns tab, which opens by itself", () => {
+      mount("model.sherpa.fct_orders", vi.fn(), { column: "total" });
+
+      expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+      const rows = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row");
+      expect(rows[2]).toHaveAttribute("aria-current", "true");
+      expect(rows[1]).not.toHaveAttribute("aria-current");
+    });
+
+    it("focusing a column from the graph opens the Columns tab", () => {
+      const { view } = mount();
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+
+      view.rerender(panel("model.sherpa.fct_orders", vi.fn(), { column: "total" }));
+
+      expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("Esc clears the column focus first and closes only when there is none", async () => {
+      const user = userEvent.setup();
+      const onFocusColumn = vi.fn();
+      const { onClose } = mount("model.sherpa.fct_orders", vi.fn(), { column: "total", onFocusColumn });
+
+      await user.keyboard("{Escape}");
+
+      expect(onFocusColumn).toHaveBeenCalledExactlyOnceWith(undefined);
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [1, "1 related column is outside this view"],
+      [3, "3 related columns are outside this view"],
+    ])("%i related columns outside the view link to the selector that holds them", (outside, text) => {
+      mount("model.sherpa.fct_orders", vi.fn(), { column: "total", outside });
+
+      expect(screen.getByRole("note")).toHaveTextContent(text);
+      const link = within(screen.getByRole("note")).getByRole("link", { name: "+fct_orders+" });
+      expect(link).toHaveAttribute(
+        "href",
+        "/lineage?select=%2Bfct_orders%2B&node=model.sherpa.fct_orders&column=total",
+      );
+    });
+
+    it("nothing outside the view, no note", () => {
+      mount("model.sherpa.fct_orders", vi.fn(), { column: "total", outside: 0 });
+
+      expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    });
+
+    it("a column's kind and resolution are an icon plus text", async () => {
+      mount();
+      await openTab("Columns");
+
+      const total = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row")[2]!;
+
+      expect(total.querySelectorAll("svg[aria-hidden]")).toHaveLength(2);
+      expect(total).toHaveTextContent("transformed");
+      expect(total).toHaveTextContent("partial");
+    });
   });
 });

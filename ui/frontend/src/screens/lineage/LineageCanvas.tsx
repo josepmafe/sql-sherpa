@@ -7,6 +7,7 @@ import {
   MarkerType,
   MiniMap,
   type Node,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -15,9 +16,10 @@ import { useEffect, useMemo } from "react";
 
 import type { components } from "../../api/schema";
 import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
+import { type FocusViewResult, nodeRows } from "./columnFocus";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
-import { edgeAppearance, edgeId, relatedNodes } from "./highlight";
-import { type BandNode, type LayoutEdge, NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { edgeAppearance, edgeId, FOCUS_EDGE, type Related, relatedNodes } from "./highlight";
+import { type BandNode, type LayoutEdge, NODE_WIDTH, nodeHeight } from "./layout";
 import { useGraphLayout } from "./useGraphLayout";
 
 type ApiNode = components["schemas"]["LineageNode"];
@@ -27,14 +29,25 @@ const MINIMAP_ABOVE_NODES = 60;
 // A whole-project fit would zoom a one-node graph to 2x.
 const FIT_MAX_ZOOM = 1;
 const NODE_TYPES = { graph: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
-// No node reports a height yet: every node is NODE_HEIGHT.
-const NO_HEIGHTS = new Map<string, number>();
+// The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
+const FIXED_WIDTH = { vectorEffect: "non-scaling-stroke" } as const;
+const LEGEND = "Column lineage follows the select list: columns used only in joins or filters are not linked";
 
 interface LineageCanvasProps {
   nodes: ApiNode[];
   edges: ApiEdge[];
   selected: string | undefined;
+  // The focused column of the selected node.
+  column: string | undefined;
   onSelect: (uniqueId: string | undefined) => void;
+  // The focused column's lineage through the nodes shown; undefined while no column is focused.
+  focus: FocusViewResult | undefined;
+  // The nodes the user opened.
+  expanded: Set<string>;
+  onToggle: (uniqueId: string) => void;
+  onFocusColumn: (uniqueId: string, column: string) => void;
+  // Why the nodes cannot expand; undefined when column lineage is available.
+  columnsUnavailable: string | undefined;
   // Why an empty graph is empty.
   failingOnly: boolean;
   layersFiltered: boolean;
@@ -56,11 +69,41 @@ export function LineageCanvas(props: LineageCanvasProps) {
   );
 }
 
-function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
+function Canvas({
+  nodes,
+  edges,
+  selected,
+  column,
+  onSelect,
+  focus,
+  expanded,
+  onToggle,
+  onFocusColumn,
+  columnsUnavailable,
+}: LineageCanvasProps) {
   const { layoutNodes, layoutEdges } = useTopology(nodes, edges);
-  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, NO_HEIGHTS);
+  const rows = useMemo(
+    () =>
+      new Map(
+        nodes.map((node) => [
+          node.unique_id,
+          nodeRows(columnsUnavailable === undefined ? (node.columns ?? []) : [], {
+            expanded: expanded.has(node.unique_id),
+            related: focus?.expanded.get(node.unique_id),
+            focused: node.unique_id === selected ? column : undefined,
+          }),
+        ]),
+      ),
+    [nodes, expanded, focus, selected, column, columnsUnavailable],
+  );
+  // A node grows by its rows (and the "+k more" row); ELK has already ordered, so only the stacking reruns.
+  const heights = useMemo(
+    () => new Map([...rows].map(([id, { rows: shown, more }]) => [id, nodeHeight(shown.length + (more > 0 ? 1 : 0))])),
+    [rows],
+  );
+  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
   const { fitView } = useReactFlow();
-  const related = useMemo(() => (selected === undefined ? undefined : relatedNodes(edges, selected)), [edges, selected]);
+  const related = useMemo(() => relatedOf(edges, selected, focus), [edges, selected, focus]);
 
   // Fit after each new order of the nodes, not after a selection or a restack.
   useEffect(() => {
@@ -73,7 +116,9 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
     () => {
       const graphNodes: Node[] = nodes.flatMap((node) => {
         const position = positions?.get(node.unique_id);
-        if (position === undefined) return [];
+        const shown = rows.get(node.unique_id);
+        if (position === undefined || shown === undefined) return [];
+        const height = heights.get(node.unique_id)!;
         const data: GraphNodeData = {
           name: node.name,
           layer: node.layer,
@@ -82,29 +127,47 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
           failingTests: node.failing_tests,
           selected: node.unique_id === selected,
           dimmed: related !== undefined && !related.nodes.has(node.unique_id),
+          height,
+          rows: shown.rows,
+          more: shown.more,
+          hasColumns: node.columns == null || node.columns.length > 0,
+          open: expanded.has(node.unique_id) || focus?.expanded.has(node.unique_id) === true,
+          unavailable: columnsUnavailable,
+          onToggle: () => onToggle(node.unique_id),
+          onFocusColumn: (name) => onFocusColumn(node.unique_id, name),
         };
-        return [{ id: node.unique_id, type: "graph", position, width: NODE_WIDTH, height: NODE_HEIGHT, data }];
+        return [{ id: node.unique_id, type: "graph", position, width: NODE_WIDTH, height, data }];
       });
       const labels = positions === undefined ? [] : bandLabelNodes(layoutNodes, positions);
       return [...labels, ...graphNodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
     },
-    [nodes, layoutNodes, positions, selected, related],
+    [nodes, layoutNodes, positions, rows, heights, selected, related, expanded, focus, columnsUnavailable, onToggle, onFocusColumn],
   );
   const flowEdges: Edge[] = useMemo(
-    () =>
-      edges.map((edge) => {
+    () => [
+      ...edges.map((edge) => {
         const look = edgeAppearance(related, edgeId(edge));
         return {
           id: edgeId(edge),
           source: edge.source,
           target: edge.target,
           markerEnd: { type: MarkerType.ArrowClosed, color: look.stroke },
-          // The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
-          style: { ...look, vectorEffect: "non-scaling-stroke" },
+          style: { ...look, ...FIXED_WIDTH },
         };
       }),
-    [edges, related],
+      ...(focus?.edges ?? []).map(({ parent, child }) => ({
+        id: `col:${parent.node}.${parent.column}->${child.node}.${child.column}`,
+        source: parent.node,
+        sourceHandle: `col:${parent.column}`,
+        target: child.node,
+        targetHandle: `col:${child.column}`,
+        markerEnd: { type: MarkerType.ArrowClosed, color: FOCUS_EDGE.stroke },
+        style: { ...FOCUS_EDGE, ...FIXED_WIDTH },
+      })),
+    ],
+    [edges, related, focus],
   );
+  const columnsShown = [...rows.values()].some((shown) => shown.rows.length > 0);
 
   return (
     <div style={{ height: "60vh", minHeight: 400 }}>
@@ -134,9 +197,23 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
       >
         <Controls showInteractive={false} fitViewOptions={{ maxZoom: FIT_MAX_ZOOM }} />
         {nodes.length > MINIMAP_ABOVE_NODES && <MiniMap pannable zoomable />}
+        {columnsShown && (
+          <Panel position="top-right">
+            <Text size="xs" c="dimmed" maw={260}>
+              {LEGEND}
+            </Text>
+          </Panel>
+        )}
       </ReactFlow>
     </div>
   );
+}
+
+// With a column focused the column edges tell the story: only the nodes that hold a related column stay lit, and every
+// table edge fades. Otherwise a selected node lights its chain of nodes.
+function relatedOf(edges: ApiEdge[], selected: string | undefined, focus: FocusViewResult | undefined): Related | undefined {
+  if (focus !== undefined) return { nodes: new Set(focus.expanded.keys()), edges: new Set() };
+  return selected === undefined ? undefined : relatedNodes(edges, selected);
 }
 
 // The layout depends on the nodes' ids and layers and on the edges, not on their statuses: a refetch that only

@@ -1,4 +1,5 @@
-import { Chip, Group, Switch, Text } from "@mantine/core";
+import { Button, Chip, Group, Switch, Text, VisuallyHidden } from "@mantine/core";
+import { useId } from "react";
 
 import type { Layer } from "./url";
 
@@ -17,11 +18,29 @@ interface LayerFilterProps {
   failingOnly: boolean;
   onFailingOnly: (failingOnly: boolean) => void;
   buildState: BuildState;
+  // Act on the nodes shown. Disabled, with this reason as their description, while column lineage is unavailable.
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
+  columnsUnavailable: string | undefined;
   // When the full build whose statuses the graph shows started (ISO 8601).
   startedAt: string | null;
 }
 
-export function LayerFilter({ available, layers, onLayers, failingOnly, onFailingOnly, buildState, startedAt }: LayerFilterProps) {
+export function LayerFilter({
+  available,
+  layers,
+  onLayers,
+  failingOnly,
+  onFailingOnly,
+  onExpandAll,
+  onCollapseAll,
+  columnsUnavailable,
+  buildState,
+  startedAt,
+}: LayerFilterProps) {
+  const why = useId();
+  const unavailable = columnsUnavailable !== undefined;
+  const describedBy = unavailable ? why : undefined;
   const shown = layers ?? available;
   return (
     <Group gap="md" align="center">
@@ -47,6 +66,15 @@ export function LayerFilter({ available, layers, onLayers, failingOnly, onFailin
         checked={failingOnly}
         onChange={(event) => onFailingOnly(event.currentTarget.checked)}
       />
+      <Group gap="xs">
+        <Button size="xs" variant="default" onClick={onExpandAll} disabled={unavailable} aria-describedby={describedBy}>
+          Expand all
+        </Button>
+        <Button size="xs" variant="default" onClick={onCollapseAll} disabled={unavailable} aria-describedby={describedBy}>
+          Collapse all
+        </Button>
+        {columnsUnavailable !== undefined && <VisuallyHidden id={why}>{columnsUnavailable}</VisuallyHidden>}
+      </Group>
       {note(buildState, startedAt) !== undefined && (
         <Text size="sm" c="dimmed">
           {note(buildState, startedAt)}

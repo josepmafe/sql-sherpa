@@ -2,6 +2,7 @@ import { EditorView } from "@codemirror/view";
 import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, type RenderResult, screen } from "@testing-library/react";
+import { vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import { createMemoryRouter, MemoryRouter, type RouteObject, RouterProvider } from "react-router-dom";
 
@@ -103,4 +104,34 @@ export function wideScreen(query: string): MediaQueryList {
     removeListener: () => {},
     dispatchEvent: () => false,
   } as MediaQueryList;
+}
+
+export const CANVAS_SIZE = { width: 1200, height: 800 };
+
+/**
+ * jsdom has no layout, so React Flow never measures a node and queues its fit, its handles and its edges. This gives
+ * the canvas CANVAS_SIZE and each node the width and height React Flow set on it, and has every ResizeObserver report
+ * what it observes once. Undone after each test (`unstubGlobals`, `restoreMocks`).
+ */
+export function stubLayout(): void {
+  const size = (element: HTMLElement, axis: "width" | "height") =>
+    (element.style[axis].endsWith("px") ? Number.parseFloat(element.style[axis]) : 0) || CANVAS_SIZE[axis];
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return size(this, "width");
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return size(this, "height");
+  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        const contentRect = { ...CANVAS_SIZE } as DOMRectReadOnly;
+        this.callback([{ target, contentRect } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  );
 }
