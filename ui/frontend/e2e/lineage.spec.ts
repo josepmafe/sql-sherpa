@@ -92,6 +92,20 @@ async function focusColumn(page: Page, uniqueId: string, column: string): Promis
   await expect(row).toHaveAttribute("aria-pressed", "true");
 }
 
+// The box of an element once it has stopped moving (a layout or a pan still running moves it between two reads).
+async function settledBox(locator: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
+  let last = await locator.boundingBox();
+  await expect
+    .poll(async () => {
+      const now = await locator.boundingBox();
+      const same = JSON.stringify(now) === JSON.stringify(last);
+      last = now;
+      return same;
+    })
+    .toBe(true);
+  return last!;
+}
+
 async function ordersColumns(page: Page): Promise<string[]> {
   const response = await page.request.get("/api/lineage?columns=true");
   const graph = (await response.json()) as Graph;
@@ -431,14 +445,14 @@ test("a mouse click on a row half outside the canvas focuses its column and leav
   // The canvas' bottom edge must be on screen for the mouse to click next to it.
   await page.getByLabel("Lineage graph").scrollIntoViewIfNeeded();
   const pane = (await page.getByLabel("Lineage graph").boundingBox())!;
-  const rowBox = (await row.boundingBox())!;
+  const rowBox = await settledBox(row);
   // Pan the canvas by dragging an empty corner, until the row's middle sits on the canvas' bottom edge.
   const shift = pane.y + pane.height - (rowBox.y + rowBox.height / 2);
   await page.mouse.move(pane.x + 5, pane.y + 5);
   await page.mouse.down();
   await page.mouse.move(pane.x + 5, pane.y + 5 + shift, { steps: 5 });
   await page.mouse.up();
-  const half = (await row.boundingBox())!;
+  const half = await settledBox(row);
   expect(half.y, "the row starts half outside").toBeLessThan(pane.y + pane.height);
   expect(half.y + half.height, "the row starts half outside").toBeGreaterThan(pane.y + pane.height);
   const viewport = page.locator(".react-flow__viewport");
