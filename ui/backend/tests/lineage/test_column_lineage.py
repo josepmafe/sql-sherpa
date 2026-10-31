@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -414,3 +415,30 @@ class TestColumnLineage:
 
     def test_info_of_an_unknown_column_is_none(self) -> None:
         assert _chain().info(_ref(STG, "nope")) is None
+
+
+class TestUnionLookupAndWalk:
+    def test_a_union_that_lacks_the_column_marks_only_its_node_unresolved(self) -> None:
+        mart = _Spec("mart", ("ghost",), parents=(SRC,))
+        sql = {
+            STG: f"select id from {SRC_SQL}",
+            MART: f"with u as (select * from {SRC_SQL} union all select * from {SRC_SQL}) select u.ghost from u",
+        }
+
+        lineage = _lineage([_src(), _stg("id"), mart], sql)
+
+        assert lineage.columns_of(MART)[0].resolution is Resolution.UNRESOLVED
+        assert lineage.node_note(MART) is not None
+        assert lineage.columns_of(STG)[0].resolution is Resolution.FULL
+        assert lineage.node_note(STG) is None
+
+    def test_a_long_chain_of_ctes_is_walked_once_per_node(self) -> None:
+        links = [f"c0 as (select id + amount as id, id - amount as amount from {SRC_SQL})"]
+        links += [f"c{i} as (select id + amount as id, id - amount as amount from c{i - 1})" for i in range(1, 40)]
+        sql = f"with {', '.join(links)} select id, amount from c39"
+        started = time.monotonic()
+
+        lineage = _lineage([_src(), _stg("id", "amount")], {STG: sql})
+
+        assert time.monotonic() - started < 5
+        assert lineage.focus(_ref(STG, "id")).upstream == {_ref(SRC, "id"), _ref(SRC, "amount")}

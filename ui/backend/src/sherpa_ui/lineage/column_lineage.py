@@ -217,6 +217,11 @@ class _Run:
             logger.warning("column lineage of %s: sqlglot could not trace the compiled SQL: %s", node.unique_id, exc)
             self._fail(node, NOTE_SQL_UNPARSED)
             return
+        except ValueError as exc:
+            # sqlglot/lineage.py:291 raises a plain ValueError when a select reads a column that a UNION lacks
+            logger.warning("column lineage of %s: sqlglot could not find a column: %s", node.unique_id, exc)
+            self._fail(node, NOTE_SQL_UNPARSED)
+            return
 
         if node.materialization == EPHEMERAL:
             self._learn_ephemeral(node, infos)
@@ -398,12 +403,8 @@ def _repoint_ephemeral_ctes(tree: exp.Query) -> exp.Query:
 def _leaves(root: Node) -> Iterator[_Leaf]:
     """The table columns a lineage tree ends in (a leaf of any other kind, such as `count(*)`, reads no column)."""
     seen: set[tuple[_RelationKey, str]] = set()
-    stack = [root]
-    while stack:
-        node = stack.pop()
-        if node.downstream:
-            stack.extend(reversed(node.downstream))
-        elif isinstance(node.source, exp.Table):
+    for node in root.walk():  # visits each lineage node once: the DAG shares nodes, a tree walk would be exponential
+        if not node.downstream and isinstance(node.source, exp.Table):
             key = (node.source.catalog.lower(), node.source.db.lower(), node.source.name.lower())
             column = _unquote(node.name.partition(".")[2] or node.name)  # the node is named `<table alias>.<column>`
             if (key, column.lower()) not in seen:

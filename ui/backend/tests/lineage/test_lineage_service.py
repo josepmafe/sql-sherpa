@@ -13,6 +13,7 @@ from sherpa_ui.lineage.column_lineage import (
     ColumnInfo,
     ColumnKind,
     ColumnLineage,
+    ColumnLineageBuilder,
     ColumnRef,
     Resolution,
 )
@@ -464,3 +465,31 @@ class TestLineageServiceFirstBuildFails:
     def test_focus_raises_catalog_unavailable(self, failing_service: LineageService) -> None:
         with pytest.raises(CatalogUnavailable):
             failing_service.column_focus("model.p.fct_orders", "id")
+
+
+class TestLineageServiceUnionLookupFailure:
+    """A node whose SQL sqlglot cannot trace (a column a UNION lacks) does not take the service down."""
+
+    @pytest.fixture
+    def union_service(self, graph: ManifestGraph, builds: BuildStatusReader, node_sql: NodeSql) -> LineageService:
+        union = (
+            'with u as (select * from "warehouse"."analytics"."int_orders__enriched" union all '
+            'select * from "warehouse"."analytics"."int_orders__enriched") select u.ghost from u'
+        )
+        columns = {"model.p.int_orders__enriched": ["id"], "model.p.fct_orders": ["ghost"]}
+        lineage = ColumnLineageBuilder(graph, columns).build({"model.p.fct_orders": union})
+        loader = create_autospec(ManifestLoader, instance=True)
+        loader.load.return_value = graph
+        columns_loader = create_autospec(ColumnLineageLoader, instance=True)
+        columns_loader.load.return_value = lineage
+        return LineageService(loader, builds, node_sql, columns_loader)
+
+    def test_graph_with_columns_and_the_node_panel_still_answer(self, union_service: LineageService) -> None:
+        result = union_service.graph("fct_orders", None, failing_only=False, columns=True)
+        details = union_service.node("model.p.fct_orders")
+
+        assert result.column_lineage == "ok"
+        [node] = result.nodes
+        assert node.columns == [ColumnView(name="ghost", kind=ColumnKind.TRANSFORMED, resolution=Resolution.UNRESOLVED)]
+        assert details is not None
+        assert details.column_lineage_note is not None
