@@ -75,6 +75,9 @@ WHOLE_ROW_NAME_HINT: Final = (
 )
 PARAMETER_MESSAGE: Final = "query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
 PARAMETER_HINT: Final = "write the values into the query, and abs(x) for an absolute value"
+# Each SELECT (CTE body, subquery, union arm) is a planning step: a few hundred chained CTEs outrun the 5 s timeout
+# in the planner, before any row (agent spec §4.2 item 3).
+MAX_QUERY_SCOPES: Final = 50
 MAX_IDENTIFIER_BYTES: Final = 63  # Postgres cuts longer names, so two names that differ later are one name to it
 ESCAPED_IDENTIFIER_MESSAGE: Final = 'escaped identifier U&"..." is not allowed'
 ESCAPED_IDENTIFIER_HINT: Final = "write the name without escapes"
@@ -178,6 +181,16 @@ class SqlGuard:
             hint = "remove the outer parentheses" if isinstance(statement, exp.Subquery) else "write one SELECT"
             return _rejected(
                 _error("not_select", f"the statement must be a SELECT query, not {_statement_kind(statement)}", hint)
+            )
+
+        scopes = sum(1 for _ in statement.find_all(exp.Select))
+        if scopes > MAX_QUERY_SCOPES:
+            return _rejected(
+                _error(
+                    "complexity",
+                    f"the query has {scopes} SELECTs, at most {MAX_QUERY_SCOPES} are allowed",
+                    "split the question or use fewer CTEs and subqueries",
+                )
             )
 
         errors: list[str] = []

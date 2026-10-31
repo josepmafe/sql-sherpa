@@ -1246,6 +1246,34 @@ class TestSqlGuard:
         assert result.tables == ()
 
 
+def _scopes(count: int) -> str:
+    """A query of `count` SELECTs: `count - 1` chained CTEs and the final one."""
+    ctes = ["c0 as (select 1 as a)"] + [f"c{i} as (select a from c{i - 1})" for i in range(1, count - 1)]
+    return f"with {', '.join(ctes)} select a from c{count - 2}"
+
+
+class TestQueryScopes:
+    def test_a_query_of_50_scopes_passes(self, guard: SqlGuard) -> None:
+        result = guard.check(_scopes(50))
+
+        assert result.ok, result.errors
+
+    def test_a_query_of_51_scopes_is_refused_with_its_remedy(self, guard: SqlGuard) -> None:
+        result = guard.check(_scopes(51))
+
+        assert result.errors == (
+            "[guard:complexity] the query has 51 SELECTs, at most 50 are allowed; "
+            "split the question or use fewer CTEs and subqueries",
+        )
+
+    def test_subqueries_and_union_arms_count_as_scopes(self, guard: SqlGuard) -> None:
+        arms = " union all ".join(["select order_id from marts.fct_orders"] * 51)
+
+        result = guard.check(f"select * from ({arms}) s")
+
+        assert result.errors[0].startswith("[guard:complexity] the query has 52 SELECTs")
+
+
 class TestWholeRowReferences:
     @pytest.mark.parametrize(
         "sql",
@@ -1429,7 +1457,11 @@ class TestQualifiedColumns:
         )
 
     @pytest.mark.parametrize("depth", [500, 2000])
-    def test_a_chain_too_deep_to_resolve_is_rejected_not_raised(self, guard: SqlGuard, depth: int) -> None:
+    def test_a_chain_too_deep_to_resolve_is_rejected_not_raised(
+        self, guard: SqlGuard, depth: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The scope cap would refuse these first; lifting it pins the resolver's own fallback.
+        monkeypatch.setattr("sherpa_mcp.sql_guard.MAX_QUERY_SCOPES", 10_000)
         ctes = ["c0 as (select * from marts.dim_customers)"] + [
             f"c{i} as (select * from c{i - 1})" for i in range(1, depth)
         ]
