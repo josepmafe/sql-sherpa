@@ -117,7 +117,7 @@ To loosen or tighten a rule:
 ```bash
 (cd ui/frontend && npm ci)                                # once (Node 22+)
 
-uv run --env-file .env pytest ui                          # 1. backend, no database needed
+uv run --env-file .env pytest ui                          # 1. backend; the `integration` tests need Postgres (`docker compose up -d --wait postgres`)
 uv run --env-file .env pytest ui -m warehouse             #    against the built prod marts (make build-prod first)
 
 (cd ui/frontend && npm test)                              # 2. Vitest + Testing Library, mocked API
@@ -141,7 +141,7 @@ make e2e
 
 - `tables`: `name`, `sql` (a `values` list), `columns`, `column_types` (grid types), `rows` (exactly what the API returns for `sql`, int8 above 2^53 as strings). Column 0 is the integer `id`; column 1 is the one sorted and filtered.
 - `cases`: `name`, `table`, `sort` and `filters` (by column index), then `expected_ids`. Optional fields: `route: "server"` (the browser must send this one to the server), `expected_error` (Postgres refuses it; the browser must refuse too), `accepted_difference` with `client_expected_ids` (a documented place where the browser answers differently).
-- A table with tied keys or more than one null has at most 6 rows: Postgres sorts stably only below 7 rows.
+- Every table has at most 6 rows: Postgres sorts stably only below 7 rows, so a larger table with tied keys would make the expected order depend on its quicksort.
 
 To add a case, or a new operator or column type (cases first):
 
@@ -149,7 +149,7 @@ To add a case, or a new operator or column type (cases first):
 2. Run both sides:
 
 ```bash
-uv run --env-file .env pytest -m integration ui/backend -k parity
+uv run --env-file .env pytest ui/backend -k parity
 (cd ui/frontend && npm test)
 ```
 

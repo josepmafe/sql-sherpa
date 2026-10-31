@@ -97,6 +97,7 @@ agent/
 ui/
   backend/         the web app's API (Python package `sherpa_ui`, its tests)
   frontend/        the web app (React + TypeScript + Vite, with Vitest and Playwright tests)
+  parity/          the sort/filter case file that the backend and frontend tests both run
   Dockerfile       the `ui` image (builds the frontend, serves it with the API)
 docs/
   superpowers/specs/   the three specs
