@@ -27,16 +27,24 @@ export function hasDuplicateColumns(columns: readonly string[]): boolean {
   return new Set(columns).size !== columns.length;
 }
 
+// How the API ends a text cell longer than 10,000 characters (sherpa_mcp's CUT_MARKER). The browser holds only the cut
+// value, so it cannot sort or filter such a column like Postgres does (UI spec §5).
+export const CUT_MARKER = " …[cut at 10000 chars]";
+
 // Whether sorting and filtering `view` goes to the server (UI spec §5): the browser cannot reproduce Postgres's order
 // or text for an `other` column (interval, uuid, json, arrays, ...), nor `contains` on a number (JavaScript and
-// Postgres write a float differently).
-export function needsServer(view: ResultView, types: readonly ColumnType[]): boolean {
+// Postgres write a float differently), nor any column that holds a cut cell. A real value that ends with the marker
+// only costs a re-run.
+export function needsServer(view: ResultView, types: readonly ColumnType[], rows: readonly Row[]): boolean {
   const typeAt = (index: number): ColumnType => types[index] ?? "other";
-  const sortsOther = view.sort !== undefined && typeAt(view.sort.index) === "other";
+  const hasCutCell = (index: number): boolean =>
+    rows.some((row) => typeof row[index] === "string" && row[index].endsWith(CUT_MARKER));
+  const sortsServerOnly = view.sort !== undefined && (typeAt(view.sort.index) === "other" || hasCutCell(view.sort.index));
   const filtersServerOnly = view.filters.some(
-    (f) => typeAt(f.index) === "other" || (f.operator === "contains" && typeAt(f.index) === "number"),
+    (f) =>
+      typeAt(f.index) === "other" || (f.operator === "contains" && typeAt(f.index) === "number") || hasCutCell(f.index),
   );
-  return sortsOther || filtersServerOnly;
+  return sortsServerOnly || filtersServerOnly;
 }
 
 // Whether `response` holds the rows of the sorted and filtered view already: a server answer, a truncated result
@@ -44,7 +52,7 @@ export function needsServer(view: ResultView, types: readonly ColumnType[]): boo
 export function isServerSide(response: QueryResponse, view: ResultView): boolean {
   if (response.mode === "server") return true;
   if (hasDuplicateColumns(response.columns)) return false;
-  return response.truncated || needsServer(view, response.column_types);
+  return response.truncated || needsServer(view, response.column_types, response.rows as Row[]);
 }
 
 export function toServerOptions(view: ResultView, columns: readonly string[]) {

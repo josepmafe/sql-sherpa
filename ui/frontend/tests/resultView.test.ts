@@ -8,6 +8,7 @@ import {
   filterValueProblem,
   hasDuplicateColumns,
   isServerSide,
+  needsServer,
   toServerOptions,
 } from "../src/components/resultView";
 
@@ -326,5 +327,32 @@ describe("helpers", () => {
       sort: [{ column: "b", direction: "desc" }],
       filters: [{ column: "a", operator: "is_null", value: null }],
     });
+  });
+});
+
+describe("needsServer with a cut cell", () => {
+  const MARKER = " …[cut at 10000 chars]";
+  const rows = [
+    ["a", "x".repeat(10_000) + MARKER, "ok"],
+    ["b", "short", "also ok"],
+  ];
+  const types: ("text" | "number")[] = ["text", "text", "text"];
+  const sortBy = (index: number) => ({ sort: { index, direction: "asc" as const }, filters: [] });
+  const filterBy = (index: number) => ({ filters: [{ index, operator: "contains" as const, value: "x" }] });
+
+  it("sends a sort and a filter on a column holding a cut cell to the server", () => {
+    expect(needsServer(sortBy(1), types, rows)).toBe(true);
+    expect(needsServer(filterBy(1), types, rows)).toBe(true);
+  });
+
+  it("keeps a column without a cut cell in the browser, even beside one with a cut cell", () => {
+    expect(needsServer(sortBy(2), types, rows)).toBe(false);
+    expect(needsServer(filterBy(0), types, rows)).toBe(false);
+  });
+
+  it("does not take a value that only resembles the marker for a cut cell", () => {
+    const similar = [["a", "cut at 10000 chars]"], ["b", "x …[cut at 10 chars]"], ["c", null]];
+
+    expect(needsServer(sortBy(1), types, similar)).toBe(false);
   });
 });

@@ -133,7 +133,7 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
     <Stack gap="xs">
       <StatusLine response={response} shown={tableRows.length} filtered={filtered} />
       {/* One-line notes, so the grid stays in view on a 900 px high screen. */}
-      {hasDuplicateColumns(columns) && (response.truncated || needsServer(view, types)) && (
+      {hasDuplicateColumns(columns) && (response.truncated || needsServer(view, types, response.rows as Row[])) && (
         <Alert color="yellow" py={6} px="sm">
           {response.truncated ? (response.warning ?? DUPLICATE_WARNING) : DUPLICATE_COMPLETE_WARNING}
         </Alert>

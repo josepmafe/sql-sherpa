@@ -437,6 +437,30 @@ describe("Explorer results", () => {
     expect(firstColumn()).toEqual(["b", "a"]);
   });
 
+  it("a column with a cell cut at 10,000 characters is sorted on the server, another text column is not", async () => {
+    const user = userEvent.setup();
+    const columns = ["name", "body"];
+    const cut = "x".repeat(10_000) + " …[cut at 10000 chars]";
+    const rows = [
+      ["b", cut],
+      ["a", "short"],
+    ];
+    post.mockResolvedValueOnce(ok(queryResponse({ columns, column_types: ["text", "text"], rows })));
+    post.mockResolvedValueOnce(
+      ok(queryResponse({ columns, column_types: ["text", "text"], rows: [...rows].reverse(), mode: "server" })),
+    );
+    renderScreen("select 1");
+    await user.click(screen.getByRole("button", { name: "Run" }));
+
+    await user.click(await screen.findByRole("button", { name: "name" }));
+
+    expect(firstColumn()).toEqual(["a", "b"]);
+    expect(queryCalls()).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "body" }));
+    await waitFor(() => expect(queryCalls()).toHaveLength(2));
+    expect(queryCalls()[1]?.[1].body).toMatchObject({ sql: "select 1", sort: [{ column: "body", direction: "asc" }] });
+  });
+
   it("Preview opens a worksheet and runs", async () => {
     const user = userEvent.setup();
     post.mockImplementation((path: string) =>

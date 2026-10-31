@@ -48,7 +48,7 @@ const ids = (rows: Row[]) => rows.map((row) => row[0]);
 
 describe("the browser's sort and filter against the shared cases", () => {
   it.each(cases.map((c) => [c.name, c] as const))("%s: routes to the server only when the case says so", (_name, c) => {
-    expect(needsServer(viewOf(c), tableOf(c).column_types)).toBe(c.route === "server");
+    expect(needsServer(viewOf(c), tableOf(c).column_types, tableOf(c).rows)).toBe(c.route === "server");
   });
 
   const inBrowser = cases.filter((c) => c.route !== "server");
