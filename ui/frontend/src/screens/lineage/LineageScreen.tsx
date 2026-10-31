@@ -18,7 +18,8 @@ export function LineageScreen() {
   const [params, update] = useLineageParams();
   // The nodes the user opened. Columns are requested from the first one on (or a focused column), and kept after it.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [wantColumns, setWantColumns] = useState(params.column !== undefined);
+  const [wantColumns, setWantColumns] = useState(false);
+  if (!wantColumns && params.column !== undefined) setWantColumns(true);
   const columns = wantColumns || params.column !== undefined;
   const lineage = useLineage(params, { columns });
   const error = lineage.error;

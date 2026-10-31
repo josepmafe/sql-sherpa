@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +19,7 @@ import {
   nodeDetails,
   ok,
 } from "../fixtures/api";
-import { deferred, renderWithProviders } from "../fixtures/render";
+import { createTestQueryClient, deferred, renderWithProviders } from "../fixtures/render";
 
 // No test here reads a position, and the real ELK layout is slow under load.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
@@ -134,14 +135,14 @@ function Go({ to }: { to: string }) {
   return <button onClick={() => void navigate(to)}>go</button>;
 }
 
-function mount(path: string, extra?: React.ReactNode) {
+function mount(path: string, extra?: React.ReactNode, queryClient?: QueryClient) {
   renderWithProviders(
     <>
       <LineageScreen />
       <Where />
       {extra}
     </>,
-    { path },
+    { path, queryClient },
   );
 }
 
@@ -504,6 +505,51 @@ describe("LineageScreen", () => {
       await waitFor(() => expect(screen.queryByRole("button", { name: /^units/ })).not.toBeInTheDocument());
       await userEvent.keyboard("{Escape}");
       expect(await row("units")).toBeVisible();
+    });
+
+    it("the rest shown during one focus does not come back with the next focus", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}&column=net_revenue`);
+      await row("net_revenue");
+      fireEvent.click(within(await screen.findByLabelText("Lineage graph")).getByRole("button", { name: "+1 more" }));
+      expect(await row("units")).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(here()).not.toHaveTextContent("column="));
+
+      await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
+
+      expect(await row("net_revenue")).toHaveAttribute("aria-pressed", "true");
+      expect(within(screen.getByLabelText("Lineage graph")).queryByRole("button", { name: /^units/ })).not.toBeInTheDocument();
+      expect(within(screen.getByLabelText("Lineage graph")).getByRole("button", { name: "+1 more" })).toBeVisible();
+    });
+
+    it("columns are still asked for after a focus from a column= URL ends", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}&column=net_revenue`);
+      await row("net_revenue");
+
+      await userEvent.keyboard("{Escape}");
+
+      await waitFor(() => expect(here()).not.toHaveTextContent("column="));
+      expect(lineageCalls().map((query) => query?.columns)).not.toContain(false);
+      expect(lineageCalls().at(-1)).toMatchObject({ columns: true });
+    });
+
+    it("columns are still asked for after a focus from the panel ends", async () => {
+      get.mockImplementation(answerScene());
+      const client = createTestQueryClient();
+      mount(`/lineage?node=${B}`, undefined, client);
+      await screen.findByText("3 nodes");
+      await userEvent.click(await screen.findByRole("tab", { name: "Columns" }));
+      await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
+      await row("net_revenue");
+
+      await userEvent.keyboard("{Escape}");
+
+      await waitFor(() => expect(here()).not.toHaveTextContent("column="));
+      // Whatever request is active now shows the graph: refetching it must still ask for the columns.
+      await client.invalidateQueries({ queryKey: ["lineage"] });
+      expect(lineageCalls().at(-1)).toMatchObject({ columns: true });
     });
   });
 });

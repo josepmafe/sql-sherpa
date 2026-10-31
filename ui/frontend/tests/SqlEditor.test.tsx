@@ -1,4 +1,5 @@
 import { CompletionContext, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
+import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -38,11 +39,17 @@ vi.mock("../src/api/queries", () => ({
   useCatalog: () => ({ data: CATALOG }),
 }));
 
+const PARSE_BUDGET_MS = 5_000;
+
 async function completions(doc: string, activeTable?: string): Promise<string[]> {
-  const state = EditorState.create({
+  let state = EditorState.create({
     doc,
     extensions: [sqlExtension(CATALOG, activeTable)],
   });
+  // The first parse has a 20 ms wall-clock budget and no view to finish it, so on a loaded machine the tree can be
+  // empty: parse it all (with a generous budget) before asking for completions.
+  ensureSyntaxTree(state, doc.length, PARSE_BUDGET_MS);
+  state = state.update({}).state;
   const pos = doc.length;
   const sources = state.languageDataAt<CompletionSource>("autocomplete", pos);
   const results = await Promise.all(sources.map((source) => source(new CompletionContext(state, pos, true))));

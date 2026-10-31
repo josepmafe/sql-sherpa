@@ -321,6 +321,7 @@ describe("NodePanel", () => {
       expect(total).toHaveTextContent("partial");
     });
   });
+
   it("the outside-the-view link of a source node selects it by its source selector", () => {
     useLineageNode.mockReturnValue({
       data: nodeDetails({ unique_id: "source.s.shop.orders", name: "orders", selector: "source:shop.orders" }),
@@ -334,5 +335,4 @@ describe("NodePanel", () => {
       "/lineage?select=%2Bsource%3Ashop.orders%2B&node=source.s.shop.orders&column=id",
     );
   });
-
 });

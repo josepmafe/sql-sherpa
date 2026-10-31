@@ -106,6 +106,7 @@ describe("GraphNode", () => {
 
     expect(screen.queryByRole("button", { name: "Columns of exposed" })).not.toBeInTheDocument();
   });
+
   it("a focus shows only the related columns of a node the user had opened, and gives the user's expansion back", async () => {
     render(<CanvasHarness nodes={COLUMN_NODES} edges={COLUMN_EDGES} initialExpanded={[FCT]} focusData={COLUMN_FOCUS} />);
     fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
@@ -129,5 +130,4 @@ describe("GraphNode", () => {
 
     await waitFor(() => expect(within(card(STG)).queryByRole("button", { name: /^amount\b/ })).not.toBeInTheDocument());
   });
-
 });

@@ -281,6 +281,7 @@ describe("LineageCanvas", () => {
       expect(screen.queryByText(/Column lineage follows the select list/)).not.toBeInTheDocument();
     });
   });
+
   describe("column focus dimming", () => {
     it("a node in the selection's table chain that holds no related column dims during a column focus", async () => {
       const upstream = node("raw_orders", { columns: [columnView({ name: "id" })] });
@@ -296,7 +297,6 @@ describe("LineageCanvas", () => {
       expect(await item("stg_orders")).not.toHaveAttribute("data-dimmed");
     });
   });
-
 });
 
 function zoomOf(transform: string): number {

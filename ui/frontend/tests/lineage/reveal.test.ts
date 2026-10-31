@@ -24,6 +24,7 @@ describe("isInView", () => {
     expect(isInView({ x: 100, y: 100 }, { x: 0, y: 0, zoom: 4 }, SIZE)).toBe(false);
     expect(isInView({ x: 1000, y: 1000 }, { x: 0, y: 0, zoom: 0.2 }, SIZE)).toBe(true);
   });
+
   it("a row far down a tall node is judged by its own box, not by the node's header", () => {
     const row = { x: 100, y: 560 };
 
@@ -41,5 +42,4 @@ describe("rowBox", () => {
       height: COLUMN_ROW_HEIGHT,
     });
   });
-
 });

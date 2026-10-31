@@ -29,7 +29,7 @@ interface SelectorBarProps {
 
 export function SelectorBar({ select, onSelect, error, columns }: SelectorBarProps) {
   // The names and domains to pick from come from the whole-project graph, which the screen's own request shares
-  // while the selector is empty and no columns are asked for.
+  // while the selector is empty (with the columns, once the screen asks for them).
   const { data: project } = useLineage(WHOLE_PROJECT, { columns });
   const current = readMode(select);
   // A mode chosen before it has a selector to write (no table picked yet) is held here.
