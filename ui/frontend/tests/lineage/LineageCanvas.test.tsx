@@ -270,7 +270,7 @@ describe("LineageCanvas", () => {
     it("the legend says what column lineage follows, while columns are shown", async () => {
       mount();
       await item("fct_orders");
-      const legend = /Column lineage follows the select list: columns used only in joins or filters are not linked/;
+      const legend = /Column lineage follows the select list: columns used only in joins, filters or group by are not linked/;
       expect(screen.getByText(legend)).toBeVisible();
     });
 

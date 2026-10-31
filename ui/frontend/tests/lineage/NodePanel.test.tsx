@@ -26,7 +26,7 @@ const DETAILS = nodeDetails({
       resolution: "partial",
       notes: ["cast to numeric(12,2)"],
     }),
-    columnDetail({ name: "orders", data_type: null, kind: "row_count", counts: "stg_orders" }),
+    columnDetail({ name: "orders", data_type: null, kind: "row_count", counts: "model.sherpa.stg_orders" }),
   ],
   tests: [
     { name: "unique_order_id", kind: "generic", severity: "error", column: "order_id", outcome: "passed" },
@@ -104,7 +104,38 @@ describe("NodePanel", () => {
     expect(rows[2]).toHaveTextContent("totalnumeric(12,2)transformedpartialcast to numeric(12,2)");
     expect(rows[3]).toHaveTextContent("orders");
     expect(rows[3]).toHaveTextContent("row count");
-    expect(rows[3]).toHaveTextContent("stg_orders");
+    expect(rows[3]).toHaveTextContent("counts stg_orders");
+    expect(rows[3]).not.toHaveTextContent("model.sherpa");
+  });
+
+  it("the Columns tab shows the column lineage note above the table", async () => {
+    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: DETAILS.columns, column_lineage_note: "Column lineage is unavailable: the compiled SQL is missing" }) });
+    mount();
+
+    await openTab("Columns");
+
+    const note = screen.getByRole("note");
+    expect(note).toHaveTextContent("Column lineage is unavailable: the compiled SQL is missing");
+    expect(note.compareDocumentPosition(screen.getByRole("table", { name: "Columns" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("the column lineage note shows too when the node has no columns", async () => {
+    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: [], column_lineage_note: "no catalog" }) });
+    mount();
+
+    await openTab("Columns");
+
+    expect(screen.getByRole("note")).toHaveTextContent("no catalog");
+    expect(screen.getByText("No documented columns.")).toBeVisible();
+  });
+
+  it("the Columns tab has no note when the column lineage has nothing to say", async () => {
+    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: DETAILS.columns, column_lineage_note: null }) });
+    mount();
+
+    await openTab("Columns");
+
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
   it("the Columns tab says so when the node has no columns", async () => {

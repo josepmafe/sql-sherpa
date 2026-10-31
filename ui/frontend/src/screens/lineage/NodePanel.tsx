@@ -160,6 +160,11 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
           <Overview d={d} />
         </Tabs.Panel>
         <Tabs.Panel value={COLUMNS} pt="xs">
+          {d.column_lineage_note !== null && (
+            <Text size="sm" role="note" mb="xs">
+              {d.column_lineage_note}
+            </Text>
+          )}
           <ColumnsTable columns={d.columns} focused={column} onFocusColumn={onFocusColumn} />
         </Tabs.Panel>
         <Tabs.Panel value={TESTS} pt="xs">
@@ -291,9 +296,9 @@ function ColumnsTable({ columns, focused, onFocusColumn }: ColumnsTableProps) {
   );
 }
 
-// A row count names the relation it counts.
+// A row count names the relation it counts: its unique_id ends with the node's name.
 function columnNotes({ counts, notes }: ColumnDetail): string {
-  return [counts === null ? null : `counts ${counts}`, ...notes].filter((note) => note !== null).join("; ");
+  return [counts === null ? null : `counts ${counts.split(".").at(-1)}`, ...notes].filter((note) => note !== null).join("; ");
 }
 
 function SqlTabs({ d }: { d: NodeDetails }) {

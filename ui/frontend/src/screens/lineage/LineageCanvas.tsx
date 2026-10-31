@@ -34,7 +34,7 @@ const GRAPH_NODE = "graph";
 const NODE_TYPES = { [GRAPH_NODE]: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
 // The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
 const FIXED_WIDTH = { vectorEffect: "non-scaling-stroke" } as const;
-const LEGEND = "Column lineage follows the select list: columns used only in joins or filters are not linked";
+const LEGEND = "Column lineage follows the select list: columns used only in joins, filters or group by are not linked";
 
 interface LineageCanvasProps {
   nodes: ApiNode[];
