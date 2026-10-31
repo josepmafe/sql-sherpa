@@ -219,13 +219,13 @@ async function expectGraphFitted(page: Page): Promise<void> {
     .toEqual([]);
 }
 
-function consoleProblems(page: Page): string[] {
-  const problems: string[] = [];
-  page.on("console", (message) => {
-    if (["warning", "error"].includes(message.type())) problems.push(message.text());
-  });
-  page.on("pageerror", (error) => problems.push(error.message));
-  return problems;
+// Every column edge of the focus whose two nodes are shown has a drawn path (React Flow drops an edge whose handle it
+// cannot find, and only warns about it in development builds).
+async function expectColumnEdgesDrawn(page: Page, focus: ColumnFocus): Promise<void> {
+  const shown = new Set(await page.locator(".react-flow__node").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-id")!)));
+  const expected = focus.edges.filter((edge) => shown.has(edge.parent.node) && shown.has(edge.child.node)).length;
+  expect(expected, "the focus has edges between shown nodes").toBeGreaterThan(0);
+  await expect(page.locator('.react-flow__edge[data-id^="col:"] path.react-flow__edge-path')).toHaveCount(expected);
 }
 
 test("the whole project shows fct_orders and a source, with the build the warehouse records", async ({
@@ -320,7 +320,6 @@ test("the node panel sits below the canvas and selecting a node never resizes it
 test("focusing fct_orders.net_revenue lights its source columns and dims the rest; Esc twice clears", async ({
   page,
 }) => {
-  const problems = consoleProblems(page);
   await page.goto("/lineage?select=%2Bfct_orders%2B");
   await expect(graphNode(page, "fct_orders")).toBeVisible();
   const graph = await wholeGraph(page);
@@ -345,6 +344,7 @@ test("focusing fct_orders.net_revenue lights its source columns and dims the res
   await expect(graphNode(page, outside!.name)).toHaveAttribute("data-dimmed", "");
   await expect(graphNode(page, "stg_shop__order_items")).not.toHaveAttribute("data-dimmed", "");
   await expect(page).toHaveURL(new RegExp(`column=${NET_REVENUE}`));
+  await expectColumnEdgesDrawn(page, focus);
 
   await page.keyboard.press("Escape");
 
@@ -357,11 +357,9 @@ test("focusing fct_orders.net_revenue lights its source columns and dims the res
 
   await expect(page).not.toHaveURL(/node=/);
   await expect(graphNode(page, "fct_orders")).toHaveAttribute("aria-pressed", "false");
-  expect(problems.filter((text) => /008|Couldn't create edge/.test(text))).toEqual([]);
 });
 
 test("a column edge joins the two rows, a table edge of an expanded node the node handles", async ({ page }) => {
-  const problems = consoleProblems(page);
   await page.goto("/lineage?select=%2Bfct_orders%2B");
   await expect(graphNode(page, "fct_orders")).toBeVisible();
   const focus = await columnFocusOf(page, ORDERS_ID, NET_REVENUE);
@@ -378,7 +376,7 @@ test("a column edge joins the two rows, a table edge of an expanded node the nod
     { node: parent.node, handle: `col:${parent.column}` },
     { node: child.node, handle: `col:${child.column}` },
   );
-  expect(problems.filter((text) => /008|Couldn't create edge/.test(text))).toEqual([]);
+  await expectColumnEdgesDrawn(page, focus);
 
   await page.keyboard.press("Escape");
   await expect(page).not.toHaveURL(/column=/);
@@ -430,6 +428,8 @@ test("a mouse click on a row half outside the canvas focuses its column and leav
   const name = columns[columns.length - 1]!;
   await expand(page, "fct_orders");
   const row = columnRow(page, ORDERS_ID, name);
+  // The canvas' bottom edge must be on screen for the mouse to click next to it.
+  await page.getByLabel("Lineage graph").scrollIntoViewIfNeeded();
   const pane = (await page.getByLabel("Lineage graph").boundingBox())!;
   const rowBox = (await row.boundingBox())!;
   // Pan the canvas by dragging an empty corner, until the row's middle sits on the canvas' bottom edge.
