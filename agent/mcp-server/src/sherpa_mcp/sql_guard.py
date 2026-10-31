@@ -75,6 +75,9 @@ WHOLE_ROW_NAME_HINT: Final = (
 )
 PARAMETER_MESSAGE: Final = "query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
 PARAMETER_HINT: Final = "write the values into the query, and abs(x) for an absolute value"
+MAX_IDENTIFIER_BYTES: Final = 63  # Postgres cuts longer names, so two names that differ later are one name to it
+ESCAPED_IDENTIFIER_MESSAGE: Final = 'escaped identifier U&"..." is not allowed'
+ESCAPED_IDENTIFIER_HINT: Final = "write the name without escapes"
 NUMBER_HINT: Final = "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix"
 _MARTS_HINT: Final = "query only the marts that list_tables returns"
 _ALIAS_LIST_HINT: Final = (
@@ -152,6 +155,11 @@ class SqlGuard:
             # sqlglot misreads these numbers, so its view of the rest of the query cannot be trusted either.
             return GuardResult(ok=False, errors=number_errors, tables=())
 
+        escaped_errors = _escaped_identifier_errors(sql)
+        if escaped_errors:
+            # sqlglot reads `U&"x"` as the column U, an `&` and a name, so its view of the query cannot be trusted.
+            return GuardResult(ok=False, errors=escaped_errors, tables=())
+
         try:
             parsed = sqlglot.parse(sql, read=DIALECT)
         except (SqlglotError, RecursionError) as exc:
@@ -227,6 +235,14 @@ class SqlGuard:
                         "type_length",
                         f"type {node.sql(dialect=DIALECT)} has a length over {MAX_PAD_LENGTH:,}",
                         f"use lengths up to {MAX_PAD_LENGTH:,}, or cast to text",
+                    )
+                ]
+            case exp.Identifier() if len(node.name.encode()) > MAX_IDENTIFIER_BYTES:
+                return [
+                    _error(
+                        "identifier_length",
+                        f"identifier longer than {MAX_IDENTIFIER_BYTES} bytes is not allowed",
+                        f"identifiers are at most {MAX_IDENTIFIER_BYTES} bytes",
                     )
                 ]
             case exp.Operator():
@@ -438,6 +454,30 @@ def _number_errors(sql: str) -> tuple[str, ...]:
         _error("number", f"numeric literal `{_cut(literal)}` is not allowed", NUMBER_HINT)
         for literal in dict.fromkeys(literals)
     )
+
+
+def _escaped_identifier_errors(sql: str) -> tuple[str, ...]:
+    """A Unicode-escape name (U&, then a quoted name) is one name to Postgres; sqlglot tokenizes `U`, `&` and a name.
+
+    Checked on the tokens, so `U&'...'` strings (one UNICODE_STRING token) and text inside strings pass.
+    """
+    try:
+        tokens = _POSTGRES.tokenize(sql)
+    except SqlglotError:
+        return ()  # the parser reports it
+
+    for first, amp, name in zip(tokens, tokens[1:], tokens[2:], strict=False):
+        if (
+            first.token_type == TokenType.VAR
+            and first.text.upper() == "U"
+            and amp.token_type == TokenType.AMP
+            and amp.start == first.end + 1
+            and name.token_type == TokenType.IDENTIFIER
+            and name.start == amp.end + 1
+        ):
+            return (_error("unicode_escape", ESCAPED_IDENTIFIER_MESSAGE, ESCAPED_IDENTIFIER_HINT),)
+
+    return ()
 
 
 def _is_word_char(char: str) -> bool:
