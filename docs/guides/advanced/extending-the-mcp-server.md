@@ -128,7 +128,7 @@ Tests in `test_sql_guard.py`: `REMEDY_HINTS` (one row per hint, checked by `test
 
 ## 4. Upgrade sqlglot
 
-The pin in `pyproject.toml` (`sqlglot==...`) is exact: the parser is the guard's view of a query, so a bump is a guard change.
+The pin in `pyproject.toml` (`sqlglot==...`) is exact: the parser is the guard's view of a query, so a bump is a guard change and a column-lineage change (the UI's column lineage uses the same parser).
 
 1. Change the pin and run `uv lock`.
 2. Run the guard suite (hostile inputs included) and the example check:
@@ -138,6 +138,7 @@ The pin in `pyproject.toml` (`sqlglot==...`) is exact: the parser is the guard's
    ```
 
 3. On a failure, inspect the new tree (`sqlglot.parse_one(sql, read="postgres")`) before touching the test. A hostile input that now passes is a guard bug to fix in `sql_guard.py`, never an assertion to relax.
+4. Run the UI's column-lineage tests, which must still hold: `uv run --env-file .env pytest ui/backend/tests/lineage` and, with `make build-prod` done, `uv run --env-file .env pytest -m warehouse -k column_lineage` (the hand-checked source columns). See "A sqlglot bump" in [Extending the UI](extending-the-ui.md).
 
 ## 5. Add or change a few-shot example
 

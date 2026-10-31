@@ -69,14 +69,15 @@ export function useTableDetails(name: string | undefined) {
 }
 
 // The graph for a selector. The node picked in the URL is not part of the key: picking one does not refetch. The
-// previous graph stays while a new selector loads, so the controls do not flicker.
-export function useLineage(params: Pick<LineageParams, "select" | "layers" | "failingOnly">) {
+// previous graph stays while a new selector loads, so the controls do not flicker. `columns` also asks for each
+// node's columns (the first such request after a build takes about 2 s on the server).
+export function useLineage(params: Pick<LineageParams, "select" | "layers" | "failingOnly">, { columns }: { columns: boolean }) {
   const { select, layers, failingOnly } = params;
   return useQuery({
-    queryKey: ["lineage", select, layers, failingOnly],
+    queryKey: ["lineage", select, layers, failingOnly, columns],
     queryFn: async () => {
       const { data, error, response } = await api.GET("/api/lineage", {
-        params: { query: { select, layers: layers?.join(","), failing_only: failingOnly } },
+        params: { query: { select, layers: layers?.join(","), failing_only: failingOnly, columns } },
       });
       if (error !== undefined) throw new ApiRequestError(apiError(error, response.status), response.status);
       return data;
@@ -97,6 +98,22 @@ export function useLineageNode(uniqueId: string | undefined) {
       return data;
     },
     enabled: uniqueId !== undefined,
+    ...QUERY_DEFAULTS,
+  });
+}
+
+// A column's focus: every column it comes from and feeds, and the edges between them.
+export function useColumnFocus(uniqueId: string | undefined, column: string | undefined) {
+  return useQuery({
+    queryKey: ["lineage", "columns", uniqueId, column],
+    queryFn: async () => {
+      const { data, error, response } = await api.GET("/api/lineage/columns/{unique_id}/{column}", {
+        params: { path: { unique_id: uniqueId ?? "", column: column ?? "" } },
+      });
+      if (error !== undefined) throw new ApiRequestError(apiError(error, response.status), response.status);
+      return data;
+    },
+    enabled: uniqueId !== undefined && column !== undefined,
     ...QUERY_DEFAULTS,
   });
 }

@@ -16,7 +16,7 @@ vi.mock("../src/api/queries", async (importOriginal) => ({
 
 vi.mock("../src/screens/lineage/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/screens/lineage/layout")>()),
-  layoutGraph: () => Promise.resolve(new Map()),
+  orderNodes: () => Promise.resolve(new Map()),
 }));
 
 function renderAt(path: string) {

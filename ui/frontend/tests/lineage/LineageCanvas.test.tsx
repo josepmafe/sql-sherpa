@@ -1,34 +1,19 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { components } from "../../src/api/schema";
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
-import { layoutGraph } from "../../src/screens/lineage/layout";
+import { orderNodes } from "../../src/screens/lineage/layout";
+import { columnView, type LineageEdge, type LineageNode } from "../fixtures/api";
+import { stubLayout } from "../fixtures/render";
+import { CanvasHarness, canvasProps, COLUMN_EDGES, COLUMN_FOCUS, COLUMN_NODES, FCT, node, rankInInputOrder } from "./canvasHarness";
 
-// The real layout, with its calls counted.
-vi.mock("../../src/screens/lineage/layout", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../src/screens/lineage/layout")>();
-  return { ...original, layoutGraph: vi.fn(original.layoutGraph) };
-});
-
-type Node = components["schemas"]["LineageNode"];
-
-function node(name: string, patch: Partial<Node> = {}): Node {
-  return {
-    unique_id: `model.s.${name}`,
-    name,
-    resource_type: "model",
-    layer: "staging",
-    domain: null,
-    materialization: "view",
-    status: "ok",
-    failing_tests: 0,
-    ...patch,
-  };
-}
+// A quick order in place of ELK (the layout tests run the real one), with its calls counted.
+vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
+  orderNodes: vi.fn(),
+}));
 
 // a -> b -> c, and an unrelated x
 const NODES = [
@@ -37,27 +22,23 @@ const NODES = [
   node("c", { layer: "marts", materialization: "table", status: "warned" }),
   node("x", { status: "not_in_build" }),
 ];
-const EDGES = [
+const EDGES: LineageEdge[] = [
   { source: "model.s.a", target: "model.s.b" },
   { source: "model.s.b", target: "model.s.c" },
 ];
 
-function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; nodes?: Node[]; edges?: typeof EDGES }) {
-  const [selected, setSelected] = useState(initial);
-  return (
-    <MantineProvider env="test">
-      <LineageCanvas nodes={nodes} edges={edges} selected={selected} onSelect={setSelected} failingOnly={false} layersFiltered={false} buildState="ok" />
-    </MantineProvider>
-  );
+function Harness({ initial, nodes = NODES, edges = EDGES }: { initial?: string; nodes?: LineageNode[]; edges?: LineageEdge[] }) {
+  return <CanvasHarness nodes={nodes} edges={edges} initial={initial} />;
 }
 
 // fireEvent, not userEvent.click: user-event's mousedown has no `view`, which d3-zoom (React Flow's pan) reads.
 const item = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}\\b`) });
 
 describe("LineageCanvas", () => {
-  // The first ELK load takes longer than findBy's default timeout under load; pay it once here.
-  beforeAll(async () => {
-    await layoutGraph([{ id: "warm", layer: "marts" }], []);
+
+  // restoreMocks restores spies only: the module-level vi.fn needs its implementation again.
+  beforeEach(() => {
+    rankInInputOrder();
   });
 
   it("renders a node per graph node with its status label", async () => {
@@ -78,7 +59,7 @@ describe("LineageCanvas", () => {
   it("shows the empty state", () => {
     render(
       <MantineProvider env="test">
-        <LineageCanvas nodes={[]} edges={[]} selected={undefined} onSelect={() => {}} failingOnly={false} layersFiltered={false} buildState="ok" />
+        <LineageCanvas {...canvasProps()} />
       </MantineProvider>,
     );
 
@@ -97,15 +78,7 @@ describe("LineageCanvas", () => {
     (failingOnly, layersFiltered, buildState, text) => {
       render(
         <MantineProvider env="test">
-          <LineageCanvas
-            nodes={[]}
-            edges={[]}
-            selected={undefined}
-            onSelect={() => {}}
-            failingOnly={failingOnly}
-            layersFiltered={layersFiltered}
-            buildState={buildState}
-          />
+          <LineageCanvas {...canvasProps({ failingOnly, layersFiltered, buildState })} />
         </MantineProvider>,
       );
 
@@ -198,26 +171,47 @@ describe("LineageCanvas", () => {
   it("a status-only refetch keeps the layout, so the zoom stays", async () => {
     const view = render(<Harness />);
     await item("x");
-    const runs = vi.mocked(layoutGraph).mock.calls.length;
+    const runs = vi.mocked(orderNodes).mock.calls.length;
 
     view.rerender(<Harness nodes={NODES.map((node) => (node.name === "x" ? { ...node, status: "ok" as const } : node))} />);
 
     expect(await screen.findByText("ok")).toBeInTheDocument();
-    expect(layoutGraph).toHaveBeenCalledTimes(runs);
+    expect(orderNodes).toHaveBeenCalledTimes(runs);
   });
 
-  it("the minimap of a large graph is hidden while the panel is open", async () => {
-    const many = Array.from({ length: 61 }, (_, index) => node(`n${index}`));
-    render(<Harness nodes={many} edges={[]} />);
+  it("the minimap appears above the node threshold, whether or not a node is selected, and not below it", async () => {
     const graphNodes = () => document.querySelectorAll("button[aria-pressed]");
+    const minimap = () => document.querySelector(".react-flow__minimap");
+    const nodesOf = (count: number) => Array.from({ length: count }, (_, index) => node(`n${index}`));
+
+    const large = render(<Harness nodes={nodesOf(61)} edges={[]} />);
     await waitFor(() => expect(graphNodes()).toHaveLength(61), { timeout: 15_000 });
-    const first = graphNodes()[0]!;
-    expect(document.querySelector(".react-flow__minimap")).not.toBeNull();
+    expect(minimap()).not.toBeNull();
+    fireEvent.click(graphNodes()[0]!);
+    expect(graphNodes()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(minimap()).not.toBeNull();
+    large.unmount();
 
-    fireEvent.click(first);
+    render(<Harness nodes={nodesOf(60)} edges={[]} />);
+    await waitFor(() => expect(graphNodes()).toHaveLength(60), { timeout: 15_000 });
+    expect(minimap()).toBeNull();
+    fireEvent.click(graphNodes()[0]!);
+    expect(graphNodes()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(minimap()).toBeNull();
+  }, 40_000);
 
-    expect(document.querySelector(".react-flow__minimap")).toBeNull();
-  }, 20_000);
+  it("the initial fit never zooms past 1x", async () => {
+    // Without the cap, one small node in a 1200x800 canvas is fitted to 2x.
+    stubLayout();
+    render(<Harness nodes={[NODES[1]!]} edges={[]} />);
+    await item("b");
+    const viewport = () => (document.querySelector(".react-flow__viewport") as HTMLElement).style.transform;
+
+    // The fit moves the viewport off its origin.
+    await waitFor(() => expect(viewport()).not.toMatch(/translate\(0px,0px\)/));
+
+    expect(zoomOf(viewport())).toBeLessThanOrEqual(1);
+  });
 
   it("node= in the URL restores the highlight after a reload", async () => {
     render(<Harness initial="model.s.b" />);
@@ -225,4 +219,88 @@ describe("LineageCanvas", () => {
     expect(await item("x")).toHaveAttribute("data-dimmed");
     expect(await item("b")).toHaveAttribute("aria-pressed", "true");
   });
+
+  describe("column focus", () => {
+    const other = node("other", { columns: [columnView({ name: "k" })] });
+    const nodes = [...COLUMN_NODES, other];
+    const mount = () =>
+      render(<CanvasHarness nodes={nodes} edges={COLUMN_EDGES} initialExpanded={[FCT]} focusData={COLUMN_FOCUS} />);
+
+    it("clicking a column focuses it and dims the unrelated nodes", async () => {
+      mount();
+      expect(await item("other")).not.toHaveAttribute("data-dimmed");
+
+      fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
+
+      expect(await item("other")).toHaveAttribute("data-dimmed");
+      expect(await item("stg_orders")).not.toHaveAttribute("data-dimmed");
+      expect(await item("fct_orders")).not.toHaveAttribute("data-dimmed");
+      expect(await screen.findByRole("button", { name: /^amount\b/ })).toBeVisible();
+      expect(screen.getByRole("button", { name: /^net_revenue\b/ })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("a dimmed node's column rows stay focusable", async () => {
+      render(<CanvasHarness nodes={nodes} edges={COLUMN_EDGES} initialExpanded={["model.s.other"]} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+      const row = await screen.findByRole("button", { name: /^k\b/ });
+
+      row.focus();
+
+      expect(row).toHaveFocus();
+      expect(await item("other")).toHaveAttribute("data-dimmed");
+    });
+
+    it("draws the column edge in the primary colour and fades the table edges", async () => {
+      stubLayout();
+      mount();
+      await waitFor(() => expect(document.querySelectorAll(".react-flow__edge")).toHaveLength(1));
+      const tableEdge = () => document.querySelector<SVGPathElement>(".react-flow__edge-path")!;
+      expect(tableEdge().style.opacity).toBe("1");
+
+      fireEvent.click(await screen.findByRole("button", { name: /^net_revenue\b/ }));
+
+      await waitFor(() => expect(document.querySelectorAll(".react-flow__edge")).toHaveLength(2));
+      const strokes = [...document.querySelectorAll<SVGPathElement>(".react-flow__edge-path")].map((path) => [
+        path.style.stroke,
+        path.style.opacity,
+      ]);
+      expect(strokes).toContainEqual(["var(--mantine-primary-color-filled)", "1"]);
+      expect(strokes.filter(([, opacity]) => opacity === "0.15")).toHaveLength(1);
+    });
+
+    it("the legend says what column lineage follows, while columns are shown", async () => {
+      mount();
+      await item("fct_orders");
+      const legend = /Column lineage follows the select list: columns used only in joins, filters or group by are not linked/;
+      expect(screen.getByText(legend)).toBeVisible();
+    });
+
+    it("no legend while every node is collapsed", async () => {
+      render(<CanvasHarness nodes={nodes} edges={COLUMN_EDGES} />);
+      await item("fct_orders");
+
+      expect(screen.queryByText(/Column lineage follows the select list/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("column focus dimming", () => {
+    it("a node in the selection's table chain that holds no related column dims during a column focus", async () => {
+      const upstream = node("raw_orders", { columns: [columnView({ name: "id" })] });
+      const nodes = [upstream, ...COLUMN_NODES];
+      const edges = [{ source: upstream.unique_id, target: "model.s.stg_orders" }, ...COLUMN_EDGES];
+      render(<CanvasHarness nodes={nodes} edges={edges} initial={FCT} />);
+      expect(await item("raw_orders")).not.toHaveAttribute("data-dimmed");
+      cleanup();
+
+      render(<CanvasHarness nodes={nodes} edges={edges} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+
+      expect(await item("raw_orders")).toHaveAttribute("data-dimmed");
+      expect(await item("stg_orders")).not.toHaveAttribute("data-dimmed");
+    });
+  });
 });
+
+function zoomOf(transform: string): number {
+  const scale = /scale\(([\d.]+)\)/.exec(transform)?.[1];
+  if (scale === undefined) throw new Error(`no zoom in the transform "${transform}"`);
+  return Number(scale);
+}

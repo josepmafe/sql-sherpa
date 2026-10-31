@@ -26,7 +26,7 @@ class ArtifactsHealth(BaseModel):
 
 
 class Health(BaseModel):
-    """What ui-1 can vouch for; the tool server and the model join in ui-4."""
+    """What ui-1 can vouch for; the tool server and the model join in ui-5."""
 
     model_config = ConfigDict(frozen=True)
 

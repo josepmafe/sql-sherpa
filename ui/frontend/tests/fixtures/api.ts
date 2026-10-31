@@ -13,6 +13,12 @@ export type ColumnDetails = Schemas["ColumnDetails"];
 export type LineageNode = Schemas["LineageNode"];
 export type LineageGraph = Schemas["LineageGraph"];
 export type NodeDetails = Schemas["NodeDetails"];
+export type LineageEdge = Schemas["LineageEdge"];
+export type ColumnView = Schemas["ColumnView"];
+export type ColumnDetail = Schemas["ColumnDetail"];
+export type ColumnFocusView = Schemas["ColumnFocusView"];
+export type FocusColumn = Schemas["FocusColumn"];
+export type FocusEdge = Schemas["FocusEdge"];
 export type Health = Schemas["Health"];
 export type ApiError = Schemas["ApiError"];
 export type FormatResponse = Schemas["FormatResponse"];
@@ -108,6 +114,45 @@ export function lineageGraph(overrides: Partial<LineageGraph> = {}): LineageGrap
     edges: [],
     layers_available: [],
     build: { state: "ok", node_count: 0, started_at: null },
+    column_lineage: "ok",
+    ...overrides,
+  };
+}
+
+export function columnView(overrides: Partial<ColumnView> = {}): ColumnView {
+  return { name: "net_revenue", kind: "passthrough", resolution: "full", ...overrides };
+}
+
+export function columnDetail(overrides: Partial<ColumnDetail> = {}): ColumnDetail {
+  return {
+    name: "net_revenue",
+    data_type: "numeric(12,2)",
+    description: "",
+    kind: "passthrough",
+    resolution: "full",
+    notes: [],
+    counts: null,
+    ...overrides,
+  };
+}
+
+export function focusColumn(overrides: Partial<FocusColumn> = {}): FocusColumn {
+  return {
+    node: "model.sherpa.fct_orders",
+    name: "net_revenue",
+    kind: "passthrough",
+    resolution: "full",
+    notes: [],
+    direction: "focus",
+    ...overrides,
+  };
+}
+
+export function columnFocusView(overrides: Partial<ColumnFocusView> = {}): ColumnFocusView {
+  return {
+    focus: { node: "model.sherpa.fct_orders", column: "net_revenue" },
+    columns: [],
+    edges: [],
     ...overrides,
   };
 }
@@ -128,6 +173,7 @@ export function nodeDetails(overrides: Partial<NodeDetails> = {}): NodeDetails {
     is_mart: true,
     contract_enforced: true,
     build: null,
+    column_lineage_note: null,
     columns: [],
     tests: [],
     raw_sql: null,

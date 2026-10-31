@@ -5,23 +5,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiRequestError } from "../../src/api/queries";
 import { SelectorBar } from "../../src/screens/lineage/SelectorBar";
+import { lineageGraph, lineageNode } from "../fixtures/api";
 
-const WHOLE_PROJECT = {
+const WHOLE_PROJECT = lineageGraph({
   build: { state: "ok", node_count: 3, started_at: null },
-  edges: [],
   layers_available: ["staging", "marts"],
   nodes: [
-    { unique_id: "model.sherpa.stg_orders", name: "stg_orders", resource_type: "model", layer: "staging", domain: null },
-    { unique_id: "model.sherpa.fct_orders", name: "fct_orders", resource_type: "model", layer: "marts", domain: "sales" },
-    {
-      unique_id: "model.sherpa.dim_products",
-      name: "dim_products",
-      resource_type: "model",
-      layer: "marts",
-      domain: "product",
-    },
+    lineageNode({ unique_id: "model.sherpa.stg_orders", name: "stg_orders", layer: "staging", domain: null }),
+    lineageNode({ unique_id: "model.sherpa.fct_orders", name: "fct_orders", layer: "marts", domain: "sales" }),
+    lineageNode({ unique_id: "model.sherpa.dim_products", name: "dim_products", layer: "marts", domain: "product" }),
   ],
-};
+});
 vi.mock("../../src/api/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/api/queries")>()),
   useLineage: () => ({ data: state.project }),
@@ -33,7 +27,7 @@ function renderBar(select: string, error: Error | null = null) {
   const onSelect = vi.fn();
   render(
     <MantineProvider env="test">
-      <SelectorBar select={select} onSelect={onSelect} error={error} />
+      <SelectorBar select={select} onSelect={onSelect} error={error} columns={false} />
     </MantineProvider>,
   );
   return onSelect;
@@ -118,7 +112,7 @@ describe("SelectorBar", () => {
       const onSelect = vi.fn();
       const bar = (value: string) => (
         <MantineProvider env="test">
-          <SelectorBar select={value} onSelect={onSelect} error={null} />
+          <SelectorBar select={value} onSelect={onSelect} error={null} columns={false} />
         </MantineProvider>
       );
       const { rerender } = render(bar(select));

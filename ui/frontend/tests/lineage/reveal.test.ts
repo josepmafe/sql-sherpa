@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
-import { isInView } from "../../src/screens/lineage/reveal";
+import { COLUMN_ROW_HEIGHT, NODE_HEIGHT } from "../../src/screens/lineage/layout";
+import { isInView, rowBox, useRevealOnKeyboardFocus } from "../../src/screens/lineage/reveal";
 
 const SIZE = { width: 800, height: 600 };
 
@@ -22,5 +24,84 @@ describe("isInView", () => {
     expect(isInView({ x: 100, y: 100 }, { x: -150, y: 0, zoom: 1 }, SIZE)).toBe(false);
     expect(isInView({ x: 100, y: 100 }, { x: 0, y: 0, zoom: 4 }, SIZE)).toBe(false);
     expect(isInView({ x: 1000, y: 1000 }, { x: 0, y: 0, zoom: 0.2 }, SIZE)).toBe(true);
+  });
+
+  it("a row far down a tall node is judged by its own box, not by the node's header", () => {
+    const row = { x: 100, y: 560 };
+
+    expect(isInView(row, { x: 0, y: 0, zoom: 1 }, SIZE)).toBe(false); // 560 + 84 > 600
+    expect(isInView(row, { x: 0, y: 0, zoom: 1 }, SIZE, COLUMN_ROW_HEIGHT)).toBe(true);
+    expect(isInView({ x: 100, y: 580 }, { x: 0, y: 0, zoom: 1 }, SIZE, COLUMN_ROW_HEIGHT)).toBe(false);
+  });
+});
+
+describe("rowBox", () => {
+  it("is the node's header without a row, and the row's own slot under it with one", () => {
+    expect(rowBox({ x: 10, y: 20 }, undefined)).toEqual({ position: { x: 10, y: 20 }, height: NODE_HEIGHT });
+    expect(rowBox({ x: 10, y: 20 }, 2)).toEqual({
+      position: { x: 10, y: 20 + NODE_HEIGHT + 2 * COLUMN_ROW_HEIGHT },
+      height: COLUMN_ROW_HEIGHT,
+    });
+  });
+});
+
+describe("useRevealOnKeyboardFocus", () => {
+  const mount = () => {
+    const reveal = vi.fn();
+    const { result } = renderHook(() => useRevealOnKeyboardFocus(reveal));
+    return { reveal, props: result.current };
+  };
+
+  it("reveals on a focus that no pointer caused", () => {
+    const { reveal, props } = mount();
+
+    props.onFocus();
+
+    expect(reveal).toHaveBeenCalledOnce();
+  });
+
+  it("does not reveal on the focus a press causes: the click must land where it was pressed", () => {
+    const { reveal, props } = mount();
+
+    props.onPointerDown();
+    props.onFocus();
+
+    expect(reveal).not.toHaveBeenCalled();
+  });
+
+  it.each(["onMouseUp", "onPointerCancel"] as const)(
+    "a keyboard focus after a press that %s ended is revealed even when no blur came in between",
+    (end) => {
+      const { reveal, props } = mount();
+      props.onPointerDown();
+      props.onFocus();
+      props[end]();
+
+      props.onFocus();
+
+      expect(reveal).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("a keyboard focus after a click that left the button is revealed again", () => {
+    const { reveal, props } = mount();
+    props.onPointerDown();
+    props.onFocus();
+    props.onBlur();
+
+    props.onFocus();
+
+    expect(reveal).toHaveBeenCalledOnce();
+  });
+
+  it("a press on a button that was already focused does not swallow the next keyboard focus", () => {
+    const { reveal, props } = mount();
+    props.onFocus();
+    props.onPointerDown();
+    props.onBlur();
+
+    props.onFocus();
+
+    expect(reveal).toHaveBeenCalledTimes(2);
   });
 });

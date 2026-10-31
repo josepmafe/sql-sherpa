@@ -8,6 +8,8 @@ import { LayerFilter } from "../../src/screens/lineage/LayerFilter";
 function renderFilter(props: Partial<Parameters<typeof LayerFilter>[0]> = {}) {
   const onLayers = vi.fn();
   const onFailingOnly = vi.fn();
+  const onExpandAll = vi.fn();
+  const onCollapseAll = vi.fn();
   render(
     <MantineProvider>
       <LayerFilter
@@ -16,13 +18,16 @@ function renderFilter(props: Partial<Parameters<typeof LayerFilter>[0]> = {}) {
         onLayers={onLayers}
         failingOnly={false}
         onFailingOnly={onFailingOnly}
+        onExpandAll={onExpandAll}
+        onCollapseAll={onCollapseAll}
+        columnsUnavailable={undefined}
         buildState="ok"
         startedAt={null}
         {...props}
       />
     </MantineProvider>,
   );
-  return { onLayers, onFailingOnly };
+  return { onLayers, onFailingOnly, onExpandAll, onCollapseAll };
 }
 
 describe("LayerFilter", () => {
@@ -81,5 +86,24 @@ describe("LayerFilter", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: "marts" }));
 
     expect(onLayers).not.toHaveBeenCalled();
+  });
+
+  it("Expand all and Collapse all call their handlers", async () => {
+    const { onExpandAll, onCollapseAll } = renderFilter();
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    await userEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+
+    expect(onExpandAll).toHaveBeenCalledTimes(1);
+    expect(onCollapseAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("without column lineage both are disabled, and say why", () => {
+    renderFilter({ columnsUnavailable: "the compiled SQL is not in the dbt target" });
+
+    for (const name of ["Expand all", "Collapse all"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+      expect(screen.getByRole("button", { name })).toHaveAccessibleDescription("the compiled SQL is not in the dbt target");
+    }
   });
 });

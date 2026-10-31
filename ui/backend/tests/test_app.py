@@ -168,6 +168,7 @@ class TestOpenapiErrors:
             ("/api/queries/{query_id}/cancel", "post", {"204", "422", "500"}),
             ("/api/lineage", "get", {"200", "422", "500", "503"}),
             ("/api/lineage/nodes/{unique_id}", "get", {"200", "404", "422", "500", "503"}),
+            ("/api/lineage/columns/{unique_id}/{column}", "get", {"200", "404", "422", "500", "503"}),
         ],
     )
     def test_each_endpoint_declares_the_statuses_it_answers(

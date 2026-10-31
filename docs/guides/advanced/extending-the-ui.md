@@ -11,7 +11,7 @@ The backend is the Python package `sherpa_ui` (`ui/backend/src/sherpa_ui/`). The
 | `app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`. The only place the pieces are wired |
 | `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`, `lineage.py`), `errors.py` (error shape) and `body_limit.py` (1 MiB POST cap) |
 | `catalog/`, `health/` | `CatalogService`, `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` |
-| `lineage/`, `build/` | `ManifestGraph`, `SelectorEvaluator` and `StatusDeriver` (pure); `ManifestLoader`, `NodeSql`, `LineageService` and `BuildStatusReader` (file and database reads) |
+| `lineage/`, `build/` | `ManifestGraph`, `SelectorEvaluator`, `StatusDeriver` and `ColumnLineageBuilder` (pure); `ManifestLoader`, `NodeSql`, `ColumnLineageLoader`, `LineageService` and `BuildStatusReader` (file and database reads) |
 | `readonly/` | `query_runner.py`, `bounded_result.py`, `sort_filter.py` |
 | `settings.py` | `UiSettings`, the only place that reads configuration (`SHERPA_UI_*`, `SHERPA_DB_*`) |
 | `openapi_export.py` | Writes the OpenAPI schema the frontend types come from |
@@ -84,6 +84,22 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 2. The status travels in `LineageNode` (`lineage/lineage_service.py`): run `make ui-client` and commit the schema.
 3. Give it a label, an icon and a colour in `STATUS` (`screens/lineage/GraphNode.tsx`); status is never colour alone, and the colours must pass AA contrast. Add a Vitest case.
 4. Add the row to the status list in the UI spec §6.5 and to the Lineage guide.
+
+**Add or change a column kind rule** (say a new kind, or what makes a column `transformed`). Column lineage is derived with sqlglot from the compiled SQL (UI spec §6.5), so a change starts from a test on a small SQL string:
+
+1. Add a case to `ui/backend/tests/lineage/test_column_lineage.py`: a few lines of compiled SQL, the expected kind, resolution, notes and edges. Include the unhappy path (SQL that does not parse, an unknown relation, a column missing from the output).
+2. Change `ColumnLineageBuilder` in `lineage/column_lineage.py` (pure: `build(compiled_sql)` takes strings). A new kind is a `ColumnKind` member, which reaches the OpenAPI schema. `ColumnLineageLoader` (`column_lineage_loader.py`) only reads the artifacts, caches per `manifest.json`/`catalog.json` change and builds under a lock; leave it alone unless the inputs change.
+3. Add the new kind to `KIND` in `screens/lineage/ColumnLabels.tsx` (an icon and a label, never colour alone) and a Vitest case; run `make ui-client` first so `tsc` flags every place the kind is missing.
+4. Add a trace to `TRACES` in `test_column_lineage_warehouse.py` when the rule changes which source columns a real mart column reaches. Read the expected set off `target-prod/compiled/` by hand, never from the builder's output. Run:
+
+   ```bash
+   uv run --env-file .env pytest ui/backend/tests/lineage -m warehouse
+   ```
+
+   `test_every_model_column_has_a_kind` also runs there, on the real project.
+5. List the kind in the UI spec §6.5 and in [Using Lineage](../basic/using-lineage.md).
+
+**A sqlglot bump** changes column lineage as well as the guard. Rerun the guard's hostile-input tests ([Extending the MCP server](extending-the-mcp-server.md)) and the whole lineage folder, including the warehouse traces above (the hand-checked sets must still hold). The column-focus end-to-end checks are in `e2e/lineage.spec.ts` (`make e2e`).
 
 The shared warehouse should not hold a really failing build, so `lineage.spec.ts` skips its failing-node check by default. `cd ui/frontend && SHERPA_E2E_LINEAGE_FAILING=1 npx playwright test lineage` inserts a synthetic full build into `ops.dbt_run_results`, checks that the node turns red and that a warning stays out of "Failing only", and deletes the rows. A killed run leaves a fake newest build behind; the next run clears it first.
 
@@ -178,6 +194,8 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | `unsupported_selector` for a form you added | `SelectorEvaluator._match_atom` has no branch for it |
 | The oracle test fails for one selector | The atom differs from `dbt ls`: fix the evaluator, not the list |
 | A new status draws nothing in the graph | Add it to `STATUS` in `GraphNode.tsx` |
+| A new column kind renders blank, or `tsc` fails after `make ui-client` | Add it to `KIND` in `ColumnLabels.tsx` |
+| A warehouse trace gains or loses a source column | A sqlglot bump, or a change to `_leaves` or `_classify`, changed what the column reads (kinds never add or remove edges): re-derive the set by hand from the compiled SQL |
 | `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next

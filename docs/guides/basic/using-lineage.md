@@ -1,6 +1,6 @@
 # Using Lineage
 
-Lineage draws the dbt project as a flowchart from sources to marts: one table's path, a whole domain or everything, with each node's SQL and the status it got in the last full build. It reads dbt's `manifest.json` and the build record in the database, and shows names and SQL, never data ([UI spec §6.5](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). Start it as for the Explorer ([Using the Explorer](using-the-explorer.md#starting-it)); `make build-prod` writes the manifest the graph is drawn from and the build status it shows. Open <http://127.0.0.1:8090/lineage>.
+Lineage draws the dbt project as a flowchart from sources to marts: one table's path, a whole domain or everything, with each node's SQL, its columns and where each column comes from, and the status the node got in the last full build. It reads dbt's `manifest.json` and the build record in the database, and shows names and SQL, never data ([UI spec §6.5](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). Start it as for the Explorer ([Using the Explorer](using-the-explorer.md#starting-it)); `make build-prod` writes the manifest the graph is drawn from and the build status it shows. Open <http://127.0.0.1:8090/lineage>.
 
 ## The three modes
 
@@ -36,7 +36,7 @@ dbt build --select "+fct_orders" --target prod --target-path target-prod
 
 ## Reading the graph
 
-Nodes sit left to right by layer: sources and seeds; staging and snapshots; intermediate; marts. Each shows its name, a layer colour, its materialization and a status as an icon and a label (never colour alone).
+Nodes sit in vertical **bands**, left to right: the raw source schemas, seeds, staging, snapshots, intermediate, marts. A node that reads a node of its own band sits in a sub-column to its right, so every edge runs left to right (the marts band is usually the widest). Each node shows its name, a layer colour, its materialization and a status as an icon and a label (never colour alone).
 
 | Status | Meaning |
 |---|---|
@@ -56,15 +56,56 @@ The "last full build" is the newest `dbt build` on prod recorded in `ops.dbt_run
 - **Build status unavailable** (the build record could not be read: database down, missing grant, timeout): the graph still draws from the manifest, with a note.
 - With a build recorded, the note says which one the statuses come from ("Status from the full build of 2026-10-26 14:05 UTC").
 
-Click a node (or focus it and press Enter) to emphasise it, draw its ancestors and descendants among the nodes shown (nodes and edges) in the accent colour, and fade the rest. Esc, the panel's close button or a click on the background clears it, and the focus goes back to the node. Tab walks the nodes column by column, top to bottom; the zoom buttons at the bottom left do what the wheel does. When the panel narrows the canvas, the selected node is centred if it would hide behind it.
+Click a node (or focus it and press Enter) to emphasise it, draw its ancestors and descendants among the nodes shown (nodes and edges) in the accent colour, and fade the rest. Esc, the panel's close button or a click on the background clears it, and the focus goes back to the node. Tab walks the nodes band by band, top to bottom; the zoom buttons at the bottom left do what the wheel does. The graph is framed whole when it loads and after every selector change, never zoomed past 100%.
+
+## Columns
+
+Every node has a chevron that expands it into its columns; **Expand all** and **Collapse all** (beside the layer chips) act on the nodes shown. Each row shows the column name, its **kind** and its **resolution**, each as an icon and a word. Columns come from `catalog.json` (the YAML columns when the catalog lacks a node, or when there is no catalog, with a note), so `make build-prod` is what fills them.
+
+| Kind | Means |
+|---|---|
+| `passthrough` | one input column, unchanged or only cast, same name |
+| `rename` | the same under another name |
+| `transformed` | any other expression of one or more columns |
+| `row count` | an expression whose only input is `count(*)`, so it reads no column; it names the relation it counts ("counts fct_orders") |
+| `constant` | reads no column: a literal, or values the SQL makes itself such as the date spine (`dim_date`'s columns still vary row by row) |
+| `generated` | a column dbt adds to a snapshot (`dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id`, `dbt_updated_at`, `dbt_is_deleted`; with the timestamp strategy `dbt_valid_from` copies `updated_at` and is not linked) |
+| `source` | a source or seed column, where every chain starts |
+
+| Resolution | Means |
+|---|---|
+| `full` | every input was found |
+| `partial` | some inputs were found and linked and the notes name the rest: the trace is incomplete |
+| `unresolved` | none was found; a note says why |
+
+Notes that explain a gap: "reads an unknown relation <name>", "column <c> not found in <node>", "* is not expanded: ...", "not in the compiled SQL's output", "the compiled SQL did not parse", "the compiled SQL is not in the dbt target". "cast to numeric(12,2)" and "also reads its own previous rows (incremental)" are information, not failures. A note about the node as a whole (no catalog, no compiled SQL) shows above the panel's Columns table.
+
+**Select list only.** A column edge exists when the child's select expression reads the parent column, as in dbt Catalog. Not linked: a column used only in a `join`, `where` or `group by`, the partition or order of a *named* window (`WINDOW w AS (...)`), and the `count(*)` of an expression that also reads a column (`count(*) * sum(amount)` links `amount` only and is `transformed`; `count(*) * 2` reads no column and is a `row count`). A fixed legend on the canvas names joins, filters and group by. Examples on the real project, read the compiled SQL in the panel for the rest:
+
+- `stg_shop__customers.is_test_account` has no downstream column, though `dim_customers`, `fct_orders`, `fct_sessions` and `dim_promotions` all drop test accounts: it is a filter.
+- `fct_orders.is_cancelled` reaches `fct_order_items` and `fct_order_discounts` but nothing in `dim_customers`, though `order_count`, the `lifetime_*` columns and `customer_segment` count only non-cancelled orders.
+- `fct_orders.has_discount` links `stg_shop__order_discounts.order_id` but not the `amount > 0` that defines it.
+- `dim_customers.avg_order_value` traces only to `fct_orders.net_revenue`: the denominator is a `count(*)` of orders, which reads no column.
+
+### Focusing a column
+
+Click a column row (or a column in the panel's Columns tab). The canvas then:
+
+- expands every node that holds an upstream or downstream column and shows in it **only the related columns** plus "+k more";
+- draws the column edges row to row in the accent colour (table edges fade) and dims everything else;
+- opens the Columns tab of the panel with the column marked.
+
+"+k more" and that node's chevron show or hide the node's other columns **for this focus only** ("+k more" stays on screen as a toggle and reads "show related only" once the rest is shown). A mouse click does not move the canvas; keyboard focus scrolls the row into view. Esc (then Esc again for the node), a click on the background, selecting another node or focusing another column ends the focus, and your own expansions are back. Nodes the focus does not reach keep your expansion. A related column in a node that is not shown (another selector, a hidden layer) is counted in a note under the panel's header with a link to `+<node>+`, which always holds it. `column=` is in the URL; a column the node does not have is dropped from it.
 
 ## The node panel
 
-Selecting a node opens a panel beside the canvas: description, layer, materialization, domain, contract, file path, the last full build (status, duration, failing tests), the tests, the columns, and the raw and compiled SQL. When the compiled file is missing, the raw SQL shows with a note.
+The panel sits below the graph, always, and scrolls on its own, so selecting a node never resizes the graph. Until you select a node it says "Select a node to see its SQL, columns and tests". Tabs:
 
-- **Copy dbt selector** copies the selector that selects the node: its name, or `source:<source>.<table>` for a source.
-- **Open in Explorer** (marts only) opens `/explorer?table=<name>`.
-- In the Explorer, **Open in Lineage** (table menu and Inspector) opens `+<table>+`.
+- **Overview:** description, layer, materialization, domain, contract, file path, the last full build (status, duration, failing tests) and the actions.
+- **Columns:** each column with its kind and resolution; click one to focus it.
+- **Tests** and **SQL:** raw and compiled SQL; when the compiled file is missing, the raw SQL shows with a note.
+
+Actions: **Copy dbt selector** copies the selector that selects the node (its name, or `source:<source>.<table>`); **Open in Explorer** (marts only) opens `/explorer?table=<name>`. In the Explorer, **Open in Lineage** (table menu and Inspector) opens `+<table>+`.
 
 ## Troubleshooting
 
@@ -76,9 +117,13 @@ Selecting a node opens a panel beside the canvas: description, layer, materializ
 | "No full build recorded: run make build-prod" | No full prod build is recorded: `make build-prod` |
 | A node reads "not in the last build" | The last full build did not include it: `make build-prod` |
 | "Build status unavailable (could not read the build record; see the ui log)" | `make build-prod` (it re-applies the grants); else see the `ui` log (`docker compose logs ui`) |
+| The chevron is disabled (its tooltip says "Column lineage is unavailable" and why) | `manifest.json` or `catalog.json` cannot be read or parsed, or the first build of the lineage failed: `make build-prod`, then Retry (a missing `catalog.json` only adds a node note) |
+| A node's columns are all `unresolved` | Its note (panel, above the Columns table) says why: usually its compiled SQL is not in `target-prod/compiled/` (`make build-prod`) or did not parse |
+| A node's chevron is disabled during a column focus (tooltip "Every column is related, so there is nothing to hide") | Nothing to do: the focus already shows all of that node's columns |
+| A column you expect to be linked is not | Column lineage is select-list only; a join, filter, group by, named-window or `count(*)` use is not an edge. Check the compiled SQL |
 | The panel shows a note instead of compiled SQL | `make build-prod` writes `target-prod/compiled/`; then reselect the node |
 
 ## Next
 
-- [Extending the UI](../advanced/extending-the-ui.md): add a selector atom or a node status.
+- [Extending the UI](../advanced/extending-the-ui.md): add a selector atom, a node status or a column kind.
 - [Building the warehouse](building-the-warehouse.md): what `make build-prod` records.

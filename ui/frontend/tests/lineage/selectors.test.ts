@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { domainSelector, pathSelector, readMode } from "../../src/screens/lineage/selectors";
+import { pathSelector, readMode } from "../../src/screens/lineage/selectors";
 
 describe("pathSelector", () => {
   it.each([
@@ -10,12 +10,6 @@ describe("pathSelector", () => {
     [3, 2, "3+fct_orders+2"],
   ] as const)("writes the depth operators (up %s, down %s)", (up, down, expected) => {
     expect(pathSelector("fct_orders", up, down)).toBe(expected);
-  });
-});
-
-describe("domainSelector", () => {
-  it("selects the domain's marts and their ancestors", () => {
-    expect(domainSelector("sales")).toBe("+config.meta.domain:sales");
   });
 });
 

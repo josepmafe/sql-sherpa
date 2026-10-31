@@ -1,4 +1,21 @@
-import { ActionIcon, Alert, Badge, Box, Button, Code, Group, Loader, Stack, Tabs, Text, Title } from "@mantine/core";
+import {
+  ActionIcon,
+  Anchor,
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Code,
+  Group,
+  Loader,
+  ScrollArea,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  Title,
+  UnstyledButton,
+} from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -8,19 +25,29 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useClipboard } from "@mantine/hooks";
-import { type ComponentType, useEffect } from "react";
+import { type ComponentType, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useLineageNode } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { ReadOnlySql } from "../../components/SqlEditor";
 import { LoadError } from "../explorer/LoadError";
+import { KindLabel, ResolutionLabel } from "./ColumnLabels";
 import { GREEN, GREY, ORANGE, RED, STATUS } from "./GraphNode";
+import { pathSelector } from "./selectors";
 
+type ColumnDetail = components["schemas"]["ColumnDetail"];
+type NodeDetails = components["schemas"]["NodeDetails"];
 type TestInfo = components["schemas"]["TestInfo"];
 type TestOutcome = components["schemas"]["TestOutcome"];
 
 const NODE_NOT_FOUND = "node_not_found";
+const PANEL_MAX_HEIGHT = "50vh";
+const EMPTY_STATE = "Select a node to see its SQL, columns and tests";
+const OVERVIEW = "overview";
+const COLUMNS = "columns";
+const TESTS = "tests";
+const SQL = "sql";
 const RAW = "raw";
 const COMPILED = "compiled";
 
@@ -39,37 +66,71 @@ const OUTCOMES: Record<TestOutcome, OutcomeView> = {
 };
 
 interface NodePanelProps {
-  uniqueId: string;
+  uniqueId: string | undefined;
   onClose: () => void;
+  // The focused column of the node, and how many columns related to it are in nodes the graph does not show.
+  column: string | undefined;
+  outside: number;
+  onFocusColumn: (column: string | undefined) => void;
 }
 
-export function NodePanel({ uniqueId, onClose }: NodePanelProps) {
+// Always rendered under the graph, so selecting a node never resizes the canvas.
+export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }: NodePanelProps) {
   const node = useLineageNode(uniqueId);
+  // The tab stays while another node is selected, so the same tab can be read across nodes. A focused column opens
+  // the Columns tab, where it is marked.
+  const [tab, setTab] = useState<string | null>(column === undefined ? OVERVIEW : COLUMNS);
+  const [seenColumn, setSeenColumn] = useState(column);
+  if (column !== seenColumn) {
+    setSeenColumn(column);
+    if (column !== undefined) setTab(COLUMNS);
+  }
 
-  // Esc closes the panel, unless it was meant for a text field or a menu.
+  // Esc clears the column focus, then the selection, unless it was meant for a text field or a menu.
   useEffect(() => {
+    if (uniqueId === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (event.key === "Escape" && !target.closest("input, textarea, [role=listbox]")) onClose();
+      if (event.key !== "Escape" || target.closest("input, textarea, [role=listbox]")) return;
+      if (column === undefined) onClose();
+      else onFocusColumn(undefined);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [uniqueId, column, onClose, onFocusColumn]);
 
   return (
-    <Stack gap="sm" component="aside" aria-label="Node details">
-      <Group justify="flex-end">
-        <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
-          <IconX size={14} />
-        </ActionIcon>
-      </Group>
-      <Body node={node} />
-    </Stack>
+    <ScrollArea.Autosize mah={PANEL_MAX_HEIGHT} offsetScrollbars="y">
+      <Stack gap="sm" component="aside" aria-label="Node details" p="xs">
+        {uniqueId === undefined ? (
+          <Text size="sm" c="dimmed">
+            {EMPTY_STATE}
+          </Text>
+        ) : (
+          <>
+            <Group justify="flex-end">
+              <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
+                <IconX size={14} />
+              </ActionIcon>
+            </Group>
+            <Body node={node} tab={tab} onTab={setTab} column={column} outside={outside} onFocusColumn={onFocusColumn} />
+          </>
+        )}
+      </Stack>
+    </ScrollArea.Autosize>
   );
 }
 
-function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
-  const clipboard = useClipboard();
+interface BodyProps {
+  node: ReturnType<typeof useLineageNode>;
+  tab: string | null;
+  onTab: (tab: string | null) => void;
+  column: string | undefined;
+  outside: number;
+  onFocusColumn: (column: string | undefined) => void;
+}
+
+function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
   if (node.isError) {
     // The graph stays: the node is simply not in the project (e.g. a stale link).
     if ("code" in node.error && node.error.code === NODE_NOT_FOUND) {
@@ -84,11 +145,45 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
   if (!node.data) return <Loader size="sm" />;
 
   const d = node.data;
-  const status = STATUS[d.status];
-  const failedTests = d.tests.filter((test) => test.outcome === "failed").length;
   return (
     <>
       <Title order={4}>{d.name}</Title>
+      {column !== undefined && outside > 0 && <OutsideNote d={d} column={column} outside={outside} />}
+      <Tabs value={tab} onChange={onTab}>
+        <Tabs.List>
+          <Tabs.Tab value={OVERVIEW}>Overview</Tabs.Tab>
+          <Tabs.Tab value={COLUMNS}>Columns</Tabs.Tab>
+          <Tabs.Tab value={TESTS}>Tests</Tabs.Tab>
+          <Tabs.Tab value={SQL}>SQL</Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value={OVERVIEW} pt="xs">
+          <Overview d={d} />
+        </Tabs.Panel>
+        <Tabs.Panel value={COLUMNS} pt="xs">
+          {d.column_lineage_note !== null && (
+            <Text size="sm" role="note" mb="xs">
+              {d.column_lineage_note}
+            </Text>
+          )}
+          <ColumnsTable columns={d.columns} focused={column} onFocusColumn={onFocusColumn} />
+        </Tabs.Panel>
+        <Tabs.Panel value={TESTS} pt="xs">
+          <TestList tests={d.tests} />
+        </Tabs.Panel>
+        <Tabs.Panel value={SQL} pt="xs">
+          <SqlTabs d={d} />
+        </Tabs.Panel>
+      </Tabs>
+    </>
+  );
+}
+
+function Overview({ d }: { d: NodeDetails }) {
+  const clipboard = useClipboard();
+  const status = STATUS[d.status];
+  const failedTests = d.tests.filter((test) => test.outcome === "failed").length;
+  return (
+    <Stack gap="sm">
       <Text size="sm">{d.description}</Text>
       <Group gap="xs">
         <Badge variant="light">{d.layer}</Badge>
@@ -134,30 +229,81 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
           {d.build?.message && <Text size="xs">{d.build.message}</Text>}
         </Stack>
       )}
+    </Stack>
+  );
+}
 
-      <Title order={5}>Columns</Title>
-      {d.columns.length === 0 && (
-        <Text size="xs" c="dimmed">
-          No documented columns.
-        </Text>
-      )}
-      {d.columns.map((column) => (
-        <Stack key={column.name} gap={2}>
-          <Group gap={6}>
-            <Code>{column.name}</Code>
-            {column.data_type !== null && (
-              <Text size="xs" c="dimmed">
-                {column.data_type}
-              </Text>
-            )}
-          </Group>
-          <Text size="xs">{column.description}</Text>
-        </Stack>
-      ))}
+// A column edge never leaves the table edges, so +<node>+ always holds the related columns left out of the view.
+function OutsideNote({ d, column, outside }: { d: NodeDetails; column: string; outside: number }) {
+  const select = pathSelector(d.selector, "all", "all");
+  const to = `/lineage?select=${encodeURIComponent(select)}&node=${encodeURIComponent(d.unique_id)}&column=${encodeURIComponent(column)}`;
+  return (
+    <Text size="sm" role="note">
+      {outside === 1 ? "1 related column is" : `${outside} related columns are`} outside this view.{" "}
+      {outside === 1 ? "Show it" : "Show them"} with{" "}
+      <Anchor component={Link} to={to}>
+        {select}
+      </Anchor>
+    </Text>
+  );
+}
 
-      <Title order={5}>Tests</Title>
-      <TestList tests={d.tests} />
+interface ColumnsTableProps {
+  columns: ColumnDetail[];
+  focused: string | undefined;
+  onFocusColumn: (column: string) => void;
+}
 
+function ColumnsTable({ columns, focused, onFocusColumn }: ColumnsTableProps) {
+  if (columns.length === 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        No documented columns.
+      </Text>
+    );
+  }
+  return (
+    <Table aria-label="Columns" withRowBorders verticalSpacing={4}>
+      <Table.Thead>
+        <Table.Tr>
+          <Table.Th>Name</Table.Th>
+          <Table.Th>Type</Table.Th>
+          <Table.Th>Kind</Table.Th>
+          <Table.Th>Resolution</Table.Th>
+          <Table.Th>Notes</Table.Th>
+        </Table.Tr>
+      </Table.Thead>
+      <Table.Tbody>
+        {columns.map((column) => (
+          <Table.Tr
+            key={column.name}
+            aria-current={column.name === focused ? "true" : undefined}
+            bg={column.name === focused ? "var(--mantine-primary-color-light)" : undefined}
+          >
+            <Table.Td>
+              <UnstyledButton onClick={() => onFocusColumn(column.name)} aria-label={column.name}>
+                <Code>{column.name}</Code>
+              </UnstyledButton>
+            </Table.Td>
+            <Table.Td>{column.data_type}</Table.Td>
+            <Table.Td>{column.kind === null ? null : <KindLabel kind={column.kind} />}</Table.Td>
+            <Table.Td>{column.resolution === null ? null : <ResolutionLabel resolution={column.resolution} />}</Table.Td>
+            <Table.Td>{columnNotes(column)}</Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
+
+// A row count names the relation it counts: its unique_id ends with the node's name.
+function columnNotes({ counts, notes }: ColumnDetail): string {
+  return [counts === null ? null : `counts ${counts.split(".").at(-1)}`, ...notes].filter((note) => note !== null).join("; ");
+}
+
+function SqlTabs({ d }: { d: NodeDetails }) {
+  return (
+    <Stack gap="xs">
       {d.sql_note !== null && (
         <Text size="sm" role="note">
           {d.sql_note}
@@ -179,7 +325,7 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
           )}
         </Tabs>
       )}
-    </>
+    </Stack>
   );
 }
 
