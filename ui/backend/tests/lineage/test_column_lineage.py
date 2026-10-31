@@ -204,6 +204,17 @@ class TestColumnLineageBuilder:
 
         assert lineage.focus(_ref(MART, "order_id")).upstream == {_ref(EPH, "order_id"), _ref(SRC, "id")}
 
+    def test_a_parent_missing_from_the_catalog_still_resolves_its_children(self) -> None:
+        # the catalog and the YAML both lack the columns of stg: its SQL's output names stand in for them
+        sql = {STG: f"select id as ident from {SRC_SQL}", MART: f"select ident, ident as again from {STG_SQL}"}
+        specs = [_src(), _stg(), _Spec("mart", ("ident", "again"), parents=(STG,))]
+
+        lineage = _lineage(specs, sql)
+
+        assert [info.ref.column for info in lineage.columns_of(STG)] == ["ident"]
+        assert [info.resolution for info in lineage.columns_of(MART)] == [Resolution.FULL] * 2
+        assert lineage.focus(_ref(MART, "again")).upstream == {_ref(STG, "ident"), _ref(SRC, "id")}
+
     def test_star_expands_from_the_schema(self) -> None:
         mart = _Spec("mart", ("id", "amount", "ts"), parents=(SRC,))
 

@@ -223,8 +223,7 @@ class _Run:
             self._fail(node, NOTE_SQL_UNPARSED)
             return
 
-        if node.materialization == EPHEMERAL:
-            self._learn_ephemeral(node, infos)
+        self._learn(node, infos)
         self.columns[node.unique_id] = tuple(infos)
 
     def _fail(self, node: GraphNode, note: str) -> None:
@@ -312,14 +311,16 @@ class _Run:
             if leaf.key not in self._uid_by_relation
         ]
 
-    def _learn_ephemeral(self, node: GraphNode, infos: list[ColumnInfo]) -> None:
-        # The children of an ephemeral model see its output columns, which only its own SQL tells.
-        if self._columns_by_node.get(node.unique_id):
+    def _learn(self, node: GraphNode, infos: list[ColumnInfo]) -> None:
+        # The children of a node see its output columns. An ephemeral model has no catalog entry and a node the
+        # catalog and the YAML both lack has none either, so only its own SQL tells them.
+        key = _pseudo_key(node.name) if node.materialization == EPHEMERAL else _relation_key(node)
+        if key is None or self._columns_by_node.get(node.unique_id):
             return
 
         columns = [info.ref.column for info in infos]
         self._catalog_names[node.unique_id] = {name.lower(): name for name in columns}
-        self._schema.add_table(_table(_pseudo_key(node.name)), dict.fromkeys(columns, UNKNOWN_TYPE), dialect=DIALECT)
+        self._schema.add_table(_table(key), dict.fromkeys(columns, UNKNOWN_TYPE), dialect=DIALECT)
 
 
 def _parse(sql: str) -> exp.Query | None:

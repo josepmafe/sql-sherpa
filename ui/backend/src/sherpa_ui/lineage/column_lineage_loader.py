@@ -65,11 +65,11 @@ class ColumnLineageLoader:
 
     def _build(self, graph: ManifestGraph) -> ColumnLineage:
         catalog = self._read_catalog()
+        columns = {unique_id: [column.name for column in node.columns] for unique_id, node in graph.nodes.items()}
         if catalog is None:
-            columns = {unique_id: [column.name for column in node.columns] for unique_id, node in graph.nodes.items()}
             note = NOTE_NO_CATALOG
         else:
-            columns = _catalog_columns(catalog, graph)
+            columns.update(_catalog_columns(catalog, graph))
             note = None
 
         compiled = {
@@ -106,7 +106,7 @@ class ColumnLineageLoader:
 
 
 def _catalog_columns(catalog: dict[str, Any], graph: ManifestGraph) -> dict[str, list[str]]:
-    """Each graph node's columns in table order (the catalog's `index`); a node the catalog lacks has none."""
+    """Each graph node's columns in table order (the catalog's `index`); a node the catalog lacks is left out."""
     try:
         columns: dict[str, list[str]] = {}
         for section in CATALOG_SECTIONS:

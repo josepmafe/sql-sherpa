@@ -139,6 +139,16 @@ class TestColumnLineageLoader:
         assert "seed.p.countries" not in compiled
         assert "source.p.shop.orders" not in compiled
 
+    def test_a_node_the_catalog_lacks_falls_back_to_its_yaml_columns(
+        self, tmp_path: Path, loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]
+    ) -> None:
+        loader.load()  # the catalog of the fixture holds fct_orders only
+
+        assert fake_builder.seen is not None
+        columns, _ = fake_builder.seen
+        assert columns[FCT] == ["b", "a"]
+        assert columns[ENRICHED] == ["id"]
+
     def test_concurrent_first_calls_build_once(
         self, loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]
     ) -> None:
