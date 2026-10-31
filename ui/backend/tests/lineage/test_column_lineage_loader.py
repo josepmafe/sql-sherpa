@@ -149,6 +149,26 @@ class TestColumnLineageLoader:
         assert columns[FCT] == ["b", "a"]
         assert columns[ENRICHED] == ["id"]
 
+    def test_an_artifact_rewritten_while_the_graph_loads_is_built_again(
+        self,
+        tmp_path: Path,
+        loader: ColumnLineageLoader,
+        manifests: ManifestLoader,
+        graph: ManifestGraph,
+        fake_builder: type[_FakeBuilder],
+    ) -> None:
+        def rewrite_during_the_first_load() -> ManifestGraph:
+            if fake_builder.builds == 0:
+                _bump_mtime(tmp_path / "catalog.json")
+            return graph
+
+        manifests.load.side_effect = rewrite_during_the_first_load  # type: ignore[attr-defined]
+
+        loader.load()
+        loader.load()
+
+        assert fake_builder.builds == 2
+
     def test_concurrent_first_calls_build_once(
         self, loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]
     ) -> None:
@@ -198,6 +218,7 @@ class TestColumnLineageLoader:
     def test_raises_when_it_never_built_one(self, tmp_path: Path, node_sql: NodeSql) -> None:
         manifests = create_autospec(ManifestLoader, instance=True)
         manifests.load.side_effect = CatalogUnavailable("no manifest")
+        (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
         loader = ColumnLineageLoader(tmp_path, manifests, node_sql)
 
         with pytest.raises(CatalogUnavailable, match="no manifest"):

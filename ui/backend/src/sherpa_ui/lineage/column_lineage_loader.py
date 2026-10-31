@@ -48,16 +48,18 @@ class ColumnLineageLoader:
     def load(self) -> ColumnLineage:
         with self._lock:
             try:
+                stamp = self._stamp_of()  # before the load, so a rewrite in between is built again on the next call
                 graph = self._manifests.load()
-                stamp = self._stamp_of()
                 if self._lineage is None or stamp != self._stamp:
                     self._lineage = self._build(graph)
                     self._stamp = stamp
+
                 return self._lineage
             except (CatalogUnavailable, SqlglotError) as exc:
                 if self._lineage is None:
                     if isinstance(exc, SqlglotError):
                         raise CatalogUnavailable(f"cannot build the column lineage: {exc}") from exc
+
                     raise
 
                 logger.warning("could not rebuild the column lineage, so the previous one stays in use: %s", exc)
@@ -88,6 +90,7 @@ class ColumnLineageLoader:
             catalog = json.loads(self._catalog_path.read_text(encoding="utf-8"))
             if not isinstance(catalog, dict):
                 raise TypeError("not an object")
+
             return catalog
         except (OSError, ValueError, TypeError) as exc:
             raise CatalogUnavailable(f"cannot read {CATALOG_FILE}: {_MISSING_HINT}") from exc
@@ -102,6 +105,7 @@ class ColumnLineageLoader:
             catalog_stamp: int | None = self._catalog_path.stat().st_mtime_ns
         except OSError:
             catalog_stamp = None
+
         return manifest_stamp, catalog_stamp
 
 

@@ -201,6 +201,7 @@ class LineageService:
         lineage, reason = self._column_lineage() if columns else (None, None)
         if lineage is not None:
             nodes = [node.model_copy(update={"columns": _column_views(lineage, node.unique_id)}) for node in nodes]
+
         return LineageGraph(
             nodes=nodes,
             edges=edges,

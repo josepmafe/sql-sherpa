@@ -295,6 +295,7 @@ class _Run:
             counted = _counted_relation(root)
             if counted is None:
                 return ColumnKind.CONSTANT, [], None
+
             return ColumnKind.ROW_COUNT, [], self._uid_by_relation.get(counted)
 
         casts: list[str] = []
@@ -302,6 +303,7 @@ class _Run:
             only_column = next(iter(inputs))[1]
             kind = ColumnKind.PASSTHROUGH if name.lower() == only_column else ColumnKind.RENAME
             return kind, [f"cast to {cast}" for cast in dict.fromkeys(casts)], None
+
         return ColumnKind.TRANSFORMED, [], None
 
     def _unknown_relations(self, root: Node) -> list[str]:
@@ -450,6 +452,7 @@ def _from_relation(select: exp.Select) -> _RelationKey | None:
 
     if table.db:
         return (table.catalog.lower(), table.db.lower(), table.name.lower())
+
     for cte in select.root().find_all(exp.CTE):  # a bare name is a CTE: count what it reads
         if cte.alias.lower() == table.name.lower() and isinstance(cte.this, exp.Select):
             return _from_relation(cte.this)
@@ -459,6 +462,7 @@ def _from_relation(select: exp.Select) -> _RelationKey | None:
 def _unquote(identifier: str) -> str:
     if len(identifier) > 1 and identifier.startswith('"') and identifier.endswith('"'):
         return identifier[1:-1].replace('""', '"')
+
     return identifier
 
 
