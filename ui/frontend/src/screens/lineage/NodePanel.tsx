@@ -1,4 +1,19 @@
-import { ActionIcon, Alert, Badge, Box, Button, Code, Group, Loader, Stack, Tabs, Text, Title } from "@mantine/core";
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Code,
+  Group,
+  Loader,
+  ScrollArea,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  Title,
+} from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -8,7 +23,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useClipboard } from "@mantine/hooks";
-import { type ComponentType, useEffect } from "react";
+import { type ComponentType, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useLineageNode } from "../../api/queries";
@@ -17,12 +32,31 @@ import { ReadOnlySql } from "../../components/SqlEditor";
 import { LoadError } from "../explorer/LoadError";
 import { GREEN, GREY, ORANGE, RED, STATUS } from "./GraphNode";
 
+type ColumnDetail = components["schemas"]["ColumnDetail"];
+type ColumnKind = components["schemas"]["ColumnKind"];
+type NodeDetails = components["schemas"]["NodeDetails"];
 type TestInfo = components["schemas"]["TestInfo"];
 type TestOutcome = components["schemas"]["TestOutcome"];
 
 const NODE_NOT_FOUND = "node_not_found";
+const PANEL_MAX_HEIGHT = "50vh";
+const EMPTY_STATE = "Select a node to see its SQL, columns and tests";
+const OVERVIEW = "overview";
+const COLUMNS = "columns";
+const TESTS = "tests";
+const SQL = "sql";
 const RAW = "raw";
 const COMPILED = "compiled";
+
+const KIND_LABEL: Record<ColumnKind, string> = {
+  passthrough: "passthrough",
+  rename: "rename",
+  transformed: "transformed",
+  row_count: "row count",
+  constant: "constant",
+  generated: "generated",
+  source: "source",
+};
 
 interface OutcomeView {
   Icon: ComponentType<{ size?: number; "aria-hidden"?: boolean }>;
@@ -39,37 +73,56 @@ const OUTCOMES: Record<TestOutcome, OutcomeView> = {
 };
 
 interface NodePanelProps {
-  uniqueId: string;
+  uniqueId: string | undefined;
   onClose: () => void;
 }
 
+// Always rendered under the graph, so selecting a node never resizes the canvas.
 export function NodePanel({ uniqueId, onClose }: NodePanelProps) {
   const node = useLineageNode(uniqueId);
+  // The tab stays while another node is selected, so the same tab can be read across nodes.
+  const [tab, setTab] = useState<string | null>(OVERVIEW);
 
-  // Esc closes the panel, unless it was meant for a text field or a menu.
+  // Esc clears the selection, unless it was meant for a text field or a menu.
   useEffect(() => {
+    if (uniqueId === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (event.key === "Escape" && !target.closest("input, textarea, [role=listbox]")) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [uniqueId, onClose]);
 
   return (
-    <Stack gap="sm" component="aside" aria-label="Node details">
-      <Group justify="flex-end">
-        <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
-          <IconX size={14} />
-        </ActionIcon>
-      </Group>
-      <Body node={node} />
-    </Stack>
+    <ScrollArea.Autosize mah={PANEL_MAX_HEIGHT} offsetScrollbars="y">
+      <Stack gap="sm" component="aside" aria-label="Node details" p="xs">
+        {uniqueId === undefined ? (
+          <Text size="sm" c="dimmed">
+            {EMPTY_STATE}
+          </Text>
+        ) : (
+          <>
+            <Group justify="flex-end">
+              <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
+                <IconX size={14} />
+              </ActionIcon>
+            </Group>
+            <Body node={node} tab={tab} onTab={setTab} />
+          </>
+        )}
+      </Stack>
+    </ScrollArea.Autosize>
   );
 }
 
-function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
-  const clipboard = useClipboard();
+interface BodyProps {
+  node: ReturnType<typeof useLineageNode>;
+  tab: string | null;
+  onTab: (tab: string | null) => void;
+}
+
+function Body({ node, tab, onTab }: BodyProps) {
   if (node.isError) {
     // The graph stays: the node is simply not in the project (e.g. a stale link).
     if ("code" in node.error && node.error.code === NODE_NOT_FOUND) {
@@ -84,11 +137,39 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
   if (!node.data) return <Loader size="sm" />;
 
   const d = node.data;
-  const status = STATUS[d.status];
-  const failedTests = d.tests.filter((test) => test.outcome === "failed").length;
   return (
     <>
       <Title order={4}>{d.name}</Title>
+      <Tabs value={tab} onChange={onTab}>
+        <Tabs.List>
+          <Tabs.Tab value={OVERVIEW}>Overview</Tabs.Tab>
+          <Tabs.Tab value={COLUMNS}>Columns</Tabs.Tab>
+          <Tabs.Tab value={TESTS}>Tests</Tabs.Tab>
+          <Tabs.Tab value={SQL}>SQL</Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value={OVERVIEW} pt="xs">
+          <Overview d={d} />
+        </Tabs.Panel>
+        <Tabs.Panel value={COLUMNS} pt="xs">
+          <ColumnsTable columns={d.columns} />
+        </Tabs.Panel>
+        <Tabs.Panel value={TESTS} pt="xs">
+          <TestList tests={d.tests} />
+        </Tabs.Panel>
+        <Tabs.Panel value={SQL} pt="xs">
+          <SqlTabs d={d} />
+        </Tabs.Panel>
+      </Tabs>
+    </>
+  );
+}
+
+function Overview({ d }: { d: NodeDetails }) {
+  const clipboard = useClipboard();
+  const status = STATUS[d.status];
+  const failedTests = d.tests.filter((test) => test.outcome === "failed").length;
+  return (
+    <Stack gap="sm">
       <Text size="sm">{d.description}</Text>
       <Group gap="xs">
         <Badge variant="light">{d.layer}</Badge>
@@ -134,30 +215,54 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
           {d.build?.message && <Text size="xs">{d.build.message}</Text>}
         </Stack>
       )}
+    </Stack>
+  );
+}
 
-      <Title order={5}>Columns</Title>
-      {d.columns.length === 0 && (
-        <Text size="xs" c="dimmed">
-          No documented columns.
-        </Text>
-      )}
-      {d.columns.map((column) => (
-        <Stack key={column.name} gap={2}>
-          <Group gap={6}>
-            <Code>{column.name}</Code>
-            {column.data_type !== null && (
-              <Text size="xs" c="dimmed">
-                {column.data_type}
-              </Text>
-            )}
-          </Group>
-          <Text size="xs">{column.description}</Text>
-        </Stack>
-      ))}
+function ColumnsTable({ columns }: { columns: ColumnDetail[] }) {
+  if (columns.length === 0) {
+    return (
+      <Text size="xs" c="dimmed">
+        No documented columns.
+      </Text>
+    );
+  }
+  return (
+    <Table aria-label="Columns" withRowBorders verticalSpacing={4}>
+      <Table.Thead>
+        <Table.Tr>
+          <Table.Th>Name</Table.Th>
+          <Table.Th>Type</Table.Th>
+          <Table.Th>Kind</Table.Th>
+          <Table.Th>Resolution</Table.Th>
+          <Table.Th>Notes</Table.Th>
+        </Table.Tr>
+      </Table.Thead>
+      <Table.Tbody>
+        {columns.map((column) => (
+          <Table.Tr key={column.name}>
+            <Table.Td>
+              <Code>{column.name}</Code>
+            </Table.Td>
+            <Table.Td>{column.data_type}</Table.Td>
+            <Table.Td>{column.kind === null ? null : KIND_LABEL[column.kind]}</Table.Td>
+            <Table.Td>{column.resolution}</Table.Td>
+            <Table.Td>{columnNotes(column)}</Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
 
-      <Title order={5}>Tests</Title>
-      <TestList tests={d.tests} />
+// A row count names the relation it counts.
+function columnNotes({ counts, notes }: ColumnDetail): string {
+  return [counts === null ? null : `counts ${counts}`, ...notes].filter((note) => note !== null).join("; ");
+}
 
+function SqlTabs({ d }: { d: NodeDetails }) {
+  return (
+    <Stack gap="xs">
       {d.sql_note !== null && (
         <Text size="sm" role="note">
           {d.sql_note}
@@ -179,7 +284,7 @@ function Body({ node }: { node: ReturnType<typeof useLineageNode> }) {
           )}
         </Tabs>
       )}
-    </>
+    </Stack>
   );
 }
 

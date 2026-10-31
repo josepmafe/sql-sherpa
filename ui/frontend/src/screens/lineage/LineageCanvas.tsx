@@ -10,7 +10,6 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-  useStore,
 } from "@xyflow/react";
 import { useEffect, useMemo } from "react";
 
@@ -19,7 +18,6 @@ import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
 import { GraphNode, type GraphNodeData } from "./GraphNode";
 import { edgeAppearance, edgeId, relatedNodes } from "./highlight";
 import { type BandNode, type LayoutEdge, NODE_HEIGHT, NODE_WIDTH } from "./layout";
-import { useRevealNode } from "./reveal";
 import { useGraphLayout } from "./useGraphLayout";
 
 type ApiNode = components["schemas"]["LineageNode"];
@@ -62,20 +60,12 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
   const { layoutNodes, layoutEdges } = useTopology(nodes, edges);
   const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, NO_HEIGHTS);
   const { fitView } = useReactFlow();
-  const reveal = useRevealNode();
-  const canvasWidth = useStore((flow) => flow.width);
-  const canvasHeight = useStore((flow) => flow.height);
   const related = useMemo(() => (selected === undefined ? undefined : relatedNodes(edges, selected)), [edges, selected]);
 
   // Fit after each new order of the nodes, not after a selection or a restack.
   useEffect(() => {
     if (state === "ready") void fitView({ maxZoom: FIT_MAX_ZOOM });
   }, [state, layoutNodes, layoutEdges, fitView]);
-
-  // The panel opening narrows the canvas under the viewport: keep the selected node in sight.
-  useEffect(() => {
-    if (selected !== undefined) reveal(selected);
-  }, [selected, canvasWidth, canvasHeight, reveal]);
 
   // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (a band splits into sub-columns,
   // so the band alone does not give the order). A band label sorts before its band's first node.
@@ -117,7 +107,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
   );
 
   return (
-    <div style={{ height: "70vh", minHeight: 400 }}>
+    <div style={{ height: "60vh", minHeight: 400 }}>
       {state === "error" && (
         <Alert color="red" role="alert" mb="xs">
           Could not lay out the graph.
@@ -143,7 +133,7 @@ function Canvas({ nodes, edges, selected, onSelect }: LineageCanvasProps) {
         proOptions={{ hideAttribution: true }}
       >
         <Controls showInteractive={false} fitViewOptions={{ maxZoom: FIT_MAX_ZOOM }} />
-        {nodes.length > MINIMAP_ABOVE_NODES && selected === undefined && <MiniMap pannable zoomable />}
+        {nodes.length > MINIMAP_ABOVE_NODES && <MiniMap pannable zoomable />}
       </ReactFlow>
     </div>
   );

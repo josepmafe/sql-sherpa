@@ -20,8 +20,7 @@ export function isInView(position: Point, viewport: Viewport, canvas: { width: n
   );
 }
 
-// Centres the node at the current zoom when it is not fully in view, e.g. after the panel narrowed the canvas or
-// when a keyboard focus lands on it.
+// Centres the node at the current zoom when it is not fully in view, e.g. when a keyboard focus lands on it.
 export function useRevealNode(): (id: string) => void {
   const { getNode, getViewport, setCenter } = useReactFlow();
   const store = useStoreApi();

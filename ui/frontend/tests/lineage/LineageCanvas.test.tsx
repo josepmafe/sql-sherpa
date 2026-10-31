@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import type { components } from "../../src/api/schema";
 import { LineageCanvas } from "../../src/screens/lineage/LineageCanvas";
 import { orderNodes } from "../../src/screens/lineage/layout";
+import { type LineageNode, lineageNode } from "../fixtures/api";
 
 // The real layout, with its calls counted.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => {
@@ -14,20 +14,17 @@ vi.mock("../../src/screens/lineage/layout", async (importOriginal) => {
   return { ...original, orderNodes: vi.fn(original.orderNodes) };
 });
 
-type Node = components["schemas"]["LineageNode"];
+type Node = LineageNode;
 
 function node(name: string, patch: Partial<Node> = {}): Node {
-  return {
+  return lineageNode({
     unique_id: `model.s.${name}`,
     name,
-    resource_type: "model",
     layer: "staging",
     domain: null,
     materialization: "view",
-    status: "ok",
-    failing_tests: 0,
     ...patch,
-  };
+  });
 }
 
 // a -> b -> c, and an unrelated x
@@ -206,18 +203,26 @@ describe("LineageCanvas", () => {
     expect(orderNodes).toHaveBeenCalledTimes(runs);
   });
 
-  it("the minimap of a large graph is hidden while the panel is open", async () => {
-    const many = Array.from({ length: 61 }, (_, index) => node(`n${index}`));
-    render(<Harness nodes={many} edges={[]} />);
+  it("the minimap appears above the node threshold, whether or not a node is selected, and not below it", async () => {
     const graphNodes = () => document.querySelectorAll("button[aria-pressed]");
+    const minimap = () => document.querySelector(".react-flow__minimap");
+    const nodesOf = (count: number) => Array.from({ length: count }, (_, index) => node(`n${index}`));
+
+    const large = render(<Harness nodes={nodesOf(61)} edges={[]} />);
     await waitFor(() => expect(graphNodes()).toHaveLength(61), { timeout: 15_000 });
-    const first = graphNodes()[0]!;
-    expect(document.querySelector(".react-flow__minimap")).not.toBeNull();
+    expect(minimap()).not.toBeNull();
+    fireEvent.click(graphNodes()[0]!);
+    expect(graphNodes()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(minimap()).not.toBeNull();
+    large.unmount();
 
-    fireEvent.click(first);
-
-    expect(document.querySelector(".react-flow__minimap")).toBeNull();
-  }, 20_000);
+    render(<Harness nodes={nodesOf(60)} edges={[]} />);
+    await waitFor(() => expect(graphNodes()).toHaveLength(60), { timeout: 15_000 });
+    expect(minimap()).toBeNull();
+    fireEvent.click(graphNodes()[0]!);
+    expect(graphNodes()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(minimap()).toBeNull();
+  }, 40_000);
 
   it("node= in the URL restores the highlight after a reload", async () => {
     render(<Harness initial="model.s.b" />);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, Group, Loader, ScrollArea, Stack, Text } from "@mantine/core";
+import { Loader, Stack, Text } from "@mantine/core";
 
 import { ApiRequestError, useLineage } from "../../api/queries";
 import { LoadError } from "../explorer/LoadError";
@@ -10,9 +10,6 @@ import { SelectorBar } from "./SelectorBar";
 import { useLineageParams } from "./url";
 
 const UNSUPPORTED_SELECTOR = "unsupported_selector";
-// The panel beside the canvas; at 1280 px the canvas keeps about 700 px, at 1024 px about 480 px.
-const PANEL_WIDTH = 380;
-const PANEL_HEIGHT = "70vh";
 
 export function LineageScreen() {
   const [params, update] = useLineageParams();
@@ -33,8 +30,8 @@ export function LineageScreen() {
     if (staleNode) update({ node: undefined });
   }, [staleNode, update]);
 
-  // The node's button keeps the keyboard where it was before the panel opened.
-  const closePanel = () => {
+  // The node's button keeps the keyboard where it was before the selection (Esc, the close button, the background).
+  const clearSelection = () => {
     const node = params.node;
     update({ node: undefined });
     if (node !== undefined) document.querySelector<HTMLElement>(`[data-id="${CSS.escape(node)}"] button`)?.focus();
@@ -60,24 +57,16 @@ export function LineageScreen() {
       {graph !== undefined && !loadError && (
         <>
           <Text size="sm">{graph.nodes.length} nodes</Text>
-          <Group align="flex-start" wrap="nowrap" gap="md">
-            <Box style={{ flex: 1, minWidth: 0 }}>
-              <LineageCanvas
-                nodes={graph.nodes}
-                edges={graph.edges}
-                selected={params.node}
-                onSelect={(node) => update({ node })}
-                failingOnly={params.failingOnly}
-                layersFiltered={params.layers !== undefined}
-                buildState={graph.build.state}
-              />
-            </Box>
-            {params.node !== undefined && (
-              <ScrollArea h={PANEL_HEIGHT} w={PANEL_WIDTH} style={{ flexShrink: 0 }} offsetScrollbars="y">
-                <NodePanel uniqueId={params.node} onClose={closePanel} />
-              </ScrollArea>
-            )}
-          </Group>
+          <LineageCanvas
+            nodes={graph.nodes}
+            edges={graph.edges}
+            selected={params.node}
+            onSelect={(node) => (node === undefined ? clearSelection() : update({ node }))}
+            failingOnly={params.failingOnly}
+            layersFiltered={params.layers !== undefined}
+            buildState={graph.build.state}
+          />
+          <NodePanel uniqueId={params.node} onClose={clearSelection} />
         </>
       )}
     </Stack>
