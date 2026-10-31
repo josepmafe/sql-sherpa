@@ -30,7 +30,8 @@ type ApiEdge = components["schemas"]["LineageEdge"];
 const MINIMAP_ABOVE_NODES = 60;
 // A whole-project fit would zoom a one-node graph to 2x.
 const FIT_MAX_ZOOM = 1;
-const NODE_TYPES = { graph: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
+const GRAPH_NODE = "graph";
+const NODE_TYPES = { [GRAPH_NODE]: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
 // The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
 const FIXED_WIDTH = { vectorEffect: "non-scaling-stroke" } as const;
 const LEGEND = "Column lineage follows the select list: columns used only in joins or filters are not linked";
@@ -110,19 +111,20 @@ function Canvas({
   );
   const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
   const { fitView } = useReactFlow();
-  const measured = useStore(allMeasured);
+  const measured = useStore(useMemo(() => measuredIn(layoutNodes), [layoutNodes]));
   const related = useMemo(() => relatedOf(edges, selected, focus), [edges, selected, focus]);
 
   // Fit once per new order of the nodes, not after a selection or a restack, and only once React Flow has measured
   // every node: a node reports its handles on its own (useUpdateNodeInternals), and a fit asked for earlier is
-  // answered by the first node that reports, framing that node alone. (useNodesInitialized never turns true here: the
+  // answered by the first node that reports, framing that node alone. The nodes of this layout, not of the previous one,
+  // must be in the store. (useNodesInitialized never turns true here: the
   // band labels have no handles.)
   const fittedFor = useRef<unknown>(undefined);
   useEffect(() => {
     if (state !== "ready" || !measured || fittedFor.current === layoutNodes) return;
     fittedFor.current = layoutNodes;
     void fitView({ maxZoom: FIT_MAX_ZOOM });
-  }, [state, layoutNodes, layoutEdges, measured, fitView]);
+  }, [state, layoutNodes, measured, fitView]);
 
   // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (a band splits into sub-columns,
   // so the band alone does not give the order). A band label sorts before its band's first node.
@@ -150,7 +152,7 @@ function Canvas({
           onToggle: () => onToggle(node.unique_id),
           onFocusColumn: (name) => onFocusColumn(node.unique_id, name),
         };
-        return [{ id: node.unique_id, type: "graph", position, width: NODE_WIDTH, height, data }];
+        return [{ id: node.unique_id, type: GRAPH_NODE, position, width: NODE_WIDTH, height, data }];
       });
       const labels = positions === undefined ? [] : bandLabelNodes(layoutNodes, positions);
       return [...labels, ...graphNodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
@@ -207,7 +209,7 @@ function Canvas({
         selectionKeyCode={null}
         minZoom={0.1}
         // A click or Enter on a node button bubbles up to here (and gives the node wrapper its pointer events).
-        onNodeClick={(_, node) => node.type === "graph" && onSelect(node.id)}
+        onNodeClick={(_, node) => node.type === GRAPH_NODE && onSelect(node.id)}
         onPaneClick={() => onSelect(undefined)}
         proOptions={{ hideAttribution: true }}
       >
@@ -225,9 +227,18 @@ function Canvas({
   );
 }
 
-function allMeasured(state: ReactFlowState): boolean {
-  const nodes = [...state.nodeLookup.values()];
-  return nodes.length > 0 && nodes.every((node) => node.measured.width !== undefined && node.measured.height !== undefined);
+// Whether React Flow holds exactly the nodes of this layout, each with a measured size (after a new layout it still
+// holds the old ones until its own update has run).
+function measuredIn(layout: BandNode[]): (state: ReactFlowState) => boolean {
+  const ids = new Set(layout.map((node) => node.id));
+  return (state) => {
+    const held = [...state.nodeLookup.values()].filter((node) => node.internals.userNode.type === GRAPH_NODE);
+    return (
+      ids.size > 0 &&
+      held.length === ids.size &&
+      held.every((node) => ids.has(node.id) && node.measured.width !== undefined && node.measured.height !== undefined)
+    );
+  };
 }
 
 // With a column focused the column edges tell the story: only the nodes that hold a related column stay lit, and every
