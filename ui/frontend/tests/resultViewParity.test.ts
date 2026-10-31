@@ -58,8 +58,14 @@ describe("the browser's sort and filter against the shared cases", () => {
     (_name, c) => {
       const table = tableOf(c);
 
-      const rows = applyView(table.rows, table.column_types, viewOf(c));
+      const view = viewOf(c);
 
+      const rows = applyView(table.rows, table.column_types, view);
+
+      // Postgres accepted every filter value of these cases, so the filter bar must accept them too.
+      for (const f of view.filters) {
+        expect(filterValueProblem(table.column_types[f.index] ?? "other", f.operator, f.value)).toBeUndefined();
+      }
       expect(ids(rows)).toEqual(c.accepted_difference ? c.client_expected_ids : c.expected_ids);
     },
   );

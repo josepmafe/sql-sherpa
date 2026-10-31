@@ -140,11 +140,11 @@ describe("ResultGrid", () => {
       />,
     );
     await user.click(screen.getAllByRole("button", { name: "id" })[0] as HTMLElement);
-    expect(screen.queryByText(/Duplicate column names/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/duplicate column names/)).not.toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "id" })[1] as HTMLElement);
 
-    expect(screen.getByText(/Duplicate column names/)).toBeInTheDocument();
+    expect(screen.getByText(/duplicate column names/)).toBeInTheDocument();
     expect(screen.getByText(/may differ from Postgres/)).toBeInTheDocument();
   });
 
