@@ -230,11 +230,12 @@ function Overview({ d }: { d: NodeDetails }) {
 
 // A column edge never leaves the table edges, so +<node>+ always holds the related columns left out of the view.
 function OutsideNote({ d, column, outside }: { d: NodeDetails; column: string; outside: number }) {
-  const select = pathSelector(d.name, "all", "all");
+  const select = pathSelector(d.selector, "all", "all");
   const to = `/lineage?select=${encodeURIComponent(select)}&node=${encodeURIComponent(d.unique_id)}&column=${encodeURIComponent(column)}`;
   return (
     <Text size="sm" role="note">
-      {outside === 1 ? "1 related column is" : `${outside} related columns are`} outside this view. Show them with{" "}
+      {outside === 1 ? "1 related column is" : `${outside} related columns are`} outside this view.{" "}
+      {outside === 1 ? "Show it" : "Show them"} with{" "}
       <Anchor component={Link} to={to}>
         {select}
       </Anchor>

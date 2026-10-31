@@ -27,7 +27,7 @@ function renderBar(select: string, error: Error | null = null) {
   const onSelect = vi.fn();
   render(
     <MantineProvider env="test">
-      <SelectorBar select={select} onSelect={onSelect} error={error} />
+      <SelectorBar select={select} onSelect={onSelect} error={error} columns={false} />
     </MantineProvider>,
   );
   return onSelect;
@@ -112,7 +112,7 @@ describe("SelectorBar", () => {
       const onSelect = vi.fn();
       const bar = (value: string) => (
         <MantineProvider env="test">
-          <SelectorBar select={value} onSelect={onSelect} error={null} />
+          <SelectorBar select={value} onSelect={onSelect} error={null} columns={false} />
         </MantineProvider>
       );
       const { rerender } = render(bar(select));

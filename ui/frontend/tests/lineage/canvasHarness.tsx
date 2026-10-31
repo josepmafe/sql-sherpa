@@ -49,6 +49,7 @@ export function canvasProps(overrides: Partial<CanvasProps> = {}): CanvasProps {
     onSelect: () => {},
     focus: undefined,
     expanded: new Set(),
+    rest: new Set(),
     onToggle: () => {},
     onFocusColumn: () => {},
     columnsUnavailable: undefined,
@@ -83,6 +84,8 @@ export function CanvasHarness({
   const [selected, setSelected] = useState(initial);
   const [column, setColumn] = useState(initialColumn);
   const [expanded, setExpanded] = useState(new Set(initialExpanded));
+  // "Show the rest" of the nodes a focus reaches; it ends with the focus.
+  const [rest, setRest] = useState(new Set<string>());
   const focus = useMemo(
     () =>
       column === undefined || focusData === undefined
@@ -93,21 +96,25 @@ export function CanvasHarness({
   return (
     <MantineProvider env="test">
       <LineageCanvas
-        {...canvasProps({ nodes, edges, selected, column, focus, expanded, columnsUnavailable })}
+        {...canvasProps({ nodes, edges, selected, column, focus, expanded, rest, columnsUnavailable })}
         onSelect={(id) => {
           setSelected(id);
           setColumn(undefined);
+          setRest(new Set());
         }}
-        onToggle={(id) =>
-          setExpanded((now) => {
+        onToggle={(id) => {
+          const toggled = (now: Set<string>) => {
             const next = new Set(now);
             if (!next.delete(id)) next.add(id);
             return next;
-          })
-        }
+          };
+          if (focus?.expanded.has(id)) setRest(toggled);
+          else setExpanded(toggled);
+        }}
         onFocusColumn={(id, name) => {
           setSelected(id);
           setColumn(name);
+          setRest(new Set());
         }}
       />
     </MantineProvider>

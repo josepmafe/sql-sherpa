@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { orderNodes } from "../../src/screens/lineage/layout";
 import { LineageScreen } from "../../src/screens/lineage/LineageScreen";
 import {
   apiFailure,
@@ -22,7 +23,7 @@ import { deferred, renderWithProviders } from "../fixtures/render";
 // No test here reads a position, and the real ELK layout is slow under load.
 vi.mock("../../src/screens/lineage/layout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/screens/lineage/layout")>()),
-  orderNodes: (nodes: { id: string }[]) => Promise.resolve(new Map(nodes.map((node, index) => [node.id, index]))),
+  orderNodes: vi.fn(),
 }));
 
 type Options = {
@@ -53,6 +54,7 @@ const DETAILS = (uniqueId: string) =>
     unique_id: uniqueId,
     name: uniqueId.split(".").pop() ?? "",
     description: `Model ${uniqueId.split(".").pop()}.`,
+    selector: uniqueId.split(".").pop() ?? "",
   });
 const LINEAGE = "/api/lineage";
 const MESSAGE = "unsupported selector 'tag:x'; supported selectors: a model name";
@@ -149,6 +151,7 @@ const panel = () => screen.getByRole("complementary", { name: "Node details" });
 describe("LineageScreen", () => {
   // restoreMocks restores spies only: a module-level vi.fn keeps its calls and implementation.
   beforeEach(() => {
+    vi.mocked(orderNodes).mockReset().mockImplementation((nodes) => Promise.resolve(new Map(nodes.map((n, index) => [n.id, index]))));
     get.mockReset();
   });
 
@@ -437,6 +440,70 @@ describe("LineageScreen", () => {
 
       expect(await screen.findByRole("note")).toHaveTextContent("1 related column is outside this view");
       expect(within(screen.getByRole("note")).getByRole("link", { name: "+b+" })).toBeVisible();
+    });
+
+    it("the first columns=true answer does not run ELK again", async () => {
+      get.mockImplementation(answerScene());
+      mount("/lineage");
+      await screen.findByText("3 nodes");
+      await nodeButton("c");
+      const runs = vi.mocked(orderNodes).mock.calls.length;
+
+      await expandAll();
+      await row("net_revenue");
+
+      expect(orderNodes).toHaveBeenCalledTimes(runs);
+    });
+
+    it("a reload with column= asks for the graph with its columns at once", async () => {
+      get.mockImplementation(answerScene());
+
+      mount(`/lineage?node=${B}&column=net_revenue`);
+      await row("net_revenue");
+
+      expect(lineageCalls().map((query) => query?.columns)).not.toContain(false);
+    });
+
+    it("a column the node does not have clears itself, and the node stays", async () => {
+      get.mockImplementation((path, options) =>
+        path.startsWith("/api/lineage/columns/")
+          ? Promise.resolve(apiFailure("column_not_found", "no column gone", 404))
+          : answerScene()(path, options),
+      );
+
+      mount(`/lineage?node=${B}&column=gone`);
+
+      await waitFor(() => expect(here()).not.toHaveTextContent("column="));
+      expect(here()).toHaveTextContent(`node=${B}`);
+    });
+
+    it("the rest shown during a focus is not the user's expansion", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}&column=net_revenue`);
+      await row("net_revenue");
+      expect(screen.queryByRole("button", { name: /^units\b/ })).not.toBeInTheDocument();
+
+      fireEvent.click(within(await screen.findByLabelText("Lineage graph")).getAllByRole("button", { name: "+1 more" })[0]!);
+      expect(await row("units")).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+
+      await waitFor(() => expect(here()).not.toHaveTextContent("column="));
+      await waitFor(() =>
+        expect(within(screen.getByLabelText("Lineage graph")).queryByRole("button", { name: /^net_revenue\b/ })).not.toBeInTheDocument(),
+      );
+    });
+
+    it("a node the user opened shows only its related columns once a column is focused from the graph", async () => {
+      get.mockImplementation(answerScene());
+      mount("/lineage");
+      await screen.findByText("3 nodes");
+      await expandAll();
+
+      fireEvent.click(await row("net_revenue"));
+
+      await waitFor(() => expect(screen.queryByRole("button", { name: /^units/ })).not.toBeInTheDocument());
+      await userEvent.keyboard("{Escape}");
+      expect(await row("units")).toBeVisible();
     });
   });
 });

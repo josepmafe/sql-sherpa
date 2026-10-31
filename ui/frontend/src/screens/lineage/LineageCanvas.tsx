@@ -17,7 +17,7 @@ import { useEffect, useMemo } from "react";
 import type { components } from "../../api/schema";
 import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
 import { type FocusViewResult, nodeRows } from "./columnFocus";
-import { GraphNode, type GraphNodeData } from "./GraphNode";
+import { GraphNode, type GraphNodeData, NODE_HANDLE } from "./GraphNode";
 import { edgeAppearance, edgeId, FOCUS_EDGE, type Related, relatedNodes } from "./highlight";
 import { type BandNode, type LayoutEdge, NODE_WIDTH, nodeHeight } from "./layout";
 import { useGraphLayout } from "./useGraphLayout";
@@ -44,6 +44,8 @@ interface LineageCanvasProps {
   focus: FocusViewResult | undefined;
   // The nodes the user opened.
   expanded: Set<string>;
+  // While a column is focused: the related nodes that show all their columns (they show only the related ones else).
+  rest: Set<string>;
   onToggle: (uniqueId: string) => void;
   onFocusColumn: (uniqueId: string, column: string) => void;
   // Why the nodes cannot expand; undefined when column lineage is available.
@@ -77,6 +79,7 @@ function Canvas({
   onSelect,
   focus,
   expanded,
+  rest,
   onToggle,
   onFocusColumn,
   columnsUnavailable,
@@ -85,16 +88,18 @@ function Canvas({
   const rows = useMemo(
     () =>
       new Map(
-        nodes.map((node) => [
-          node.unique_id,
-          nodeRows(columnsUnavailable === undefined ? (node.columns ?? []) : [], {
-            expanded: expanded.has(node.unique_id),
-            related: focus?.expanded.get(node.unique_id),
+        nodes.map((node) => {
+          // A node the focus reaches shows its related columns; the user's own expansion is back when the focus ends.
+          const related = focus?.expanded.get(node.unique_id);
+          const rowOptions = {
+            expanded: related === undefined ? expanded.has(node.unique_id) : rest.has(node.unique_id),
+            related,
             focused: node.unique_id === selected ? column : undefined,
-          }),
-        ]),
+          };
+          return [node.unique_id, nodeRows(columnsUnavailable === undefined ? (node.columns ?? []) : [], rowOptions)];
+        }),
       ),
-    [nodes, expanded, focus, selected, column, columnsUnavailable],
+    [nodes, expanded, rest, focus, selected, column, columnsUnavailable],
   );
   // A node grows by its rows (and the "+k more" row); ELK has already ordered, so only the stacking reruns.
   const heights = useMemo(
@@ -150,7 +155,9 @@ function Canvas({
         return {
           id: edgeId(edge),
           source: edge.source,
+          sourceHandle: NODE_HANDLE,
           target: edge.target,
+          targetHandle: NODE_HANDLE,
           markerEnd: { type: MarkerType.ArrowClosed, color: look.stroke },
           style: { ...look, ...FIXED_WIDTH },
         };

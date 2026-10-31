@@ -10,12 +10,12 @@ import {
   IconSquareDashed,
 } from "@tabler/icons-react";
 import { Handle, type Node, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { type ComponentType, type MouseEvent, useEffect, useId } from "react";
+import { type ComponentType, useEffect, useId } from "react";
 
 import type { components } from "../../api/schema";
-import { KindLabel, ResolutionLabel } from "./ColumnLabels";
 import type { RowView } from "./columnFocus";
-import { COLUMN_ROW_HEIGHT, NODE_HEIGHT, NODE_WIDTH } from "./layout";
+import { ColumnRow, ROW_BUTTON, STRIPE_WIDTH, stop } from "./ColumnRow";
+import { NODE_HEIGHT, NODE_WIDTH } from "./layout";
 import { useRevealNode } from "./reveal";
 import type { Layer } from "./url";
 
@@ -43,7 +43,8 @@ export interface GraphNodeData extends Record<string, unknown> {
   onFocusColumn: (column: string) => void;
 }
 
-const STRIPE_WIDTH = 6;
+// The handle of a table edge; the column rows have their own (`col:<name>`).
+export const NODE_HANDLE = "node";
 
 // Shade 8 for the stripe on white and shade 4 on the dark body keep it above 3:1 (non-text contrast); the text never
 // sits on a layer colour, so its contrast is the theme's own.
@@ -98,7 +99,7 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
 
   return (
     <>
-      <Handle type="target" position={Position.Left} isConnectable={false} style={{ opacity: 0, top: NODE_HEIGHT / 2 }} />
+      <Handle type="target" position={Position.Left} id={NODE_HANDLE} isConnectable={false} style={{ opacity: 0, top: NODE_HEIGHT / 2 }} />
       <div
         style={{
           width: NODE_WIDTH,
@@ -172,8 +173,8 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
           </button>
           {data.hasColumns && <Chevron data={data} />}
         </div>
-        {data.rows.map((row) => (
-          <ColumnRow key={row.column.name} row={row} nodeId={id} data={data} />
+        {data.rows.map((row, index) => (
+          <ColumnRow key={row.column.name} row={row} index={index} nodeId={id} onFocusColumn={data.onFocusColumn} />
         ))}
         {data.more > 0 && (
           <button type="button" onClick={(event) => stop(event, data.onToggle)} style={ROW_BUTTON}>
@@ -183,7 +184,7 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
           </button>
         )}
       </div>
-      <Handle type="source" position={Position.Right} isConnectable={false} style={{ opacity: 0, top: NODE_HEIGHT / 2 }} />
+      <Handle type="source" position={Position.Right} id={NODE_HANDLE} isConnectable={false} style={{ opacity: 0, top: NODE_HEIGHT / 2 }} />
     </>
   );
 }
@@ -220,71 +221,4 @@ function Chevron({ data }: { data: GraphNodeData }) {
       {data.unavailable !== undefined && <VisuallyHidden id={why}>{data.unavailable}</VisuallyHidden>}
     </>
   );
-}
-
-// One handle per column and side, so a column edge joins row to row. The row sits inside the stripe, so the handle
-// on the left is moved out to the card's edge.
-function ColumnRow({ row, nodeId, data }: { row: RowView; nodeId: string; data: GraphNodeData }) {
-  const reveal = useRevealNode();
-  const { column, role } = row;
-  const handle = `col:${column.name}`;
-  return (
-    <div style={{ position: "relative", flex: "none", height: COLUMN_ROW_HEIGHT }}>
-      <Handle type="target" position={Position.Left} id={handle} isConnectable={false} style={{ opacity: 0, left: -STRIPE_WIDTH }} />
-      <button
-        type="button"
-        aria-pressed={role === undefined ? undefined : role === "focus"}
-        data-dimmed={role === "other" ? "" : undefined}
-        title={column.name}
-        onClick={(event) => stop(event, () => data.onFocusColumn(column.name))}
-        onFocus={() => reveal(nodeId)}
-        style={{
-          ...ROW_BUTTON,
-          fontWeight: role === "focus" ? 700 : undefined,
-          background: role === "focus" ? "var(--mantine-primary-color-light)" : "transparent",
-          outline: role === "focus" ? "2px solid var(--mantine-primary-color-filled)" : undefined,
-          outlineOffset: -2,
-          color: role === "other" ? "var(--mantine-color-dimmed)" : "var(--mantine-color-text)",
-        }}
-      >
-        <Text component="span" size="xs" truncate style={{ flex: 1, minWidth: 0, fontWeight: "inherit" }}>
-          {column.name}
-        </Text>
-        {" "}
-        <Text component="span" size="xs" c="dimmed" style={{ flex: "none", fontSize: 11 }}>
-          <KindLabel kind={column.kind} />
-        </Text>
-        {column.resolution !== "full" && (
-          <>
-            {" "}
-            <Text component="span" size="xs" c="dimmed" style={{ flex: "none", fontSize: 11 }}>
-              <ResolutionLabel resolution={column.resolution} />
-            </Text>
-          </>
-        )}
-      </button>
-      <Handle type="source" position={Position.Right} id={handle} isConnectable={false} style={{ opacity: 0, right: -1 }} />
-    </div>
-  );
-}
-
-const ROW_BUTTON = {
-  width: "100%",
-  height: COLUMN_ROW_HEIGHT,
-  boxSizing: "border-box",
-  padding: "0 8px",
-  border: 0,
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  textAlign: "left",
-  cursor: "pointer",
-  background: "transparent",
-  color: "var(--mantine-color-text)",
-} as const;
-
-// A click on the chevron or a row would select the node too (React Flow's node click), and it is not that.
-function stop(event: MouseEvent, action: () => void): void {
-  event.stopPropagation();
-  action();
 }

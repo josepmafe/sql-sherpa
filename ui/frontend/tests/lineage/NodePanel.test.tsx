@@ -291,9 +291,9 @@ describe("NodePanel", () => {
     });
 
     it.each([
-      [1, "1 related column is outside this view"],
-      [3, "3 related columns are outside this view"],
-    ])("%i related columns outside the view link to the selector that holds them", (outside, text) => {
+      [1, "1 related column is outside this view. Show it with"],
+      [3, "3 related columns are outside this view. Show them with"],
+    ])("%i related column(s) outside the view link to the selector that holds them", (outside, text) => {
       mount("model.sherpa.fct_orders", vi.fn(), { column: "total", outside });
 
       expect(screen.getByRole("note")).toHaveTextContent(text);
@@ -321,4 +321,18 @@ describe("NodePanel", () => {
       expect(total).toHaveTextContent("partial");
     });
   });
+  it("the outside-the-view link of a source node selects it by its source selector", () => {
+    useLineageNode.mockReturnValue({
+      data: nodeDetails({ unique_id: "source.s.shop.orders", name: "orders", selector: "source:shop.orders" }),
+    });
+    mount("source.s.shop.orders", vi.fn(), { column: "id", outside: 2 });
+
+    const link = within(screen.getByRole("note")).getByRole("link", { name: "+source:shop.orders+" });
+
+    expect(link).toHaveAttribute(
+      "href",
+      "/lineage?select=%2Bsource%3Ashop.orders%2B&node=source.s.shop.orders&column=id",
+    );
+  });
+
 });

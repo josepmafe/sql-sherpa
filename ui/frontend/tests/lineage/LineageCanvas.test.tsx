@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -281,8 +281,26 @@ describe("LineageCanvas", () => {
       expect(screen.queryByText(/Column lineage follows the select list/)).not.toBeInTheDocument();
     });
   });
+  describe("column focus dimming", () => {
+    it("a node in the selection's table chain that holds no related column dims during a column focus", async () => {
+      const upstream = node("raw_orders", { columns: [columnView({ name: "id" })] });
+      const nodes = [upstream, ...COLUMN_NODES];
+      const edges = [{ source: upstream.unique_id, target: "model.s.stg_orders" }, ...COLUMN_EDGES];
+      render(<CanvasHarness nodes={nodes} edges={edges} initial={FCT} />);
+      expect(await item("raw_orders")).not.toHaveAttribute("data-dimmed");
+      cleanup();
+
+      render(<CanvasHarness nodes={nodes} edges={edges} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+
+      expect(await item("raw_orders")).toHaveAttribute("data-dimmed");
+      expect(await item("stg_orders")).not.toHaveAttribute("data-dimmed");
+    });
+  });
+
 });
 
 function zoomOf(transform: string): number {
-  return Number(/scale\(([\d.]+)\)/.exec(transform)?.[1] ?? 0);
+  const scale = /scale\(([\d.]+)\)/.exec(transform)?.[1];
+  if (scale === undefined) throw new Error(`no zoom in the transform "${transform}"`);
+  return Number(scale);
 }

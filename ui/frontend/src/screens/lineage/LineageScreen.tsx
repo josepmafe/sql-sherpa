@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader, Stack, Text } from "@mantine/core";
 
 import { ApiRequestError, useColumnFocus, useLineage } from "../../api/queries";
@@ -11,15 +11,16 @@ import { SelectorBar } from "./SelectorBar";
 import { useLineageParams } from "./url";
 
 const UNSUPPORTED_SELECTOR = "unsupported_selector";
+const COLUMN_NOT_FOUND = "column_not_found";
 const COLUMNS_UNAVAILABLE = "Column lineage is unavailable";
 
 export function LineageScreen() {
   const [params, update] = useLineageParams();
   // The nodes the user opened. Columns are requested from the first one on (or a focused column), and kept after it.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [wantColumns, setWantColumns] = useState(false);
-  if (!wantColumns && (expanded.size > 0 || params.column !== undefined)) setWantColumns(true);
-  const lineage = useLineage(params, { columns: wantColumns });
+  const [wantColumns, setWantColumns] = useState(params.column !== undefined);
+  const columns = wantColumns || params.column !== undefined;
+  const lineage = useLineage(params, { columns });
   const error = lineage.error;
   // The last good graph stays while a selector fails (or loads), so the controls and the count do not vanish.
   const [lastGood, setLastGood] = useState(lineage.data);
@@ -30,7 +31,14 @@ export function LineageScreen() {
 
   const columnsUnavailable =
     graph?.column_lineage === "unavailable" ? (graph.column_lineage_reason ?? COLUMNS_UNAVAILABLE) : undefined;
-  const focusData = useColumnFocus(params.node, columnsUnavailable === undefined ? params.column : undefined).data;
+  const focusQuery = useColumnFocus(params.node, columnsUnavailable === undefined ? params.column : undefined);
+  const focusData = focusQuery.data;
+  // "Show the rest" of the nodes a focus reaches belongs to that focus: it ends with it, and the user's own expansion
+  // is not touched.
+  const focusKey = params.node !== undefined && params.column !== undefined ? `${params.node}/${params.column}` : undefined;
+  const [restOf, setRestOf] = useState<{ key: string | undefined; nodes: Set<string> }>({ key: undefined, nodes: new Set() });
+  if (restOf.key !== focusKey) setRestOf({ key: focusKey, nodes: new Set() });
+  const rest = restOf.nodes;
   const shown = useMemo(() => new Set(graph?.nodes.map((node) => node.unique_id)), [graph]);
   const focus = useMemo(
     () => (params.column === undefined || focusData === undefined ? undefined : focusView(focusData, shown)),
@@ -39,6 +47,11 @@ export function LineageScreen() {
 
   // A node= that the (freshly loaded) graph does not hold, e.g. after a selector change, clears itself.
   const fresh = lineage.data !== undefined && !lineage.isPlaceholderData;
+  const staleColumn =
+    focusQuery.error instanceof ApiRequestError && focusQuery.error.code === COLUMN_NOT_FOUND;
+  useEffect(() => {
+    if (staleColumn) update({ column: undefined });
+  }, [staleColumn, update]);
   const staleNode =
     fresh && params.node !== undefined && !lineage.data.nodes.some((node) => node.unique_id === params.node);
   useEffect(() => {
@@ -59,26 +72,30 @@ export function LineageScreen() {
     update({ column });
     if (column === undefined) focusNodeButton(params.node);
   };
-  const toggle = useCallback(
-    (uniqueId: string) =>
-      setExpanded((now) => {
-        const next = new Set(now);
-        if (!next.delete(uniqueId)) next.add(uniqueId);
-        return next;
-      }),
-    [],
-  );
+  const toggle = (uniqueId: string) => {
+    setWantColumns(true);
+    const toggled = (now: Set<string>) => {
+      const next = new Set(now);
+      if (!next.delete(uniqueId)) next.add(uniqueId);
+      return next;
+    };
+    if (focus?.expanded.has(uniqueId)) setRestOf({ key: focusKey, nodes: toggled(rest) });
+    else setExpanded(toggled);
+  };
 
   return (
     <Stack gap="md">
-      <SelectorBar select={params.select} onSelect={(select) => update({ select })} error={error} />
+      <SelectorBar select={params.select} onSelect={(select) => update({ select })} error={error} columns={columns} />
       <LayerFilter
         available={graph?.layers_available ?? []}
         layers={params.layers}
         onLayers={(layers) => update({ layers })}
         failingOnly={params.failingOnly}
         onFailingOnly={(failingOnly) => update({ failingOnly })}
-        onExpandAll={() => setExpanded(new Set(shown))}
+        onExpandAll={() => {
+          setWantColumns(true);
+          setExpanded(new Set(shown));
+        }}
         onCollapseAll={() => setExpanded(new Set())}
         columnsUnavailable={columnsUnavailable}
         buildState={graph?.build.state ?? "ok"}
@@ -100,8 +117,12 @@ export function LineageScreen() {
             onSelect={(node) => (node === undefined ? clearSelection() : update({ node, column: undefined }))}
             focus={focus}
             expanded={expanded}
+            rest={rest}
             onToggle={toggle}
-            onFocusColumn={(node, column) => update({ node, column })}
+            onFocusColumn={(node, column) => {
+              setWantColumns(true);
+              update({ node, column });
+            }}
             columnsUnavailable={columnsUnavailable}
             failingOnly={params.failingOnly}
             layersFiltered={params.layers !== undefined}
