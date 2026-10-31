@@ -91,17 +91,18 @@ export const WorksheetPanel = memo(function WorksheetPanel({
   }, [runOnOpen, initialSql, run, onRunStarted, id]);
 
   // Sorting and filtering a truncated result, or a complete one the browser cannot sort exactly, re-runs the SQL of the
-  // last run (not the editor's current text) on the server.
+  // last run (not the editor's current text) on the server. While such a re-run is in flight every change goes to the
+  // server too, so the last click wins over the answer still on its way.
   const changeView = useCallback(
     (next: ResultView) => {
-      if (!response || !isServerSide(response, next)) {
+      if (!response || (!rerunning && !isServerSide(response, next))) {
         setView(next);
         return;
       }
       setRequested(next);
       void run(origin.sql, { ...toServerOptions(next, response.columns), onApplied: () => setView(next) });
     },
-    [response, origin.sql, run],
+    [response, rerunning, origin.sql, run],
   );
 
   const highlight = useMemo(

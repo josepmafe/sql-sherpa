@@ -226,6 +226,71 @@ describe("Explorer results", () => {
     });
   });
 
+  describe("a view change while a server re-run of a complete result is in flight", () => {
+    const COLUMNS = ["name", "amount", "span"];
+    const A = ["a", "10", "1:00:00"];
+    const B = ["b", "9", "2:00:00"];
+    const AB = [A, B];
+    const BA = [B, A];
+    const answer = (rows: string[][], mode: "server" | "client" = "server") =>
+      ok(queryResponse({ columns: COLUMNS, column_types: ["text", "number", "other"], rows, mode }));
+
+    // The query requests, in order, as functions so one can stay pending; the cancel call every abandoned query
+    // makes gets 204.
+    function answerQueries(...answers: Array<() => Promise<unknown>>) {
+      post.mockImplementation((path: string) => (path === "/api/queries" ? answers.shift()!() : Promise.resolve(noContent())));
+    }
+
+    it("goes to the server too, so the last click wins over the stale answer", async () => {
+      const user = userEvent.setup();
+      let stale!: (value: unknown) => void;
+      answerQueries(
+        () => Promise.resolve(answer(AB, "client")),
+        () => new Promise((resolve) => (stale = resolve)),
+        () => Promise.resolve(answer(BA)),
+      );
+      renderScreen("select 1");
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await user.click(await screen.findByRole("button", { name: "span" }));
+
+      await user.click(screen.getByRole("button", { name: "amount" }));
+
+      await waitFor(() => expect(queryCalls()).toHaveLength(3));
+      expect(queryCalls()[2]?.[1].body).toMatchObject({ sort: [{ column: "amount", direction: "asc" }] });
+      await act(async () => stale(answer(AB)));
+      await waitFor(() => expect(firstColumn()).toEqual(["b", "a"]));
+      expect(screen.getByRole("columnheader", { name: "amount" })).toHaveAttribute("aria-sort", "ascending");
+      expect(screen.getByRole("columnheader", { name: "span" })).toHaveAttribute("aria-sort", "none");
+    });
+
+    it("removing the filter that needed the server goes to the server too", async () => {
+      const user = userEvent.setup();
+      let stale!: (value: unknown) => void;
+      answerQueries(
+        () => Promise.resolve(answer(AB, "client")),
+        () => new Promise((resolve) => (stale = resolve)),
+        () => Promise.resolve(answer(AB)),
+      );
+      renderScreen("select 1");
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await user.click(await screen.findByRole("combobox", { name: "Filter column" }));
+      await user.click(await screen.findByRole("option", { name: "amount" }));
+      await user.click(screen.getByRole("combobox", { name: "Filter operator" }));
+      await user.click(await screen.findByRole("option", { name: "contains" }));
+      await user.type(screen.getByRole("textbox", { name: "Filter value" }), "1");
+      await user.click(screen.getByRole("button", { name: "Add filter" }));
+      await waitFor(() => expect(queryCalls()).toHaveLength(2));
+
+      await user.click(screen.getByRole("button", { name: "Remove filter on amount" }));
+
+      await waitFor(() => expect(queryCalls()).toHaveLength(3));
+      expect(queryCalls()[2]?.[1].body.filters).toEqual([]);
+      await act(async () => stale(answer([A])));
+      await waitFor(() => expect(firstColumn()).toEqual(["a", "b"]));
+      expect(screen.queryByRole("button", { name: "Remove filter on amount" })).not.toBeInTheDocument();
+    });
+  });
+
   describe("a Run after a result", () => {
     const OTHER = queryResponse({ ...RESPONSE, columns: ["city", "code"], rows: [["x", "1"], ["y", "2"]] });
 
