@@ -116,3 +116,24 @@ def test_a_passthrough_with_a_cast_says_so(graph_and_lineage: tuple[ManifestGrap
 
     assert info is not None
     assert (info.kind.value, info.notes) == ("passthrough", ("cast to timestamptz",))
+
+
+def test_a_row_count_names_the_model_it_counts(graph_and_lineage: tuple[ManifestGraph, ColumnLineage]) -> None:
+    _, lineage = graph_and_lineage
+
+    info = lineage.info(ColumnRef(unique_id="model.sherpa.dim_customers", column="order_count"))
+
+    assert info is not None
+    assert (info.kind.value, info.counts) == ("row_count", "model.sherpa.fct_orders")
+
+
+def test_a_trace_passes_through_an_ephemeral_model(graph_and_lineage: tuple[ManifestGraph, ColumnLineage]) -> None:
+    _, lineage = graph_and_lineage
+    ephemeral = "model.sherpa.int_orders__payments_summarized"
+
+    focus = lineage.focus(ColumnRef(unique_id="model.sherpa.fct_orders", column="primary_payment_method"))
+
+    assert ColumnRef(unique_id=ephemeral, column="primary_payment_method") in focus.upstream
+    assert {(ref.unique_id, ref.column) for ref in focus.upstream if ref.unique_id.startswith("source.")} == {
+        (f"{SHOP}.payments", "method")
+    }

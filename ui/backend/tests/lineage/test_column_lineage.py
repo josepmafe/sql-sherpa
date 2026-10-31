@@ -300,6 +300,17 @@ class TestColumnLineageBuilder:
 
         assert (lineage.columns_of(MART)[0].resolution, lineage.node_note(MART)) == (Resolution.FULL, None)
 
+    def test_count_star_counts_the_relation_of_its_own_from_not_another_cte(self) -> None:
+        other = _Spec("other", ("id",), kind="source")
+        sql = (
+            f'with first as (select id from {SRC_SQL}), second as (select id from "db"."raw"."other") '
+            "select count(*) as c from second"
+        )
+
+        lineage = _lineage([_src(), other, _stg("c")], {STG: sql})
+
+        assert lineage.columns_of(STG)[0].counts == "source.p.other"
+
     def test_count_star_in_a_cte_reading_another_cte_is_a_row_count(self) -> None:
         sql = (
             f"with a as (select * from {SRC_SQL}), t as (select id, count(*) as c from a group by id) select t.c from t"
@@ -381,17 +392,19 @@ class TestColumnLineageBuilder:
 
 
 def _chain() -> ColumnLineage:
-    """src.id -> stg.id -> mart.id -> top.id, plus src.amount -> stg.amount (a side branch)."""
+    """src.id -> stg.id -> mart.id -> top.id, plus src.amount -> stg.amount and stg.id -> side.sid (side branches)."""
     specs = [
         _src(),
         _stg("id", "amount"),
         _Spec("mart", ("id",), parents=(STG,)),
         _Spec("top", ("id",), parents=(MART,)),
+        _Spec("side", ("sid",), parents=(STG,)),
     ]
     sql = {
         STG: f"select id, amount from {SRC_SQL}",
         MART: f"select id from {STG_SQL}",
         TOP: 'select id from "db"."analytics"."mart"',
+        "model.p.side": f"select id as sid from {STG_SQL}",
     }
     return _lineage(specs, sql)
 
