@@ -47,9 +47,27 @@ test.describe("at 1024 x 700", () => {
   });
 });
 
-// The node panel is a fixed column beside the canvas, so neither may spill out of the page.
+// The canvas pans and the panel sits below it, so neither the bands nor the panel may widen the page.
 test.describe("Lineage at 1280 x 800", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("the whole project's bands do not scroll the page sideways and the panel stays under the canvas", async ({ page }) => {
+    await page.goto("/lineage?node=model.sherpa.fct_orders");
+    const panel = page.getByRole("complementary", { name: "Node details" });
+    await expect(panel.getByRole("heading", { name: "fct_orders", level: 4 })).toBeVisible();
+
+    const canvas = await page.getByLabel("Lineage graph").boundingBox();
+    const panelBox = await panel.boundingBox();
+    const root = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+
+    expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+    expect(canvas!.x + canvas!.width).toBeLessThanOrEqual(root.clientWidth);
+    expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(root.clientWidth);
+    expect(panelBox!.y).toBeGreaterThanOrEqual(canvas!.y + canvas!.height);
+  });
 
   test("neither the canvas nor the node panel overflows the page", async ({ page }) => {
     const widths = await lineageWidths(page);
