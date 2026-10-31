@@ -201,6 +201,25 @@ async function expectEdgeJoins(
   expect(gap(ends.end, target), `${edgeId} end vs ${to.handle}`).toBeLessThanOrEqual(HANDLE_TOLERANCE);
 }
 
+// The fit shows every node: each node's box lies inside the canvas (a fit that framed one node leaves the rest outside).
+async function expectGraphFitted(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const canvas = await page.getByLabel("Lineage graph").boundingBox();
+      const boxes = await page.locator(".react-flow__node").evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const { x, y, width, height } = node.getBoundingClientRect();
+          return { id: node.getAttribute("data-id") ?? "", x, y, right: x + width, bottom: y + height };
+        }),
+      );
+      if (canvas === null || boxes.length === 0) return ["no canvas or nodes"];
+      return boxes
+        .filter((b) => b.x < canvas.x - 1 || b.y < canvas.y - 1 || b.right > canvas.x + canvas.width + 1 || b.bottom > canvas.y + canvas.height + 1)
+        .map((b) => b.id);
+    }, { message: "nodes outside the canvas after the fit" })
+    .toEqual([]);
+}
+
 function consoleProblems(page: Page): string[] {
   const problems: string[] = [];
   page.on("console", (message) => {
@@ -224,6 +243,32 @@ test("the whole project shows fct_orders and a source, with the build the wareho
   const banner = page.getByText(/No full build recorded/);
   if (build.recorded) await expect(banner).toBeHidden();
   else await expect(banner).toBeVisible();
+});
+
+test("the graph is fitted after the load and after each change of selector", async ({ page }) => {
+  await page.goto("/lineage");
+  await expectGraphFitted(page);
+  const box = page.getByRole("textbox", { name: "dbt selector" });
+
+  await box.fill("fct_orders");
+  await box.press("Enter");
+  await expect(page).toHaveURL(/select=fct_orders$/);
+  await expectGraphFitted(page);
+
+  await box.fill("+fct_orders+");
+  await box.press("Enter");
+  await expect(graphNode(page, "stg_shop__orders")).toBeVisible();
+  await expectGraphFitted(page);
+
+  await box.fill("1+fct_orders+2");
+  await box.press("Enter");
+  await expect(page).toHaveURL(/select=1%2Bfct_orders%2B2/);
+  await expectGraphFitted(page);
+
+  await box.fill("");
+  await box.press("Enter");
+  await expect(graphNode(page, "orders")).toBeVisible();
+  await expectGraphFitted(page);
 });
 
 test("the bands run left to right and every edge points right", async ({ page }) => {

@@ -47,7 +47,7 @@ test.describe("at 1024 x 700", () => {
   });
 });
 
-// The canvas pans and the panel sits below it, so neither the bands nor the panel may widen the page.
+// The panel sits below the canvas and the canvas clips the graph, so neither the bands nor the panel may widen the page.
 test.describe("Lineage at 1280 x 800", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
