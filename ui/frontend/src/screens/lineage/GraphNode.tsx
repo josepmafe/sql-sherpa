@@ -82,6 +82,7 @@ export const STATUS: Partial<Record<NodeStatus, StatusView>> = {
 };
 
 // A dimmed node fades its stripe, border and background; the text keeps the theme's contrast.
+const ALL_RELATED = "Every column is related, so there is nothing to hide";
 const DIMMED_STRIPE = "light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4))";
 const DIMMED_BORDER = "light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-5))";
 const DIMMED_BACKGROUND = "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7))";
@@ -206,6 +207,7 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
 function Chevron({ data }: { data: GraphNodeData }) {
   const why = useId();
   const Icon = data.open ? IconChevronDown : IconChevronRight;
+  const reason = data.unavailable ?? (data.reached && data.more === 0 ? ALL_RELATED : undefined);
   const label = !data.reached
     ? `Columns of ${data.name}`
     : data.open
@@ -217,9 +219,9 @@ function Chevron({ data }: { data: GraphNodeData }) {
         type="button"
         aria-label={label}
         aria-expanded={data.open}
-        aria-describedby={data.unavailable === undefined ? undefined : why}
-        disabled={data.unavailable !== undefined || (data.reached && data.more === 0)}
-        title={data.unavailable}
+        aria-describedby={reason === undefined ? undefined : why}
+        disabled={reason !== undefined}
+        title={reason}
         onClick={(event) => stop(event, data.onToggle)}
         style={{
           position: "absolute",
@@ -231,13 +233,13 @@ function Chevron({ data }: { data: GraphNodeData }) {
           borderRadius: 3,
           background: "transparent",
           color: "var(--mantine-color-text)",
-          cursor: data.unavailable === undefined ? "pointer" : "not-allowed",
-          opacity: data.unavailable === undefined ? 1 : 0.5,
+          cursor: reason === undefined ? "pointer" : "not-allowed",
+          opacity: reason === undefined ? 1 : 0.5,
         }}
       >
         <Icon size={16} aria-hidden />
       </button>
-      {data.unavailable !== undefined && <VisuallyHidden id={why}>{data.unavailable}</VisuallyHidden>}
+      {reason !== undefined && <VisuallyHidden id={why}>{reason}</VisuallyHidden>}
     </>
   );
 }

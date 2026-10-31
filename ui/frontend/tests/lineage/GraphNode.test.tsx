@@ -164,7 +164,9 @@ describe("GraphNode", () => {
     render(<CanvasHarness nodes={nodes} edges={[{ source: "model.s.up", target: "model.s.down" }]} initial="model.s.down" initialColumn="k" focusData={focus} />);
     await waitFor(() => expect(screen.getAllByRole("button", { name: /^k\b/ })).toHaveLength(2));
 
-    expect(await within(card("model.s.up")).findByRole("button", { name: "Show all columns of up" })).toBeDisabled();
+    const chevron = await within(card("model.s.up")).findByRole("button", { name: "Show all columns of up" });
+    expect(chevron).toBeDisabled();
+    expect(chevron).toHaveAccessibleDescription("Every column is related, so there is nothing to hide");
     expect(within(card("model.s.down")).getByRole("button", { name: "Show all columns of down" })).toBeEnabled();
     expect(within(card("model.s.up")).queryByRole("button", { name: /more column/ })).not.toBeInTheDocument();
   });
