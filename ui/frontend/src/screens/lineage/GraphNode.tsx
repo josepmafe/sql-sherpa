@@ -16,7 +16,7 @@ import type { components } from "../../api/schema";
 import type { RowView } from "./columnFocus";
 import { ColumnRow, ROW_BUTTON, STRIPE_WIDTH, stop } from "./ColumnRow";
 import { NODE_HEIGHT, NODE_WIDTH } from "./layout";
-import { useRevealNode } from "./reveal";
+import { useRevealNode, useRevealOnKeyboardFocus } from "./reveal";
 import type { Layer } from "./url";
 
 type NodeStatus = components["schemas"]["NodeStatus"];
@@ -86,6 +86,7 @@ const DIMMED_BACKGROUND = "light-dark(var(--mantine-color-gray-0), var(--mantine
 
 export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
   const reveal = useRevealNode();
+  const focusProps = useRevealOnKeyboardFocus(() => reveal(id));
   const updateNodeInternals = useUpdateNodeInternals();
   const status = STATUS[data.status];
   const failed = data.status === "failed";
@@ -128,7 +129,7 @@ export function GraphNode({ id, data }: NodeProps<Node<GraphNodeData>>) {
             type="button"
             data-dimmed={data.dimmed ? "" : undefined}
             aria-pressed={data.selected}
-            onFocus={() => reveal(id)}
+            {...focusProps}
             style={{
               width: "100%",
               height: "100%",

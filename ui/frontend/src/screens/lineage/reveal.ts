@@ -1,5 +1,5 @@
 import { useReactFlow, useStoreApi } from "@xyflow/react";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 import { COLUMN_ROW_HEIGHT, NODE_HEIGHT, NODE_WIDTH, type Point } from "./layout";
 
@@ -52,4 +52,22 @@ export function useRevealNode(): (id: string, row?: number) => void {
     },
     [getNode, getViewport, setCenter, store],
   );
+}
+
+// The handlers of a button that reveals itself when the keyboard focuses it. A press focuses the button too (in
+// Chromium on mousedown): moving the viewport then would put the click on whatever lands under the pointer.
+export function useRevealOnKeyboardFocus(reveal: () => void): { onPointerDown: () => void; onFocus: () => void; onBlur: () => void } {
+  const pressed = useRef(false);
+  return {
+    onPointerDown: () => {
+      pressed.current = true;
+    },
+    onFocus: () => {
+      if (!pressed.current) reveal();
+    },
+    // Every focus arrives after a blur, so the flag cannot outlive the press that set it.
+    onBlur: () => {
+      pressed.current = false;
+    },
+  };
 }

@@ -85,10 +85,9 @@ async function expand(page: Page, name: string): Promise<void> {
   await page.getByRole("button", { name: `Columns of ${name}` }).click();
 }
 
-// A row far from the pane is brought into view by its focus, then clicked.
+// Clicked like a user does.
 async function focusColumn(page: Page, uniqueId: string, column: string): Promise<void> {
   const row = columnRow(page, uniqueId, column);
-  await row.focus();
   await row.click();
   await expect(row).toHaveAttribute("aria-pressed", "true");
 }
@@ -422,6 +421,34 @@ test("keyboard focus on a row far down a tall node scrolls it into the canvas", 
   await last.focus();
 
   await expect.poll(inside).toBe(true);
+});
+
+test("a mouse click on a row half outside the canvas focuses its column and leaves the viewport alone", async ({ page }) => {
+  await page.goto("/lineage?select=fct_orders");
+  await expect(graphNode(page, "fct_orders")).toBeVisible();
+  const columns = await ordersColumns(page);
+  const name = columns[columns.length - 1]!;
+  await expand(page, "fct_orders");
+  const row = columnRow(page, ORDERS_ID, name);
+  const pane = (await page.getByLabel("Lineage graph").boundingBox())!;
+  const rowBox = (await row.boundingBox())!;
+  // Pan the canvas by dragging an empty corner, until the row's middle sits on the canvas' bottom edge.
+  const shift = pane.y + pane.height - (rowBox.y + rowBox.height / 2);
+  await page.mouse.move(pane.x + 5, pane.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(pane.x + 5, pane.y + 5 + shift, { steps: 5 });
+  await page.mouse.up();
+  const half = (await row.boundingBox())!;
+  expect(half.y, "the row starts half outside").toBeLessThan(pane.y + pane.height);
+  expect(half.y + half.height, "the row starts half outside").toBeGreaterThan(pane.y + pane.height);
+  const viewport = page.locator(".react-flow__viewport");
+  const before = await viewport.getAttribute("style");
+
+  await page.mouse.click(half.x + 20, pane.y + pane.height - 4);
+
+  await expect(page).toHaveURL(new RegExp(`column=${name}`));
+  await expect(row).toHaveAttribute("aria-pressed", "true");
+  expect(await viewport.getAttribute("style")).toBe(before);
 });
 
 test("a focus that reaches outside the selector says so and links to +fct_orders+", async ({ page }) => {

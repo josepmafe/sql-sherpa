@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { COLUMN_ROW_HEIGHT, NODE_HEIGHT } from "../../src/screens/lineage/layout";
-import { isInView, rowBox } from "../../src/screens/lineage/reveal";
+import { isInView, rowBox, useRevealOnKeyboardFocus } from "../../src/screens/lineage/reveal";
 
 const SIZE = { width: 800, height: 600 };
 
@@ -41,5 +42,52 @@ describe("rowBox", () => {
       position: { x: 10, y: 20 + NODE_HEIGHT + 2 * COLUMN_ROW_HEIGHT },
       height: COLUMN_ROW_HEIGHT,
     });
+  });
+});
+
+describe("useRevealOnKeyboardFocus", () => {
+  const mount = () => {
+    const reveal = vi.fn();
+    const { result } = renderHook(() => useRevealOnKeyboardFocus(reveal));
+    return { reveal, props: result.current };
+  };
+
+  it("reveals on a focus that no pointer caused", () => {
+    const { reveal, props } = mount();
+
+    props.onFocus();
+
+    expect(reveal).toHaveBeenCalledOnce();
+  });
+
+  it("does not reveal on the focus a press causes: the click must land where it was pressed", () => {
+    const { reveal, props } = mount();
+
+    props.onPointerDown();
+    props.onFocus();
+
+    expect(reveal).not.toHaveBeenCalled();
+  });
+
+  it("a keyboard focus after a click that left the button is revealed again", () => {
+    const { reveal, props } = mount();
+    props.onPointerDown();
+    props.onFocus();
+    props.onBlur();
+
+    props.onFocus();
+
+    expect(reveal).toHaveBeenCalledOnce();
+  });
+
+  it("a press on a button that was already focused does not swallow the next keyboard focus", () => {
+    const { reveal, props } = mount();
+    props.onFocus();
+    props.onPointerDown();
+    props.onBlur();
+
+    props.onFocus();
+
+    expect(reveal).toHaveBeenCalledTimes(2);
   });
 });

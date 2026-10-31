@@ -5,7 +5,7 @@ import type { MouseEvent } from "react";
 import { KindLabel, ResolutionLabel } from "./ColumnLabels";
 import type { RowView } from "./columnFocus";
 import { COLUMN_ROW_HEIGHT } from "./layout";
-import { useRevealNode } from "./reveal";
+import { useRevealNode, useRevealOnKeyboardFocus } from "./reveal";
 
 // The node card's left border (its layer stripe); the row sits inside it.
 export const STRIPE_WIDTH = 6;
@@ -37,6 +37,7 @@ interface ColumnRowProps {
 // on the left is moved out to the card's edge.
 export function ColumnRow({ row, index, nodeId, onFocusColumn }: ColumnRowProps) {
   const reveal = useRevealNode();
+  const focusProps = useRevealOnKeyboardFocus(() => reveal(nodeId, index));
   const { column, role } = row;
   const handle = `col:${column.name}`;
   return (
@@ -48,7 +49,7 @@ export function ColumnRow({ row, index, nodeId, onFocusColumn }: ColumnRowProps)
         data-dimmed={role === "other" ? "" : undefined}
         title={column.name}
         onClick={(event) => stop(event, () => onFocusColumn(column.name))}
-        onFocus={() => reveal(nodeId, index)}
+        {...focusProps}
         style={{
           ...ROW_BUTTON,
           fontWeight: role === "focus" ? 700 : undefined,
