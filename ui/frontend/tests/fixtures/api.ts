@@ -108,6 +108,7 @@ export function lineageGraph(overrides: Partial<LineageGraph> = {}): LineageGrap
     edges: [],
     layers_available: [],
     build: { state: "ok", node_count: 0, started_at: null },
+    column_lineage: "ok",
     ...overrides,
   };
 }
@@ -128,6 +129,7 @@ export function nodeDetails(overrides: Partial<NodeDetails> = {}): NodeDetails {
     is_mart: true,
     contract_enforced: true,
     build: null,
+    column_lineage_note: null,
     columns: [],
     tests: [],
     raw_sql: null,
