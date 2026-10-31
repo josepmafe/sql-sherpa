@@ -8,11 +8,13 @@ import {
   MiniMap,
   type Node,
   Panel,
+  type ReactFlowState,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { components } from "../../api/schema";
 import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
@@ -108,12 +110,19 @@ function Canvas({
   );
   const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
   const { fitView } = useReactFlow();
+  const measured = useStore(allMeasured);
   const related = useMemo(() => relatedOf(edges, selected, focus), [edges, selected, focus]);
 
-  // Fit after each new order of the nodes, not after a selection or a restack.
+  // Fit once per new order of the nodes, not after a selection or a restack, and only once React Flow has measured
+  // every node: a node reports its handles on its own (useUpdateNodeInternals), and a fit asked for earlier is
+  // answered by the first node that reports, framing that node alone. (useNodesInitialized never turns true here: the
+  // band labels have no handles.)
+  const fittedFor = useRef<unknown>(undefined);
   useEffect(() => {
-    if (state === "ready") void fitView({ maxZoom: FIT_MAX_ZOOM });
-  }, [state, layoutNodes, layoutEdges, fitView]);
+    if (state !== "ready" || !measured || fittedFor.current === layoutNodes) return;
+    fittedFor.current = layoutNodes;
+    void fitView({ maxZoom: FIT_MAX_ZOOM });
+  }, [state, layoutNodes, layoutEdges, measured, fitView]);
 
   // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (a band splits into sub-columns,
   // so the band alone does not give the order). A band label sorts before its band's first node.
@@ -214,6 +223,11 @@ function Canvas({
       </ReactFlow>
     </div>
   );
+}
+
+function allMeasured(state: ReactFlowState): boolean {
+  const nodes = [...state.nodeLookup.values()];
+  return nodes.length > 0 && nodes.every((node) => node.measured.width !== undefined && node.measured.height !== undefined);
 }
 
 // With a column focused the column edges tell the story: only the nodes that hold a related column stay lit, and every
