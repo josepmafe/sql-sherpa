@@ -10,7 +10,7 @@ The answers can be trusted because of the platform underneath: one documented, t
 
 It is a learning project held to production standards: a realistic synthetic e-commerce business, dbt Core features used the way practitioners use them, and an agent where observability and evaluation come first. All data is synthetic.
 
-> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), agent-design-1 (MCP server), ui-1 (shell and Explorer) and ui-2 (Lineage) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
+> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage) and ui-3 (column lineage) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
 
 ## How it works
 
@@ -119,11 +119,11 @@ docs/
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, masking, limitations and tracing
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, worksheets, running, sorting and filtering, and what it won't let you do
-- [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, the node panel and copying a selector for `dbt`
+- [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, expandable columns with their kinds, the column focus, the node panel and copying a selector for `dbt`
 
 ### Advanced: extending it
 
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, and keeping the generator deterministic
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests, intermediate models and incremental models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and new marts
-- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, where the read-only rules live, and the three test layers
+- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers

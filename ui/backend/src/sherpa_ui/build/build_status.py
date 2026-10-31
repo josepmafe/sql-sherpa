@@ -1,5 +1,5 @@
 """The last full prod build, read from `ops.dbt_run_results` (data platform spec §8, written by the
-`record_run_results` hook). Lineage uses it for node status; ui-3 reuses `LAST_FULL_BUILD_SQL` for the data-status
+`record_run_results` hook). Lineage uses it for node status; ui-4 reuses `LAST_FULL_BUILD_SQL` for the data-status
 strip."""
 
 from __future__ import annotations

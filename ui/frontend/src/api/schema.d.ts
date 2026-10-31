@@ -346,7 +346,7 @@ export interface components {
         };
         /**
          * Health
-         * @description What ui-1 can vouch for; the tool server and the model join in ui-4.
+         * @description What ui-1 can vouch for; the tool server and the model join in ui-5.
          */
         Health: {
             artifacts: components["schemas"]["ArtifactsHealth"];

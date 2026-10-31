@@ -5,7 +5,7 @@ import { LineageScreen } from "../screens/lineage/LineageScreen";
 import { AppShell } from "./AppShell";
 import { RouteError } from "./RouteError";
 
-// `/` goes to the Explorer until Home arrives (ui-3).
+// `/` goes to the Explorer until Home arrives (ui-4).
 export const routes: RouteObject[] = [
   {
     element: <AppShell />,
