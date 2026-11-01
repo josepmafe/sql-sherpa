@@ -796,13 +796,18 @@ class TestQueryRunner:
     def test_a_wide_padded_result_stops_at_its_character_budget(
         self, runner: QueryRunner, sort: tuple[SortSpec, ...]
     ) -> None:
-        columns = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(10))
+        # each replace turns every 'b' into ten: four of them make a 10,000-character cell
+        cell = (
+            "replace(replace(replace(replace('b', 'b', 'bbbbbbbbbb'), 'b', 'bbbbbbbbbb'), "
+            "'b', 'bbbbbbbbbb'), 'b', 'bbbbbbbbbb')"
+        )
+        columns = ", ".join(f"{cell} as c{index}" for index in range(10))
 
         outcome = runner.run("q1", f"select {columns} from marts.fct_order_items", sort=sort)
 
         # 100,000 characters a row: 20 rows fill the 2,000,000-character budget.
         assert (outcome.returned_rows, outcome.truncated) == (20, True)
-        assert set(outcome.rows) == {("b" * 9_999 + "a",) * 10}
+        assert set(outcome.rows) == {("b" * 10_000,) * 10}
 
     def test_a_huge_aggregated_cell_is_cut(self, runner: QueryRunner) -> None:
         outcome = runner.run("q1", "select string_agg(order_number, ',') as numbers from marts.fct_orders")
@@ -874,7 +879,7 @@ class TestQueryRunner:
     def test_error_in_the_wrapper_has_no_position(self, runner: QueryRunner) -> None:
         with pytest.raises(UiQueryError) as error:
             runner.run(
-                "q1", "select '{}'::json as j from marts.fct_orders", sort=[SortSpec(column="j", direction="asc")]
+                "q1", "select o.to_json as j from marts.fct_orders o", sort=[SortSpec(column="j", direction="asc")]
             )
 
         assert error.value.code == "sql_error"
@@ -1215,7 +1220,8 @@ class TestQueryRunner:
         outcome = runner.run(
             "q1",
             "select order_id, order_number, order_date, placed_at, is_cancelled, order_total, 1.5::float8 as f,"
-            " 2::int2 as s, 'x'::varchar(3) as v, 'y'::char(2) as c, interval '1 day' as i, '{}'::jsonb as j"
+            " 2::int2 as s, 'x'::varchar(3) as v, user as c, interval '1 day' as i,"
+            " (select s.to_jsonb from (select 1 as k) s) as j"
             " from marts.fct_orders limit 1",
         )
 
@@ -1238,10 +1244,10 @@ class TestQueryRunner:
         outcome = runner.run(
             "q1",
             "select 1.50::numeric(12,2) as d, date '2025-03-01' as day,"
-            " timestamptz '2025-03-01 04:05:00+00' as ts, true as b, '{\"k\": [1]}'::jsonb as j",
+            " timestamptz '2025-03-01 04:05:00+00' as ts, true as b, (select s.to_jsonb from (select 1 as k) s) as j",
         )
 
-        assert outcome.rows == (("1.50", "2025-03-01", "2025-03-01T04:05:00+00:00", True, {"k": [1]}),)
+        assert outcome.rows == (("1.50", "2025-03-01", "2025-03-01T04:05:00+00:00", True, {"k": 1}),)
 
     def test_an_int8_past_the_browser_s_precision_arrives_as_a_string_of_a_number_column(
         self, runner: QueryRunner

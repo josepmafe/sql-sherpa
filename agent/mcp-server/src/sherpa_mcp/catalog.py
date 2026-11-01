@@ -81,12 +81,8 @@ class MartCatalog(BaseModel):
         wanted = name.lower()
         return next((mart for mart in self.marts if mart.name.lower() == wanted), None)
 
-    def visible_names(self) -> frozenset[str]:
+    def visible_marts(self) -> frozenset[str]:
         return frozenset(mart.name for mart in self.marts)
-
-    def mart_columns(self) -> dict[str, frozenset[str]]:
-        """Each visible mart and its column names: what `SqlGuard` resolves qualified columns against."""
-        return {mart.name: frozenset(column.name for column in mart.columns) for mart in self.marts}
 
     def domains(self) -> tuple[str, ...]:
         return tuple(sorted({mart.domain for mart in self.marts}))

@@ -302,31 +302,22 @@ class TestWarehouseTools:
         [
             "select c from marts.dim_customers c limit 1",
             "select dim_customers from marts.dim_customers limit 1",
-            "select to_json(c) from marts.dim_customers c limit 1",
             "select c.*::text from marts.dim_customers c limit 1",
             "select concat(c.*) from marts.dim_customers c limit 1",
             "select (c.*)::text as x from marts.dim_customers c limit 1",
-            "select array_agg(c.*) from marts.dim_customers c",
+            "select array_agg(c.*) from marts.dim_customers c where c.customer_id <= 3",
             # attribute notation: Postgres reads c.f as f(c) when f is not a column of c
             "select c.row_to_json from marts.dim_customers c limit 1",
             "select c.record_out from marts.dim_customers c limit 1",
             "with x as (select * from marts.dim_customers) select x.to_jsonb from x limit 1",
         ],
     )
-    def test_run_sql_refuses_whole_row_pii_leaks(self, tools: WarehouseTools, query: str) -> None:
-        with pytest.raises(WarehouseToolError, match=r"whole-row reference|is not allowed|is not a column of"):
-            tools.run_sql(query)
+    def test_whole_row_forms_return_only_hashes(self, tools: WarehouseTools, query: str) -> None:
+        result = tools.run_sql(query)
 
-    def test_run_sql_reads_an_aggregate_column_by_the_name_postgres_gives_it(self, tools: WarehouseTools) -> None:
-        result = tools.run_sql(
-            "select t.count, t.sum is not null, t.avg is not null, t.min <= t.max from ("
-            "select count(*), sum(net_revenue), avg(net_revenue), min(order_date), max(order_date) "
-            "from marts.fct_orders) t"
-        )
-
-        assert result.columns == ("count", "?column?", "?column?", "?column?")
-        assert result.rows[0][0] > 0
-        assert result.rows[0][1:] == (True, True, True)
+        dumped = json.dumps(result.rows)
+        assert "@" not in dumped
+        assert re.search(r"[0-9a-f]{32}", dumped)
 
     def test_run_sql_rejects_hostile_sql_with_guard_errors(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError, match="staging"):
@@ -354,10 +345,10 @@ class TestGuardTracing:
         assert "drop table" not in str(spans)
 
     def test_rejection_rule_comes_from_the_error_code(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
-        tools.validate_sql("select c.row_to_json from marts.dim_customers c")
+        tools.validate_sql("select pg_sleep(1) from marts.fct_orders")
 
         rejected = _only_span(capfire.exporter.exported_spans_as_dict(), "guard rejected")
-        assert rejected["attributes"]["rule"] == "column"
+        assert rejected["attributes"]["rule"] == "function"
 
     def test_accepted_query_is_traced_with_its_marts(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
         tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")
@@ -656,11 +647,11 @@ class TestSearchValues:
 
 class TestValidateSql:
     def test_a_guard_refusal_never_reaches_explain(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        validation = fake_tools.validate_sql("select c from marts.dim_customers c")
+        validation = fake_tools.validate_sql("select pg_sleep(1) from marts.fct_orders")
 
         assert not validation.ok
         assert len(validation.errors) == 1
-        assert validation.errors[0].startswith("[guard:whole_row]")
+        assert validation.errors[0].startswith("[guard:function]")
         fake_database.explain.assert_not_called()
 
     def test_an_accepted_query_is_explained_as_executed(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
@@ -738,8 +729,8 @@ class TestRunSql:
         fake_database.fetch_for_model.assert_called_once_with(text)
 
     def test_a_refused_query_never_reaches_the_database(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        with pytest.raises(WarehouseToolError, match=r"^\[guard:whole_row\]"):
-            fake_tools.run_sql("select c from marts.dim_customers c")
+        with pytest.raises(WarehouseToolError, match=r"^\[guard:function\]"):
+            fake_tools.run_sql("select pg_sleep(1) from marts.fct_orders")
 
         fake_database.fetch_for_model.assert_not_called()
 

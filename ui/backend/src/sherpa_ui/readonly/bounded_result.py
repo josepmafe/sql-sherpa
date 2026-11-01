@@ -10,8 +10,8 @@ from sherpa_mcp.database import MAX_CELL_CHARS, cap_cell, cell_chars, json_safe
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# UI spec §5. All cells of one result together, after cutting each to sherpa_mcp's MAX_CELL_CHARS (the length the
-# guard lets lpad build); about eight times the widest mart's 1,000 rows (fct_orders, ~250,000 characters).
+# UI spec §5. All cells of one result together, after cutting each to sherpa_mcp's MAX_CELL_CHARS; about eight times
+# the widest mart's 1,000 rows (fct_orders, ~250,000 characters).
 MAX_RESULT_CHARS: Final = 2_000_000
 # After a row this long before cutting, rows are fetched one at a time, so at most one such row is in memory.
 LARGE_ROW_CHARS: Final = 1_000_000

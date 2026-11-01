@@ -118,7 +118,7 @@ class TestMartCatalogLoader:
 
         loaded = MartCatalogLoader(fixture_target).load()
 
-        assert loaded.visible_names() == frozenset({"fct_orders"})
+        assert loaded.visible_marts() == frozenset({"fct_orders"})
 
     def test_reloads_on_mtime_change(self, fixture_target: Path) -> None:
         loader = MartCatalogLoader(fixture_target)
@@ -131,7 +131,7 @@ class TestMartCatalogLoader:
         reloaded = loader.load()
 
         assert reloaded is not first
-        assert reloaded.visible_names() == frozenset({"fct_orders"})
+        assert reloaded.visible_marts() == frozenset({"fct_orders"})
 
     def test_reloads_when_only_catalog_json_changes(self, fixture_target: Path) -> None:
         loader = MartCatalogLoader(fixture_target)
@@ -263,19 +263,12 @@ class TestMartCatalog:
         assert [column.name for column in products.columns if column.is_pii] == ["supplier_email"]
 
     def test_an_unmasked_table_is_not_a_visible_mart(self, catalog: MartCatalog) -> None:
-        assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+        assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
         assert catalog.mart("dim_customers_unmasked") is None
 
-    def test_visible_names_and_domains(self, catalog: MartCatalog) -> None:
-        assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+    def test_visible_marts_and_domains(self, catalog: MartCatalog) -> None:
+        assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
         assert catalog.domains() == ("customers", "products", "sales")
-
-    def test_mart_columns_name_every_column_of_every_visible_mart(self, catalog: MartCatalog) -> None:
-        assert catalog.mart_columns() == {
-            "fct_orders": frozenset({"order_id", "customer_id", "order_date", "net_revenue", "current_status"}),
-            "dim_customers": frozenset({"customer_id", "email", "customer_segment"}),
-            "dim_products": frozenset({"brand", "product_id", "supplier_email"}),
-        }
 
 
 class TestCatalogShape:

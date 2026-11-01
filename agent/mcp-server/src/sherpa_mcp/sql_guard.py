@@ -3,29 +3,21 @@
 from __future__ import annotations
 
 import re
-from itertools import zip_longest
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 import sqlglot
 from pydantic import BaseModel, ConfigDict
 from sqlglot import exp
-from sqlglot.dialects.dialect import Dialect
 from sqlglot.errors import SqlglotError
-from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
-from sqlglot.optimizer.scope import Scope, traverse_scope
-from sqlglot.tokens import TokenType
 
 from sherpa_mcp.catalog import MARTS_SCHEMA
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 DIALECT: Final = "postgres"
 # Agent spec §4.2. Names as sqlglot reports them (`sql_name()`, or the name for an unknown function). Where sqlglot
 # parses a Postgres function into a node with another name, that name is listed next to the Postgres one:
 # string_agg -> group_concat, bool_and/bool_or -> logical_and/logical_or, var_samp -> variance,
 # var_pop -> variance_pop, ceiling -> ceil, pow -> power, char_length -> length, substr -> substring,
-# ltrim/rtrim -> trim, strpos/position -> str_position, lpad/rpad -> pad, date_part -> extract,
+# ltrim/rtrim -> trim, strpos/position -> str_position, date_part -> extract,
 # date_trunc -> timestamp_trunc, now -> current_timestamp, to_char -> time_to_str, to_date -> str_to_date.
 # mod(a, b) parses as the `%` operator (`mod` stays listed for the Postgres spelling).
 ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
@@ -42,8 +34,7 @@ ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
         *("sign", "greatest", "least"),
         # string
         *("lower", "upper", "length", "char_length", "substring", "substr", "trim", "ltrim", "rtrim", "replace"),
-        *("concat", "concat_ws", "left", "right", "split_part", "strpos", "position", "str_position", "lpad"),
-        *("rpad", "pad", "initcap"),
+        *("concat", "concat_ws", "left", "right", "split_part", "strpos", "position", "str_position", "initcap"),
         # date
         *("date_trunc", "timestamp_trunc", "date_part", "extract", "age", "now", "current_date"),
         *("current_timestamp", "to_char", "time_to_str", "to_date", "str_to_date", "make_date", "date_bin"),
@@ -53,10 +44,19 @@ ALLOWED_FUNCTIONS: Final[frozenset[str]] = frozenset(
         "similarity",
     }
 )
-# lpad/rpad build a string of the length they are given, and char(n)/bit(n) pad every value to n, so only a literal
-# length up to the cell cap the server returns (database.MAX_CELL_CHARS) is allowed: a computed or huge length could
-# fill the server's memory.
-MAX_PAD_LENGTH: Final = 10_000
+# Agent spec §4.2 item 2: casts go to this closed list. A cast to another type (json, uuid, bytea, char, bit, the reg*
+# types, domains, ...) is rejected. The walk visits an array's element type too, so `jsonb[]` fails on JSONB.
+CAST_TYPES: Final[frozenset[exp.DType]] = frozenset(
+    {
+        *(exp.DType.SMALLINT, exp.DType.INT, exp.DType.BIGINT, exp.DType.DECIMAL, exp.DType.FLOAT, exp.DType.DOUBLE),
+        *(exp.DType.BOOLEAN, exp.DType.TEXT, exp.DType.VARCHAR, exp.DType.DATE, exp.DType.TIME, exp.DType.TIMESTAMP),
+        *(exp.DType.TIMESTAMPTZ, exp.DType.INTERVAL, exp.DType.ARRAY),
+    }
+)
+CAST_HINT: Final = (
+    "cast to smallint, integer, bigint, numeric, real, double precision, boolean, text, varchar, date, time, "
+    "timestamp, timestamptz, interval or an array of these"
+)
 ERROR_SNIPPET_LENGTH: Final = 60  # longest expression an error quotes for an operator the guard rejects
 # Every error starts with `[guard:<rule>]`, a stable code a caller can match on; the rest may quote the query.
 ERROR_CODE: Final = "[guard:{rule}] "
@@ -70,31 +70,12 @@ JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_jso
 JSON_HINT: Final = "aggregate with string_agg, or select the columns"
 DEFAULT_FUNCTION_HINT: Final = "rewrite it with the common aggregate, window, string, date and math functions"
 DEFAULT_OPERATOR_HINT: Final = "use comparison operators, LIKE/ILIKE or IN (...)"
-WHOLE_ROW_NAME_HINT: Final = (
-    "select named columns, or qualify a column that shares a table, alias or CTE name (`t.name`)"
-)
 PARAMETER_MESSAGE: Final = "query parameters ($1, ?, :name) and the prefix @ operator are not allowed"
 PARAMETER_HINT: Final = "write the values into the query, and abs(x) for an absolute value"
 # Each SELECT (CTE body, subquery, union arm) is a planning step: a few hundred chained CTEs outrun the 5 s timeout
 # in the planner, before any row (agent spec §4.2 item 3).
 MAX_QUERY_SCOPES: Final = 50
-MAX_IDENTIFIER_BYTES: Final = 63  # Postgres cuts longer names, so two names that differ later are one name to it
-ESCAPED_IDENTIFIER_MESSAGE: Final = 'escaped identifier U&"..." is not allowed'
-ESCAPED_IDENTIFIER_HINT: Final = "write the name without escapes"
-NUMBER_HINT: Final = "write plain decimal digits such as 10000, without _ separators or a 0x, 0o or 0b prefix"
 _MARTS_HINT: Final = "query only the marts that list_tables returns"
-_ALIAS_LIST_HINT: Final = (
-    "the source's alias list (`s(a, b)`) renames its columns by position, so name only those, "
-    "or drop the list and alias the columns in the select list (`email as e`)"
-)
-# Postgres names an unaliased `count(*)`, `sum(x)`, ... column after the function (`?column?` for most expressions).
-_AGGREGATE_NAMES: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
-    (exp.Count, "count"),
-    (exp.Sum, "sum"),
-    (exp.Avg, "avg"),
-    (exp.Min, "min"),
-    (exp.Max, "max"),
-)
 _OPERATOR_HINTS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
     (exp.Array, "use IN (...) instead of = ANY(ARRAY[...])"),
     (exp.RegexpLike, "use LIKE or ILIKE instead of a regular expression"),
@@ -106,7 +87,6 @@ _CLOCK_CALLS: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
     (exp.CurrentTimestamp, "now()/current_timestamp"),
     (exp.CurrentDate, "current_date"),
 )
-_POSTGRES: Final = Dialect.get_or_raise(DIALECT)
 _CALL_HEAD: Final = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _WRITTEN_NAME: Final = re.compile(r"[A-Za-z_]\w*")
 # sqlglot models these operators as function nodes; they call no function.
@@ -141,28 +121,16 @@ class GuardResult(BaseModel):
 class SqlGuard:
     """Never rewrites the SQL and never raises on bad SQL: every problem is an error in the result."""
 
-    def __init__(
-        self, mart_columns: Mapping[str, frozenset[str]], allowed_functions: frozenset[str] = ALLOWED_FUNCTIONS
-    ) -> None:
-        """`mart_columns`: every visible mart and the names of its columns, as Postgres stores them.
+    def __init__(self, visible_marts: frozenset[str], allowed_functions: frozenset[str] = ALLOWED_FUNCTIONS) -> None:
+        """`visible_marts`: the names of the marts the agent may read, as Postgres stores them.
 
         `allowed_functions` defaults to the agent's list; another caller (the UI) may pass its own, named as in
         `ALLOWED_FUNCTIONS` (sqlglot's names next to the Postgres ones).
         """
-        self._mart_columns = mart_columns
+        self._visible_marts = visible_marts
         self._allowed_functions = allowed_functions
 
     def check(self, sql: str) -> GuardResult:
-        number_errors = _number_errors(sql)
-        if number_errors:
-            # sqlglot misreads these numbers, so its view of the rest of the query cannot be trusted either.
-            return GuardResult(ok=False, errors=number_errors, tables=())
-
-        escaped_errors = _escaped_identifier_errors(sql)
-        if escaped_errors:
-            # sqlglot reads `U&"x"` as the column U, an `&` and a name, so its view of the query cannot be trusted.
-            return GuardResult(ok=False, errors=escaped_errors, tables=())
-
         try:
             parsed = sqlglot.parse(sql, read=DIALECT)
         except (SqlglotError, RecursionError) as exc:
@@ -199,7 +167,6 @@ class SqlGuard:
         for node in statement.walk():
             errors.extend(self._node_errors(node, tables))
             clock_calls.extend(name for kind, name in _CLOCK_CALLS if isinstance(node, kind))
-        errors.extend(self._qualified_column_errors(statement))
 
         unique_errors = tuple(dict.fromkeys(errors))
         return GuardResult(
@@ -226,37 +193,9 @@ class SqlGuard:
                         "use marts.dim_date for a series of dates, or a non-recursive query",
                     )
                 ]
-            case exp.Pad() if not _is_small_literal(node.expression):
+            case exp.DataType() if node.this not in CAST_TYPES:
                 return [
-                    _error(
-                        "pad",
-                        f"{_written_name(node)} needs a literal length of at most {MAX_PAD_LENGTH:,}",
-                        f"write the length as a number, e.g. {_written_name(node)}(x::text, 2, '0')",
-                    )
-                ]
-            case exp.DataType() if not _is_built_in_type(node):
-                return [
-                    _error(
-                        "cast",
-                        f"cast to type {node.sql(dialect=DIALECT)} is not allowed",
-                        "cast to a built-in type such as text, numeric, date or timestamp",
-                    )
-                ]
-            case exp.DataType() if not all(_is_small_literal(param.this) for param in _type_params(node)):
-                return [
-                    _error(
-                        "type_length",
-                        f"type {node.sql(dialect=DIALECT)} has a length over {MAX_PAD_LENGTH:,}",
-                        f"use lengths up to {MAX_PAD_LENGTH:,}, or cast to text",
-                    )
-                ]
-            case exp.Identifier() if len(node.name.encode()) > MAX_IDENTIFIER_BYTES:
-                return [
-                    _error(
-                        "identifier_length",
-                        f"identifier longer than {MAX_IDENTIFIER_BYTES} bytes is not allowed",
-                        f"use a name of at most {MAX_IDENTIFIER_BYTES} bytes",
-                    )
+                    _error("cast", f"cast to type {node.sql(dialect=DIALECT)} is not allowed", CAST_HINT),
                 ]
             case exp.Operator():
                 # `a OPERATOR(pg_catalog.~) b` names any operator by its schema, past the rules for written ones.
@@ -279,15 +218,6 @@ class SqlGuard:
                         "call functions without a schema",
                     )
                 ]
-            case exp.Dot():
-                # `(expr).name` or a five-part name: Postgres may read the last part as a function of the rest.
-                return [
-                    _error(
-                        "field",
-                        f"field selection `{_cut(node.sql(dialect=DIALECT))}` is not allowed",
-                        "select named columns",
-                    )
-                ]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):
                 if _function_name(node) in self._allowed_functions:
                     return []
@@ -299,23 +229,6 @@ class SqlGuard:
                 return [_error("function", f"function {name} is not allowed", _function_hint(name))]
             case exp.Table():
                 return self._table_errors(node, tables)
-            case exp.Column(this=exp.Star()) if not _is_projection_item(node):
-                # `c.*` expands to named (maskable) columns only as a select-list item; anywhere else it is one record.
-                return [
-                    _error(
-                        "whole_row",
-                        f"whole-row reference `{node.sql(dialect=DIALECT)}` inside an expression is not allowed",
-                        "select named columns",
-                    )
-                ]
-            case exp.Column(table="") if _is_whole_row(node):
-                return [
-                    _error(
-                        "whole_row",
-                        f"whole-row reference `{node.name}` is not allowed",
-                        WHOLE_ROW_NAME_HINT,
-                    )
-                ]
             case _:
                 return []
 
@@ -350,211 +263,11 @@ class SqlGuard:
         if _identifier_value(schema) != MARTS_SCHEMA:
             return [_error("table", f"table {qualified} is outside {MARTS_SCHEMA}", _MARTS_HINT)]
 
-        if name not in self._mart_columns:
+        if name not in self._visible_marts:
             return [_error("table", f"table {qualified} is not a visible mart", _MARTS_HINT)]
 
         tables.append(qualified)
         return []
-
-    def _qualified_column_errors(self, statement: exp.Expr) -> list[str]:
-        """Every qualified column must be a real column of the source its qualifier names.
-
-        Postgres reads `t.f` as the call `f(t)` when `f` is not a column of `t`, so `c.row_to_json` or `c.to_jsonb`
-        would return the whole row past the function allow-list and the name-based masking. A qualifier that does not
-        resolve to a mart or a derived table whose columns are known fails closed. Identifiers are folded as Postgres
-        folds them (unquoted to lower case), on a copy: the query itself is never rewritten.
-        """
-        tree = normalize_identifiers(statement.copy(), dialect=DIALECT)
-        try:
-            scopes = {id(scope.expression): scope for scope in traverse_scope(tree)}
-            return self._unresolved_columns(tree, scopes)
-        except (SqlglotError, RecursionError):
-            # A chain of hundreds of CTEs nests deeper than `_outputs` can follow.
-            return [_error("column", "could not resolve the column references of the query", "simplify it")]
-
-    def _unresolved_columns(self, tree: exp.Expr, scopes: dict[int, Scope]) -> list[str]:
-        errors: list[str] = []
-        for column in tree.find_all(exp.Column):
-            if not column.table or isinstance(column.this, exp.Star):
-                continue  # unqualified (never a function call) or `t.*` (checked as a whole-row reference)
-
-            scope = _enclosing_scope(column, scopes)
-            source = None if scope is None or column.args.get("catalog") else _find_source(scope, column)
-            outputs = None if source is None else self._outputs(source, scopes, frozenset())
-            if outputs is None or column.name not in outputs:
-                errors.append(_not_a_column(column, source))
-        return errors
-
-    def _outputs(
-        self, source: exp.Expr | Scope, scopes: dict[int, Scope], seen: frozenset[int]
-    ) -> frozenset[str] | None:
-        """The column names a FROM source exposes, or None when they cannot be known (the caller fails closed)."""
-        if isinstance(source, exp.Table):
-            renamed = _alias_columns(source)
-            if renamed is not None:
-                return renamed  # Postgres renames by position; only the new names are certain
-
-            if source.db != MARTS_SCHEMA or not isinstance(source.this, exp.Identifier) or source.args.get("catalog"):
-                return None
-            return self._mart_columns.get(source.name)
-
-        if not isinstance(source, Scope) or id(source) in seen:
-            return None  # not a query, or a recursive reference
-
-        seen = seen | {id(source)}
-        expression = source.expression
-        renamed = _alias_columns(expression)
-        if renamed is not None:
-            return renamed
-
-        match expression:
-            case exp.SetOperation():
-                # A set operation's columns are named by its first query.
-                left = expression.left.unnest()
-                return self._outputs(scopes[id(left)], scopes, seen) if id(left) in scopes else None
-            case exp.Lateral(this=exp.Subquery(this=inner)) if id(inner) in scopes:
-                return self._outputs(scopes[id(inner)], scopes, seen)
-            case exp.Select():
-                return self._select_outputs(source, expression, scopes, seen)
-            case _:
-                return None
-
-    def _select_outputs(
-        self, scope: Scope, select: exp.Select, scopes: dict[int, Scope], seen: frozenset[int]
-    ) -> frozenset[str] | None:
-        names: set[str] = set()
-        for projection in select.expressions:
-            expanded: list[frozenset[str] | None]
-            match projection:
-                case exp.Star():
-                    expanded = [self._outputs(item, scopes, seen) for _, item in scope.selected_sources.values()]
-                case exp.Column(this=exp.Star()):
-                    item = _find_source(scope, projection)
-                    expanded = [None if item is None else self._outputs(item, scopes, seen)]
-                case _:
-                    expanded = [frozenset({_output_name(projection)})]
-            for outputs in expanded:
-                if outputs is None:
-                    return None
-                names.update(outputs)
-        return frozenset(names)
-
-
-def _number_errors(sql: str) -> tuple[str, ...]:
-    """Numbers Postgres 16 reads differently from sqlglot: `1_000`, `0x10`, `0o17`, `0b1` are one number to Postgres,
-    while sqlglot splits them (`1_000` is `1 AS _000`, `char(10_485_760)` is CHAR(10)) or reads a bit string.
-
-    Checked on sqlglot's tokens, so digits inside strings, quoted names and comments (which are not tokens) pass: a
-    number directly followed by a letter, digit or `_`, or any other token that starts with a digit, is rejected.
-    """
-    try:
-        tokens = _POSTGRES.tokenize(sql)
-    except SqlglotError:
-        return ()  # the parser reports it
-
-    literals: list[str] = []
-    for token, following in zip_longest(tokens, tokens[1:]):
-        if token.token_type == TokenType.COMMAND:
-            break  # the rest is one string token that does not map onto the text; the statement is rejected anyway
-
-        text = sql[token.start : token.end + 1]
-        if token.token_type != TokenType.NUMBER:
-            if text[:1].isdigit():
-                literals.append(text)
-        elif following is not None and following.start == token.end + 1 and _is_word_char(sql[following.start]):
-            literals.append(sql[token.start : following.end + 1])
-    return tuple(
-        _error("number", f"numeric literal `{_cut(literal)}` is not allowed", NUMBER_HINT)
-        for literal in dict.fromkeys(literals)
-    )
-
-
-def _escaped_identifier_errors(sql: str) -> tuple[str, ...]:
-    """A Unicode-escape name (U&, then a quoted name) is one name to Postgres; sqlglot tokenizes `U`, `&` and a name.
-
-    Checked on the tokens, so `U&'...'` strings (one UNICODE_STRING token) and text inside strings pass.
-    """
-    try:
-        tokens = _POSTGRES.tokenize(sql)
-    except SqlglotError:
-        return ()  # the parser reports it
-
-    for first, amp, name in zip(tokens, tokens[1:], tokens[2:], strict=False):
-        if (
-            first.token_type == TokenType.VAR
-            and first.text.upper() == "U"
-            and amp.token_type == TokenType.AMP
-            and amp.start == first.end + 1
-            and name.token_type == TokenType.IDENTIFIER
-            and name.start == amp.end + 1
-        ):
-            return (_error("unicode_escape", ESCAPED_IDENTIFIER_MESSAGE, ESCAPED_IDENTIFIER_HINT),)
-
-    return ()
-
-
-def _is_word_char(char: str) -> bool:
-    return char.isalnum() or char == "_"
-
-
-def _enclosing_scope(column: exp.Column, scopes: dict[int, Scope]) -> Scope | None:
-    node = column.parent
-    while node is not None and id(node) not in scopes:
-        node = node.parent
-    return None if node is None else scopes[id(node)]
-
-
-def _find_source(scope: Scope, column: exp.Column) -> exp.Expr | Scope | None:
-    """The FROM item that `column`'s qualifier names, searched outwards from the innermost query as Postgres does."""
-    current: Scope | None = scope
-    while current is not None:
-        selected = current.selected_sources.get(column.table)
-        if selected is not None:
-            source: exp.Expr | Scope = selected[1]
-            schema = column.args.get("db")
-            if schema is None:
-                return source
-            # `schema.table.column` only names a table that has no alias.
-            if isinstance(source, exp.Table) and not source.alias and source.db == schema.name:
-                return source
-            return None
-
-        current = current.parent
-    return None
-
-
-def _alias_columns(node: exp.Expr) -> frozenset[str] | None:
-    """The column names an alias list gives a source (`s(a, b)`, `with t(a, b) as`), if it has one."""
-    alias = node.args.get("alias")
-    if alias is None and isinstance(node.parent, exp.Subquery | exp.CTE):
-        alias = node.parent.args.get("alias")
-    if not isinstance(alias, exp.TableAlias) or not alias.columns:
-        return None
-    return frozenset(column.name for column in alias.columns)
-
-
-def _not_a_column(column: exp.Column, source: exp.Expr | Scope | None) -> str:
-    match source:
-        case exp.Table():
-            target = f"{source.db}.{source.name}" if source.db else source.name
-        case None:
-            target = "a table in scope"
-        case _:
-            target = column.table
-    renamed = None if source is None else _alias_columns(source.expression if isinstance(source, Scope) else source)
-    return _error(
-        "column",
-        f"column {column.sql(dialect=DIALECT)} is not a column of {target}",
-        "use a column listed by describe_table" if renamed is None else _ALIAS_LIST_HINT,
-    )
-
-
-def _output_name(projection: exp.Expr) -> str:
-    """The column name Postgres gives a select-list item: its alias or column name, or for a bare call of one of
-    `_AGGREGATE_NAMES` the function's name. Anything else gets no name here, so a reference to it fails closed."""
-    if projection.output_name:
-        return projection.output_name
-    return next((name for kind, name in _AGGREGATE_NAMES if type(projection) is kind), "")
 
 
 def _error(rule: str, message: str, hint: str) -> str:
@@ -571,15 +284,6 @@ def _function_hint(name: str) -> str:
 
 def _operator_hint(node: exp.Expr) -> str:
     return next((hint for kind, hint in _OPERATOR_HINTS if isinstance(node, kind)), DEFAULT_OPERATOR_HINT)
-
-
-def _is_small_literal(length: exp.Expr | None) -> bool:
-    return (
-        isinstance(length, exp.Literal)
-        and not length.is_string
-        and length.is_int
-        and int(length.this) <= MAX_PAD_LENGTH
-    )
 
 
 def _cut(text: str) -> str:
@@ -633,16 +337,6 @@ def _starts_with_operand(func: exp.Func, rendered: str) -> bool:
     return isinstance(func, exp.Binary) and rendered.startswith(func.this.sql(dialect=DIALECT))
 
 
-def _is_built_in_type(data_type: exp.DataType) -> bool:
-    """sqlglot knows the standard types; reg* types (catalog lookups), domains and qualified types it does not."""
-    return isinstance(data_type.this, exp.DataType.Type) and data_type.this != exp.DataType.Type.USERDEFINED
-
-
-def _type_params(data_type: exp.DataType) -> list[exp.DataTypeParam]:
-    """A type's length or precision parameters (`char(n)`, `numeric(p, s)`), not the element type of an array."""
-    return [param for param in data_type.expressions if isinstance(param, exp.DataTypeParam)]
-
-
 def _identifier_value(identifier: exp.Identifier) -> str:
     """How Postgres resolves the name: unquoted names fold to lower case, quoted ones are kept verbatim."""
     return identifier.this if identifier.quoted else identifier.this.lower()
@@ -676,40 +370,3 @@ def _ctes_in_scope(table: exp.Expr) -> set[str]:
 
 def _cte_name(cte: exp.CTE) -> str:
     return _identifier_value(cte.args["alias"].this)
-
-
-def _is_projection_item(column: exp.Column) -> bool:
-    return isinstance(column.parent, exp.Select) and column.arg_key == "expressions"
-
-
-def _is_whole_row(column: exp.Column) -> bool:
-    """An unqualified name that is a table alias, table name or CTE name listed in a FROM reads the whole record.
-
-    Postgres resolves a real column first, so this also rejects a column that shares such a name; that is rare and the
-    model can qualify it (`alias.column`).
-    """
-    # Fails closed: compared case-insensitively on both sides, so `"C"`, `C` and `c` all count as the same name.
-    name = _identifier_value(column.this).lower()
-    scope = column.parent
-    while scope is not None:
-        if isinstance(scope, exp.Select):
-            sources = [scope.args.get("from_") or scope.args.get("from"), *scope.args.get("joins", [])]
-            for source in sources:
-                if source is not None and any(r.alias_or_name.lower() == name for r in _relations(source.this)):
-                    return True
-        scope = scope.parent
-    return False
-
-
-def _relations(relation: exp.Expr) -> list[exp.Expr]:
-    """The relation and, for a parenthesized join, the relations joined inside it (to any depth).
-
-    `from (a join b c on ...)` parses as a Subquery around the first relation, and that relation (a Table, a derived
-    table or an inner parenthesized join) carries the joins, so `c` is only visible here.
-    """
-    found = [relation]
-    if isinstance(relation, exp.Subquery) and isinstance(relation.this, exp.Subquery | exp.Table):
-        found.extend(_relations(relation.this))
-    for join in relation.args.get("joins") or []:
-        found.extend(_relations(join.this))
-    return found

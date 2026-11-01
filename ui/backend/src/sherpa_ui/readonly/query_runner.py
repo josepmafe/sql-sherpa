@@ -62,7 +62,6 @@ COLUMN_TYPES: Final[dict[str, ColumnType]] = {
     "float8": "number",
     "text": "text",
     "varchar": "text",
-    "bpchar": "text",
     "name": "text",
     "date": "date",
     "timestamp": "timestamp",
@@ -76,8 +75,8 @@ DECLARE_PREFIX: Final = f'DECLARE "{CURSOR_NAME}" CURSOR FOR '
 PROBE_SUFFIX: Final = " limit 0"  # server mode learns the result's column names without running the query
 # Rows a FETCH asks for: 1,000 fct_orders rows take ~20 ms in batches of 100, against ~10 ms in a single FETCH.
 FETCH_BATCH_ROWS: Final = 100
-# Cells a FETCH asks for, so a wide result comes in fewer rows at a time: a batch of 10,000-character cells (lpad's
-# longest) stays near 100 MB however many columns the query has.
+# Cells a FETCH asks for, so a wide result comes in fewer rows at a time: a batch of 10,000-character cells (the cell
+# cap) stays near 100 MB however many columns the query has.
 FETCH_BATCH_CELLS: Final = 10_000
 CANCEL_TIMEOUT_SECONDS: Final = 5.0
 # UI spec §5. Runs holding a connection at once, below the sherpa_ui role's CONNECTION LIMIT 10
@@ -284,7 +283,7 @@ class QueryRunner:
             raise UiQueryError("catalog_unavailable", str(error)) from error
 
     def _check_guard(self, catalog: MartCatalog, sql_text: str) -> None:
-        guard = SqlGuard(catalog.mart_columns()).check(sql_text)
+        guard = SqlGuard(catalog.visible_marts()).check(sql_text)
         if not guard.ok:
             raise UiQueryError("guard_rejected", "\n".join(guard.errors))
 

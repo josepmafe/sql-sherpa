@@ -76,11 +76,6 @@ class AdminSettings(BaseSettings):
 
 
 @pytest.fixture(scope="session")
-def repo_root() -> Path:
-    return REPO_ROOT
-
-
-@pytest.fixture(scope="session")
 def examples_path() -> Path:
     return EXAMPLES_PATH
 
