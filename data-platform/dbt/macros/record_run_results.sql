@@ -18,7 +18,7 @@
                     {{ _audit_text(result.node.resource_type) }}, {{ _audit_text(result.status) }},
                     {{ result.failures if result.failures is not none else 'null' }},
                     {{ result.execution_time if result.execution_time is not none else 'null' }},
-                    {{ _audit_text((result.message | string)[:2000] if result.message is not none else none) }},
+                    {{ _audit_text(_audit_message(result.message)) }},
                     {{ _audit_text(run_started_at.isoformat()) }}::timestamptz)
                 {%- endset -%}
                 {%- do rows.append(row) -%}
@@ -63,6 +63,15 @@
         or args.get('resource_types') or args.get('exclude_resource_types')
         or args.get('empty') or args.get('sample')
     )) -}}
+{%- endmacro %}
+
+{#- The first line of a dbt message, at most 2000 characters, or none. A constraint violation's later lines (DETAIL) carry
+    the failing row's values, so they stay out of the audit table. An empty message keeps its empty first line. -#}
+{% macro _audit_message(message) -%}
+    {%- if message is none -%}
+        {{- return(none) -}}
+    {%- endif -%}
+    {{- return(((message | string).splitlines() or [''])[0][:2000]) -}}
 {%- endmacro %}
 
 {#- A SQL string literal, or null; doubles single quotes (standard_conforming_strings is on, so backslashes stay literal). -#}
