@@ -18,7 +18,6 @@ from sherpa_ui.app import create_app
 from sherpa_ui.readonly.query_runner import QueryOutcome, QueryRunner, UiQueryError
 from sherpa_ui.readonly.sort_filter import (
     FilterSpec,
-    PiiColumnError,
     SortSpec,
     UnknownColumnError,
 )
@@ -126,17 +125,6 @@ class TestQueriesApi:
 
         assert response.status_code == 422
         assert response.json() == {"code": "unknown_column", "message": "column 'zzz' is not a column of the result"}
-
-    def test_a_masked_sort_or_filter_column_is_422_pii_column(self, client: TestClient, runner: MagicMock) -> None:
-        runner.run.side_effect = PiiColumnError("column 'email' holds personal data")
-
-        response = client.post(
-            "/api/queries", json=body(filters=[{"column": "email", "operator": "contains", "value": "@"}])
-        )
-
-        assert response.status_code == 422
-        assert response.json() == {"code": "pii_column", "message": "column 'email' holds personal data"}
-        runner.run.assert_called_once()  # no fallback to a run in the browser's mode
 
     @pytest.mark.parametrize("failure", [RecursionError("maximum recursion depth exceeded"), RuntimeError("boom")])
     def test_unexpected_error_is_500_internal_error(

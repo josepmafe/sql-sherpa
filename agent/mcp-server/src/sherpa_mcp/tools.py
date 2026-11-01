@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalog, MartColumn, MetricDefinition
 from sherpa_mcp.database import WarehouseToolError
 from sherpa_mcp.examples import RankedExample
-from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import SqlGuard
 
 if TYPE_CHECKING:
@@ -240,8 +239,7 @@ class WarehouseTools:
             sql.Identifier(MARTS_SCHEMA), sql.Identifier(mart.name), order_by, sql.Literal(SAMPLE_ROWS)
         )
         result = self._database.fetch_for_model(query, max_rows=SAMPLE_ROWS)
-        masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
-        sample = SampleRows(columns=result.columns, rows=tuple(tuple(row) for row in masked))
+        sample = SampleRows(columns=result.columns, rows=result.rows)
         stored = self._stored_values(catalog, mart)
         return TableDescription(
             name=mart.name,
@@ -321,12 +319,11 @@ class WarehouseTools:
         if not guard.ok:
             raise WarehouseToolError("; ".join(guard.errors))
         result = self._database.fetch_for_model(executed)
-        masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
         return SqlResult(
             execution_id=execution_id,
             columns=result.columns,
             column_types=result.column_types,
-            rows=tuple(tuple(row) for row in masked),
+            rows=result.rows,
             returned_rows=result.returned_rows,
             truncated=result.truncated,
             elapsed_ms=result.elapsed_ms,

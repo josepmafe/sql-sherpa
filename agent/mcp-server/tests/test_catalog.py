@@ -253,9 +253,6 @@ class TestMartCatalog:
         assert catalog.mart("stg_shop__customers") is None
         assert orders.column("nope") is None
 
-    def test_pii_columns(self, catalog: MartCatalog) -> None:
-        assert catalog.pii_columns() == frozenset({"email", "supplier_email"})
-
     def test_is_pii_is_the_column_s_meta_masked(self, catalog: MartCatalog) -> None:
         customers = catalog.mart("dim_customers")
         products = catalog.mart("dim_products")
@@ -264,16 +261,6 @@ class TestMartCatalog:
         assert products is not None
         assert [column.name for column in customers.columns if column.is_pii] == ["email"]
         assert [column.name for column in products.columns if column.is_pii] == ["supplier_email"]
-
-    def test_pii_in_a_later_mart_is_found_when_the_first_mart_has_none(self, fixture_target: Path) -> None:
-        def clear_customer_email_pii(manifest: dict[str, Any]) -> None:
-            manifest["nodes"]["model.sherpa.dim_customers"]["columns"]["email"]["meta"]["masked"] = False
-
-        _edit_manifest(fixture_target, clear_customer_email_pii)
-
-        catalog = MartCatalogLoader(fixture_target).load()
-
-        assert catalog.pii_columns() == frozenset({"supplier_email"})
 
     def test_an_unmasked_table_is_not_a_visible_mart(self, catalog: MartCatalog) -> None:
         assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers", "dim_products"})

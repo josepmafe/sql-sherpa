@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 import psycopg
 import pytest
 from pydantic import BaseModel, ConfigDict
-from sherpa_mcp.masking import PiiMasker
 from sherpa_ui.readonly.query_runner import COLUMN_TYPES, QueryRunner, UiQueryError
 from sherpa_ui.readonly.sort_filter import FilterOperator, FilterSpec, SortSpec, build_wrapped_query
 from ui_helpers import REPO_ROOT
@@ -92,7 +91,7 @@ def ui_connection(ui_settings: UiSettings) -> Iterator[psycopg.Connection]:
 @pytest.mark.parametrize("case", [case for case in PARITY.cases if not case.expected_error], ids=lambda case: case.name)
 def test_every_case_matches_postgres(ui_connection: psycopg.Connection, case: ParityCase) -> None:
     table = TABLES[case.table]
-    wrapped = build_wrapped_query(table.sql, table.columns, PiiMasker(frozenset()), *_specs(case, table))
+    wrapped = build_wrapped_query(table.sql, table.columns, *_specs(case, table))
 
     rows = ui_connection.execute(wrapped.query, wrapped.params).fetchall()
 

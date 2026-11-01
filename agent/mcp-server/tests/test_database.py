@@ -121,36 +121,10 @@ class TestErrorMapping:
 
         assert str(error) == "[timeout] the query took longer than 5 s; aggregate or filter more narrowly"
 
-    @pytest.mark.parametrize(
-        ("error", "expected"),
-        [
-            (
-                errors.InvalidTextRepresentation('invalid input syntax for type integer: "alice@x.com"'),
-                "[sql] a value could not be converted or computed (InvalidTextRepresentation); "
-                "check the literal format",
-            ),
-            (
-                errors.DivisionByZero("division by zero"),
-                "[sql] a value could not be converted or computed (DivisionByZero); "
-                "wrap the denominator in nullif(x, 0)",
-            ),
-            (
-                errors.InvalidDatetimeFormat('invalid input syntax for type date: "alice@x.com"'),
-                "[sql] a value could not be converted or computed (InvalidDatetimeFormat); check the literal format",
-            ),
-            (
-                errors.DatetimeFieldOverflow('date/time field value out of range: "alice@x.com"'),
-                "[sql] a value could not be converted or computed (DatetimeFieldOverflow); check the literal format",
-            ),
-            (
-                errors.NumericValueOutOfRange('value "alice@x.com" is out of range'),
-                "[sql] a value could not be converted or computed (NumericValueOutOfRange); "
-                "check the column types and use explicit, safe casts",
-            ),
-        ],
-    )
-    def test_data_exceptions_never_carry_the_value(self, error: psycopg.Error, expected: str) -> None:
-        assert str(to_tool_error(error)) == expected
+    def test_a_data_exception_keeps_postgres_message(self) -> None:
+        error = to_tool_error(errors.InvalidTextRepresentation('invalid input syntax for type integer: "x"'))
+
+        assert str(error) == '[sql] invalid input syntax for type integer: "x"'
 
     @pytest.mark.parametrize(
         "error",
@@ -544,13 +518,11 @@ class TestAgentDatabaseOnPostgres:
         assert row["raw"] == "dead"
         json.dumps(result.rows, allow_nan=False)
 
-    def test_division_by_zero_gets_its_remedy(self, agent_database: AgentDatabase) -> None:
+    def test_division_by_zero_is_postgres_message(self, agent_database: AgentDatabase) -> None:
         with pytest.raises(WarehouseToolError) as error:
             agent_database.fetch_for_model("select count(*) / 0 from generate_series(1, 3)")
 
-        assert str(error.value) == (
-            "[sql] a value could not be converted or computed (DivisionByZero); wrap the denominator in nullif(x, 0)"
-        )
+        assert str(error.value) == "[sql] division by zero"
 
     def test_similarity_thresholds_are_set_on_request(self, agent_database: AgentDatabase) -> None:
         result = agent_database.fetch(

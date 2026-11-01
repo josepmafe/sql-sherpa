@@ -94,14 +94,17 @@ class TestWarehouseTools:
 
         assert sorted(names) == sorted(marts)
 
-    def test_describe_table_samples_are_ordered_by_pk_and_masked(self, tools: WarehouseTools) -> None:
+    def test_describe_table_samples_are_ordered_by_pk_and_pseudonymised(self, tools: WarehouseTools) -> None:
         description = tools.describe_table("dim_customers")
 
         columns = description.sample_rows.columns
         ids = [row[columns.index("customer_id")] for row in description.sample_rows.rows]
         assert ids == sorted(ids)
         assert len(ids) == 3
-        assert {row[columns.index("email")] for row in description.sample_rows.rows} == {"***"}
+        assert all(
+            row[columns.index("email")] is None or re.fullmatch(r"[0-9a-f]{32}", str(row[columns.index("email")]))
+            for row in description.sample_rows.rows
+        )
         assert any(column.name == "email" and column.is_pii for column in description.columns)
 
     def test_describe_table_lists_the_stored_values_of_small_text_columns(self, tools: WarehouseTools) -> None:
@@ -271,7 +274,7 @@ class TestWarehouseTools:
             "derive periods from (select max(order_date) from marts.fct_orders)",
         )
 
-    def test_run_sql_truncates_masks_and_ids(self, tools: WarehouseTools) -> None:
+    def test_run_sql_truncates_pseudonymises_and_ids(self, tools: WarehouseTools) -> None:
         big = tools.run_sql("select * from marts.fct_order_items")
         emails = tools.run_sql("select email from marts.dim_customers limit 5")
         plain = tools.run_sql("select order_id from marts.fct_orders limit 2")
@@ -283,22 +286,16 @@ class TestWarehouseTools:
         assert big.returned_rows == 100
         assert big.truncated
         assert len(big.rows) == 100
-        assert [row[0] for row in emails.rows] == ["***"] * 5
+        assert len(emails.rows) == 5
+        assert all(re.fullmatch(r"[0-9a-f]{32}", str(row[0])) for row in emails.rows)
         assert plain.execution_id == spaced.execution_id
         assert plain.execution_id == hashlib.sha256(b"select order_id from marts.fct_orders limit 2").hexdigest()[:16]
 
-    def test_error_text_never_carries_pii_values(self, tools: WarehouseTools, admin: psycopg.Connection) -> None:
-        row = admin.execute("select email from marts.dim_customers where email is not null limit 1").fetchone()
-        assert row is not None
-        email = str(row[0])
-
+    def test_a_data_error_quotes_a_hash(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError) as error:
-            tools.run_sql("select cast(email as integer) from marts.dim_customers limit 1")
-        validation = tools.validate_sql("select cast(email as integer) from marts.dim_customers limit 1")
+            tools.run_sql("select cast(email as integer) from marts.dim_customers where email is not null limit 1")
 
-        assert email not in str(error.value)
-        assert "check the literal format" in str(error.value)
-        assert email not in " ".join(validation.errors)
+        assert re.search(r'invalid input syntax for type integer: "[0-9a-f]{32}"', str(error.value))
 
     @pytest.mark.parametrize(
         "query",
@@ -473,16 +470,6 @@ class TestDescribeTable:
         (query,) = fake_database.fetch_for_model.call_args.args
         assert query.as_string() == 'select * from "marts"."dim_products" order by "product_id" limit 3'
         assert fake_database.fetch_for_model.call_args.kwargs == {"max_rows": 3}
-
-    def test_sample_rows_mask_the_pii_of_every_mart(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        fake_database.fetch_for_model.return_value = _result(
-            ("brand", "product_id", "supplier_email"), [("acme", 1, "a@b.com"), ("zed", 2, None)]
-        )
-
-        description = fake_tools.describe_table("dim_products")
-
-        assert description.sample_rows.columns == ("brand", "product_id", "supplier_email")
-        assert description.sample_rows.rows == (("acme", 1, "***"), ("zed", 2, None))  # a NULL stays NULL
 
     def test_columns_carry_their_synonyms_types_and_metric_refs(
         self, fake_tools: WarehouseTools, fake_database: Mock
@@ -756,9 +743,7 @@ class TestRunSql:
 
         fake_database.fetch_for_model.assert_not_called()
 
-    def test_rows_are_masked_by_the_pii_columns_of_every_mart(
-        self, fake_tools: WarehouseTools, fake_database: Mock
-    ) -> None:
+    def test_rows_and_flags_come_back_as_fetched(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
         fake_database.fetch_for_model.return_value = _result(
             ("brand", "supplier_email"), [("acme", "a@b.com")], column_types=("text", "text"), truncated=True
         )
@@ -767,7 +752,7 @@ class TestRunSql:
 
         assert result.columns == ("brand", "supplier_email")
         assert result.column_types == ("text", "text")
-        assert result.rows == (("acme", "***"),)
+        assert result.rows == (("acme", "a@b.com"),)
         assert result.returned_rows == 1
         assert result.truncated
 

@@ -44,8 +44,6 @@ type GridProps = {
   response: QueryResponse;
   view: ResultView;
   onViewChange: (view: ResultView) => void;
-  // Lower-cased names of the masked columns: they get no sort or filter (UI spec §5).
-  masked: ReadonlySet<string>;
 };
 
 const ROW_HEIGHT = 32;
@@ -54,7 +52,6 @@ const VIEWPORT_HEIGHT = 380;
 const OVERSCAN = 10;
 const COLUMN_WIDTH = 160;
 const DISPLAY_MAX_CHARS = 200; // Long text is cut in the display only; the full value is the hover title.
-export const MASKED_HINT = "Masked personal data (shown as ***): not sortable or filterable";
 const DUPLICATE_WARNING = "duplicate column names: sorting and filtering apply only to the rows shown";
 // A complete result sorts in the browser; for this view Postgres's order or text may differ (UI spec §5).
 const DUPLICATE_COMPLETE_WARNING =
@@ -72,7 +69,7 @@ const OPERATORS: { value: Operator; label: string }[] = [
 ];
 
 // Memoized: a worksheet's editor re-renders its panel on every keystroke, and the grid's props stay the same.
-export const ResultGrid = memo(function ResultGrid({ response, view, onViewChange, masked }: GridProps) {
+export const ResultGrid = memo(function ResultGrid({ response, view, onViewChange }: GridProps) {
   const { columns, column_types: types } = response;
   const serverSide = isServerSide(response, view);
   // In server mode the rows already are the sorted and filtered ones.
@@ -87,9 +84,8 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
         id: String(index),
         header: name,
         accessorFn: (row) => row[index],
-        enableSorting: !masked.has(name.toLowerCase()),
       })),
-    [columns, masked],
+    [columns],
   );
   const sorting: SortingState = view.sort ? [{ id: String(view.sort.index), desc: view.sort.direction === "desc" }] : [];
   // TanStack Table returns unmemoizable functions; nothing here depends on their identity.
@@ -151,7 +147,7 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
         </Text>
       ) : (
         <>
-          <FilterBar columns={columns} types={types} masked={masked} view={view} onViewChange={onViewChange} />
+          <FilterBar columns={columns} types={types} view={view} onViewChange={onViewChange} />
           <Box ref={scrollRef} style={{ height: VIEWPORT_HEIGHT, overflow: "auto" }}>
             <Table stickyHeader withTableBorder withColumnBorders style={{ width: columns.length * COLUMN_WIDTH }}>
               <Table.Thead>
@@ -173,13 +169,9 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
                           style={{ width: COLUMN_WIDTH }}
                         >
                           {/* A real button, so sorting works from the keyboard too. */}
-                          {header.column.getCanSort() ? (
-                            <UnstyledButton w="100%" style={{ font: "inherit" }} onClick={header.column.getToggleSortingHandler()}>
-                              {label}
-                            </UnstyledButton>
-                          ) : (
-                            <Box title={MASKED_HINT}>{label}</Box>
-                          )}
+                          <UnstyledButton w="100%" style={{ font: "inherit" }} onClick={header.column.getToggleSortingHandler()}>
+                            {label}
+                          </UnstyledButton>
                         </Table.Th>
                       );
                     })}
@@ -266,7 +258,7 @@ function Spacer({ height, columns }: { height: number; columns: number }) {
 
 type FilterBarProps = Omit<GridProps, "response"> & { columns: string[]; types: ColumnType[] };
 
-function FilterBar({ columns, types, masked, view, onViewChange }: FilterBarProps) {
+function FilterBar({ columns, types, view, onViewChange }: FilterBarProps) {
   const [column, setColumn] = useState<string | null>(null);
   const [operator, setOperator] = useState<Operator>("=");
   const [value, setValue] = useState("");
@@ -286,11 +278,7 @@ function FilterBar({ columns, types, masked, view, onViewChange }: FilterBarProp
         <Select
           aria-label="Filter column"
           placeholder="Filter column"
-          data={columns.map((name, index) =>
-            masked.has(name.toLowerCase())
-              ? { value: String(index), label: `${name} (masked)`, disabled: true }
-              : { value: String(index), label: name },
-          )}
+          data={columns.map((name, index) => ({ value: String(index), label: name }))}
           value={column}
           onChange={setColumn}
           size="xs"

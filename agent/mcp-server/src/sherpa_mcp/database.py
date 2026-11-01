@@ -35,16 +35,6 @@ FETCH_DEADLINE_SECONDS = 5.0
 TIMEOUT_MESSAGE = "[timeout] the query took longer than 5 s; aggregate or filter more narrowly"
 UNREACHABLE_MESSAGE = "[unreachable] the warehouse is unreachable; is `make up` running?"
 CONNECTION_EXCEPTION_CLASS = "08"  # SQLSTATE class: connection exception
-# Data exceptions (SQLSTATE class 22) quote the offending value (`invalid input syntax for type integer: "a@b.com"`),
-# which can be PII, so the model (and the UI, through `data_error_message`) gets the exception's name and a remedy
-# instead of Postgres's message.
-DATA_ERROR_HINTS = {
-    "22012": "wrap the denominator in nullif(x, 0)",  # division_by_zero
-    "22P02": "check the literal format",  # invalid_text_representation
-    "22007": "check the literal format",  # invalid_datetime_format
-    "22008": "check the literal format",  # datetime_field_overflow
-}
-DATA_ERROR_HINT = "check the column types and use explicit, safe casts"
 POOL_TIMEOUT_SECONDS = 10.0  # how long a call waits for a free connection
 FETCH_BATCH_ROWS = 20  # rows per FETCH: one round trip per row was ~11x slower for 100 rows
 # After a row this long (before cutting), the rest is fetched one row at a time, so at most one such row is in memory.
@@ -136,8 +126,6 @@ def to_tool_error(error: psycopg.Error, prefix_chars: int = 0) -> WarehouseToolE
         return WarehouseToolError(UNREACHABLE_MESSAGE)
     if isinstance(error, psycopg.OperationalError) and not sqlstate:  # the connection failed or broke: no SQLSTATE
         return WarehouseToolError(UNREACHABLE_MESSAGE)
-    if isinstance(error, errors.DataError):
-        return WarehouseToolError(f"[sql] {data_error_message(error)}")
 
     message = f"[sql] {error.diag.message_primary or str(error)}"
     position = int(error.diag.statement_position or 0) - prefix_chars
@@ -146,12 +134,6 @@ def to_tool_error(error: psycopg.Error, prefix_chars: int = 0) -> WarehouseToolE
     if error.diag.message_hint:
         message += f"; {error.diag.message_hint}"
     return WarehouseToolError(message)
-
-
-def data_error_message(error: errors.DataError) -> str:
-    """A data exception without Postgres's text, which can quote the offending value: its name and a remedy."""
-    hint = DATA_ERROR_HINTS.get(error.sqlstate or "", DATA_ERROR_HINT)
-    return f"a value could not be converted or computed ({type(error).__name__}); {hint}"
 
 
 class AgentDatabase:

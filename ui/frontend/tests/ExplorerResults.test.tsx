@@ -87,7 +87,6 @@ describe("Explorer results", () => {
   it.each([
     ["busy", 429, "Too many queries running"],
     ["too_many_connections", 503, "Warehouse connections full"],
-    ["pii_column", 422, "Masked column"],
   ])("a %s error has its own title", async (code, status, title) => {
     const user = userEvent.setup();
     post.mockResolvedValue(apiFailure(code, "the server's reason", status));
@@ -187,7 +186,7 @@ describe("Explorer results", () => {
 
     it("that fails shows its error above the last rows and drops the filter it tried", async () => {
       const user = userEvent.setup();
-      const message = "a value could not be converted or computed (InvalidTextRepresentation); check the literal format";
+      const message = 'invalid input syntax for type integer: "zzz"';
       post.mockResolvedValueOnce(TRUNCATED);
       post.mockResolvedValueOnce(apiFailure("sql_error", message, 422));
       await runTruncated(user);
@@ -200,17 +199,17 @@ describe("Explorer results", () => {
       expect(queryCalls()[1]?.[1].body.filters).toEqual([{ column: "name", operator: "=", value: "zzz" }]);
     });
 
-    it("is never sent for a column the catalog marks as PII", async () => {
+    it("is sent for a column the catalog marks as PII, like any other", async () => {
       const user = userEvent.setup();
       const withEmail = queryResponse({ ...TRUNCATED_DATA, columns: ["name", "EMAIL"], column_types: ["text", "text"] });
       post.mockResolvedValueOnce(ok(withEmail));
+      post.mockResolvedValueOnce(ok(queryResponse({ ...withEmail, mode: "server" })));
       await runTruncated(user, "EMAIL");
 
-      await user.click(screen.getByRole("columnheader", { name: "EMAIL" }));
+      await user.click(screen.getByRole("button", { name: "EMAIL" }));
 
-      expect(screen.queryByRole("button", { name: "EMAIL" })).not.toBeInTheDocument();
-      expect(queryCalls()).toHaveLength(1);
-      expect(screen.getByRole("columnheader", { name: "EMAIL" })).toHaveAttribute("aria-sort", "none");
+      await waitFor(() => expect(queryCalls()).toHaveLength(2));
+      expect(queryCalls()[1]?.[1].body).toMatchObject({ sort: [{ column: "EMAIL", direction: "asc" }] });
     });
 
     it("is not a history entry: history records Runs", async () => {

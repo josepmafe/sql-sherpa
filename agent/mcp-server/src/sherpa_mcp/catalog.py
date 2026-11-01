@@ -88,9 +88,6 @@ class MartCatalog(BaseModel):
         """Each visible mart and its column names: what `SqlGuard` resolves qualified columns against."""
         return {mart.name: frozenset(column.name for column in mart.columns) for mart in self.marts}
 
-    def pii_columns(self) -> frozenset[str]:
-        return frozenset(column.name.lower() for mart in self.marts for column in mart.columns if column.is_pii)
-
     def domains(self) -> tuple[str, ...]:
         return tuple(sorted({mart.domain for mart in self.marts}))
 
