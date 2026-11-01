@@ -39,25 +39,27 @@ CLOCK_WARNING: Final = (
 )
 # What each domain's marts are about, as the subject of a question; a domain missing here is named as it is.
 DOMAIN_SUBJECTS: Final = {
-    "customers": "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history",
-    "marketing_web": ("web sessions: traffic source and channel, campaign, device and the browse-to-purchase funnel"),
+    "customers": (
+        "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history, "
+        "CRM leads and their conversion to customers"
+    ),
+    "marketing_web": (
+        "web sessions: traffic source and channel, campaign, device and the browse-to-purchase funnel, "
+        "campaigns, and daily ad spend of paid campaigns with their sessions, orders, revenue and new customers"
+    ),
     "products": "products and their variants: brand, three-level category, current list and cost prices",
     "sales": "orders, order lines, discounts and promotions, returns and refunds: revenue, cost, margin, delivery",
     "shared": "a calendar of days with weeks, months, quarters, weekends and Black Friday week",
 }
-# Fixed: what the warehouse cannot answer, so the model says so instead of guessing. The campaign and lead entries
-# change when data-platform-4 adds their marts.
+# Fixed: what the warehouse cannot answer, so the model says so instead of guessing.
 DOES_NOT_COVER: Final = (
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "customers' email addresses, domains and names: the email is available only as a salted hash and customer "
-    "names are not in the marts",
-    "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
-    "the utm_campaign slug)",
+    "email addresses, email domains and names of customers and leads: emails are available only as salted hashes "
+    "and names are not in the marts",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
     "(fct_sessions has one row per web session with funnel flags)",
-    "leads that never became customers (customers carry lead_id and lead_source)",
 )
 TWO_YEARS_DAYS: Final = 730
 SHORT_HISTORY: Final = "comparisons across years, such as year over year: the history is shorter than two years"
@@ -73,6 +75,8 @@ NOTES: Final = (
     "cancelled orders are kept and flagged: order metrics filter on not is_cancelled",
     "test accounts and their orders are left out of every mart",
     "sessions are web only: app orders have no session, so conversion_rate and session counts leave app orders out",
+    "fct_ad_spend_daily covers paid campaigns only: email campaigns spend nothing, so their sessions, orders and new "
+    "customers are in fct_sessions, fct_orders and dim_customers but not in fct_ad_spend_daily",
 )
 MAX_DISTINCT_VALUES: Final = 30  # a text column with at most this many stored values lists them in describe_table
 NO_MATCH_HINT: Final = (
