@@ -17,6 +17,7 @@ models:
             max_value: 1725
           config:
             severity: warn
+            tags: [distribution]
     columns:
       - name: variant_id
         description: The product variant. Primary key.

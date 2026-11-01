@@ -1,0 +1,11 @@
+selectors:
+  - name: ci
+    description: >
+      Everything except the distribution checks (spec 8): they test the generator's random draws, not the code
+      under review, so a CI run on a small simulation would fail them for no reason.
+    definition:
+      method: fqn
+      value: "*"
+      exclude:
+        - method: tag
+          value: distribution

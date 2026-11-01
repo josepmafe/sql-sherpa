@@ -1,4 +1,4 @@
-.PHONY: up down advance backfill reset build build-prod docs eval-db mcp-dev ui-client ui-dev e2e lint test
+.PHONY: up down advance backfill reset build build-prod slim docs eval-db mcp-dev ui-client ui-dev e2e lint test
 # Private targets, called by the ones above and not commands of their own; their names start with _.
 .PHONY: _roles _docs-check _lockfile-check _ui-api-dev _ui-web-dev
 
@@ -27,7 +27,7 @@ DBT_PACKAGES = data-platform/dbt/dbt_packages/.installed
 # The simulation's first day is the `begin` of the microbatch model (spec 6.2). Recursive, so only the targets that
 # use it run the command (make up does not).
 SIMULATION_START = $(shell uv run sherpa-generate start-date 2>/dev/null)
-build build-prod: export SHERPA_SIMULATION_START_DATE = $(SIMULATION_START)
+build build-prod slim: export SHERPA_SIMULATION_START_DATE = $(SIMULATION_START)
 
 # After the services are healthy, the roles are brought up to date (_roles), so an existing volume never lags behind.
 up:
@@ -64,6 +64,11 @@ build-prod: $(DBT_PACKAGES)
 	$(DBT) source freshness $(PROD)
 	$(DBT) build $(PROD)
 	$(DBT) docs generate $(PROD)
+
+# Builds on dev only what differs from the prod build (state:modified+), reading the rest from prod's tables.
+slim: $(DBT_PACKAGES)
+	$(if $(wildcard data-platform/dbt/target-prod/manifest.json),,$(error make slim defers to prod: run make build-prod first))
+	$(DBT) build --select state:modified+ --defer --state target-prod
 
 docs: $(DBT_PACKAGES)
 	$(DBT) docs generate

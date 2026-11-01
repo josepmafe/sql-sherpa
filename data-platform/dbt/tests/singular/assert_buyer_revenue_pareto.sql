@@ -1,4 +1,4 @@
-{{ config(severity='warn') }}
+{{ config(severity='warn', tags=['distribution']) }}
 
 -- Generator distribution check (spec 7): the top 20% of buyers by lifetime
 -- net revenue hold 55-65% of all buyers' net revenue. Returns a row with the
