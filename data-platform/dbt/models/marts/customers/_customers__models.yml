@@ -7,6 +7,7 @@ models:
       order history (non-cancelled orders only), lifecycle segment, VIP flag and how they were acquired. It holds
       real PII, so no reader role can query it; only the dim_customers view reads it.
     config:
+      access: private
       grants:
         select: []
       meta:
@@ -243,6 +244,7 @@ models:
       and how many emails it received, opened and clicked. It holds real PII, so no reader role can query it; only
       the fct_leads view reads it.
     config:
+      access: private
       grants:
         select: []
       meta:

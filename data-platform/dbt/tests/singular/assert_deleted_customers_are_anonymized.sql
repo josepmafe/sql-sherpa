@@ -1,3 +1,4 @@
+{{ config(group='customers') }}
 -- Soft-deleted customers (R6) stay in dim_customers_unmasked (the source of
 -- truth), so facts keep their customer, but without their PII. Returns a row
 -- per deleted customer that still has an email or a name, and one per

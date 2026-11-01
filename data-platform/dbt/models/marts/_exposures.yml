@@ -1,0 +1,27 @@
+version: 2
+
+# An exposure declares a consumer of the project, so the lineage graph and the docs show what depends on the marts.
+exposures:
+  - name: sherpa_agent
+    label: SQL Sherpa agent
+    type: application
+    owner:
+      name: Data platform
+    description: >
+      The consumers of the visible marts through the read-only agent interface (data platform spec section 11):
+      the MCP server, the text-to-SQL agent (CLI) and the UI's Ask page. They read only these marts, never an
+      *_unmasked table, and only with the sherpa_agent role's SELECT grants.
+    depends_on:
+      - ref('dim_campaigns')
+      - ref('dim_customers')
+      - ref('dim_date')
+      - ref('dim_products')
+      - ref('dim_promotions')
+      - ref('fct_ad_spend_daily')
+      - ref('fct_leads')
+      - ref('fct_order_discounts')
+      - ref('fct_order_items')
+      - ref('fct_orders')
+      - ref('fct_refunds')
+      - ref('fct_returns')
+      - ref('fct_sessions')

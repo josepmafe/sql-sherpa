@@ -1,3 +1,4 @@
+{{ config(group='customers') }}
 -- Spec 6.5 "Checks": a model with a meta.pii column is a table named
 -- *_unmasked behind a plain view that hashes it. Failing rows are
 -- (model, problem) and hold literals only; the arm that reads the table

@@ -31,8 +31,10 @@ def _bump_mtime(path: Path, seconds: int) -> None:
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + seconds * 1_000_000_000))
 
 
-def _make_orders_public(manifest: dict[str, Any]) -> None:
-    manifest["nodes"]["model.sherpa.fct_orders"]["access"] = "public"
+def _make_only_orders_public(manifest: dict[str, Any]) -> None:
+    for node in manifest["nodes"].values():
+        if node["resource_type"] == "model" and node["schema"] == "marts":
+            node["access"] = "public" if node["name"] == "fct_orders" else "protected"
 
 
 # Data platform spec §6.5: the sentence that ends the description of every masked column, and per column the
@@ -119,7 +121,7 @@ class TestMartCatalogLoader:
         assert catalog.generated_at.isoformat() == "2026-10-24T12:36:42.863017+00:00"
 
     def test_public_access_rule_applies_once_any_model_is_public(self, fixture_target: Path) -> None:
-        _edit_manifest(fixture_target, _make_orders_public)
+        _edit_manifest(fixture_target, _make_only_orders_public)
 
         loaded = MartCatalogLoader(fixture_target).load()
 
@@ -131,7 +133,7 @@ class TestMartCatalogLoader:
 
         assert loader.load() is first
 
-        _edit_manifest(fixture_target, _make_orders_public)
+        _edit_manifest(fixture_target, _make_only_orders_public)
         _bump_mtime(fixture_target / "manifest.json", seconds=5)
         reloaded = loader.load()
 

@@ -45,7 +45,7 @@
       "schema": "marts",
       "relation_name": "\"sherpa\".\"marts\".\"fct_orders\"",
       "description": "Order fact, one row per order.",
-      "access": "protected",
+      "access": "public",
       "meta": {
         "domain": "sales",
         "grain": "one row per order",
@@ -161,7 +161,7 @@
       "schema": "marts",
       "relation_name": "\"sherpa\".\"marts\".\"dim_customers\"",
       "description": "Customer dimension, one row per customer.",
-      "access": "protected",
+      "access": "public",
       "meta": {
         "domain": "customers",
         "grain": "one row per customer",
@@ -249,7 +249,7 @@
       "schema": "marts",
       "relation_name": "\"sherpa\".\"marts\".\"dim_customers_unmasked\"",
       "description": "Customer dimension with the real email; no reader can query it.",
-      "access": "protected",
+      "access": "private",
       "meta": {},
       "depends_on": {
         "macros": [],
@@ -397,7 +397,7 @@
       "schema": "marts",
       "relation_name": "\"sherpa\".\"marts\".\"dim_products\"",
       "description": "Product dimension, one row per product.",
-      "access": "protected",
+      "access": "public",
       "meta": {
         "domain": "products",
         "grain": "one row per product",
