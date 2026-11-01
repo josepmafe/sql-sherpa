@@ -20,7 +20,11 @@ def _yaml_mart_columns(repo_root: Path) -> dict[str, frozenset[str]]:
         for path in (repo_root / "data-platform" / "dbt" / "models" / "marts").glob("*/_*__models.yml")
         for model in yaml.safe_load(path.read_text(encoding="utf-8"))["models"]
     ]
-    return {model["name"]: frozenset(column["name"] for column in model.get("columns", [])) for model in models}
+    return {
+        model["name"]: frozenset(column["name"] for column in model.get("columns", []))
+        for model in models
+        if not model["name"].endswith("_unmasked")
+    }
 
 
 def _example(question: str, notes: str = "", sql: str = "select 1") -> Example:

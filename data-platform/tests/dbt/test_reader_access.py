@@ -8,6 +8,7 @@ missing table cannot pass for a missing privilege.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,6 +44,8 @@ MARTS = (
     "fct_returns",
     "fct_sessions",
 )
+# Spec §6.5: the tables behind the masked views; no reader role can read them.
+UNMASKED = ("dim_customers_unmasked",)
 NOT_EXPOSED = (
     ("staging", "stg_shop__orders"),
     ("intermediate", "int_order_items__discount_allocated"),
@@ -96,7 +99,8 @@ def test_manifest_marts_are_the_expected_marts() -> None:
 
     built = sorted(node["name"] for node in nodes if node["resource_type"] == "model" and node["schema"] == "marts")
 
-    assert built == sorted(MARTS)
+    assert [name for name in built if not name.endswith("_unmasked")] == sorted(MARTS)
+    assert [name for name in built if name.endswith("_unmasked")] == sorted(UNMASKED)
 
 
 class TestReaderAccess:
@@ -198,6 +202,140 @@ class TestReaderAccess:
         assert row[0] is not None
 
 
+class TestMaskedMarts:
+    def test_no_reader_privilege_on_an_unmasked_relation_or_the_salt(
+        self, admin: psycopg.Connection, reader: psycopg.Connection
+    ) -> None:
+        hidden = _hidden_relations(admin)
+        assert {"marts.dim_customers_unmasked", "ops.pii_salt"} <= {name for _, name in hidden}
+        role = _current_user(reader)
+        query = (
+            "select"
+            " has_table_privilege(%(role)s, %(oid)s::oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),"
+            " has_any_column_privilege(%(role)s, %(oid)s::oid, 'SELECT,INSERT,UPDATE,REFERENCES')"
+        )
+
+        granted = {
+            (name, grantee): admin.execute(query, {"role": grantee, "oid": oid}).fetchone()  # type: ignore[call-overload]
+            for oid, name in hidden
+            for grantee in (role, "public")
+        }
+
+        assert all(privileges == (False, False) for privileges in granted.values()), granted
+        for mart in MARTS:
+            row = admin.execute("select has_table_privilege(%s, %s, 'SELECT')", (role, f"marts.{mart}")).fetchone()
+            assert row == (True,), mart
+
+    @pytest.mark.parametrize(("schema", "table"), [("marts", "dim_customers_unmasked"), ("ops", "pii_salt")])
+    def test_reading_an_unmasked_table_or_the_salt_is_denied(
+        self, admin: psycopg.Connection, reader: psycopg.Connection, schema: str, table: str
+    ) -> None:
+        assert _exists(admin, schema, table)
+        query = sql.SQL("select count(*) from {}").format(sql.Identifier(schema, table))
+
+        with pytest.raises(errors.InsufficientPrivilege):
+            reader.execute(query)
+
+    def test_pg_stats_shows_readers_no_personal_column(self, reader: psycopg.Connection) -> None:
+        # Views have no statistics and the readers hold no privilege on a table with these columns.
+        query = "select count(*) from pg_stats where attname in ('email', 'first_name', 'last_name')"
+
+        row = reader.execute(query).fetchone()
+
+        assert row == (0,)
+
+    def test_pii_columns_are_md5_of_the_value_and_the_salt(
+        self, admin: psycopg.Connection, reader: psycopg.Connection
+    ) -> None:
+        deleted = admin.execute(
+            "select customer_id from marts.dim_customers_unmasked where is_deleted order by customer_id limit 1"
+        ).fetchone()
+        assert deleted is not None
+        rows = reader.execute(
+            "(select customer_id, email, first_name, last_name from marts.dim_customers where customer_id = %(id)s)"
+            " union all"
+            " (select customer_id, email, first_name, last_name from marts.dim_customers"
+            " where not is_deleted order by customer_id limit 20)",
+            {"id": deleted[0]},
+        ).fetchall()
+        assert len(rows) == 21
+        assert any(row[0] == deleted[0] for row in rows)
+        values = [value for row in rows for value in row[1:] if value is not None]
+        assert values
+        assert all(re.fullmatch("[0-9a-f]{32}", value) for value in values)
+
+        row = admin.execute(
+            "select bool_and((v.email is not distinct from md5(t.email || s.salt))"
+            " and (v.first_name is not distinct from md5(t.first_name || s.salt))"
+            " and (v.last_name is not distinct from md5(t.last_name || s.salt)))"
+            " from unnest(%s::bigint[], %s::text[], %s::text[], %s::text[])"
+            " as v(customer_id, email, first_name, last_name)"
+            " left join marts.dim_customers_unmasked t on t.customer_id = v.customer_id"
+            " cross join ops.pii_salt s",
+            [[r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows], [r[3] for r in rows]],
+        ).fetchone()
+
+        assert row == (True,)
+
+    def test_counts_survive_the_hashing(self, admin: psycopg.Connection, reader: psycopg.Connection) -> None:
+        query = "select count(email), count(distinct email) from marts.{}"
+
+        as_reader = reader.execute(query.format("dim_customers")).fetchone()  # type: ignore[call-overload]
+        as_admin = admin.execute(query.format("dim_customers_unmasked")).fetchone()  # type: ignore[call-overload]
+
+        assert as_reader == as_admin
+        assert as_reader is not None
+        assert as_reader[0] > 0
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "select email as e from marts.dim_customers where customer_id = %s",
+            "select lower(email) || '' from marts.dim_customers where customer_id = %s",
+            "select c::text from marts.dim_customers c where customer_id = %s",
+            "select to_jsonb(c)::text from marts.dim_customers c where customer_id = %s",
+            "select (c.*)::text from marts.dim_customers c where customer_id = %s",
+            "select c.row_to_json::text from marts.dim_customers c where customer_id = %s",
+        ],
+    )
+    def test_whole_row_forms_return_only_hashes(
+        self, admin: psycopg.Connection, reader: psycopg.Connection, query: str
+    ) -> None:
+        customer = admin.execute(
+            "select customer_id from marts.dim_customers_unmasked"
+            " where email is not null and first_name is not null and last_name is not null order by customer_id limit 1"
+        ).fetchone()
+        assert customer is not None
+        row = reader.execute(query, (customer[0],)).fetchone()  # type: ignore[call-overload]
+        assert row is not None
+
+        leaked = admin.execute(
+            "select position(t.email in %(out)s) > 0 or position(t.first_name in %(out)s) > 0"
+            " or position(t.last_name in %(out)s) > 0"
+            " from marts.dim_customers_unmasked t where customer_id = %(id)s",
+            {"out": row[0], "id": customer[0]},
+        ).fetchone()
+
+        assert leaked is not None
+        assert leaked[0] is False, f"{query} returned a real value"
+
+    def test_the_salt_is_in_no_artifact(self, admin: psycopg.Connection) -> None:
+        row = admin.execute("select salt from ops.pii_salt").fetchone()
+        assert row is not None
+        salt = row[0].encode()
+        dbt_dir = Path(__file__).parents[2] / "dbt"
+        folders = [*dbt_dir.glob("target*"), dbt_dir / "logs"]
+
+        hits = [
+            str(path)
+            for folder in folders
+            for path in folder.rglob("*")
+            if path.is_file() and salt in path.read_bytes()
+        ]
+
+        assert hits == []
+
+
 class TestRunResultsAccess:
     # ops is built by the prod target only, so the main database is enough.
     @pytest.mark.parametrize("database", ["main"], indirect=True)
@@ -227,6 +365,16 @@ class TestTrigramIndexes:
         rows = admin.execute(query).fetchall()
 
         assert [row[0] for row in rows] == TRIGRAM_INDEXES
+
+
+def _hidden_relations(admin: psycopg.Connection) -> list[tuple[int, str]]:
+    """The relations no reader may touch, in every schema: any `*_unmasked` one and the salt."""
+    rows = admin.execute(
+        "select c.oid::int8, n.nspname || '.' || c.relname"
+        " from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+        " where c.relname like '%\\_unmasked' or (n.nspname = 'ops' and c.relname = 'pii_salt')"
+    ).fetchall()
+    return [(oid, name) for oid, name in rows]
 
 
 def _current_user(conn: psycopg.Connection) -> str:

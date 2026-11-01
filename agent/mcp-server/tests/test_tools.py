@@ -40,6 +40,8 @@ DOES_NOT_COVER = [
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
+    "customers' email addresses and names, which the marts hold only as pseudonymised hashes (comparing one with a "
+    "plain value matches nothing)",
     "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
     "the utm_campaign slug)",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "

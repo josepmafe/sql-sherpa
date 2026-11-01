@@ -1,0 +1,65 @@
+-- Spec 6.5 "Checks": a model with a meta.pii column is a table named
+-- *_unmasked behind a plain view that hashes it. Failing rows are
+-- (model, problem) and hold literals only, never a value of the table.
+-- depends_on: {{ ref('dim_customers') }}
+-- depends_on: {{ ref('dim_customers_unmasked') }}
+-- noqa: disable=LT02,LT05
+{% set arms = [] -%}
+{%- if execute -%}
+{%- for table in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') -%}
+{%- set pii = table.columns.values() | selectattr('meta.pii') | map(attribute='name') | list -%}
+{%- if pii -%}
+{%- if not (table.name.endswith('_unmasked') and table.config.materialized == 'table') -%}
+{%- do arms.append("select '" ~ table.name ~ "', 'has a meta.pii column but is not a table named *_unmasked'") -%}
+{%- else -%}
+{%- set view_name = table.name[:-9] -%}
+{%- set view = graph.nodes.get('model.' ~ table.package_name ~ '.' ~ view_name) -%}
+{%- if view is none or view.config.materialized != 'view' -%}
+{%- do arms.append("select '" ~ table.name ~ "', 'its sibling " ~ view_name ~ " is missing from the project or is not a view'") -%}
+{%- else -%}
+{#- (c) what Postgres holds, in literals-only arms -#}
+{%- set view_rel = "to_regclass('" ~ view.relation_name ~ "')" -%}
+{%- set table_rel = "to_regclass('" ~ table.relation_name ~ "')" -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'missing in Postgres' where " ~ view_rel ~ " is null") -%}
+{%- do arms.append("select '" ~ table.name ~ "', 'missing in Postgres' where " ~ table_rel ~ " is null") -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'is not a plain view' from pg_class where oid = " ~ view_rel ~ " and (relkind <> 'v' or reloptions is not null)") -%}
+{%- do arms.append("select '" ~ table.name ~ "', 'is not a table' from pg_class where oid = " ~ table_rel ~ " and relkind <> 'r'") -%}
+{%- set columns_of = "(select array_agg(attname::text order by attnum) from pg_attribute where attnum > 0 and not attisdropped and attrelid = " -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'has other columns than " ~ table.name ~ ", or in another order' where " ~ columns_of ~ view_rel ~ ") is distinct from " ~ columns_of ~ table_rel ~ ")") -%}
+{#- (d) the view marks as masked exactly what the table marks as pii -#}
+{%- set masked = view.columns.values() | selectattr('meta.masked') | map(attribute='name') | list -%}
+{%- for column in pii if column not in masked -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " is pii in " ~ table.name ~ " but not masked here'") -%}
+{%- endfor -%}
+{%- for column in masked if column not in pii -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " is masked here but not pii in " ~ table.name ~ "'") -%}
+{%- endfor -%}
+{#- (e) the view must show a different value than the table, wherever the table has one -#}
+{%- if adapter.get_relation(view.database, view.schema, view.alias) and adapter.get_relation(table.database, table.schema, table.alias) -%}
+{%- set keys = [view.meta.primary_key] if view.meta.primary_key is string else view.meta.primary_key -%}
+{%- set on = [] -%}
+{%- for key in keys -%}
+{%- do on.append("v." ~ adapter.quote(key) ~ " = t." ~ adapter.quote(key)) -%}
+{%- endfor -%}
+{%- for column in pii -%}
+{%- set quoted = adapter.quote(column) -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " shows the real value or none where there is one' where exists (select 1 from " ~ view.relation_name ~ " as v inner join " ~ table.relation_name ~ " as t on " ~ on | join(' and ') ~ " where t." ~ quoted ~ " is not null and (v." ~ quoted ~ " is null or v." ~ quoted ~ " = t." ~ quoted ~ "))") -%}
+{%- endfor -%}
+{%- endif -%}
+{#- (f) this test must run after both, so it is ordered behind their builds -#}
+{%- if view.unique_id not in model.depends_on.nodes or table.unique_id not in model.depends_on.nodes -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'add -- depends_on lines for " ~ view_name ~ " and " ~ table.name ~ " to this test'") -%}
+{%- endif -%}
+{%- endif -%}
+{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+select
+    null::text as model, -- noqa: RF04
+    null::text as problem
+where false
+{% for arm in arms %}
+union all
+{{ arm }}
+{% endfor %}

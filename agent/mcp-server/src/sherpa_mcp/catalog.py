@@ -14,16 +14,23 @@ logger = logging.getLogger(__name__)
 
 MANIFEST_FILE = "manifest.json"
 CATALOG_FILE = "catalog.json"
-# Visible marts are the models in this schema (data platform spec §11).
+# Visible marts are the models in this schema (data platform spec §11), except the tables behind the masked views
+# (spec §6.5), which no reader role can read.
 MARTS_SCHEMA = "marts"
+UNMASKED_SUFFIX = "_unmasked"
 PUBLIC_ACCESS = "public"
 METRIC_PREFIX = "metric_"
+EVAL_TARGET_FOLDER = "target-eval"
 ACCEPTED_VALUES_TEST = "accepted_values"
 _MISSING_HINT = "run `make build-prod` (it writes both files)"
 
 
 class CatalogUnavailable(Exception):
     """The dbt artifacts are missing or unreadable."""
+
+
+class UnmaskedArtifacts(CatalogUnavailable):
+    """A visible mart has a `meta.pii` column: the artifacts come from before PII was hashed in the mart."""
 
 
 class MartColumn(BaseModel):
@@ -108,6 +115,10 @@ class MartCatalogLoader:
                 self._catalog = self._read_catalog()
                 self._stamp = stamp
             return self._catalog
+        except UnmaskedArtifacts:
+            self._catalog = None
+            self._stamp = None
+            raise
         except CatalogUnavailable as exc:
             if self._catalog is None:
                 raise
@@ -122,11 +133,14 @@ class MartCatalogLoader:
     def _read_catalog(self) -> MartCatalog:
         manifest, catalog = self._read(MANIFEST_FILE), self._read(CATALOG_FILE)
         try:
-            return _build_catalog(manifest, catalog)
+            return _build_catalog(manifest, catalog, self._rebuild_command())
         except (KeyError, TypeError, AttributeError, ValueError) as exc:
             raise CatalogUnavailable(
                 f"unexpected layout in {MANIFEST_FILE} or {CATALOG_FILE}: {_MISSING_HINT}"
             ) from exc
+
+    def _rebuild_command(self) -> str:
+        return "make eval-db" if self._target_path.name == EVAL_TARGET_FOLDER else "make build-prod"
 
     def _mtimes(self) -> tuple[int, int]:
         try:
@@ -148,16 +162,18 @@ class MartCatalogLoader:
         return content
 
 
-def _build_catalog(manifest: dict[str, Any], catalog: dict[str, Any]) -> MartCatalog:
+def _build_catalog(manifest: dict[str, Any], catalog: dict[str, Any], command: str) -> MartCatalog:
     nodes: dict[str, Any] = manifest["nodes"]
     models = {uid: node for uid, node in nodes.items() if node["resource_type"] == "model"}
     tests = [node for node in nodes.values() if node["resource_type"] == "test"]
     # Once any model is declared public only those count; until then every marts model does.
     public_rule = any(node.get("access") == PUBLIC_ACCESS for node in models.values())
     marts = tuple(
-        _build_mart(uid, node, tests, catalog["nodes"].get(uid, {}).get("columns", {}))
+        _build_mart(uid, node, tests, catalog["nodes"].get(uid, {}).get("columns", {}), command)
         for uid, node in sorted(models.items(), key=lambda item: item[1]["name"])
-        if node["schema"] == MARTS_SCHEMA and (not public_rule or node.get("access") == PUBLIC_ACCESS)
+        if node["schema"] == MARTS_SCHEMA
+        and not node["name"].endswith(UNMASKED_SUFFIX)
+        and (not public_rule or node.get("access") == PUBLIC_ACCESS)
     )
     metrics = tuple(
         MetricDefinition(name=doc["name"].removeprefix(METRIC_PREFIX), definition=doc["block_contents"])
@@ -169,8 +185,16 @@ def _build_catalog(manifest: dict[str, Any], catalog: dict[str, Any]) -> MartCat
     )
 
 
-def _build_mart(uid: str, node: dict[str, Any], tests: list[dict[str, Any]], db_columns: dict[str, Any]) -> Mart:
+def _build_mart(
+    uid: str, node: dict[str, Any], tests: list[dict[str, Any]], db_columns: dict[str, Any], command: str
+) -> Mart:
     meta = node.get("meta", {})
+    for name, column in node["columns"].items():
+        if column.get("meta", {}).get("pii", False):
+            raise UnmaskedArtifacts(
+                f"mart {node['name']} has a column with meta.pii ({name}): "
+                f"artifacts from before PII was hashed in the mart; run {command}"
+            )
     primary_key = tuple(name for name in _as_tuple(meta.get("primary_key")) if name)
     if not primary_key:  # describe_table orders its sample rows by it
         raise CatalogUnavailable(f"mart {node['name']} has no meta.primary_key; add it in its dbt YAML and rebuild")
@@ -185,7 +209,7 @@ def _build_mart(uid: str, node: dict[str, Any], tests: list[dict[str, Any]], db_
             name=name,
             data_type=db_columns.get(name, {}).get("type") or column.get("data_type") or "",
             description=column.get("description", ""),
-            is_pii=bool(column.get("meta", {}).get("pii", False)),
+            is_pii=bool(column.get("meta", {}).get("masked", False)),
             is_primary_key=name in primary_key,
             accepted_values=accepted.get(name),
             synonyms=_as_tuple(column.get("meta", {}).get("synonyms")),

@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict
-from sherpa_mcp.catalog import CatalogUnavailable
+from sherpa_mcp.catalog import UNMASKED_SUFFIX, CatalogUnavailable
 
 from sherpa_ui.build.build_status import BuildStatusUnavailable
 from sherpa_ui.lineage.column_lineage import ColumnKind, ColumnRef, Resolution
@@ -244,7 +244,7 @@ class LineageService:
                 for test in graph.tests_of(unique_id)
             ],
             build=self._node_build(build, unique_id),
-            is_mart=node.layer == Layer.MARTS,
+            is_mart=node.layer == Layer.MARTS and not node.name.endswith(UNMASKED_SUFFIX),
             selector=_selector(node),
         )
 

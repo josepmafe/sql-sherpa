@@ -22,7 +22,9 @@ vars:
   "dbt_date:time_zone": "UTC"
 
 # Runs once at the start of every dbt invocation.
-on-run-start: "{{ ensure_extensions() }}"
+on-run-start:
+  - "{{ ensure_extensions() }}"
+  - "{{ ensure_pii_salt() }}"
 # Runs once at the end of every dbt invocation: the run-results audit table, then read access to the marts (and
 # the audit table for the UI) on prod and eval only. The order matters: the audit table must exist when it is granted.
 on-run-end:

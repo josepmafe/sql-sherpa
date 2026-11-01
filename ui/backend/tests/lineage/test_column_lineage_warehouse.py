@@ -121,10 +121,22 @@ def test_a_passthrough_with_a_cast_says_so(graph_and_lineage: tuple[ManifestGrap
 def test_a_row_count_names_the_model_it_counts(graph_and_lineage: tuple[ManifestGraph, ColumnLineage]) -> None:
     _, lineage = graph_and_lineage
 
-    info = lineage.info(ColumnRef(unique_id="model.sherpa.dim_customers", column="order_count"))
+    info = lineage.info(ColumnRef(unique_id="model.sherpa.dim_customers_unmasked", column="order_count"))
 
     assert info is not None
     assert (info.kind.value, info.counts) == ("row_count", "model.sherpa.fct_orders")
+
+
+def test_a_masked_column_reads_the_salt_from_outside_the_project(
+    graph_and_lineage: tuple[ManifestGraph, ColumnLineage],
+) -> None:
+    _, lineage = graph_and_lineage
+
+    info = lineage.info(ColumnRef(unique_id="model.sherpa.dim_customers", column="email"))
+
+    assert info is not None
+    assert (info.kind.value, info.resolution.value) == ("transformed", "partial")
+    assert info.notes == ("reads an unknown relation sherpa.ops.pii_salt",)
 
 
 def test_a_trace_passes_through_an_ephemeral_model(graph_and_lineage: tuple[ManifestGraph, ColumnLineage]) -> None:
