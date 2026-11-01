@@ -22,12 +22,24 @@ customers as (
 
 ),
 
+orders as (
+
+    select * from {{ ref('stg_shop__orders') }}
+
+),
+
+order_discounts as (
+
+    select * from {{ ref('stg_shop__order_discounts') }}
+
+),
+
 -- Orders of test accounts (R5) never count. Cancelled orders do: the
 -- redemption happened.
 non_test_orders as (
 
     select orders.order_id
-    from {{ ref('stg_shop__orders') }} as orders
+    from orders
     left join customers on orders.customer_id = customers.customer_id
     where not coalesce(customers.is_test_account, false)
 
@@ -39,7 +51,7 @@ redemptions as (
         order_discounts.promotion_id,
         count(*) as redemption_count,
         sum(order_discounts.amount) as total_discount_amount
-    from {{ ref('stg_shop__order_discounts') }} as order_discounts
+    from order_discounts
     inner join non_test_orders
         on order_discounts.order_id = non_test_orders.order_id
     group by order_discounts.promotion_id

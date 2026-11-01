@@ -52,11 +52,11 @@ Tools return JSON text; a failed call has `result.is_error` set and the text `Er
 
 ## The eight tools
 
-- **`get_context {}`**: the as-of date (the latest order date; use it instead of today), what the warehouse covers (one line per domain: sales, customers, products, web sessions, calendar) and does not (`does_not_cover`), and notes on the data, such as that sessions are web only, so `conversion_rate` leaves app orders out.
+- **`get_context {}`**: the as-of date (the latest order date; use it instead of today), what the warehouse covers (one line per domain: sales, customers and leads, products, web sessions with campaigns and ad spend, calendar) and does not (`does_not_cover`), and notes on the data, such as that sessions are web only, so `conversion_rate` leaves app orders out.
 - **`list_tables {}`**: every mart with description, domain, grain and primary key.
 - **`describe_table {"table"}`**: grain, primary key, and per column the type, description, PII flag, accepted values, `distinct_values` (the stored values of a short text column) and synonyms, plus three sample rows.
 - **`search_values {"table", "column", "term", "limit"}`**: how a value is stored in a text column (`limit` 1 to 50, default 10). Use it before filtering on a name the user typed. PII columns are refused.
-- **`get_metric_definitions {}`**: the official definitions (`aov`, `cogs`, `discount_amount`, `gross_margin`, `gross_revenue`, `net_revenue`, `refund_rate`, `refunded_revenue`).
+- **`get_metric_definitions {}`**: the official definitions (`aov`, `cac`, `cogs`, `conversion_rate`, `discount_amount`, `gross_margin`, `gross_revenue`, `net_revenue`, `refund_rate`, `refunded_revenue`, `roas`).
 - **`get_examples {"question", "k"}`**: up to `k` (1 to 10, default 3) worked examples with question, SQL, notes and `score`. The score only orders examples; it does not say whether the warehouse can answer the question.
 - **`validate_sql {"sql"}`**: the guard, then a Postgres `EXPLAIN` without execution. A bad query is a normal result (`ok: false` plus `errors`); a warning flags a query that reads the real clock (`now()`).
 - **`run_sql {"sql"}`**: runs one SELECT exactly as written (a trailing `;` is dropped). `execution_id` is the first 16 characters of the SHA-256 of the executed SQL.
@@ -91,7 +91,7 @@ Errors start with a code: `[guard:<rule>]` (the hint after the `;` says what to 
 
 ## PII
 
-`dim_customers` is a view: `email` is a salted hash (`md5` of the value and a secret salt, `NULL` stays `NULL`) and customer names are not in it, in every query, whatever its shape, and the real values sit in a table the agent's role cannot read ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Equal values hash equally, so counting, grouping and joining work. The hash is 32 hex characters, so a comparison with a plain value (`email = 'a@b.com'`), `LIKE`/`ILIKE`, a string function, `length()` or sorting gives meaningless results (some patterns match random rows): identify customers by `customer_id`; questions about email domains or names cannot be answered. `search_values` refuses PII columns, and `describe_table` flags them with `is_pii`.
+`dim_customers` and `fct_leads` are views: `email` is a salted hash (`md5` of the value and a secret salt, `NULL` stays `NULL`) and customer names are not in it, in every query, whatever its shape, and the real values sit in a table the agent's role cannot read ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Equal values hash equally, so counting, grouping and joining work. The hash is 32 hex characters, so a comparison with a plain value (`email = 'a@b.com'`), `LIKE`/`ILIKE`, a string function, `length()` or sorting gives meaningless results (some patterns match random rows): identify customers by `customer_id`; questions about email domains or names cannot be answered. `search_values` refuses PII columns, and `describe_table` flags them with `is_pii`.
 
 ## Known limitations
 

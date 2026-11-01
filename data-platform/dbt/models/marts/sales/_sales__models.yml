@@ -41,7 +41,7 @@ models:
         data_tests:
           - relationships:
               arguments:
-                to: ref('stg_marketing__campaigns')
+                to: ref('dim_campaigns')
                 field: campaign_id
               config:
                 where: "campaign_id is not null"
@@ -211,6 +211,7 @@ models:
                 max_value: 2.4
               config:
                 severity: warn
+                tags: [distribution]
       - name: gross_revenue
         description: >
           The order's gross revenue as placed, kept when the order is cancelled, so a sum over

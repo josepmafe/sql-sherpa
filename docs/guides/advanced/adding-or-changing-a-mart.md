@@ -6,7 +6,7 @@ How to change what the marts expose: add a column, add a mart, change a metric, 
 
 The marts' columns, grain and metric definitions are in the [data platform spec](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md) (§6.5, §6.6). Changing them is a spec change: agree it with the owner and update the spec in the same branch. The agent relies on the marts as §11 describes them, so a rename or a removal breaks it.
 
-Everything under `data-platform/dbt/models/marts/` inherits from `dbt_project.yml`: `materialized: table`, `contract: enforced` (dbt checks the model's columns and types against the YAML before building), `persist_docs` (descriptions become Postgres comments), an `analyze` post-hook and `SELECT` grants for the agent and UI roles, which `grant_read_access` applies per relation. The folder is `marts/<domain>/`, with one `_<domain>__models.yml` per folder and `meta.domain` matching the folder. Metric definitions live in `marts/_metrics.md`.
+Everything under `data-platform/dbt/models/marts/` inherits from `dbt_project.yml`: `materialized: table`, `contract: enforced` (dbt checks the model's columns and types against the YAML before building), `persist_docs` (descriptions become Postgres comments), an `analyze` post-hook and `SELECT` grants for the agent and UI roles, which `grant_read_access` applies per relation. The folder is `marts/<domain>/`, with one `_<domain>__models.yml` per folder and `meta.domain` matching the folder. The folder also sets the model's **group** (its owning domain, declared in `models/_groups.yml`) and `access: public`: a visible mart is public, so any model may `ref` it. A model with `access: private` can be `ref`ed only from its own group, which `dbt parse` enforces. Metric definitions live in `marts/_metrics.md`.
 
 ## 1. Add a column to a mart
 
@@ -70,9 +70,10 @@ Example: `dim_countries`, one row per country from the `countries` seed, domain 
 
 2. **The YAML**, appended to `models/marts/shared/_shared__models.yml`: a description, `config.meta` with `domain`, `grain` and `primary_key` (a column name or a list; the agent reads them and nothing enforces them, so review them yourself), and every column with `description` and `data_type`. Put `constraints: [not_null, primary_key]` and `data_tests: [unique, not_null]` on the key: the constraint makes Postgres enforce it, the tests report violations.
 3. **Indexes.** For a fact table, add an index per join or filter column in the SQL file: `{{ config(indexes=[{'columns': ['order_id']}]) }}`. Text columns searched by name get a trigram index (section 4).
-4. **Grants.** Nothing to do: the `+grants` setting and the `grant_read_access` hook, which grants per relation, cover every visible mart (see [Building the warehouse](../basic/building-the-warehouse.md#hooks-and-grants)). The agent reads the table after the next `make build-prod`.
-5. **Registry.** Add the mart to `models/overview.md`, its row to the spec's §6.5, and the table to the `MARTS` tuple in `data-platform/tests/dbt/test_reader_access.py`.
-6. **Prove it:**
+4. **Group and access.** Nothing to do in an existing folder: `dbt_project.yml` gives it the folder's group and `public`. A new domain folder needs `+group: <domain>` under `marts:` in `dbt_project.yml` and a `groups:` entry in `models/_groups.yml`.
+5. **Grants.** Nothing to do: the `+grants` setting and the `grant_read_access` hook, which grants per relation, cover every visible mart (see [Building the warehouse](../basic/building-the-warehouse.md#hooks-and-grants)). The agent reads the table after the next `make build-prod`.
+6. **Registry.** Add the mart to the `sherpa_agent` exposure (`models/marts/_exposures.yml`, `depends_on`), to `models/overview.md`, its row to the spec's §6.5, and the table to the `MARTS` tuple in `data-platform/tests/dbt/test_reader_access.py`. `assert_agent_exposure_lists_every_visible_mart` fails the build with `(unique_id, problem)` rows (`not in sherpa_agent`, `visible but not public`, `unmasked but not private`, `unmasked but granted`) when the exposure and the visible marts differ.
+7. **Prove it:**
 
    ```bash
    dbt build --select dim_countries
@@ -128,6 +129,8 @@ A generic test is a Jinja `{% test %}` block under `data-platform/dbt/tests/gene
 
 Run every use with `dbt test --select "test_name:column_sums_match" --target prod --target-path target-prod`; [Building the warehouse](../basic/building-the-warehouse.md#reading-a-column_sums_match-failure) shows a failure. Write a generic test when the rule applies to several models; a rule about one model with fixed cases is a singular test, a plain `SELECT` of failing rows in `data-platform/dbt/tests/singular/<name>.sql`. Comment what a returned row means.
 
+**Tag a test `distribution`** (`tags: [distribution]` in the YAML, `config(tags=['distribution'])` in a singular test) only when it checks the generator's random draws against a full-year target, such as a row-count or mean expectation or the Pareto check. Nothing else gets the tag: CI skips tagged tests because its 30-day simulation cannot meet those targets ([CI](ci.md)).
+
 ## 6. Ephemeral, view or table for an intermediate model
 
 Intermediate models (`models/intermediate/`) default to `ephemeral`. Override with `{{ config(materialized='view') }}` in the model's file only when a reason below applies:
@@ -144,7 +147,7 @@ Current choices: `int_events__sessionized` (`delete+insert`) and `int_identity__
 dbt --quiet ls --select intermediate --resource-type model --output json --output-keys name config.materialized
 ```
 
-The agent role cannot read the `intermediate` schema, so these models can be renamed or restructured freely as long as the marts keep their shape.
+The agent role cannot read the `intermediate` schema, so these models can be renamed or restructured freely as long as the marts keep their shape. An intermediate model only one group uses is `access: private` to it (the `int_orders__*` and `int_order_items__*` models are private to `sales`); a new one takes its folder's group and access from `dbt_project.yml`.
 
 ## 7. Change an incremental model
 
@@ -181,10 +184,10 @@ Run on the dev target (the default), it compares `dev_marts.fct_sessions`, which
 
 Example: a mart `fct_leads` with an `email` column. A mart with personal data is a pair ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)), so the readers get hashes and never the values:
 
-1. **The table**, `models/marts/<domain>/fct_leads_unmasked.sql`: the model of section 2, named `<mart>_unmasked`, with `grants: {select: []}` under `config:` in its YAML entry (never `+select`, which would append to the project-level grants and let the readers read the table), and `meta.pii: true` on each personal column, as in `dim_customers_unmasked`.
+1. **The table**, `models/marts/<domain>/fct_leads_unmasked.sql`: the model of section 2, named `<mart>_unmasked`, with `grants: {select: []}` and `access: private` under `config:` in its YAML entry (never `+select`, which would append to the project-level grants and let the readers read the table), and `meta.pii: true` on each personal column, as in `dim_customers_unmasked`. Private keeps it in its group: only models of that group may `ref` it.
 2. **The view**, `models/marts/<domain>/fct_leads.sql`: `{{ config(materialized='view') }}`, the table's columns in the same order, each personal one as `{{ mask_pii('email') }} as email`, from `{{ ref('fct_leads_unmasked') }}`. Leave out a personal column that only invites wrong answers (`dim_customers` omits the names). Its YAML entry repeats the columns with `meta.masked: true` on exactly the `meta.pii` ones it keeps; their description says it is a 32-character hash (copy the `email` description of `dim_customers`). Do not make it `security_invoker`: the view reads `ops.pii_salt` with the owner's rights.
-3. **The singular test** `tests/singular/assert_pii_marts_are_masked_views.sql` reads the graph, so add two lines for the pair: `-- depends_on: {{ ref('fct_leads') }}` and `-- depends_on: {{ ref('fct_leads_unmasked') }}`.
-4. **Registry.** `fct_leads` goes in `MARTS` and `fct_leads_unmasked` in `UNMASKED` in `data-platform/tests/dbt/test_reader_access.py`; the new columns go in the expected set of `test_masked_columns_are_the_specs` (`agent/mcp-server/tests/test_catalog.py`); the spec's §6.5 gets the pair.
+3. **Who reads the table.** Only the sibling view refs `fct_leads_unmasked`; every other model refs `fct_leads`. `assert_pii_marts_are_masked_views` has an arm for it and returns `(model, 'reads fct_leads_unmasked; ref fct_leads instead')`, also for another `_unmasked` model. A singular test that refs an `_unmasked` table (and returns no value of its PII columns) takes the table's group: `{{ config(group='customers') }}` on its first line, or `dbt parse` refuses it as private to that group. The pair-registration test itself reads the graph, so add two lines for the pair: `-- depends_on: {{ ref('fct_leads') }}` and `-- depends_on: {{ ref('fct_leads_unmasked') }}`.
+4. **Registry.** `fct_leads` goes in the `sherpa_agent` exposure and in `MARTS` and `fct_leads_unmasked` in `UNMASKED` in `data-platform/tests/dbt/test_reader_access.py`; the new columns go in the expected set of `test_masked_columns_are_the_specs` (`agent/mcp-server/tests/test_catalog.py`); the spec's §6.5 gets the pair.
 5. **Prove it:**
 
    ```bash
@@ -202,6 +205,9 @@ Example: a mart `fct_leads` with an `email` column. A mart with personal data is
 | `Contracted models require data_type` | Add `data_type` to the named column |
 | `make lint` reports `Missing descriptions` | Add a `description` to the model or column |
 | Agent cannot see the new table | Run `make build-prod`; the grant hook runs with every build |
+| `assert_agent_exposure_lists_every_visible_mart` returns `not in sherpa_agent` | Add `ref('<mart>')` to the exposure in `models/marts/_exposures.yml` |
+| `Parsing Error ... which is not allowed because the referenced node is private to the 'customers' group` | A model of another group refs a private model: ref the visible mart, or put the model in the group (a singular test: `config(group=...)`) |
+| `assert_pii_marts_are_masked_views` returns `reads <mart>_unmasked; ref <mart> instead` | Only the sibling view may read the table: ref the view |
 | `assert_pii_marts_are_masked_views` fails, or a reader gets `relation ... does not exist` for a PII mart | A `meta.pii` model is not a table named `*_unmasked`, the view is missing or differs in columns, or the table was built without its view: `dbt build --select <mart>_unmasked+` |
 | Trigram index missing after a rebuild | Use `create_trigram_index` in `post_hook`, not a hand-written `create index if not exists` |
 | Singular test fails after a metric change | Update its expected values on purpose, then the spec |

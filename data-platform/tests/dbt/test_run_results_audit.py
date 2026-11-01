@@ -23,7 +23,8 @@ DBT_DIR = Path(__file__).parents[2] / "dbt"
 SCRATCH = ("--target-path", "target-scratch")
 PROD = ("--target", "prod", *SCRATCH)
 # What `dbt build` runs and records: models other than ephemeral ones, seeds, snapshots and tests, and unit tests
-# (kept apart in the manifest, under `unit_tests`).
+# (kept apart in the manifest, under `unit_tests`) and exposures (a build reports each as a no-op; also kept apart,
+# under `exposures`).
 BUILT_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot", "test"})
 # The other tests run dbt after this one in a full file run, but before it on a rerun, so look past them, and past
 # any build that started after this checkout's manifest was generated.
@@ -85,11 +86,15 @@ def test_full_prod_build_records_every_built_node_once(admin: psycopg.Connection
     checkout that builds prod between this one's build and its manifest still goes unnoticed."""
     latest = admin.execute(LATEST_FULL_INVOCATION, (manifest["metadata"]["generated_at"],)).fetchone()  # type: ignore[call-overload]
     assert latest is not None
-    built = {
-        unique_id
-        for unique_id, node in manifest["nodes"].items()
-        if node["resource_type"] in BUILT_RESOURCE_TYPES and node["config"].get("materialized") != "ephemeral"
-    } | set(manifest.get("unit_tests", {}))
+    built = (
+        {
+            unique_id
+            for unique_id, node in manifest["nodes"].items()
+            if node["resource_type"] in BUILT_RESOURCE_TYPES and node["config"].get("materialized") != "ephemeral"
+        }
+        | set(manifest.get("unit_tests", {}))
+        | set(manifest.get("exposures", {}))
+    )
 
     rows = admin.execute(
         "select unique_id, is_full_run from ops.dbt_run_results where invocation_id = %s", (latest[0],)

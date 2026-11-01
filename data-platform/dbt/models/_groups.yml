@@ -1,0 +1,19 @@
+version: 2
+
+# Groups own models. A model with access: private can only be referenced from its own group.
+groups:
+  - name: sales
+    owner:
+      name: Sales analytics
+  - name: customers
+    owner:
+      name: CRM analytics
+  - name: products
+    owner:
+      name: Merchandising analytics
+  - name: marketing_web
+    owner:
+      name: Marketing analytics
+  - name: shared
+    owner:
+      name: Data platform

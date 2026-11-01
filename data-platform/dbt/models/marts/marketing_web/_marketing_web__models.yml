@@ -1,6 +1,55 @@
 version: 2
 
 models:
+  - name: dim_campaigns
+    description: >
+      Marketing campaign dimension, one row per campaign, with its channel, run dates and planned
+      budget. Sessions and promotions point at it through campaign_id, customers through acquisition_campaign_id.
+    config:
+      meta:
+        domain: marketing_web
+        grain: one row per marketing campaign
+        primary_key: campaign_id
+        synonyms: [campaigns, marketing campaigns]
+    columns:
+      - name: campaign_id
+        description: The campaign. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: campaign_name
+        description: Name of the campaign.
+        data_type: text
+      - name: utm_campaign
+        description: Slug used as utm_campaign in tracked links; identifies the campaign of a session.
+        data_type: text
+        data_tests: [unique, not_null]
+      - name: channel
+        description: >
+          Channel the campaign runs on: paid_search, paid_social, email, affiliate or display. Email
+          campaigns have no ad spend.
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid_search, paid_social, email, affiliate, display]
+      - name: starts_at
+        description: When the campaign starts (UTC).
+        data_type: timestamptz
+      - name: ends_at
+        description: >
+          When the campaign ends (UTC), exclusive: the first moment after it, so the last active day is
+          ends_at::date - 1.
+        data_type: timestamptz
+      - name: budget
+        description: Planned budget of the campaign in EUR.
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [planned spend]
+
   - name: fct_sessions
     description: >
       Web session fact, one row per session: one device's events (anonymous_id) with no gap over 30
@@ -126,7 +175,7 @@ models:
         data_tests:
           - relationships:
               arguments:
-                to: ref('stg_marketing__campaigns')
+                to: ref('dim_campaigns')
                 field: campaign_id
               config:
                 where: "campaign_id is not null"
@@ -170,6 +219,95 @@ models:
                 field: order_id
               config:
                 where: "order_id is not null"
+
+  - name: fct_ad_spend_daily
+    description: >
+      Ad spend fact, one row per paid campaign and day with spend, with the activity of the campaign's
+      sessions that started on that day (spend_date): sessions, non-cancelled orders and their net
+      revenue, and new customers. Paid campaigns only: email campaigns have no rows. A session's
+      order belongs to the session's day even when it is placed after midnight. clicks are the ad
+      platform's, not tracked sessions, so they do not equal sessions.
+      {{ doc('metric_roas') }} {{ doc('metric_cac') }}
+    config:
+      meta:
+        domain: marketing_web
+        grain: one row per paid campaign and day with spend
+        primary_key: [campaign_id, spend_date]
+        synonyms: [ad spend, marketing spend, paid media]
+    constraints:
+      - type: primary_key
+        columns: [campaign_id, spend_date]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [campaign_id, spend_date]
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "new_customers <= orders"
+    columns:
+      - name: campaign_id
+        description: The paid campaign that spent the money. Join to dim_campaigns on campaign_id.
+        data_type: bigint
+        constraints:
+          - type: not_null
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_campaigns')
+                field: campaign_id
+      - name: spend_date
+        description: UTC day the spend belongs to; the day the counted sessions started. Join to dim_date on date_day.
+        data_type: date
+        constraints:
+          - type: not_null
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: channel
+        description: Channel of the campaign, from dim_campaigns (never email, which has no ad spend).
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid_search, paid_social, affiliate, display]
+      - name: spend
+        description: >
+          Amount the ad platform charged that day, in EUR. {{ doc('metric_cac') }}
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [cost, ad cost, media spend]
+      - name: impressions
+        description: Ad impressions the platform reported that day.
+        data_type: integer
+      - name: clicks
+        description: Ad clicks the platform reported that day. They are not tracked sessions.
+        data_type: integer
+      - name: sessions
+        description: Number of tracked sessions of the campaign that started on spend_date; 0 when there are none.
+        data_type: integer
+      - name: orders
+        description: >
+          Number of non-cancelled orders placed in those sessions, whatever day they were placed on;
+          0 when there are none.
+        data_type: integer
+      - name: attributed_net_revenue
+        description: >
+          Σ net_revenue in EUR of those orders; 0.00 when there are none. {{ doc('metric_roas') }}
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [attributed revenue, campaign revenue]
+      - name: new_customers
+        description: >
+          Number of those orders that are their customer's first order, for paid campaigns only: all first-time
+          buyers are in fct_orders.is_first_order and dim_customers. {{ doc('metric_cac') }}
+        data_type: integer
+        config:
+          meta:
+            synonyms: [acquisitions, new buyers]
 
 unit_tests:
   - name: fct_sessions_aggregates_a_session
@@ -245,3 +383,100 @@ unit_tests:
     expect:
       rows:
         - {session_id: s2, customer_id: 202}
+
+  - name: fct_ad_spend_daily_order_after_midnight_counts_on_session_day
+    model: fct_ad_spend_daily
+    given:
+      - input: ref('stg_marketing__ad_spend_daily')
+        rows:
+          - {spend_date: "2025-03-01", campaign_id: 1, spend: 10.00, impressions: 100, clicks: 9}
+          - {spend_date: "2025-03-02", campaign_id: 1, spend: 12.00, impressions: 120, clicks: 11}
+      - input: ref('dim_campaigns')
+        rows:
+          - {campaign_id: 1, channel: paid_search}
+          - {campaign_id: 2, channel: paid_social}
+          - {campaign_id: 3, channel: email}
+      - input: ref('fct_sessions')
+        rows:
+          - {session_id: s1, session_date: "2025-03-01", session_start_at: "2025-03-01 23:50:00+00", campaign_id: 1}
+      - input: ref('fct_orders')
+        rows:
+          - {order_id: 501, session_id: s1, order_date: "2025-03-02", placed_at: "2025-03-02 00:10:00+00", is_cancelled: false, is_first_order: false, net_revenue: 40.00}
+    expect:
+      rows:
+        - {campaign_id: 1, spend_date: "2025-03-01", channel: paid_search, spend: 10.00, impressions: 100, clicks: 9, sessions: 1, orders: 1, attributed_net_revenue: 40.00, new_customers: 0}
+        - {campaign_id: 1, spend_date: "2025-03-02", channel: paid_search, spend: 12.00, impressions: 120, clicks: 11, sessions: 0, orders: 0, attributed_net_revenue: 0.00, new_customers: 0}
+
+  - name: fct_ad_spend_daily_cancelled_order_adds_nothing
+    model: fct_ad_spend_daily
+    given:
+      - input: ref('stg_marketing__ad_spend_daily')
+        rows:
+          - {spend_date: "2025-03-01", campaign_id: 1, spend: 10.00, impressions: 100, clicks: 9}
+      - input: ref('dim_campaigns')
+        rows:
+          - {campaign_id: 1, channel: paid_search}
+          - {campaign_id: 2, channel: paid_social}
+          - {campaign_id: 3, channel: email}
+      - input: ref('fct_sessions')
+        rows:
+          - {session_id: s1, session_date: "2025-03-01", campaign_id: 1}
+          - {session_id: s2, session_date: "2025-03-01", campaign_id: 1}
+      - input: ref('fct_orders')
+        rows:
+          - {order_id: 501, session_id: s1, order_date: "2025-03-01", is_cancelled: true, is_first_order: false, net_revenue: 0.00}
+          - {order_id: 502, session_id: s2, order_date: "2025-03-01", is_cancelled: false, is_first_order: true, net_revenue: 25.00}
+    expect:
+      rows:
+        - {campaign_id: 1, spend_date: "2025-03-01", sessions: 2, orders: 1, attributed_net_revenue: 25.00, new_customers: 1}
+
+  - name: fct_ad_spend_daily_two_campaigns_on_one_day_stay_apart
+    model: fct_ad_spend_daily
+    given:
+      - input: ref('stg_marketing__ad_spend_daily')
+        rows:
+          - {spend_date: "2025-03-01", campaign_id: 1, spend: 10.00, impressions: 100, clicks: 9}
+          - {spend_date: "2025-03-01", campaign_id: 2, spend: 20.00, impressions: 200, clicks: 18}
+      - input: ref('dim_campaigns')
+        rows:
+          - {campaign_id: 1, channel: paid_search}
+          - {campaign_id: 2, channel: paid_social}
+          - {campaign_id: 3, channel: email}
+      - input: ref('fct_sessions')
+        rows:
+          - {session_id: s1, session_date: "2025-03-01", campaign_id: 1}
+          - {session_id: s2, session_date: "2025-03-01", campaign_id: 1}
+          - {session_id: s3, session_date: "2025-03-01", campaign_id: 2}
+          - {session_id: s4, session_date: "2025-03-01", campaign_id: 3}
+      - input: ref('fct_orders')
+        rows:
+          - {order_id: 501, session_id: s1, order_date: "2025-03-01", is_cancelled: false, is_first_order: true, net_revenue: 10.00}
+          - {order_id: 502, session_id: s3, order_date: "2025-03-01", is_cancelled: false, is_first_order: false, net_revenue: 35.00}
+          - {order_id: 503, session_id: s4, order_date: "2025-03-01", is_cancelled: false, is_first_order: true, net_revenue: 99.00}
+    expect:
+      rows:
+        - {campaign_id: 1, spend_date: "2025-03-01", channel: paid_search, sessions: 2, orders: 1, attributed_net_revenue: 10.00, new_customers: 1}
+        - {campaign_id: 2, spend_date: "2025-03-01", channel: paid_social, sessions: 1, orders: 1, attributed_net_revenue: 35.00, new_customers: 0}
+
+  - name: fct_ad_spend_daily_first_order_counts_one_new_customer
+    model: fct_ad_spend_daily
+    given:
+      - input: ref('stg_marketing__ad_spend_daily')
+        rows:
+          - {spend_date: "2025-03-01", campaign_id: 1, spend: 10.00, impressions: 100, clicks: 9}
+      - input: ref('dim_campaigns')
+        rows:
+          - {campaign_id: 1, channel: paid_search}
+          - {campaign_id: 2, channel: paid_social}
+          - {campaign_id: 3, channel: email}
+      - input: ref('fct_sessions')
+        rows:
+          - {session_id: s1, session_date: "2025-03-01", campaign_id: 1}
+          - {session_id: s2, session_date: "2025-03-01", campaign_id: 1}
+      - input: ref('fct_orders')
+        rows:
+          - {order_id: 501, session_id: s1, order_date: "2025-03-01", customer_id: 7, is_cancelled: false, is_first_order: true, net_revenue: 20.00}
+          - {order_id: 502, session_id: s2, order_date: "2025-03-01", customer_id: 7, is_cancelled: false, is_first_order: false, net_revenue: 15.00}
+    expect:
+      rows:
+        - {campaign_id: 1, spend_date: "2025-03-01", sessions: 2, orders: 2, attributed_net_revenue: 35.00, new_customers: 1}

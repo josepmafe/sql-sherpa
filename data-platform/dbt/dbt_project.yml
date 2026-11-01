@@ -41,9 +41,27 @@ models:
     intermediate:
       +schema: intermediate
       +materialized: ephemeral
+      orders:
+        +group: sales
+        # Private: only the sales group may ref these models.
+        +access: private
+      events:
+        +group: marketing_web
     marts:
       +schema: marts
       +materialized: table
+      # Marts are the public interface; the *_unmasked tables override this to private in their YAML.
+      +access: public
+      customers:
+        +group: customers
+      marketing_web:
+        +group: marketing_web
+      products:
+        +group: products
+      sales:
+        +group: sales
+      shared:
+        +group: shared
       # Contracts make dbt check column names and types against the YAML before building.
       +contract:
         enforced: true

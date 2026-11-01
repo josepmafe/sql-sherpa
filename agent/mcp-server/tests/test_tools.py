@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 METRICS = (
     *("gross_revenue", "discount_amount", "refunded_revenue", "net_revenue"),
     *("cogs", "gross_margin", "aov", "refund_rate", "conversion_rate"),
+    *("roas", "cac"),
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 PII_LITERAL = "leak@example.com"
@@ -40,13 +41,12 @@ DOES_NOT_COVER = [
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "customers' email addresses, domains and names: the email is available only as a salted hash and customer "
-    "names are not in the marts",
-    "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
-    "the utm_campaign slug)",
+    "email addresses, email domains and names of customers and leads: emails are available only as salted hashes "
+    "and names are not in the marts",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
     "(fct_sessions has one row per web session with funnel flags)",
-    "leads that never became customers (customers carry lead_id and lead_source)",
+    "email opens and clicks per campaign or per send, and which campaign a lead came from "
+    "(fct_leads has per-lead totals only)",
 ]
 SHORT_HISTORY = "comparisons across years, such as year over year: the history is shorter than two years"
 NOTES = [
@@ -60,6 +60,8 @@ NOTES = [
     "cancelled orders are kept and flagged: order metrics filter on not is_cancelled",
     "test accounts and their orders are left out of every mart",
     "sessions are web only: app orders have no session, so conversion_rate and session counts leave app orders out",
+    "fct_ad_spend_daily covers paid campaigns only: email campaigns spend nothing, so their sessions, orders and new "
+    "customers are in fct_sessions, fct_orders and dim_customers but not in fct_ad_spend_daily",
 ]
 
 
@@ -82,8 +84,8 @@ class TestWarehouseTools:
         assert list(context.notes) == NOTES
         assert set(context.domains) == {"customers", "marketing_web", "products", "sales", "shared"}
         assert context.covers[0] == (
-            "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history "
-            "(dim_customers)"
+            "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history, "
+            "CRM leads and their conversion to customers (dim_customers, fct_leads)"
         )
         assert context.covers[3].endswith(
             "(dim_promotions, fct_order_discounts, fct_order_items, fct_orders, fct_refunds, fct_returns)"
@@ -373,8 +375,8 @@ class TestGetContext:
         assert context.first_order_date == dt.date(2025, 1, 1)
         assert context.domains == ("customers", "products", "sales")
         assert context.covers == (
-            "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history "
-            "(dim_customers)",
+            "customers: lifecycle segment, VIP flag, lead source, acquisition channel and lifetime order history, "
+            "CRM leads and their conversion to customers (dim_customers)",
             "products and their variants: brand, three-level category, current list and cost prices (dim_products)",
             "orders, order lines, discounts and promotions, returns and refunds: revenue, cost, margin, delivery "
             "(fct_orders)",

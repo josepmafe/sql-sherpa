@@ -92,6 +92,12 @@ first_orders as (
 
 ),
 
+sessionized as (
+
+    select * from {{ ref('int_events__sessionized') }}
+
+),
+
 -- Every event of a session carries the session's utm_campaign, so distinct
 -- gives one row per session.
 first_order_sessions as (
@@ -99,7 +105,7 @@ first_order_sessions as (
     select distinct
         sessionized.session_id,
         sessionized.session_utm_campaign
-    from {{ ref('int_events__sessionized') }} as sessionized
+    from sessionized
     inner join first_orders
         on sessionized.session_id = first_orders.session_id
 

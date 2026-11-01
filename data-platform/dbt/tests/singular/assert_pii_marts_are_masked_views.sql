@@ -1,12 +1,21 @@
+{{ config(group='customers') }}
 -- Spec 6.5 "Checks": a model with a meta.pii column is a table named
 -- *_unmasked behind a plain view that hashes it. Failing rows are
 -- (model, problem) and hold literals only; the arm that reads the table
 -- returns no value of its PII columns.
 -- depends_on: {{ ref('dim_customers') }}
 -- depends_on: {{ ref('dim_customers_unmasked') }}
+-- depends_on: {{ ref('fct_leads') }}
+-- depends_on: {{ ref('fct_leads_unmasked') }}
 -- noqa: disable=LT02,LT05
 {% set arms = [] -%}
 {%- if execute -%}
+{#- a model other than the view of an *_unmasked table reads it (another *_unmasked model included) -#}
+{%- for reader in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') -%}
+{%- for dep_id in reader.depends_on.nodes if dep_id.endswith('_unmasked') and dep_id.split('.')[-1][:-9] != reader.name -%}
+{%- do arms.append("select '" ~ reader.name ~ "', 'reads " ~ dep_id.split('.')[-1] ~ "; ref " ~ dep_id.split('.')[-1][:-9] ~ " instead'") -%}
+{%- endfor -%}
+{%- endfor -%}
 {%- for table in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') -%}
 {%- set pii = table.columns.values() | selectattr('meta.pii') | map(attribute='name') | list -%}
 {%- if pii -%}
@@ -41,7 +50,7 @@
 {%- for column in masked if column not in pii -%}
 {%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " is masked here but not pii in " ~ table.name ~ "'") -%}
 {%- endfor -%}
-{#- (e) the view must show a different value than the table, wherever the table has one -#}
+{#- (e) the view must show the salted hash of the table's value, wherever the table has one -#}
 {%- if adapter.get_relation(view.database, view.schema, view.alias) and adapter.get_relation(table.database, table.schema, table.alias) -%}
 {%- set keys = [view.meta.primary_key] if view.meta.primary_key is string else view.meta.primary_key -%}
 {%- set on = [] -%}
@@ -50,7 +59,7 @@
 {%- endfor -%}
 {%- for column in masked -%}
 {%- set quoted = adapter.quote(column) -%}
-{%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " shows the real value or none where there is one' where exists (select 1 from " ~ view.relation_name ~ " as v inner join " ~ table.relation_name ~ " as t on " ~ on | join(' and ') ~ " where t." ~ quoted ~ " is not null and (v." ~ quoted ~ " is null or v." ~ quoted ~ " = t." ~ quoted ~ "))") -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " is not the salted hash of the real value where there is one' where exists (select 1 from " ~ view.relation_name ~ " as v inner join " ~ table.relation_name ~ " as t on " ~ on | join(' and ') ~ " where t." ~ quoted ~ " is not null and (v." ~ quoted ~ " is null or v." ~ quoted ~ " is distinct from " ~ mask_pii('t.' ~ quoted) ~ "))") -%}
 {%- endfor -%}
 {%- endif -%}
 {#- (f) this test must run after both, so it is ordered behind their builds -#}

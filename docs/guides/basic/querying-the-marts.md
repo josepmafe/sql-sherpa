@@ -20,10 +20,13 @@ docker compose exec postgres psql -U sherpa_admin -d sherpa
 | `dim_promotions` | promotion |
 | `dim_date` | calendar day |
 | `fct_sessions` | web session (a device's events with no gap over 30 minutes) |
+| `dim_campaigns` | marketing campaign |
+| `fct_ad_spend_daily` | paid campaign and day with spend |
+| `fct_leads` | CRM lead |
 
 ## Which revenue to use
 
-Use `net_revenue` for "revenue" unless the question says otherwise. It is gross minus discounts minus refunds, and 0 for a cancelled order. The other columns (`gross_revenue`, `discount_amount`, `refunded_revenue`, `gross_margin`), AOV and refund rate are defined in [the data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md); the same text is in the column comments.
+Use `net_revenue` for "revenue" unless the question says otherwise. The metrics are defined in [the data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md); the same text is in the column comments.
 
 ## Example queries
 
@@ -63,6 +66,38 @@ select case when is_first_order then 'new' else 'returning' end as customer_type
 from marts.fct_orders where not is_cancelled group by 1;
 ```
 
+## Campaigns, ad spend and leads
+
+ROAS (attributed net revenue / spend) by channel for the month before the latest spend day's month, anchored on the latest spend day. ROAS and CAC are defined in [the spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md):
+
+```sql
+with as_of as (select date_trunc('month', max(spend_date)) as this_month from marts.fct_ad_spend_daily)
+select a.channel, round(sum(a.spend), 2) as spend,
+       round(sum(a.attributed_net_revenue) / nullif(sum(a.spend), 0), 2) as roas
+from marts.fct_ad_spend_daily as a
+cross join as_of
+where a.spend_date >= as_of.this_month - interval '1 month' and a.spend_date < as_of.this_month
+group by a.channel order by roas desc;
+```
+
+CAC (spend / new customers) by campaign. Divide the sums, never average the daily ratios; a campaign with no new customers has no CAC:
+
+```sql
+select c.campaign_name, c.channel, round(sum(a.spend), 2) as spend, sum(a.new_customers) as new_customers,
+       round(sum(a.spend) / nullif(sum(a.new_customers), 0), 2) as cac
+from marts.fct_ad_spend_daily as a
+inner join marts.dim_campaigns as c using (campaign_id)
+group by c.campaign_id, c.campaign_name, c.channel order by cac;
+```
+
+Lead-to-customer conversion by `lead_source`, counted by `lead_id` (the email is a hash):
+
+```sql
+select lead_source, count(lead_id) as leads, count(lead_id) filter (where is_converted) as converted,
+       round(count(lead_id) filter (where is_converted) * 1.0 / count(lead_id), 4) as conversion_rate
+from marts.fct_leads group by lead_source order by conversion_rate desc;
+```
+
 ## Traps
 
 ### Cancelled orders
@@ -83,7 +118,7 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 
 ### The `unknown` channel
 
-`marketing_channel` is one of eight channels or `unknown`: a web order whose purchase event has not arrived yet (late events) is `unknown` until it lands. Keep `unknown` in breakdowns so totals add up. For customers it is large: `dim_customers.acquisition_channel` is `unknown` for every prospect, so filter `order_count >= 1` in acquisition analyses.
+`marketing_channel` is one of eight channels or `unknown`: a web order whose purchase event has not arrived yet (late events) is `unknown` until it lands. Keep `unknown` in breakdowns so totals add up. `dim_customers.acquisition_channel` is `unknown` for every prospect: filter `order_count >= 1` in acquisition analyses.
 
 ### `as_of_date`, not today
 
@@ -91,19 +126,23 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 
 ### Sessions are web only
 
-A session is one device's events with no gap over 30 minutes. App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders; a session whose order was later cancelled still counts as purchased) leave them out. Compare orders per channel with `fct_orders`, and join `fct_orders` to `fct_sessions` on `session_id`. Anonymous visitors never return (every session of a non-customer is a first session). `fct_sessions.customer_id` is the customer the device was identified as at its latest identification, so sessions from before a visitor logged in carry it too, and it is null for visitors never identified. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise.
+App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders) leave them out (a session whose order was later cancelled still counts as purchased); compare orders per channel with `fct_orders`, and join `fct_orders` to `fct_sessions` on `session_id`. Anonymous visitors never return, so every session of a non-customer is a first session. `customer_id` and `is_first_session` are explained in the column comments; the definition is in `get_metric_definitions` and the spec's §6.6.
 
 ### Line grain against order grain
 
-Joining `fct_orders` to `fct_order_items` repeats each order's columns once per line, so summing an order column after the join multiplies it (in the 365-day dataset, gross revenue came out at 1,589,281.58 instead of 717,784.62). Sum order columns in `fct_orders` alone and line columns (`gross_amount`, `net_amount`, `quantity`) in `fct_order_items`; to use both, aggregate the lines in a subquery first. `fct_order_discounts` fans out the same way when an order has several discounts: filter to one promotion, or use `where exists (...)`.
+Joining `fct_orders` to `fct_order_items` repeats each order's columns once per line, so summing an order column after the join multiplies it (in the 365-day dataset, gross revenue came out at 1,589,281.58 instead of 717,784.62). Sum order columns in `fct_orders` alone and line columns (`gross_amount`, `net_amount`, `quantity`) in `fct_order_items`, or aggregate the lines in a subquery first. `fct_order_discounts` fans out the same way when an order has several discounts: filter to one promotion, or use `where exists (...)`.
+
+### Campaigns and leads
+
+- **Email has no ad spend.** `fct_ad_spend_daily` holds paid campaigns only; email campaigns are in `dim_campaigns`.
+- **Clicks are not sessions (R11).** `clicks` and `impressions` are the ad platform's; `sessions` are tracked web sessions. They differ by up to about 15% either way, so never use one for the other. An order belongs to its session's day, even when placed after midnight.
+- **`is_converted` means a customer account, not an order.** A lead converts when a customer's `lead_id` is this lead (a signup); for buyers join `dim_customers` on `converted_customer_id` and filter `order_count >= 1`. Recent leads have had less time to convert, so compare cohorts over a fixed window. `new_customers` in `fct_ad_spend_daily` is different: first orders of paid campaigns only, so `sum(new_customers)` counts paid acquisitions, not all first-time buyers (blended CAC needs `fct_orders.is_first_order`).
+- **`lifecycle_stage` lags `is_converted`.** A converted lead is not always at `customer` yet; a lead at `customer` is always converted. Use `is_converted` for conversion.
+- **`fct_leads.email` is a hash,** like `dim_customers.email`: count by `lead_id`, and reach the customer through `converted_customer_id`.
 
 ## Fuzzy search on products
 
-`dim_products` has GIN trigram indexes on the name, brand and category columns, and `pg_trgm` is on the search path.
-
-- `'text' <% column`: `text` is similar to a run of whole words in `column` (word similarity at least 0.6). Use it for a misspelled word inside a longer name.
-- `column % 'text'`: whole-string similarity above 0.3. Use it for short values such as a brand or category.
-- `ilike '%text%'` finds exact fragments only.
+`dim_products` has GIN trigram indexes on the name, brand and category columns, and `pg_trgm` is on the search path. `'text' <% column` matches a misspelled word inside a longer name (word similarity at least 0.6); `column % 'text'` matches short values such as a brand (whole-string similarity above 0.3); `ilike '%text%'` finds exact fragments only.
 
 ```sql
 select distinct product_name, round(word_similarity('dumbell', product_name)::numeric, 2) as sim
@@ -114,9 +153,9 @@ order by sim desc, product_name limit 5;
 
 ## Connecting as `sherpa_agent`
 
-The agent's role reads only the `marts` schema (and uses the functions in `extensions`) on prod and on the frozen eval database. It cannot read staging, intermediate, seeds, raw or `dev_` schemas, cannot create temporary tables, and its queries stop after 5 seconds. dbt grants this at the end of every prod and eval build.
+The agent's role reads only the `marts` schema (and uses `extensions`) on prod and the eval database: no staging, intermediate, raw or `dev_` schemas, no temporary tables, and queries stop after 5 seconds. dbt grants this at the end of every prod and eval build.
 
-The container already holds the `.env` variables, so read the password there instead of putting it on a command line:
+The container holds the `.env` variables, so the password stays off the command line:
 
 ```bash
 agent_psql() {
@@ -127,7 +166,7 @@ agent_psql -c "select count(*) from marts.fct_orders"
 agent_psql -c "select count(*) from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
 ```
 
-`dim_customers` is a view: `email` is a salted hash (the same value always gives the same hash) and customer names are not in it. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind it is closed to the role:
+`dim_customers` and `fct_leads` are views: `email` is a salted hash (the same value always gives the same hash) and customer names are not in them. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind each is closed to the role:
 
 ```bash
 agent_psql -c "select * from marts.dim_customers_unmasked"   # ERROR:  permission denied for table dim_customers_unmasked
@@ -147,5 +186,4 @@ For the eval database add `-d sherpa_eval` (see [the frozen eval database](build
 
 ## Next
 
-- [Building the warehouse](building-the-warehouse.md): build, test and debug the models behind these tables.
-- [Adding or changing a mart](../advanced/adding-or-changing-a-mart.md): add a column, a mart or a metric.
+[Building the warehouse](building-the-warehouse.md) builds and debugs the models behind these tables; [Adding or changing a mart](../advanced/adding-or-changing-a-mart.md) adds a column, a mart or a metric.

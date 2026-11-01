@@ -33,10 +33,13 @@ LARGE_OBJECT_FUNCTIONS = (
 # Spec §6.5: the marts built so far. Hard-coded on purpose: the MCP server and UI suites import it, and a list read
 # from the same manifest as their catalogs would pass when a mart disappears.
 MARTS = (
+    "dim_campaigns",
     "dim_customers",
     "dim_date",
     "dim_products",
     "dim_promotions",
+    "fct_ad_spend_daily",
+    "fct_leads",
     "fct_order_discounts",
     "fct_order_items",
     "fct_orders",
@@ -45,7 +48,7 @@ MARTS = (
     "fct_sessions",
 )
 # Spec §6.5: the tables behind the masked views; no reader role can read them.
-UNMASKED = ("dim_customers_unmasked",)
+UNMASKED = ("dim_customers_unmasked", "fct_leads_unmasked")
 NOT_EXPOSED = (
     ("staging", "stg_shop__orders"),
     ("intermediate", "int_order_items__discount_allocated"),
@@ -207,7 +210,9 @@ class TestMaskedMarts:
         self, admin: psycopg.Connection, reader: psycopg.Connection
     ) -> None:
         hidden = _hidden_relations(admin)
-        assert {"marts.dim_customers_unmasked", "ops.pii_salt"} <= {name for _, name in hidden}
+        assert {"marts.dim_customers_unmasked", "marts.fct_leads_unmasked", "ops.pii_salt"} <= {
+            name for _, name in hidden
+        }
         role = _current_user(reader)
         query = sql.SQL(
             "select"
@@ -226,7 +231,9 @@ class TestMaskedMarts:
             row = admin.execute("select has_table_privilege(%s, %s, 'SELECT')", (role, f"marts.{mart}")).fetchone()
             assert row == (True,), mart
 
-    @pytest.mark.parametrize(("schema", "table"), [("marts", "dim_customers_unmasked"), ("ops", "pii_salt")])
+    @pytest.mark.parametrize(
+        ("schema", "table"), [("marts", "dim_customers_unmasked"), ("marts", "fct_leads_unmasked"), ("ops", "pii_salt")]
+    )
     def test_reading_an_unmasked_table_or_the_salt_is_denied(
         self, admin: psycopg.Connection, reader: psycopg.Connection, schema: str, table: str
     ) -> None:

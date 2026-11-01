@@ -29,7 +29,7 @@ models:
   - name: stg_marketing__ad_spend_daily
     description: >
       Spend and traffic per paid campaign and day, as reported by the ad platforms. Platform clicks
-      are not tracked sessions (R11).
+      are not tracked sessions.
     data_tests:
       # Composite key: the table has no id, a row is identified by day + campaign.
       - dbt_utils.unique_combination_of_columns:

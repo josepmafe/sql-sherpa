@@ -15,11 +15,17 @@ customers as (
 
 ),
 
+source_orders as (
+
+    select * from {{ ref('stg_shop__orders') }}
+
+),
+
 -- Orders of test accounts (R5) are excluded.
 orders as (
 
     select orders.*
-    from {{ ref('stg_shop__orders') }} as orders
+    from source_orders as orders
     inner join customers on orders.customer_id = customers.customer_id
     where not customers.is_test_account
 
@@ -62,6 +68,24 @@ purchase_sessions as (
 
 ),
 
+discount_allocated as (
+
+    select * from {{ ref('int_order_items__discount_allocated') }}
+
+),
+
+costed as (
+
+    select * from {{ ref('int_order_items__costed') }}
+
+),
+
+returns_summarized as (
+
+    select * from {{ ref('int_order_items__returns_summarized') }}
+
+),
+
 lines as (
 
     select
@@ -77,11 +101,10 @@ lines as (
             ),
             0
         ) as returned_cogs
-    from {{ ref('int_order_items__discount_allocated') }} as discount_allocated
-    inner join {{ ref('int_order_items__costed') }} as costed
+    from discount_allocated
+    inner join costed
         on discount_allocated.order_item_id = costed.order_item_id
-    left join
-        {{ ref('int_order_items__returns_summarized') }} as returns_summarized
+    left join returns_summarized
         on discount_allocated.order_item_id = returns_summarized.order_item_id
     group by discount_allocated.order_id
 

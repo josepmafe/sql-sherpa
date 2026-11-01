@@ -31,18 +31,26 @@ def _bump_mtime(path: Path, seconds: int) -> None:
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + seconds * 1_000_000_000))
 
 
-def _make_orders_public(manifest: dict[str, Any]) -> None:
-    manifest["nodes"]["model.sherpa.fct_orders"]["access"] = "public"
+def _make_only_orders_public(manifest: dict[str, Any]) -> None:
+    for node in manifest["nodes"].values():
+        if node["resource_type"] == "model" and node["schema"] == "marts":
+            node["access"] = "public" if node["name"] == "fct_orders" else "protected"
 
 
-# Data platform spec §6.5: the sentence that ends the description of every masked column.
-PSEUDONYMISED_SENTENCE = (
-    "Salted md5 hash (32 hex characters) of the customer's normalized email; null for deleted customers. "
+# Data platform spec §6.5: the sentence that ends the description of every masked column, and per column the
+# sentence that names its subject.
+HASH_SENTENCE = (
     "Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with "
     "a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results "
-    "(some patterns match random rows). Identify customers by customer_id; questions about email domains "
-    "cannot be answered."
+    "(some patterns match random rows)."
 )
+SUBJECT_SENTENCES = {
+    ("dim_customers", "email"): "Identify customers by customer_id; questions about email domains cannot be answered.",
+    ("fct_leads", "email"): (
+        "Identify leads by lead_id; join customers on converted_customer_id = customer_id, never on email: "
+        "a deleted customer's email is null; questions about email domains cannot be answered."
+    ),
+}
 
 
 @pytest.mark.warehouse
@@ -51,8 +59,9 @@ def test_masked_columns_are_the_specs(prod_loader: MartCatalogLoader) -> None:
 
     masked = [(mart.name, column) for mart in marts for column in mart.columns if column.is_pii]
 
-    assert {(name, column.name) for name, column in masked} == {("dim_customers", "email")}
-    assert all(PSEUDONYMISED_SENTENCE in column.description for _, column in masked)
+    assert {(name, column.name) for name, column in masked} == {("dim_customers", "email"), ("fct_leads", "email")}
+    assert all(HASH_SENTENCE in column.description for _, column in masked)
+    assert all(SUBJECT_SENTENCES[name, column.name] in column.description for name, column in masked)
 
 
 class TestMartCatalogLoader:
@@ -112,7 +121,7 @@ class TestMartCatalogLoader:
         assert catalog.generated_at.isoformat() == "2026-10-24T12:36:42.863017+00:00"
 
     def test_public_access_rule_applies_once_any_model_is_public(self, fixture_target: Path) -> None:
-        _edit_manifest(fixture_target, _make_orders_public)
+        _edit_manifest(fixture_target, _make_only_orders_public)
 
         loaded = MartCatalogLoader(fixture_target).load()
 
@@ -124,7 +133,7 @@ class TestMartCatalogLoader:
 
         assert loader.load() is first
 
-        _edit_manifest(fixture_target, _make_orders_public)
+        _edit_manifest(fixture_target, _make_only_orders_public)
         _bump_mtime(fixture_target / "manifest.json", seconds=5)
         reloaded = loader.load()
 
@@ -261,6 +270,27 @@ class TestMartCatalog:
         assert [column.name for column in products.columns if column.is_pii] == ["supplier_email"]
 
     def test_an_unmasked_table_is_not_a_visible_mart(self, catalog: MartCatalog) -> None:
+        assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+        assert catalog.mart("dim_customers_unmasked") is None
+
+    @pytest.mark.parametrize("access", ["public", None])
+    def test_the_unmasked_suffix_refuses_a_table_whatever_its_access(
+        self, fixture_target: Path, access: str | None
+    ) -> None:
+        # With the access rule out of play (public, or no model declaring access at all), only the name refuses it.
+        def set_access(manifest: dict[str, Any]) -> None:
+            for uid, node in manifest["nodes"].items():
+                if node["resource_type"] != "model":
+                    continue
+                if access is None:
+                    node.pop("access", None)
+                elif uid.endswith("dim_customers_unmasked"):
+                    node["access"] = access
+
+        _edit_manifest(fixture_target, set_access)
+
+        catalog = MartCatalogLoader(fixture_target).load()
+
         assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
         assert catalog.mart("dim_customers_unmasked") is None
 

@@ -1,6 +1,6 @@
 -- Test accounts (R5) and their orders are excluded from every mart. Returns
--- one row per test-account customer found in dim_customers, fct_orders or
--- fct_sessions.
+-- one row per test-account customer found in dim_customers, fct_orders,
+-- fct_sessions or fct_leads.
 with
 
 test_accounts as (
@@ -27,6 +27,12 @@ mart_customers as (
         customer_id,
         'fct_sessions' as mart
     from {{ ref('fct_sessions') }}
+    union all
+    select distinct
+        converted_customer_id as customer_id,
+        'fct_leads' as mart
+    from {{ ref('fct_leads') }}
+    where converted_customer_id is not null
 
 )
 

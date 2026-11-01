@@ -65,3 +65,17 @@ orders: a session with a purchase counts even if its order was cancelled later. 
 app orders (35% of orders) have no session, so they are in neither the numerator nor the denominator.
 To count web orders, use fct_orders (`sales_channel = 'web'`), not fct_sessions.
 {% enddocs %}
+
+{% docs metric_roas %}
+Return on ad spend (ROAS): attributed_net_revenue / spend, for paid campaigns only (email campaigns
+have no ad spend). Attribution is last-touch session: an order belongs to the campaign of the session
+it was placed in, on the day that session started. Compute it from sums, Σ attributed_net_revenue /
+Σ spend, for any grouping of campaigns, channels and dates; never average the daily ratios.
+{% enddocs %}
+
+{% docs metric_cac %}
+Customer acquisition cost (CAC): Σ spend / Σ new_customers, for paid campaigns only (email campaigns
+have no ad spend). A new customer is a customer whose first order was placed in one of the campaign's
+sessions that started on that day. Sum both over any grouping of campaigns, channels and dates before
+dividing; a day or campaign with no new customers has no CAC of its own.
+{% enddocs %}
