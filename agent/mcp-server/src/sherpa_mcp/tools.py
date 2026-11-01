@@ -60,6 +60,8 @@ DOES_NOT_COVER: Final = (
     "and names are not in the marts",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
     "(fct_sessions has one row per web session with funnel flags)",
+    "email opens and clicks per campaign or per send, and which campaign a lead came from "
+    "(fct_leads has per-lead totals only)",
 )
 TWO_YEARS_DAYS: Final = 730
 SHORT_HISTORY: Final = "comparisons across years, such as year over year: the history is shorter than two years"

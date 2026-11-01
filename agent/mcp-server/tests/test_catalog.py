@@ -273,6 +273,27 @@ class TestMartCatalog:
         assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
         assert catalog.mart("dim_customers_unmasked") is None
 
+    @pytest.mark.parametrize("access", ["public", None])
+    def test_the_unmasked_suffix_refuses_a_table_whatever_its_access(
+        self, fixture_target: Path, access: str | None
+    ) -> None:
+        # With the access rule out of play (public, or no model declaring access at all), only the name refuses it.
+        def set_access(manifest: dict[str, Any]) -> None:
+            for uid, node in manifest["nodes"].items():
+                if node["resource_type"] != "model":
+                    continue
+                if access is None:
+                    node.pop("access", None)
+                elif uid.endswith("dim_customers_unmasked"):
+                    node["access"] = access
+
+        _edit_manifest(fixture_target, set_access)
+
+        catalog = MartCatalogLoader(fixture_target).load()
+
+        assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+        assert catalog.mart("dim_customers_unmasked") is None
+
     def test_domains(self, catalog: MartCatalog) -> None:
         assert catalog.domains() == ("customers", "products", "sales")
 
