@@ -38,6 +38,7 @@ MARTS = (
     "dim_date",
     "dim_products",
     "dim_promotions",
+    "fct_ad_spend_daily",
     "fct_order_discounts",
     "fct_order_items",
     "fct_orders",
