@@ -218,6 +218,16 @@ class SqlGuard:
                         "call functions without a schema",
                     )
                 ]
+            case exp.Dot() if not isinstance(node.parent, exp.DataType):
+                # `(expr).name` or a five-part name: Postgres may read the last part as the call name(expr), which
+                # reaches a function past the allow-list. (A qualified type name is a Dot too; its cast is refused.)
+                return [
+                    _error(
+                        "field",
+                        f"field selection `{_cut(node.sql(dialect=DIALECT))}` is not allowed",
+                        "select named columns",
+                    )
+                ]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):
                 if _function_name(node) in self._allowed_functions:
                     return []

@@ -4,7 +4,7 @@ import re
 from typing import TYPE_CHECKING
 
 import pytest
-from sherpa_mcp.sql_guard import ALLOWED_FUNCTIONS, CAST_HINT, CAST_TYPES, SqlGuard
+from sherpa_mcp.sql_guard import ALLOWED_FUNCTIONS, CAST_TYPES, SqlGuard
 from sqlglot import exp
 
 if TYPE_CHECKING:
@@ -339,14 +339,25 @@ REJECTED_QUERIES = [
         "function",
         "function or operator `CAST(order_id AS TEXT) ~ '1'` is not allowed",
     ),
-    # an alias of an outer query read from a subquery
     ("select to_json(c) from marts.dim_customers c", "function", "function to_json is not allowed"),
     ("select row_to_json(c) from marts.dim_customers c", "function", "function row_to_json is not allowed"),
     ("select row(c.email) from marts.dim_customers c", "function", "function row is not allowed"),
-    # Postgres expands `c.* as x` and ignores the alias; the guard fails closed on it anyway
     ("select row_to_json(c.*) from marts.dim_customers c", "function", "function row_to_json is not allowed"),
     ("select to_jsonb(c.*) from marts.dim_customers c", "function", "function to_jsonb is not allowed"),
-    # quoted names match case-insensitively; Postgres reads unquoted `Foo` as foo, and the guard fails closed on it too
+    # `(expr).name` is the call name(expr) to Postgres, so a field selection reaches functions past the allow-list
+    ("select (c.email).x from marts.dim_customers c", "field", "field selection `(c.email).x` is not allowed"),
+    ("select (c).email from marts.dim_customers c", "field", "field selection `(c).email` is not allowed"),
+    (
+        "select (c.email).length from marts.dim_customers c",
+        "field",
+        "field selection `(c.email).length` is not allowed",
+    ),
+    ("select (1).abs from marts.fct_orders", "field", "field selection `(1).abs` is not allowed"),
+    (
+        "select (c.email).pg_sleep from marts.dim_customers c",
+        "field",
+        "field selection `(c.email).pg_sleep` is not allowed",
+    ),
     ("select 1 from", "parse", "could not parse the query"),
     ("select 1::regclass from marts.fct_orders", "cast", "cast to type REGCLASS is not allowed"),
     (
@@ -431,6 +442,7 @@ REMEDY_HINTS = [
     ("select * from fct_orders", "table", "qualify it as marts.fct_orders"),
     ("select * from pg_catalog.pg_roles", "table", "query only the marts that list_tables returns"),
     ("select * from a.b.c.d", "table", "use marts.<name>"),
+    ("select (c.email).x from marts.dim_customers c", "field", "select named columns"),
     ("select 1 from", "parse", "write one Postgres SELECT"),
     ("select 1 from marts.fct_orders; select 2", "statement_count", "send one SELECT"),
     ("delete from marts.fct_orders", "not_select", "write one SELECT"),
@@ -580,7 +592,7 @@ class TestAttributeNotationReach:
         # `t.f` is the call f(t) when f is not a column of t, past the allow-list. These are the functions the agent
         # role may run on a row (one required argument of a row-accepting type); each only reads, formats or aggregates
         # it, and the marts hold only hashes, so that is harmless. A new entry (a Postgres upgrade, a grant) needs the
-        # same review.
+        # same review. The scalar form `(expr).f` is the guard's `field` rule, not covered here.
         names = {
             row[0]
             for row in admin.execute(
@@ -737,11 +749,13 @@ class TestSqlGuard:
             "use marts.dim_date for a series of dates, or a non-recursive query"
         ) in result.errors
 
-    @pytest.mark.parametrize("call", ["repeat('a', 5)", "lpad('a', 5)", "rpad('a', 5, 'b')"])
-    def test_string_builders_are_rejected(self, guard: SqlGuard, call: str) -> None:
+    @pytest.mark.parametrize(
+        ("call", "name"), [("repeat('a', 5)", "repeat"), ("lpad('a', 5)", "lpad"), ("rpad('a', 5, 'b')", "rpad")]
+    )
+    def test_string_builders_are_rejected(self, guard: SqlGuard, call: str, name: str) -> None:
         result = guard.check(f"select {call} from marts.fct_orders")
 
-        assert result.errors == (f"[guard:function] function {call.split('(')[0]} is not allowed; {FUNCTION_HINT}",)
+        assert result.errors == (f"[guard:function] function {name} is not allowed; {FUNCTION_HINT}",)
 
     def test_session_identity_values_pass(self, guard: SqlGuard) -> None:
         result = guard.check("select user, current_role, system_user from marts.fct_orders")
@@ -754,7 +768,6 @@ class TestSqlGuard:
             "select c from marts.dim_customers c",
             "select c.*::text from marts.dim_customers c",
             "select c.row_to_json from marts.dim_customers c",
-            "select (c).email from marts.dim_customers c",
             'select U&"c" from marts.dim_customers c',
             "select s.e from (select email from marts.dim_customers) s(e)",
             "select 1_000 from marts.fct_orders",
@@ -950,7 +963,6 @@ class TestCastTypes:
             "cast to smallint, integer, bigint, numeric, real, double precision, boolean, text, varchar, date, time, "
             "timestamp, timestamptz, interval or an array of these",
         )
-        assert CAST_HINT in result.errors[0]
 
     def test_a_json_literal_is_rejected(self, guard: SqlGuard) -> None:
         # sqlglot reads `json '{}'` as ParseJSON, a function that is not on the allow-list.
