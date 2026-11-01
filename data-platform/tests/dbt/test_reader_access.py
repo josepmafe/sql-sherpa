@@ -209,14 +209,14 @@ class TestMaskedMarts:
         hidden = _hidden_relations(admin)
         assert {"marts.dim_customers_unmasked", "ops.pii_salt"} <= {name for _, name in hidden}
         role = _current_user(reader)
-        query = (
+        query = sql.SQL(
             "select"
             " has_table_privilege(%(role)s, %(oid)s::oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),"
             " has_any_column_privilege(%(role)s, %(oid)s::oid, 'SELECT,INSERT,UPDATE,REFERENCES')"
         )
 
         granted = {
-            (name, grantee): admin.execute(query, {"role": grantee, "oid": oid}).fetchone()  # type: ignore[call-overload]
+            (name, grantee): admin.execute(query, {"role": grantee, "oid": oid}).fetchone()
             for oid, name in hidden
             for grantee in (role, "public")
         }

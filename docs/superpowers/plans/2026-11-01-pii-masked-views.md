@@ -63,7 +63,7 @@ The dbt side breaks down as: view 30, two macros 20, `grant_read_access` +30, th
 - **Tests:**
   - assert the spec's literals, never the module constant;
   - privilege and leak assertions are booleans, computed so that a real value or the salt never reaches Python or a failure message (compare in SQL as admin, or `assert not leaked, "<what leaked>"`);
-  - singular tests return only literal text, because `store_failures` keeps their rows;
+  - a singular test that reads an `_unmasked` table returns no value of its PII columns, because `store_failures` keeps the failing rows;
   - warehouse tests only read.
 - **Every commit:** `make lint` and `make test` green. At the end of Tasks 2–4, `uv run --env-file .env pytest -m warehouse` is green too, after `make build`, `make build-prod` and `make eval-db`.
 - **Environment:**
@@ -252,13 +252,13 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
   - **`_customers__models.yml`, `dim_customers_unmasked`:**
     - a short description: what it computes, real PII, no reader can query it, only the view reads it;
     - `config: grants: {select: []}`;
-    - every column with `data_type` and a one-line description, `meta.pii: true` on the three PII columns, and the `customer_id` constraints;
+    - every column with `data_type` and a one-line description, `meta.pii: true` on the PII columns (`email`, `first_name`, `last_name`), and the `customer_id` constraints;
     - no data tests;
     - the unit test keeps its name, with `model: dim_customers_unmasked`.
   - **`_customers__models.yml`, `dim_customers`:**
     - today's model description, its `meta`, and its columns with their descriptions, synonyms and every data test; no constraints;
-    - `meta.masked: true` on the three PII columns;
-    - each of the three descriptions ends: `Pseudonymised: an md5 hash of the value and a secret salt. Equal values hash equally, so counts, joins and group by work, but comparing it with a plain value, LIKE or a string function matches nothing; identify customers by customer_id.`;
+    - `meta.masked: true` on `email`, the one PII column the view exposes;
+    - the `email` description says it is a 32-character hex hash: a comparison, pattern, string function or sorting gives meaningless results; count, group by and joins work; identify customers by `customer_id`;
     - do not name the `_unmasked` table, because the agent reads this text.
   - **The consumers of `dim_customers` all read the view, unchanged:**
     - the relationships tests in `_sales__models.yml` (5) and `_marketing_web__models.yml` (1);
@@ -273,7 +273,7 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
        - otherwise: `grant select`.
     5. The `ops` grants as now.
     It never fails on a missing mart or view. Update the header comment.
-  - **`assert_pii_marts_are_masked_views.sql`.** Failing rows `(model text, problem text)` hold only literals. It starts with `-- depends_on: {{ ref('dim_customers') }}` and `-- depends_on: {{ ref('dim_customers_unmasked') }}`. Under `{% if execute %}`, over `graph.nodes`, one literal row or one SQL arm per broken rule (spec §6.5 Checks):
+  - **`assert_pii_marts_are_masked_views.sql`.** Failing rows `(model text, problem text)` hold no value of a PII column. It starts with `-- depends_on: {{ ref('dim_customers') }}` and `-- depends_on: {{ ref('dim_customers_unmasked') }}`. Under `{% if execute %}`, over `graph.nodes`, one literal row or one SQL arm per broken rule (spec §6.5 Checks):
     - (a) a model with a `meta.pii` column that is not a table named `*_unmasked`;
     - (b) its sibling missing from the graph or not a view;
     - (c) in Postgres:
@@ -291,7 +291,7 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
     - `is_pii` from `masked`;
     - the refusal in `_build_catalog`, and `load()` handling `UnmaskedArtifacts` before the generic `CatalogUnavailable` (`self._catalog = None`, `self._stamp = None`, re-raise);
     - update the `MARTS_SCHEMA` comment.
-  - `tools.py`: `DOES_NOT_COVER` gains, after "currencies other than EUR", `"customers' email addresses and names, which the marts hold only as pseudonymised hashes (comparing one with a plain value matches nothing)"`.
+  - `tools.py`: `DOES_NOT_COVER` gains, after "currencies other than EUR", `"customers' email addresses, domains and names: the email is available only as a salted hash and customer names are not in the marts"`.
   - `lineage_service.py:247`: `is_mart=node.layer == Layer.MARTS and not node.name.endswith(UNMASKED_SUFFIX)`.
   - `ui/frontend/e2e/helpers.ts:17`: the `information_schema.tables` query adds `and table_name not like '%\_unmasked'`.
   - `test_column_lineage_warehouse.py`:
@@ -451,7 +451,7 @@ The walk visits the element type too, so `jsonb[]` fails on `JSONB`.
 
     - `test_a_json_literal_is_rejected`: `select json '{}' from marts.fct_orders` gives `[guard:function] function cast is not allowed; rewrite it with the common aggregate, window, string, date and math functions`. sqlglot reads it as `ParseJSON`.
   - **`test_session_identity_values_pass`:** `select user, current_role, system_user from marts.fct_orders` is ok. `current_user` and `session_user` stay rejected (existing rows).
-  - **`test_string_builders_are_rejected`,** parametrized over `repeat('a', 5)`, `lpad('a', 5)` and `rpad('a', 5, 'b')`: `[guard:function] function <name> is not allowed; rewrite it with the common aggregate, window, string, date and math functions`. It replaces `test_repeat_stays_rejected`.
+  - **`test_string_builders_are_rejected`,** parametrized over `repeat('a', 5)`, `lpad('a', 5)` and `rpad('a', 5, 'b')`: `[guard:function] function <name> is not allowed; <hint>`, where `repeat` gets the default function hint and `lpad`/`rpad` get `use to_char(order_date, 'YYYY-MM') for a label, or to_char(n, 'FM00') to zero-pad`. It replaces `test_repeat_stays_rejected`.
   - **`test_forms_the_marts_make_harmless_pass`:** it pins that the guard has no PII rule. Each of these passes:
     - `select c from marts.dim_customers c`, `select c.*::text from marts.dim_customers c`;
     - `select c.row_to_json from marts.dim_customers c`; `select (c).email from marts.dim_customers c` is rejected by the restored `field` rule (`[guard:field]`);
@@ -539,12 +539,12 @@ Rewrite in place to the current state, with no "previously". The length rules of
     - the `make build` bullet: build a PII mart with its view (`--select <mart>_unmasked+`), because the table alone drops the view;
     - the direct repair is `dbt build --select dim_customers_unmasked+ --target prod --target-path target-prod`;
     - `make reset`'s `ops` also holds the generated PII salt, so a reset changes the hashes.
-  - **dbt tests:** a singular test's failing rows hold only literals (`store_failures` keeps them).
+  - **dbt tests:** a singular test that reads an `_unmasked` table returns no value of its PII columns (`store_failures` keeps the failing rows).
   - **Python Guidelines:** "MCP server: `sql_guard`, `masking`, …" loses `masking`.
 - [ ] **Step 2: `README.md`:** the guides list says "PII" instead of "masking".
 - [ ] **Step 3: Guides**, each with its symptom → fix table updated:
   - `basic/using-the-mcp-server.md`:
-    - "PII masking" becomes "PII": salted hashes from the mart; equal values hash equally; a comparison with a plain value matches nothing; `search_values` refuses PII columns; data errors are Postgres's text.
+    - "PII masking" becomes "PII": salted hashes from the mart; equal values hash equally; a comparison, pattern, string function or sorting gives meaningless results; count, group by and joins work; customers are identified by `customer_id`; `search_values` refuses PII columns; data errors are Postgres's text.
     - Known limitations: delete the `pg_stats` line, and replace `replace(lpad(...))` with "nested string functions such as `replace` over a literal".
     - Troubleshooting: drop "name columns instead of `select c`".
   - `basic/querying-the-marts.md`:
