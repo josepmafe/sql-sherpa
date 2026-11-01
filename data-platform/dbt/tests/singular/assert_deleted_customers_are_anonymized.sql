@@ -27,7 +27,7 @@ union all
 select
     leads.converted_customer_id as customer_id,
     true as is_deleted,
-    true as staging_is_deleted,
+    null::boolean as staging_is_deleted,
     leads.lead_id
 from {{ ref('fct_leads_unmasked') }} as leads
 inner join {{ ref('dim_customers_unmasked') }} as customers

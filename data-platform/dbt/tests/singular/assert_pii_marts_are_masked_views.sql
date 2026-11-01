@@ -9,8 +9,8 @@
 -- noqa: disable=LT02,LT05
 {% set arms = [] -%}
 {%- if execute -%}
-{#- a model reads an *_unmasked table although it is neither its view nor an *_unmasked table itself -#}
-{%- for reader in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') if not reader.name.endswith('_unmasked') -%}
+{#- a model other than the view of an *_unmasked table reads it (another *_unmasked model included) -#}
+{%- for reader in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') -%}
 {%- for dep_id in reader.depends_on.nodes if dep_id.endswith('_unmasked') and dep_id.split('.')[-1][:-9] != reader.name -%}
 {%- do arms.append("select '" ~ reader.name ~ "', 'reads " ~ dep_id.split('.')[-1] ~ "; ref " ~ dep_id.split('.')[-1][:-9] ~ " instead'") -%}
 {%- endfor -%}

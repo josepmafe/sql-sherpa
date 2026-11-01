@@ -277,7 +277,7 @@ It comes first because `dim_customers_unmasked` already has `not_null` constrain
     - `dbt_utils.expression_is_true` with `is_converted = (converted_customer_id is not null)`, `lifecycle_stage <> 'customer' or is_converted`, `emails_opened <= emails_sent` and `emails_clicked <= emails_sent`
 - [ ] **Step 5: `assert_pii_marts_are_masked_views`.**
   - **Dependencies:** add `-- depends_on: {{ ref('fct_leads') }}` and `-- depends_on: {{ ref('fct_leads_unmasked') }}`.
-  - **New arm (spec §6.5 "Checks"):** a node with `resource_type == 'model'` whose `depends_on.nodes` holds an `*_unmasked` model, and which is neither that model's sibling view nor itself `*_unmasked`, returns the literal row (`<model>`, `'reads <table>; ref <view> instead'`). It is about 5 lines of Jinja.
+  - **New arm (spec §6.5 "Checks"):** a node with `resource_type == 'model'` whose `depends_on.nodes` holds an `*_unmasked` model, and which is not that model's own sibling view (another `*_unmasked` model is no exception), returns the literal row (`<model>`, `'reads <table>; ref <view> instead'`). It is about 5 lines of Jinja.
   - **Exact hash:** arm (e) becomes "`t.<col> is not null and (v.<col> is null or v.<col> is distinct from {{ mask_pii('t.<col>') }})`", so an unsalted `md5(email)` fails it, and an empty salt still does.
   - **Prove each arm,** with throwaway edits that you revert:
     - a model `tmp_reads_leads` that selects from `fct_leads_unmasked` returns the new arm's row
