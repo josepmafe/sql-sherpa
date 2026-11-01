@@ -219,8 +219,9 @@ class SqlGuard:
                     )
                 ]
             case exp.Dot() if not isinstance(node.parent, exp.DataType):
-                # `(expr).name` or a five-part name: Postgres may read the last part as the call name(expr), which
-                # reaches a function past the allow-list. (A qualified type name is a Dot too; its cast is refused.)
+                # `(expr).name` or a five-part name, which Postgres refuses anyway: Postgres reads `(expr).name` as
+                # the call name(expr), which reaches a function past the allow-list. (A qualified type name is a Dot
+                # too; its cast is refused.)
                 return [
                     _error(
                         "field",

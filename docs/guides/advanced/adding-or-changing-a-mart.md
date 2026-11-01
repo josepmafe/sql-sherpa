@@ -6,7 +6,7 @@ How to change what the marts expose: add a column, add a mart, change a metric, 
 
 The marts' columns, grain and metric definitions are in the [data platform spec](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md) (§6.5, §6.6). Changing them is a spec change: agree it with the owner and update the spec in the same branch. The agent relies on the marts as §11 describes them, so a rename or a removal breaks it.
 
-Everything under `data-platform/dbt/models/marts/` inherits from `dbt_project.yml`: `materialized: table`, `contract: enforced` (dbt checks the model's columns and types against the YAML before building), `persist_docs` (descriptions become Postgres comments), an `analyze` post-hook and `SELECT` grants for the agent and UI roles. The folder is `marts/<domain>/`, with one `_<domain>__models.yml` per folder and `meta.domain` matching the folder. Metric definitions live in `marts/_metrics.md`.
+Everything under `data-platform/dbt/models/marts/` inherits from `dbt_project.yml`: `materialized: table`, `contract: enforced` (dbt checks the model's columns and types against the YAML before building), `persist_docs` (descriptions become Postgres comments), an `analyze` post-hook and `SELECT` grants for the agent and UI roles, which `grant_read_access` applies per relation. The folder is `marts/<domain>/`, with one `_<domain>__models.yml` per folder and `meta.domain` matching the folder. Metric definitions live in `marts/_metrics.md`.
 
 ## 1. Add a column to a mart
 
@@ -30,7 +30,7 @@ Example: `dim_products.current_margin`, list price minus cost price. Three steps
            data_tests: [not_null]
    ```
 
-   `data_type` and `description` are mandatory. `meta.synonyms` helps the agent match questions to the column; add `meta.pii: true` for personal data. Reuse a metric's doc block with `{{ doc('metric_net_revenue') }}`.
+   `data_type` and `description` are mandatory. `meta.synonyms` helps the agent match questions to the column; for personal data see [section 8](#8-add-a-mart-with-pii). Reuse a metric's doc block with `{{ doc('metric_net_revenue') }}`.
 
 3. **Build and test:**
 
@@ -70,7 +70,7 @@ Example: `dim_countries`, one row per country from the `countries` seed, domain 
 
 2. **The YAML**, appended to `models/marts/shared/_shared__models.yml`: a description, `config.meta` with `domain`, `grain` and `primary_key` (a column name or a list; the agent reads them and nothing enforces them, so review them yourself), and every column with `description` and `data_type`. Put `constraints: [not_null, primary_key]` and `data_tests: [unique, not_null]` on the key: the constraint makes Postgres enforce it, the tests report violations.
 3. **Indexes.** For a fact table, add an index per join or filter column in the SQL file: `{{ config(indexes=[{'columns': ['order_id']}]) }}`. Text columns searched by name get a trigram index (section 4).
-4. **Grants.** Nothing to do: the `+grants` setting and the `grant_read_access` hook cover every mart table (see [Building the warehouse](../basic/building-the-warehouse.md)). The agent reads the table after the next `make build-prod`.
+4. **Grants.** Nothing to do: the `+grants` setting and the `grant_read_access` hook, which grants per relation, cover every visible mart (see [Building the warehouse](../basic/building-the-warehouse.md#hooks-and-grants)). The agent reads the table after the next `make build-prod`.
 5. **Registry.** Add the mart to `models/overview.md`, its row to the spec's §6.5, and the table to the `MARTS` tuple in `data-platform/tests/dbt/test_reader_access.py`.
 6. **Prove it:**
 
@@ -177,6 +177,22 @@ dbt show --select fct_sessions_incremental_vs_full_refresh --vars '{compare_sche
 
 Run on the dev target (the default), it compares `dev_marts.fct_sessions`, which `make build` has updated incrementally, with the prod table that the full refresh rebuilt; zero rows means identical. The analysis requires `compare_schema` only when it is the selected node; selecting it by `--selector` or resource type skips that check and fails on a placeholder schema.
 
+## 8. Add a mart with PII
+
+Example: a mart `dim_leads` with an `email` column. A mart with personal data is a pair ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)), so the readers get hashes and never the values:
+
+1. **The table**, `models/marts/<domain>/dim_leads_unmasked.sql`: the model of section 2, named `<mart>_unmasked`, with `{{ config(grants={'select': []}) }}` (never `+select`, which would append to the project-level grants and let the readers read the table). Its YAML entry sets `meta.pii: true` on each personal column, as in `dim_customers_unmasked`.
+2. **The view**, `models/marts/<domain>/dim_leads.sql`: `{{ config(materialized='view') }}`, the same columns in the same order, each personal one as `{{ mask_pii('email') }} as email`, from `{{ ref('dim_leads_unmasked') }}`. Its YAML entry repeats the columns with `meta.masked: true` on exactly the `meta.pii` ones; the description ends with the pseudonymised sentence of `dim_customers` (copy it). Do not make it `security_invoker`: the view reads `ops.pii_salt` with the owner's rights.
+3. **The singular test** `tests/singular/assert_pii_marts_are_masked_views.sql` reads the graph, so add two lines for the pair: `-- depends_on: {{ ref('dim_leads') }}` and `-- depends_on: {{ ref('dim_leads_unmasked') }}`.
+4. **Registry.** `dim_leads` goes in `MARTS` and `dim_leads_unmasked` in `UNMASKED` in `data-platform/tests/dbt/test_reader_access.py`; the new columns go in the expected set of `test_masked_columns_are_the_specs` (`agent/mcp-server/tests/test_catalog.py`); the spec's §6.5 gets the pair.
+5. **Prove it:**
+
+   ```bash
+   dbt build --select dim_leads_unmasked+
+   ```
+
+   The `+` is required: building the table alone drops its view. Then `make build-prod` and, from the repository root, `uv run --env-file .env pytest data-platform/tests/dbt/test_reader_access.py -m warehouse` (`TestMaskedMarts`: no reader privilege on the table or the salt, only hashes through the view) and `uv run --env-file .env pytest agent/mcp-server/tests/test_catalog.py -m warehouse` (the catalog marks exactly the view's masked columns as PII, and refuses a visible mart that still carries `meta.pii`). The singular test runs in every build and fails with `(model, problem)` rows, never a value.
+
 ## Common errors
 
 | Symptom | Fix |
@@ -186,6 +202,7 @@ Run on the dev target (the default), it compares `dev_marts.fct_sessions`, which
 | `Contracted models require data_type` | Add `data_type` to the named column |
 | `make lint` reports `Missing descriptions` | Add a `description` to the model or column |
 | Agent cannot see the new table | Run `make build-prod`; the grant hook runs with every build |
+| `assert_pii_marts_are_masked_views` fails, or a reader gets `relation ... does not exist` for a PII mart | A `meta.pii` model is not a table named `*_unmasked`, the view is missing or differs in columns, or the table was built without its view: `dbt build --select <mart>_unmasked+` |
 | Trigram index missing after a rebuild | Use `create_trigram_index` in `post_hook`, not a hand-written `create index if not exists` |
 | Singular test fails after a metric change | Update its expected values on purpose, then the spec |
 | `The source and target schemas on this incremental model are out of sync!` | Columns changed, or another checkout built the model with other code: `dbt build --full-refresh --select <model>+` on that target (section 7) |

@@ -109,18 +109,18 @@ Three layers, none of which trusts the one before it:
 
 | Layer | Where | Does |
 |---|---|---|
-| SQL guard | `sherpa_mcp.sql_guard.SqlGuard`, built in `QueryRunner` | One `SELECT`/`WITH`, function allow-list, only visible `marts` tables and real columns |
+| SQL guard | `sherpa_mcp.sql_guard.SqlGuard`, built in `QueryRunner` | One `SELECT`/`WITH`, function allow-list, only visible `marts` tables |
 | Connection | `UiSettings.ui_conninfo()` | `default_transaction_read_only=on` and the statement timeout on every session |
 | Role | `data-platform/postgres/roles.sql` | `sherpa_ui` is read-only, time-limited, with only the grants dbt's `grant_read_access` macro gives |
 
-The guard and the masking (`sherpa_mcp.masking.PiiMasker`) are imported from `sherpa_mcp`, not copied. The Explorer and the agent must agree on what a read-only query is and what is masked, and one implementation guarantees it. A guard change is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md), then rerun the UI tests.
+The guard is imported from `sherpa_mcp`, not copied. The Explorer and the agent must agree on what a read-only query is, and one implementation guarantees it. Personal data is hidden by the marts themselves (salted hashes in the view, nothing readable behind it), so the UI masks nothing. A guard change is therefore a change to both: follow [Extending the MCP server](extending-the-mcp-server.md), then rerun the UI tests.
 
 What belongs only to the UI is in `readonly/`:
 
 - `query_runner.py`: timeout (`SHERPA_UI_STATEMENT_TIMEOUT_S`), batched fetch, cancel, the concurrency gate, and the mapping of Postgres errors to `UiQueryError`.
 - The gate: `MAX_CONCURRENT_QUERIES` (8) stays below the role's `CONNECTION LIMIT 10`, with room for the health check. Another query fails `busy` without connecting.
-- `bounded_result.py`: the 1,000-row cap (`SHERPA_UI_ROW_CAP`), the cell cut shared with the MCP server (the guard's `MAX_PAD_LENGTH` assumes it) and `MAX_RESULT_CHARS`. Pure, tested in `tests/readonly/test_bounded_result.py`.
-- `sort_filter.py`: the server-side sort/filter wrapper. It refuses (`422 pii_column`) any column the masker hides, so the refusal and the masking agree. The grid hides those controls too (`maskedColumnNames` in `components/resultView.ts`).
+- `bounded_result.py`: the 1,000-row cap (`SHERPA_UI_ROW_CAP`), the cell cut shared with the MCP server and `MAX_RESULT_CHARS`. Pure, tested in `tests/readonly/test_bounded_result.py`.
+- `sort_filter.py`: the server-side sort/filter wrapper.
 
 To loosen or tighten a rule:
 
@@ -200,5 +200,5 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 
 ## Next
 
-- [Extending the MCP server](extending-the-mcp-server.md): the guard and masking the UI shares.
+- [Extending the MCP server](extending-the-mcp-server.md): the guard the UI shares.
 - [Adding or changing a mart](adding-or-changing-a-mart.md): a new mart appears in the Explorer after `make build-prod`; no UI change is needed.

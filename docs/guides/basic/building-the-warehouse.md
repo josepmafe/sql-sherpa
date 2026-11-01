@@ -41,7 +41,7 @@ The other two (`int_identity__anonymous_to_customer`, `int_events__sessionized`)
   ```
 
 - **`--full-refresh`.** `dbt build --full-refresh` drops and rebuilds the incremental models from scratch (for `stg_events__events`, a batch per simulated day, about two minutes on a year), and all other models as usual. Snapshots ignore it: the old versions exist nowhere else.
-- **`dbt retry`.** After a failed build, `dbt retry` (same target) reruns only the failed and skipped nodes. A failing unit test stops its model from building, so a typo in `fct_sessions.sql` fails `fct_sessions_aggregates_a_session` first; after the fix, retry runs that unit test, `fct_sessions`, its tests and the skipped nodes, and ends `Completed successfully`.
+- **`dbt retry`.** After a failed build, `dbt retry` (same target) reruns only the failed and skipped nodes; a failing unit test stops its model from building, and retry runs both after the fix.
 - **Incremental equals full refresh.** Build dev and prod from the same raw state (no `make advance` between), with at least one incremental build over new data first (`make advance DAYS=1 && make build`), or it compares full with full. Then `dbt build --full-refresh --target prod --target-path target-prod` and compare with the dev table (zero rows means identical):
 
   ```bash
@@ -54,13 +54,15 @@ Both targets run `dbt source freshness` first. `shop.orders`, `events.events` an
 
 ### Hooks and grants
 
-Three hooks in `dbt_project.yml` work outside the models:
+Hooks in `dbt_project.yml` work outside the models:
 
-- `on-run-start` runs `ensure_extensions`: the `extensions` schema with `pg_trgm` (fuzzy search).
+- `on-run-start` runs `ensure_extensions` (the `extensions` schema with `pg_trgm`) and `ensure_pii_salt` (creates `ops.pii_salt`, the secret salt of the PII hashes, once; no reader role can read it).
 - `post-hook: analyze {{ this }}` on every mart refreshes table statistics.
-- `on-run-end` runs `record_run_results` (every target) and `grant_read_access` (`prod` and `eval` only), which gives `sherpa_agent` and `sherpa_ui` read access to the marts.
+- `on-run-end` runs `record_run_results` (every target) and `grant_read_access` (`prod` and `eval` only): per visible mart, `SELECT` for `sherpa_agent` and `sherpa_ui`, after revoking every privilege on each `*_unmasked` table.
 
 Re-apply the grants without a build with `dbt run-operation grant_read_access --target prod --target-path target-prod` (the prefix is explained under "Running dbt directly").
+
+A mart with personal data is a pair: the table `dim_customers_unmasked` (real values, nobody can read it) and the view `dim_customers` (salted hashes of `email`, `first_name`, `last_name`). Dropping `ops` (`make reset`) makes a new salt, so the hashes change.
 
 The table `ops.dbt_run_results` keeps one row per node of every invocation (`target_name`, `command`, `is_full_run`, `unique_id`, `status`, ...), the history that `run_results.json` overwrites.
 
@@ -75,17 +77,9 @@ DBT_PROFILES_DIR=. uv run --env-file ../../.env dbt <command>
 
 Also `export SHERPA_SIMULATION_START_DATE=$(uv run --env-file ../../.env sherpa-generate start-date)` (without it `begin` falls back to 2024-01-01: slower, not wrong). Below, that prefix is shortened to `dbt`. Add `--target prod --target-path target-prod` for prod; `dbt debug` checks the connection.
 
-**Selecting.** `--select` takes names, folders, sources and graph operators (`+model` upstream, `source:events+` downstream). `dbt ls` previews a selection, `dbt build` runs it with its tests:
+**Selecting.** `--select` takes names, folders, sources and graph operators (`+model` upstream, `source:events+` downstream). `dbt ls` previews a selection, `dbt build --select stg_shop__payments` runs it with its tests. Build a PII table with its view (`--select dim_customers_unmasked+`): rebuilding the table alone drops the view.
 
-```bash
-dbt build --select stg_shop__payments
-```
-
-**Previewing.** `dbt show` runs a query and prints rows without creating anything; `--inline` resolves `ref()` and `source()`:
-
-```bash
-dbt show --select stg_shop__customers --limit 3
-```
+**Previewing.** `dbt show --select stg_shop__customers --limit 3` prints rows without creating anything.
 
 ## Documentation and the lineage graph
 
@@ -129,6 +123,7 @@ dbt compares each mart's YAML columns and `data_type`s with the model's real col
 | An incremental model is out of sync because another checkout built it with other code; duplicate sessions / the unique test on `session_id` fails after concurrent builds | `dbt build --full-refresh --select <model>+` on that target. Rebase every worktree before touching the warehouse; one build per target at a time |
 | `make advance` fails at its snapshot / `make backfill` fails midway | `dbt snapshot --target prod --target-path target-prod` / `make reset && make backfill` |
 | `--- Logging error ---` and a `UnicodeEncodeError` instead of a unit-test diff (Windows) | `export PYTHONUTF8=1` |
+| `relation "marts.dim_customers" does not exist` (a reader, or a build step that reads the mart) | The view is gone, as after a build of `dim_customers_unmasked` alone: `dbt build --select dim_customers_unmasked+ --target prod --target-path target-prod` |
 | `role "sherpa_ui" does not exist` at the grants | `make up` re-applies the roles, then build again |
 | `enforced contract that failed` | Make the mart's YAML columns and `data_type`s match the SQL |
 | `make eval-db` refuses `SHERPA_EVAL_DB_NAME` | The name must start with `sherpa_eval` and differ from the main database |

@@ -55,16 +55,12 @@ select marketing_channel, count(*) as sessions,
 from marts.fct_sessions group by 1 order by 2 desc;
 ```
 
-New against returning customers (`is_first_order` marks a customer's first non-cancelled order), and customers by segment (`prospect`, `new`, `active`, `at_risk`, `churned`; rules in the `customer_segment` column description):
+New against returning customers (`is_first_order` marks a customer's first non-cancelled order):
 
 ```sql
 select case when is_first_order then 'new' else 'returning' end as customer_type,
        count(*) as orders, round(sum(net_revenue) / count(*), 2) as aov
 from marts.fct_orders where not is_cancelled group by 1;
-
-select customer_segment, count(*) as customers
-from marts.dim_customers
-group by 1 order by 2 desc;
 ```
 
 ## Traps
@@ -131,13 +127,21 @@ agent_psql -c "select count(*) from marts.fct_orders"
 agent_psql -c "select count(*) from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
 ```
 
+`dim_customers` is a view: `email`, `first_name` and `last_name` are salted hashes (the same value always gives the same hash), so count or group by them and identify customers by `customer_id`. The table behind it is closed to the role:
+
+```bash
+agent_psql -c "select * from marts.dim_customers_unmasked"   # ERROR:  permission denied for table dim_customers_unmasked
+```
+
 For the eval database add `-d sherpa_eval` (see [the frozen eval database](building-the-warehouse.md#the-frozen-eval-database)).
+
 ## Errors
 
 | Symptom | Fix |
 |---|---|
 | `relation "marts.fct_orders" does not exist` | The prod warehouse is not built: `make build-prod`. |
 | Revenue is too high | Missing `where not is_cancelled`, or an order column summed after a line join. |
+| `where email = 'a@b.com'` finds nothing | `email`, `first_name` and `last_name` are hashes; look the customer up by `customer_id` |
 | `permission denied for schema ...` as `sherpa_agent` | Expected outside `marts`; rebuild prod (`make build-prod`) if `marts` itself is refused. |
 | `canceling statement due to statement timeout` | The agent role stops queries after 5 seconds; add filters. |
 

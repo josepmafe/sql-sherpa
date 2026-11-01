@@ -20,7 +20,7 @@ Open <http://127.0.0.1:8090>; the root redirects to `/explorer`. A link `/explor
 The tree is `sherpa > marts > <domain> > table > column`: descriptions from dbt's `manifest.json`, column types from `catalog.json`. It lists every mart.
 
 - **Search** filters tables and columns by name.
-- **Columns** show their type, a PK badge and a PII badge (masked values).
+- **Columns** show their type, a PK badge and a PII badge (the column holds salted hashes).
 - **Hover** a table for the first sentence of its description, its grain and primary key.
 - **Click** a table to show it in the Inspector: description, domain, grain, primary key, synonyms, columns (with accepted values and the metrics they feed) and dbt tests.
 - **Table menu** (right-click, or the "..." button):
@@ -49,15 +49,14 @@ While the database is down (red "Database unavailable" banner), Run, Run selecti
 
 Above the grid the status line reads `2 rows in 19 ms` with a `read-only` badge, plus an orange `truncated` badge when rows were left out (row cap or size budget, see below).
 
-A failed query shows the guard's or Postgres's message in a red box. A Postgres error that names a position is highlighted in the editor. Data errors (a bad cast, `1/0`) get the kind of error and a remedy, never the offending value, since it could be masked data.
+A failed query shows the guard's or Postgres's message in a red box. A Postgres error that names a position is highlighted in the editor. Data errors (a bad cast, `1/0`) show Postgres's own message.
 
 ## Sorting and filtering
 
 Click a column header to sort (again to reverse). The filter bar supports `=`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `is null` and `is not null`; a value that does not fit the column's type is refused before anything runs.
 
-- **Not truncated:** the browser sorts and filters the rows it has, except a sort or filter on an interval, uuid, json or array column, on a column with a cell cut at 10,000 characters, and `contains` on a number, which re-run on the server (UI spec §5).
+- **Not truncated:** the browser sorts and filters the rows it has, except a sort or filter on an interval, json or array column, on a column with a cell cut at 10,000 characters, and `contains` on a number, which re-run on the server (UI spec §5).
 - **Truncated:** the grid holds only the first rows, so the Explorer re-sends your SQL wrapped with the sort and filters, and the server applies them over all rows. The same guarded, read-only path runs it, and these re-runs are not history entries.
-- **Masked columns** (`email`, `first_name`, `last_name`) are never sorted or filtered, in either mode, because the order or matches would reveal the hidden values. The filter bar lists them as `email (masked)`, disabled.
 - **Duplicate column names** (`select o.order_id, i.order_id ...`) cannot be wrapped, so sorting and filtering stay in the browser, under a yellow banner. Alias the columns to get server-side back.
 
 ## What you can't do, and why
@@ -67,7 +66,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 - **Get more than 1,000 rows.** The 1,001st row marks the result `truncated`. A cell is cut at 10,000 characters and rows past 2,000,000 characters in all are left out. Aggregate, select fewer columns, or sort and filter on the server. The cap is `SHERPA_UI_ROW_CAP`.
 - **Run longer than 30 s.** The timeout is `SHERPA_UI_STATEMENT_TIMEOUT_S` (whole seconds, default 30). Set either variable in `.env`; `make up` passes it on.
 - **Run more than 8 queries at once.** The `sherpa_ui` login holds 10 connections and 2 stay free for the health check. A 9th query is refused at once; wait or cancel one.
-- **See personal data.** Result columns named `email`, `first_name` or `last_name` show `***`. Masking is by result-column name, so `select email as e ...` or `lower(email)` returns the real value. It stops accidents only; the data is synthetic.
+- **See personal data.** `email`, `first_name` and `last_name` of `dim_customers` are salted hashes in every query; the real values sit in a table the `sherpa_ui` login cannot read. Equal values hash equally, so count or group by them.
 - **Keep work on the server.** Nothing is saved server-side; there are no accounts.
 
 ## Troubleshooting
@@ -75,7 +74,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 | Symptom | Fix |
 |---|---|
 | "The SQL Sherpa server is unreachable" | The `ui` container is down: `docker compose ps`, then `make up` |
-| Sorting or filtering an interval, uuid, json or array column, a column with a cell cut at 10,000 characters, or filtering a number with "contains", re-runs the query (blue "on the server" note) | Expected: the browser cannot reproduce Postgres's order or text for those, so the server applies them |
+| Sorting or filtering an interval, json or array column, a column with a cell cut at 10,000 characters, or filtering a number with "contains", re-runs the query (blue "on the server" note) | Expected: the browser cannot reproduce Postgres's order or text for those, so the server applies them |
 | "Database unavailable" banner | Start Postgres (`docker compose up -d --wait postgres`) and check `SHERPA_UI_PASSWORD` in `.env`; `make up` re-applies the roles |
 | "dbt artifacts missing" / `catalog_unavailable` in the tree | `make build-prod`, then reload or Retry |
 | "Query not allowed: ..." | The guard rejected it: write one `SELECT` over `marts.<table>` |
