@@ -162,10 +162,14 @@ agent_psql() {
     'PGPASSWORD="$SHERPA_AGENT_PASSWORD" exec psql -h "$(hostname -i)" -U "$SHERPA_AGENT_USER" -d "$POSTGRES_DB" "$@"' sh "$@"
 }
 agent_psql -c "select count(*) from marts.fct_orders"
-agent_psql -c "select * from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
+agent_psql -c "select count(*) from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
 ```
 
-`dim_customers` and `fct_leads` are views: `email` is a salted hash (the same value always gives the same hash) and customer names are not in them. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind each (`dim_customers_unmasked`) is closed to the role: `permission denied for table`.
+`dim_customers` and `fct_leads` are views: `email` is a salted hash (the same value always gives the same hash) and customer names are not in them. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind each is closed to the role:
+
+```bash
+agent_psql -c "select * from marts.dim_customers_unmasked"   # ERROR:  permission denied for table dim_customers_unmasked
+```
 
 For the eval database add `-d sherpa_eval` (see [the frozen eval database](building-the-warehouse.md#the-frozen-eval-database)).
 
@@ -174,6 +178,7 @@ For the eval database add `-d sherpa_eval` (see [the frozen eval database](build
 | Symptom | Fix |
 |---|---|
 | `relation "marts.fct_orders" does not exist` | The prod warehouse is not built: `make build-prod`. |
+| Revenue is too high | Missing `where not is_cancelled`, or an order column summed after a line join. |
 | `where email = 'a@b.com'` finds nothing, or a `LIKE` on it finds random rows | `email` is a 32-character hash; look the customer up by `customer_id` |
 | `permission denied for schema ...` as `sherpa_agent` | Expected outside `marts`; rebuild prod (`make build-prod`) if `marts` itself is refused. |
 | `canceling statement due to statement timeout` | The agent role stops queries after 5 seconds; add filters. |
