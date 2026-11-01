@@ -68,7 +68,7 @@ build-prod: $(DBT_PACKAGES)
 # Builds on dev only what differs from the prod build (state:modified+), reading the rest from prod's tables.
 slim: $(DBT_PACKAGES)
 	$(if $(wildcard data-platform/dbt/target-prod/manifest.json),,$(error make slim defers to prod: run make build-prod first))
-	$(DBT) build --select state:modified+ --defer --state target-prod
+	$(DBT) build --select state:modified+ --defer --favor-state --state target-prod
 
 docs: $(DBT_PACKAGES)
 	$(DBT) docs generate
@@ -131,7 +131,7 @@ lint:
 	cd ui/frontend && npx openapi-typescript ../../$(UI_OPENAPI) -o ../../$(UI_TMP)/schema.d.ts
 	diff $(UI_SCHEMA) $(UI_TMP)/schema.d.ts
 
-test:
+test: $(DBT_PACKAGES)
 	uv run --env-file .env pytest
 
 # --- Private targets ---

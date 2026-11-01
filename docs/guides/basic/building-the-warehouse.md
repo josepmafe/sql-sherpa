@@ -24,7 +24,7 @@ make build-prod  # the same on prod, then dbt docs generate
 
 ### Building only what changed
 
-`make slim` builds on dev only the models that differ from the last prod build, and their children. Their unchanged parents are read from prod's tables, so a change to one mart does not rebuild the sources, staging and intermediate models behind it (dbt's `state:modified+` selection with `--defer --state target-prod`). Each `make build-prod` refreshes the state it compares against. Use it in the edit-and-check loop; `make build` gives a complete dev warehouse.
+`make slim` builds on dev only the models that differ from the last prod build, and their children. Their unchanged parents are read from prod's tables, so a change to one mart does not rebuild the sources, staging and intermediate models behind it (dbt's `state:modified+` selection with `--defer --favor-state --state target-prod`). Each `make build-prod` refreshes the state it compares against, and every other prod-target command (`make advance`, `make backfill`, `dbt run-operation ... --target-path target-prod`) rewrites that state too: run `make slim` after a `make build-prod` with no prod command in between, or it can report "Nothing to do". Use it in the edit-and-check loop; `make build` gives a complete dev warehouse.
 
 ```
 make slim        # right after make build-prod:
@@ -127,6 +127,7 @@ dbt compares each mart's YAML columns and `data_type`s with the model's real col
 | Symptom | Fix |
 |---|---|
 | `make slim` stops with `make slim defers to prod: run make build-prod first` | There is no prod build to compare with (`data-platform/dbt/target-prod/manifest.json`): `make build-prod` once |
+| `make slim` after only `make build-prod`, with a PII mart edited, fails `assert_pii_marts_are_masked_views` with `missing in Postgres` | That test checks the dev relation names, which a prod-only warehouse lacks: `make build` once, then `make slim` |
 | `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>`. A break of up to 7 days then recovers on its own; after a longer one the next build fails the guard test below, which is the normal path |
 | `assert_every_source_event_is_staged` fails: a simulated day older than 7 days before today that no earlier build loaded | The failing rows list the days. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; for prod add `--target prod --target-path target-prod`). `lookback` in the model config is the knob ([spec §6.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Never build the downstream models alone after this failure; if you did, `--full-refresh --select int_events__sessionized+` and the map |
 | `on_schema_change` fail on `int_events__sessionized` or `stg_events__events`, or `fct_sessions` missing (after merging or switching checkouts), or every variant has one snapshot version | Reset sequence on the shared warehouse: `make reset && make backfill && make build && make build-prod` |
