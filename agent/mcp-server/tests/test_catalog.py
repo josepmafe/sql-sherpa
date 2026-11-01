@@ -47,8 +47,8 @@ HASH_SENTENCE = (
 SUBJECT_SENTENCES = {
     ("dim_customers", "email"): "Identify customers by customer_id; questions about email domains cannot be answered.",
     ("fct_leads", "email"): (
-        "Identify leads by lead_id and their customers by converted_customer_id; "
-        "questions about email domains cannot be answered."
+        "Identify leads by lead_id; join customers on converted_customer_id = customer_id, never on email: "
+        "a deleted customer's email is null; questions about email domains cannot be answered."
     ),
 }
 

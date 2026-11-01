@@ -205,7 +205,7 @@ It comes first because `dim_customers_unmasked` already has `not_null` constrain
   - **Contract:** a model-level `primary_key` constraint on both columns, plus `dbt_utils.unique_combination_of_columns` (spec §7).
   - **Tests:** `relationships` from `campaign_id` to `dim_campaigns`; `dbt_utils.expression_is_true` with `new_customers <= orders`.
   - **Descriptions:**
-    - the model: paid campaigns only (email campaigns have no rows), every column belongs to the campaign's sessions that started on `spend_date`, and `clicks` are the platform's, not tracked sessions (R11)
+    - the model: paid campaigns only (email campaigns have no rows), every column belongs to the campaign's sessions that started on `spend_date`, and `clicks` are the platform's, not tracked sessions
     - `attributed_net_revenue`: `{{ doc('metric_roas') }}`
     - `new_customers` and `spend`: `{{ doc('metric_cac') }}`
   - **Synonyms:**
@@ -266,9 +266,9 @@ It comes first because `dim_customers_unmasked` already has `not_null` constrain
   - **The view:**
     - every column with `data_type`
     - the same meta
-    - `email` with `meta.masked: true` and the description `Salted md5 hash (32 hex characters) of the lead's normalized email; null when the lead's customer is deleted. Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results (some patterns match random rows). Identify leads by lead_id and their customers by converted_customer_id; questions about email domains cannot be answered.`
+    - `email` with `meta.masked: true` and the description `Salted md5 hash (32 hex characters) of the lead's normalized email; null when the lead's customer is deleted. Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results (some patterns match random rows). Identify leads by lead_id; join customers on converted_customer_id = customer_id, never on email: a deleted customer's email is null; questions about email domains cannot be answered.`
     - `lifecycle_stage` described as the CRM's stage, which can lag behind `is_converted`
-    - synonyms: model `[leads, subscribers, prospects]`, `is_converted` `[converted, became a customer]`
+    - synonyms: model `[leads, subscribers]`, `is_converted` `[converted, became a customer]`
   - **The view's tests:**
     - `unique` and `not_null` on `lead_id`
     - `accepted_values` on `lead_source` and on `lifecycle_stage`
@@ -292,7 +292,7 @@ It comes first because `dim_customers_unmasked` already has `not_null` constrain
   - **`test_catalog.py`:** the expected set of `test_masked_columns_are_the_specs` becomes `{("dim_customers", "email"), ("fct_leads", "email")}`.
   - **`test_catalog.py`, wording:** `PSEUDONYMISED_SENTENCE` speaks of customers, so split it into:
     - `HASH_SENTENCE` (from "Equal emails hash equally" to "(some patterns match random rows).") asserted on every masked column
-    - a per-column dict of the sentence that names the subject, asserted on its column: `("dim_customers", "email")`: `"Identify customers by customer_id; questions about email domains cannot be answered."` and `("fct_leads", "email")`: `"Identify leads by lead_id and their customers by converted_customer_id; questions about email domains cannot be answered."`
+    - a per-column dict of the sentence that names the subject, asserted on its column: `("dim_customers", "email")`: `"Identify customers by customer_id; questions about email domains cannot be answered."` and `("fct_leads", "email")`: `"Identify leads by lead_id; join customers on converted_customer_id = customer_id, never on email: a deleted customer's email is null; questions about email domains cannot be answered."`
 - [ ] **Step 8: Verify.**
   - `dbt build --select fct_leads_unmasked+` (the pair, never the table alone), then `make build`, `make lint`, `make test`.
   - Then `make build-prod` and `uv run --env-file .env pytest -m warehouse data-platform/tests/dbt/test_reader_access.py agent/mcp-server/tests/test_catalog.py`. As each reader role, `TestMaskedMarts` finds no privilege on `fct_leads_unmasked` and only hashes through `fct_leads`.

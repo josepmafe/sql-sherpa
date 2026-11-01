@@ -68,7 +68,7 @@ from marts.fct_orders where not is_cancelled group by 1;
 
 ## Campaigns, ad spend and leads
 
-ROAS (attributed net revenue / spend) by channel for the month before the latest spend day's month, anchored on the data like `as_of_date`. ROAS and CAC are defined in [the spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md):
+ROAS (attributed net revenue / spend) by channel for the month before the latest spend day's month, anchored on the latest spend day. ROAS and CAC are defined in [the spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md):
 
 ```sql
 with as_of as (select date_trunc('month', max(spend_date)) as this_month from marts.fct_ad_spend_daily)
@@ -135,7 +135,8 @@ Joining `fct_orders` to `fct_order_items` repeats each order's columns once per 
 ### Campaigns and leads
 
 - **Email has no ad spend.** `fct_ad_spend_daily` holds paid campaigns only; email campaigns are in `dim_campaigns`.
-- **Clicks are not sessions (R11).** `clicks` and `impressions` are the ad platform's; `sessions` are tracked web sessions, so it is lower than `clicks`. An order belongs to its session's day, even when placed after midnight.
+- **Clicks are not sessions (R11).** `clicks` and `impressions` are the ad platform's; `sessions` are tracked web sessions. They differ by up to about 15% either way, so never use one for the other. An order belongs to its session's day, even when placed after midnight.
+- **`is_converted` means a customer account, not an order.** A lead converts when a customer's `lead_id` is this lead (a signup); for buyers join `dim_customers` on `converted_customer_id` and filter `order_count >= 1`. Recent leads have had less time to convert, so compare cohorts over a fixed window. `new_customers` in `fct_ad_spend_daily` is different: first orders of paid campaigns only, so `sum(new_customers)` counts paid acquisitions, not all first-time buyers (blended CAC needs `fct_orders.is_first_order`).
 - **`lifecycle_stage` lags `is_converted`.** A converted lead is not always at `customer` yet; a lead at `customer` is always converted. Use `is_converted` for conversion.
 - **`fct_leads.email` is a hash,** like `dim_customers.email`: count by `lead_id`, and reach the customer through `converted_customer_id`.
 

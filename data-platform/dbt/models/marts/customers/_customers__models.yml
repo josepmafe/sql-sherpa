@@ -220,7 +220,7 @@ models:
         description: >
           Lifecycle segment: prospect (no non-cancelled order), new (1 order, the last 90 days ago or
           less), active (2 or more orders, the last 90 days ago or less), at_risk (last order 91 to
-          180 days ago) or churned (more than 180 days ago).
+          180 days ago) or churned (more than 180 days ago). It is not fct_leads.lifecycle_stage.
         data_type: text
         config:
           meta:
@@ -240,8 +240,8 @@ models:
             synonyms: [vip]
   - name: fct_leads_unmasked
     description: >
-      The CRM lead fact with the real email, one row per lead, with whether and when the lead became a customer
-      and how many emails it received, opened and clicked. It holds real PII, so no reader role can query it; only
+      The CRM lead fact with the real email, one row per lead, with whether and when the lead got a customer
+      account and how many emails it received, opened and clicked. It holds real PII, so no reader role can query it; only
       the fct_leads view reads it.
     config:
       access: private
@@ -265,9 +265,9 @@ models:
           meta:
             pii: true
       - {name: lead_source, description: How the lead was captured., data_type: text}
-      - {name: lifecycle_stage, description: The CRM's funnel stage of the lead., data_type: text}
+      - {name: lifecycle_stage, description: The CRM's funnel stage of the lead; a customer's segment is dim_customers.customer_segment., data_type: text}
       - {name: created_at, description: When the lead was captured (UTC)., data_type: timestamptz}
-      - {name: is_converted, description: True when a customer has this lead's email., data_type: boolean}
+      - {name: is_converted, description: True when a customer's lead_id is this lead (converted_customer_id); a customer account is not necessarily an order., data_type: boolean}
       - {name: converted_customer_id, description: The customer whose lead_id is this lead; null when unconverted., data_type: bigint}
       - {name: converted_at, description: When the converted customer signed up (UTC); null when unconverted., data_type: timestamptz}
       - {name: days_to_convert, description: UTC days from created_at to converted_at; null when unconverted., data_type: integer}
@@ -276,15 +276,15 @@ models:
       - {name: emails_clicked, description: Number of those emails that were clicked; 0 when none., data_type: integer}
   - name: fct_leads
     description: >
-      CRM lead fact, one row per lead: how it was captured, whether and when it became a customer, and how many
-      emails it received, opened and clicked. A lead converts when a customer has its email, so a test account
-      never converts a lead. The email is a salted hash. Newsletter sends count as well.
+      CRM lead fact, one row per lead: how it was captured, whether and when it got a customer account, and how many
+      emails it received, opened and clicked. A lead converts when a customer's lead_id is this lead
+      (converted_customer_id), so a test account never converts a lead. The email is a salted hash. Newsletter sends count as well.
     config:
       meta:
         domain: customers
         grain: one row per CRM lead
         primary_key: lead_id
-        synonyms: [leads, subscribers, prospects]
+        synonyms: [leads, subscribers]
     data_tests:
       - dbt_utils.expression_is_true:
           arguments:
@@ -308,8 +308,9 @@ models:
           Salted md5 hash (32 hex characters) of the lead's normalized email; null when the lead's customer is
           deleted. Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing
           it with a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless
-          results (some patterns match random rows). Identify leads by lead_id and their customers by
-          converted_customer_id; questions about email domains cannot be answered.
+          results (some patterns match random rows). Identify leads by lead_id; join customers on
+          converted_customer_id = customer_id, never on email: a deleted customer's email is null; questions about
+          email domains cannot be answered.
         data_type: text
         config:
           meta:
@@ -324,7 +325,8 @@ models:
       - name: lifecycle_stage
         description: >
           The CRM's funnel stage of the lead: subscriber, lead, mql or customer. It can lag behind is_converted: a
-          converted lead is not always at customer yet, but a lead at customer is always converted.
+          converted lead is not always at customer yet, but a lead at customer is always converted. A customer's
+          segment is dim_customers.customer_segment.
         data_type: text
         data_tests:
           - accepted_values:
@@ -334,7 +336,10 @@ models:
         description: When the lead was captured (UTC).
         data_type: timestamptz
       - name: is_converted
-        description: True when a customer has this lead's email, i.e. the lead became a customer.
+        description: >
+          True when a customer's lead_id is this lead (converted_customer_id), i.e. the lead has a customer account
+          (signup), not necessarily an order: for buyers join dim_customers on converted_customer_id and filter
+          order_count >= 1. Recent leads have had less time to convert.
         data_type: boolean
         config:
           meta:
@@ -353,7 +358,9 @@ models:
         description: When the converted customer signed up (UTC); null when the lead is unconverted.
         data_type: timestamptz
       - name: days_to_convert
-        description: UTC days from created_at to converted_at, never negative; null when the lead is unconverted.
+        description: >
+          UTC days from created_at to converted_at, never negative; null when the lead is unconverted. Recent
+          leads have had less time to convert.
         data_type: integer
         data_tests:
           - dbt_utils.accepted_range:
