@@ -26,7 +26,7 @@ docker compose exec postgres psql -U sherpa_admin -d sherpa
 
 ## Which revenue to use
 
-Use `net_revenue` for "revenue" unless the question says otherwise. It is gross minus discounts minus refunds, and 0 for a cancelled order. The other columns (`gross_revenue`, `discount_amount`, `refunded_revenue`, `gross_margin`), AOV and refund rate are defined in [the data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md); the same text is in the column comments.
+Use `net_revenue` for "revenue" unless the question says otherwise. The metrics are defined in [the data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md); the same text is in the column comments.
 
 ## Example queries
 
@@ -40,7 +40,7 @@ select marketing_channel, count(*) as orders, round(sum(net_revenue) / count(*),
 from marts.fct_orders where not is_cancelled group by 1 order by 3 desc;
 ```
 
-Top 10 products by net revenue (a line's `net_amount` is its gross minus its share of the discount; its `refunded_revenue` covers return refunds only):
+Top 10 products by net revenue. A line's `net_amount` is its gross minus its share of the discount, and its `refunded_revenue` covers return refunds only:
 
 ```sql
 select p.product_name, round(sum(i.net_amount - i.refunded_revenue), 2) as net_revenue
@@ -50,16 +50,28 @@ where not i.is_cancelled
 group by 1 order by 2 desc limit 10;
 ```
 
-Conversion rate by channel is `avg(purchased::int)` over `marts.fct_sessions`, grouped by `marketing_channel` (defined in the spec's section 6.6).
+Conversion rate by channel (the share of web sessions that ended in a purchase, defined in the spec's section 6.6):
+
+```sql
+select marketing_channel, count(*) as sessions,
+       round(avg(purchased::int), 4) as conversion_rate
+from marts.fct_sessions group by 1 order by 2 desc;
+```
+
+New against returning customers (`is_first_order` marks a customer's first non-cancelled order):
+
+```sql
+select case when is_first_order then 'new' else 'returning' end as customer_type,
+       count(*) as orders, round(sum(net_revenue) / count(*), 2) as aov
+from marts.fct_orders where not is_cancelled group by 1;
+```
 
 ## Campaigns, ad spend and leads
 
-ROAS (attributed net revenue / spend) by channel for the last full month of data, anchored on the latest spend day like `as_of_date`. ROAS and CAC are defined in [the spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md):
+ROAS (attributed net revenue / spend) by channel for the month before the latest spend day's month, anchored on the data like `as_of_date`. ROAS and CAC are defined in [the spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md):
 
 ```sql
-with as_of as (
-    select date_trunc('month', max(spend_date)) as this_month from marts.fct_ad_spend_daily
-)
+with as_of as (select date_trunc('month', max(spend_date)) as this_month from marts.fct_ad_spend_daily)
 select a.channel, round(sum(a.spend), 2) as spend,
        round(sum(a.attributed_net_revenue) / nullif(sum(a.spend), 0), 2) as roas
 from marts.fct_ad_spend_daily as a
@@ -75,7 +87,7 @@ select c.campaign_name, c.channel, round(sum(a.spend), 2) as spend, sum(a.new_cu
        round(sum(a.spend) / nullif(sum(a.new_customers), 0), 2) as cac
 from marts.fct_ad_spend_daily as a
 inner join marts.dim_campaigns as c using (campaign_id)
-group by c.campaign_name, c.channel order by cac;
+group by c.campaign_id, c.campaign_name, c.channel order by cac;
 ```
 
 Lead-to-customer conversion by `lead_source`, counted by `lead_id` (the email is a hash):
@@ -90,11 +102,19 @@ from marts.fct_leads group by lead_source order by conversion_rate desc;
 
 ### Cancelled orders
 
-`fct_orders` keeps cancelled orders. Their amount columns (`gross_revenue`, `cogs`) describe the order as placed and keep their values; the outcome columns (`net_revenue`, `gross_margin`) are 0. Filter `where not is_cancelled` for every sum of `gross_revenue` and every count or average of orders.
+`fct_orders` keeps cancelled orders. Their amount columns (`gross_revenue`, `cogs`) describe the order as placed and keep their values; the outcome columns (`net_revenue`, `gross_margin`) are 0. Filter `where not is_cancelled` for every sum of `gross_revenue` and every count or average of orders (in the 365-day dataset the 398 cancelled orders hold 36,741.85 of `gross_revenue` and 0.00 of `net_revenue`).
 
 ### Refunds by order date or by refund date
 
-`fct_orders.refunded_revenue` belongs to the order's date; `fct_refunds.revenue_amount` to the refund's date (`refund_date`): "how much of January's sales was later refunded?" against "how much did we refund in January?". `fct_refunds.amount` is the cash refunded (tax included); `revenue_amount` is the revenue part (tax removed, 0 for `cancellation` refunds).
+`fct_orders.refunded_revenue` belongs to the order's date; `fct_refunds.revenue_amount` to the refund's date (`refund_date`). They answer "how much of January's sales was later refunded?" against "how much did we refund in January?". `fct_refunds.amount` is the cash refunded (tax included); `revenue_amount` is the revenue part (tax removed, 0 for `cancellation` refunds).
+
+```sql
+select 'by order date' as basis, round(sum(refunded_revenue), 2) as refunded_revenue
+from marts.fct_orders where order_date between '2026-01-01' and '2026-01-31'
+union all
+select 'by refund date', round(sum(revenue_amount), 2)
+from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
+```
 
 ### The `unknown` channel
 
@@ -106,11 +126,11 @@ from marts.fct_leads group by lead_source order by conversion_rate desc;
 
 ### Sessions are web only
 
-A session is one device's events with no gap over 30 minutes. App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders; a session whose order was later cancelled still counts as purchased) leave them out. Compare orders per channel with `fct_orders`, and join `fct_orders` to `fct_sessions` on `session_id`. Anonymous visitors never return (every session of a non-customer is a first session). `fct_sessions.customer_id` is the customer the device was identified as at its latest identification (null for visitors never identified), so sessions from before a login carry it too. `is_first_session` is true for a visitor's first session, where the visitor is the customer when known (across devices) and the device otherwise.
+App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders) leave them out; compare orders per channel with `fct_orders`. `is_first_session` and `customer_id` are explained in the column comments; the definition is in `get_metric_definitions` and the spec's §6.6.
 
 ### Line grain against order grain
 
-Joining `fct_orders` to `fct_order_items` repeats each order's columns once per line, so summing an order column after the join multiplies it (in the 365-day dataset, 1,589,281.58 instead of 717,784.62). Sum order columns in `fct_orders` alone and line columns in `fct_order_items`; to use both, aggregate the lines in a subquery first. `fct_order_discounts` fans out the same way: filter to one promotion, or use `where exists (...)`.
+Joining `fct_orders` to `fct_order_items` repeats each order's columns once per line, so summing an order column after the join multiplies it (in the 365-day dataset, gross revenue came out at 1,589,281.58 instead of 717,784.62). Sum each column in its own mart, or aggregate the lines in a subquery first; `fct_order_discounts` fans out the same way.
 
 ### Campaigns and leads
 
@@ -132,7 +152,7 @@ order by sim desc, product_name limit 5;
 
 ## Connecting as `sherpa_agent`
 
-The agent's role reads only the `marts` schema (and uses the functions in `extensions`) on prod and on the frozen eval database. It cannot read staging, intermediate, seeds, raw or `dev_` schemas, cannot create temporary tables, and its queries stop after 5 seconds. dbt grants this at the end of every prod and eval build.
+The agent's role reads only the `marts` schema (and uses `extensions`) on prod and the eval database: no staging, intermediate, raw or `dev_` schemas, no temporary tables, and queries stop after 5 seconds. dbt grants this at the end of every prod and eval build.
 
 The container holds the `.env` variables, so the password stays off the command line:
 
@@ -142,14 +162,10 @@ agent_psql() {
     'PGPASSWORD="$SHERPA_AGENT_PASSWORD" exec psql -h "$(hostname -i)" -U "$SHERPA_AGENT_USER" -d "$POSTGRES_DB" "$@"' sh "$@"
 }
 agent_psql -c "select count(*) from marts.fct_orders"
-agent_psql -c "select count(*) from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
+agent_psql -c "select * from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
 ```
 
-`dim_customers` and `fct_leads` are views: `email` is a salted hash (the same value always gives the same hash) and customer names are not in them. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind each is closed to the role:
-
-```bash
-agent_psql -c "select * from marts.dim_customers_unmasked"   # ERROR:  permission denied for table dim_customers_unmasked
-```
+`dim_customers` and `fct_leads` are views: `email` is a salted hash (the same value always gives the same hash) and customer names are not in them. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind each (`dim_customers_unmasked`) is closed to the role: `permission denied for table`.
 
 For the eval database add `-d sherpa_eval` (see [the frozen eval database](building-the-warehouse.md#the-frozen-eval-database)).
 
@@ -158,7 +174,6 @@ For the eval database add `-d sherpa_eval` (see [the frozen eval database](build
 | Symptom | Fix |
 |---|---|
 | `relation "marts.fct_orders" does not exist` | The prod warehouse is not built: `make build-prod`. |
-| Revenue is too high | Missing `where not is_cancelled`, or an order column summed after a line join. |
 | `where email = 'a@b.com'` finds nothing, or a `LIKE` on it finds random rows | `email` is a 32-character hash; look the customer up by `customer_id` |
 | `permission denied for schema ...` as `sherpa_agent` | Expected outside `marts`; rebuild prod (`make build-prod`) if `marts` itself is refused. |
 | `canceling statement due to statement timeout` | The agent role stops queries after 5 seconds; add filters. |

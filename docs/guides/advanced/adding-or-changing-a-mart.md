@@ -147,7 +147,7 @@ Current choices: `int_events__sessionized` (`delete+insert`) and `int_identity__
 dbt --quiet ls --select intermediate --resource-type model --output json --output-keys name config.materialized
 ```
 
-The agent role cannot read the `intermediate` schema, so these models can be renamed or restructured freely as long as the marts keep their shape. An intermediate model only one group uses is `access: private` to it (`orders` is private to `sales`); a new one takes its folder's group and access from `dbt_project.yml`.
+The agent role cannot read the `intermediate` schema, so these models can be renamed or restructured freely as long as the marts keep their shape. An intermediate model only one group uses is `access: private` to it (the `int_orders__*` and `int_order_items__*` models are private to `sales`); a new one takes its folder's group and access from `dbt_project.yml`.
 
 ## 7. Change an incremental model
 

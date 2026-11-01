@@ -31,8 +31,6 @@ make slim        # right after make build-prod:
 WARNING: Nothing to do. Try checking your model configs and model specification args
 ```
 
-Edit one model and `make slim` builds that model, its children and their tests. A prod build refreshes the state it compares against.
-
 ### Keeping it current
 
 Three models are incremental, so a build processes only what is new ([why each strategy](../advanced/adding-or-changing-a-mart.md#7-change-an-incremental-model)). `stg_events__events` is a microbatch model: each run reprocesses today and the 7 days before (8 batches), counted from today (not from the data), one batch per day, with `begin` set to the simulation's first day by `make build`:
