@@ -22,7 +22,7 @@
 
 **`CLAUDE.md` is binding.**
 
-**Base:** `main`. If data-platform-4 has merged, rebase first: it adds marts and an exposure, which the Lineage e2e expects in the graph.
+**Base:** `main` at `c494a6b` (#21, data-platform-4). Its marts (`dim_campaigns`, `fct_ad_spend_daily`, the `fct_leads` pair) and the `sherpa_agent` exposure are in the graph every task and e2e sees, and its CI gates this branch's pull request.
 
 **Model selection:** every task names its implementer and reviewer models. Dispatch exactly those. Fix rounds 4–5 go one tier up. The final whole-branch review is Task 10's panel.
 
@@ -36,6 +36,7 @@
 - **Backend:** the production code follows `CLAUDE.md`. New behaviour is a pure function or a method of the class that owns it, and the API gets a Pydantic model. After any API change, `make ui-client` and commit `schema.d.ts`.
 - **Shared warehouse:** tests only read. `make e2e` needs `make up` from this worktree (it replaces the running `ui` and `mcp` containers; `make up` from the main checkout puts them back) and `make build-prod`. If `make build-prod` stops at the freshness gate, ask the owner before `make advance`.
 - **Running one Playwright spec:** `cd ui/frontend && SHERPA_UI_PORT=<port> SHERPA_UI_USER=<user> npx playwright test <spec>`, with the values `make e2e` passes (`.env` or the defaults 8090 and `sherpa_ui`). The whole `make e2e` runs at the end of Task 10.
+- **CI** (`.github/workflows/ci.yml`) runs `make lint`, `make test` and `npm test` on the pull request, on a fresh checkout with no `target-prod`. A default-suite test that needs the built warehouse is marked `warehouse`, and the Vitest layout fixture is committed.
 - **Every commit** leaves `make lint`, `make test` and `cd ui/frontend && npm test` green. Commit as `Josep Martinez <57620224+josepmafe@users.noreply.github.com>`.
 
 ## Review Focus
@@ -45,6 +46,18 @@
 3. **Dragging the Lineage handle moves the graph or hides the selected node.** Expected: the pan and zoom stay as they were. Tests: Task 4's e2e (the viewport transform is unchanged after a drag and the selected node is still in view).
 4. **A disabled tab is the open one.** On Tests, the user clicks a node with no tests. Expected: Overview opens, never a blank panel. Test: Task 5.
 5. **The tests endpoint reads outside `compiled/` or fails on a long test name.** Expected: the path never leaves `compiled/`; a generic test whose name dbt shortened (a hash suffix) still resolves; an unknown id is `test_not_found`. Tests: Task 7 (crafted path; every test of the real prod manifest resolves, as a `warehouse` test).
+
+---
+
+## Environment (before Task 1)
+
+The worktree has `node_modules`. Before Task 1:
+1. Copy `.env` from the main checkout.
+2. Run `UV_LINK_MODE=copy uv sync`.
+3. Run `make build-prod`, so this worktree has its own `target-prod` with #21's nodes.
+4. Run `make up` from this worktree before the first e2e. The running `ui` container serves another checkout's artifacts.
+
+If `make build-prod` stops at the source-freshness gate, ask the owner whether to run `make advance`.
 
 ---
 
@@ -244,15 +257,18 @@ By kind:
 - Create: `src/screens/lineage/edgeRoute.ts`, `src/screens/lineage/RoutedEdge.tsx`
 - Test: `tests/lineage/layout.test.ts`, `tests/lineage/edgeRoute.test.ts`, `tests/lineage/LineageCanvasEdges.test.tsx`; new `tests/lineage/layoutMetrics.ts`, `tests/fixtures/lineage_project.json`
 
-**Measured at planning** on this project's whole graph (66 nodes, 87 edges, collapsed). The edges are measured as drawn: today's React Flow bezier, and B's routes through their gaps. The owner chose **B straightened** (renders kept outside the repo):
+**Measured at planning** on this project's whole graph after #21 (71 nodes, 109 edges, collapsed; the `sherpa_agent` exposure reads all 13 visible marts). The edges are measured as drawn: today's React Flow bezier, and B's routes through their gaps. The owner chose **B straightened** (renders kept outside the repo):
 
 | | crossings | edges behind a node | vertical edge travel (px) | height (px) |
 |---|---|---|---|---|
-| plain stack (today) | 259 | 40 | 38,016 | 2,244 |
-| placement near neighbours only | 122 | 32 | 16,686 | 2,251 |
-| B: gaps for long edges, reordering | 106 | 0 | 16,978 | 2,276 |
-| **B straightened (this task)** | **100** | **0** | **17,781** | **2,313** |
-| today's single curves on B's positions | 104 | 34 | 16,024 | 2,276 |
+| plain stack (today) | 402 | 53 | 43,416 | 2,244 |
+| placement near neighbours only | 143 | 28 | 19,336 | 2,253 |
+| B: gaps for long edges, reordering | 128 | 0 | 24,873 | 2,283 |
+| **B straightened (this task)** | **128** | **0** | **26,575** | **2,310** |
+
+The exposure's 13 edges converge on one node, so they keep most of the vertical travel that is left.
+Straightening is about the look (one rise, a level run, one landing), not the numbers.
+Today's single curves drawn on B's positions brought a third of the hidden edges back on the earlier graph, so the curve follows the gaps.
 
 **Interfaces — Produces** (`layout.ts`, `edgeRoute.ts`):
 - `orderNodes(nodes, edges)` is unchanged: ELK gives the starting order.
@@ -282,7 +298,7 @@ No edge passes behind a node, by construction: a route is level through a column
   - **Fixture:** save the whole-project graph from the running stack (`curl http://127.0.0.1:8090/api/lineage`) as `tests/fixtures/lineage_project.json`. Keep only `{ nodes: [{ id, layer, sourceName }], edges: [{ source, target }] }`: names only.
   - **Metrics:** in `layoutMetrics.ts` write `layoutMetrics(rects, curves) → { crossings, edgesBehindNodes, edgeTravel, height }`. Each curve is a sampled polyline with its source and target. Crossings count segment intersections between edges that share no node; an edge is behind a node when a sample point falls strictly inside a node it doesn't touch.
   - **Helper tests:** two crossing edges give 1; two parallel give 0; edges sharing a node never cross; an edge through a third node counts as behind it.
-- [ ] **Step 2: Baseline.** With the plain stack and today's bezier (React Flow's default: control points at half the horizontal distance, horizontal tangents), compute the metrics on the fixture with the real `orderNodes`. Write them in the acceptance test as the literal `BASELINE`. On the planning graph they are 259 / 40 / 38,016 / 2,244; if yours differ much, check the helper against the table first.
+- [ ] **Step 2: Baseline.** With the plain stack and today's bezier (React Flow's default: control points at half the horizontal distance, horizontal tangents), compute the metrics on the fixture with the real `orderNodes`. Write them in the acceptance test as the literal `BASELINE`. On the planning graph they are 402 / 53 / 43,416 / 2,244. The fixture comes from the stack started in the Environment step, so it has #21's nodes. If yours differ much, check the helper against the table first.
 - [ ] **Step 3: Tests first.**
   - **`edgeRoute.test.ts`:**
     - the curve passes through every waypoint
@@ -292,9 +308,9 @@ No edge passes behind a node, by construction: a route is level through a column
     - `edgePath` is valid SVG whose sampled points match `edgePoints` within 0.5 px
   - **`layout.test.ts`, acceptance (the fixture, the edges as drawn):**
     - `edgesBehindNodes === 0`
-    - `crossings ≤ 0.45 × BASELINE.crossings`
-    - `edgeTravel ≤ 0.55 × BASELINE.edgeTravel`
-    - `height ≤ 1.10 × BASELINE.height`
+    - `crossings ≤ 0.40 × BASELINE.crossings` (0.32 measured)
+    - `edgeTravel ≤ 0.70 × BASELINE.edgeTravel` (0.61 measured)
+    - `height ≤ 1.10 × BASELINE.height` (1.03 measured)
     - with every node expanded to 10 rows, `edgesBehindNodes === 0` still
   - **`layout.test.ts`, placement:**
     - a node whose only parent sits at y = 500 is centred on it
