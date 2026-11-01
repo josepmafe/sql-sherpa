@@ -41,7 +41,8 @@ jobs:
       - name: Data
         run: |
           uv run --env-file .env python data-platform/scripts/backfill.py --days 30 --scale 0.05
-          echo "SHERPA_SIMULATION_START_DATE=$(uv run --env-file .env sherpa-generate start-date)" >> "$GITHUB_ENV"
+          start_date=$(uv run --env-file .env sherpa-generate start-date)
+          echo "SHERPA_SIMULATION_START_DATE=$start_date" >> "$GITHUB_ENV"
 
       # `run --empty` creates every relation without rows; the full refresh then loads all 30 days, because a plain
       # build would run the empty incremental models incrementally and load only the last 7 days.
