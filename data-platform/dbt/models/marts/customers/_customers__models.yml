@@ -343,7 +343,7 @@ models:
         data_type: boolean
         config:
           meta:
-            synonyms: [converted, became a customer]
+            synonyms: [converted, signed up]
       - name: converted_customer_id
         description: The customer whose lead_id is this lead; null when the lead is unconverted. Join to dim_customers on customer_id.
         data_type: bigint

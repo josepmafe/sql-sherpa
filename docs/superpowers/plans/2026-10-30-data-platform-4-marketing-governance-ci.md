@@ -395,7 +395,7 @@ It comes first because `dim_customers_unmasked` already has `not_null` constrain
 - [ ] **Step 2: Tag.** Add `config: {tags: [distribution]}` on each of those tests, and `tags=['distribution']` in the Pareto test's `config()`.
 - [ ] **Step 3: Selector.** In `selectors.yml`, `ci` = everything except `tag:distribution`, with a `description` saying why (spec §8). Check that `dbt ls --selector ci --resource-type test` leaves exactly the tagged tests out.
 - [ ] **Step 4: `make slim`.**
-  - **Recipe:** `$(DBT) build --select state:modified+ --defer --state target-prod`, on dev. The `+` also keeps a changed `_unmasked` table with its view.
+  - **Recipe:** `$(DBT) build --select state:modified+ --defer --favor-state --state target-prod`, on dev. The `+` also keeps a changed `_unmasked` table with its view.
   - **Start date:** add `slim` to the line that exports `SHERPA_SIMULATION_START_DATE` (`build build-prod slim: export …`).
   - **Guard:** before dbt runs, `$(if $(wildcard data-platform/dbt/target-prod/manifest.json),,$(error make slim defers to prod: run make build-prod first))`.
   - **Makefile:** add it to `.PHONY`, with a one-line comment.
@@ -422,9 +422,9 @@ It comes first because `dim_customers_unmasked` already has `not_null` constrain
     1. **Toolchains:** `actions/checkout`; `astral-sh/setup-uv` with Python 3.12; `actions/setup-node` with Node 22 and the npm cache on `ui/frontend/package-lock.json`. Each `uses:` is pinned to a full commit SHA, its tag in a comment.
     2. **Environment:** `cp .env.example .env`. The `change-me` passwords are fine for a throwaway container. The PII salt needs nothing: `ensure_pii_salt` generates it in the runner's Postgres on the first dbt run.
     3. **Postgres:** `docker compose up -d --wait postgres`. The init script creates the roles, as on a new local volume.
-    4. **Dependencies:** `uv sync --locked`; `cd ui/frontend && npm ci`.
+    4. **Dependencies:** `uv sync --locked`; `make data-platform/dbt/dbt_packages/.installed` (the backfill script parses the dbt project, so the packages come first); `cd ui/frontend && npm ci`.
     5. **Data:** `uv run --env-file .env python data-platform/scripts/backfill.py --days 30 --scale 0.05`. Then write `SHERPA_SIMULATION_START_DATE=$(uv run sherpa-generate start-date)` to `$GITHUB_ENV`.
-    6. **dbt:** from `data-platform/dbt` with `DBT_PROFILES_DIR=.` and `uv run --env-file ../../.env dbt`, run `deps`, `seed`, `run --empty`, then `build --full-refresh --selector ci --warn-error` (Review Focus 1).
+    6. **dbt:** from `data-platform/dbt` with `DBT_PROFILES_DIR=.` and `uv run --env-file ../../.env dbt`, run `seed`, `run --empty`, then `build --full-refresh --selector ci --warn-error` (Review Focus 1).
     7. **Checks:** `make lint`, `make test`, `cd ui/frontend && npm test`.
 - [ ] **Step 2: Commit** `ci: pull-request gate (tiny-data dbt build with warnings as errors, lint, tests)`.
 - [ ] **Step 3: First real run** (Review Focus 1 and 5). Ask the owner, then push the branch and open the pull request as a draft. The runner is a fresh checkout with no gitignored file, so this run is the test: a local copy of it would check the same things less faithfully.
