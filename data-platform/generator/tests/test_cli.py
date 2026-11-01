@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import psycopg
 import pytest
+import typer.rich_utils
 from helpers import RUN_SCALE, RUN_SEED, RUN_TODAY, STATE_TABLE, assert_empty, fingerprint
 from sherpa_generator import settings
 from sherpa_generator.cli import app
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
     from sherpa_generator.database.connection import Database
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def plain_terminal_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Typer reads GITHUB_ACTIONS / FORCE_COLOR once at import and then colours its error panel; turn that off."""
+    monkeypatch.setattr(typer.rich_utils, "FORCE_TERMINAL", False)
 
 
 @pytest.fixture
