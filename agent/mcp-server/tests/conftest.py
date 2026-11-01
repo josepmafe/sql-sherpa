@@ -30,12 +30,15 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_PATH = REPO_ROOT / "agent" / "mcp-server" / "src" / "sherpa_mcp" / "examples.yaml"
 FIXTURES = Path(__file__).parent / "fixtures"
-# Data platform spec §6.5: the ten marts.
+# Data platform spec §6.5 and §6.6 (data-platform-4): the visible marts, none of them an `_unmasked` table.
 MARTS = (
+    "dim_campaigns",
     "dim_customers",
     "dim_date",
     "dim_products",
     "dim_promotions",
+    "fct_ad_spend_daily",
+    "fct_leads",
     "fct_order_discounts",
     "fct_order_items",
     "fct_orders",

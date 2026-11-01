@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 METRICS = (
     *("gross_revenue", "discount_amount", "refunded_revenue", "net_revenue"),
     *("cogs", "gross_margin", "aov", "refund_rate", "conversion_rate"),
+    *("roas", "cac"),
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 PII_LITERAL = "leak@example.com"
