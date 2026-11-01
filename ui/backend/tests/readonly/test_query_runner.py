@@ -19,7 +19,6 @@ from sherpa_ui.readonly import query_runner
 from sherpa_ui.readonly.query_runner import MAX_CONCURRENT_QUERIES, QueryRunner, UiQueryError, user_position
 from sherpa_ui.readonly.sort_filter import (
     FilterSpec,
-    PiiColumnError,
     SortSpec,
     UnknownColumnError,
 )
@@ -673,26 +672,15 @@ class TestQueryRunnerOffline:
         connection.close.assert_called_once_with()
 
     @pytest.mark.parametrize(
-        ("error", "message"),
+        "error",
         [
-            (
-                psycopg.errors.InvalidTextRepresentation('invalid input syntax for type integer: "jurre931@x.com"'),
-                "a value could not be converted or computed (InvalidTextRepresentation); check the literal format",
-            ),
-            (
-                psycopg.errors.NumericValueOutOfRange('value "jurre931@hotmail.com" is out of range for type integer'),
-                "a value could not be converted or computed (NumericValueOutOfRange); "
-                "check the column types and use explicit, safe casts",
-            ),
-            (
-                psycopg.errors.DivisionByZero("division by zero"),
-                "a value could not be converted or computed (DivisionByZero); wrap the denominator in nullif(x, 0)",
-            ),
+            psycopg.errors.InvalidTextRepresentation('invalid input syntax for type integer: "x"'),
+            psycopg.errors.DivisionByZero("division by zero"),
         ],
-        ids=["invalid_text", "out_of_range", "division_by_zero"],
+        ids=["invalid_text", "division_by_zero"],
     )
-    def test_a_data_error_never_quotes_the_value(
-        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, error: psycopg.Error, message: str
+    def test_a_data_error_is_postgres_message(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch, error: psycopg.Error
     ) -> None:
         connection = _fake_connection()
         connection.cursor.return_value.__enter__.return_value.execute.side_effect = error
@@ -702,7 +690,7 @@ class TestQueryRunnerOffline:
             offline_runner.run("q1", "select 1 as a")
 
         assert raised.value.code == "sql_error"
-        assert raised.value.message == message
+        assert raised.value.message == str(error)
 
     def test_rows_are_fetched_in_batches_and_one_past_the_cap(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
@@ -805,16 +793,19 @@ class TestQueryRunner:
         assert (over_cap.returned_rows, over_cap.truncated) == (1000, True)
 
     @pytest.mark.parametrize("sort", [(), (SortSpec(column="c0", direction="asc"),)], ids=["client", "server"])
-    def test_a_wide_padded_result_stops_at_its_character_budget(
-        self, runner: QueryRunner, sort: tuple[SortSpec, ...]
-    ) -> None:
-        columns = ", ".join(f"lpad('a', 10000, 'b') as c{index}" for index in range(10))
+    def test_a_wide_result_stops_at_its_character_budget(self, runner: QueryRunner, sort: tuple[SortSpec, ...]) -> None:
+        # each replace turns every 'b' into ten: four of them make a 10,000-character cell
+        cell = (
+            "replace(replace(replace(replace('b', 'b', 'bbbbbbbbbb'), 'b', 'bbbbbbbbbb'), "
+            "'b', 'bbbbbbbbbb'), 'b', 'bbbbbbbbbb')"
+        )
+        columns = ", ".join(f"{cell} as c{index}" for index in range(10))
 
         outcome = runner.run("q1", f"select {columns} from marts.fct_order_items", sort=sort)
 
         # 100,000 characters a row: 20 rows fill the 2,000,000-character budget.
         assert (outcome.returned_rows, outcome.truncated) == (20, True)
-        assert set(outcome.rows) == {("b" * 9_999 + "a",) * 10}
+        assert set(outcome.rows) == {("b" * 10_000,) * 10}
 
     def test_a_huge_aggregated_cell_is_cut(self, runner: QueryRunner) -> None:
         outcome = runner.run("q1", "select string_agg(order_number, ',') as numbers from marts.fct_orders")
@@ -862,7 +853,7 @@ class TestQueryRunner:
         assert error.value.position == sql_text.index("nope")
 
     @pytest.mark.parametrize("sort", [(), (SortSpec(column="n", direction="asc"),)], ids=["client", "server"])
-    def test_a_data_error_keeps_its_position_but_not_the_value(
+    def test_a_data_error_keeps_postgres_message_and_position(
         self, runner: QueryRunner, sort: tuple[SortSpec, ...]
     ) -> None:
         sql_text = "select 'jurre931@hotmail.com'::int as n"
@@ -871,26 +862,23 @@ class TestQueryRunner:
             runner.run("q1", sql_text, sort=sort)
 
         assert error.value.code == "sql_error"
-        assert error.value.message == (
-            "a value could not be converted or computed (InvalidTextRepresentation); check the literal format"
-        )
+        assert error.value.message == 'invalid input syntax for type integer: "jurre931@hotmail.com"'
         assert error.value.position == sql_text.index("'jurre931")
 
     @pytest.mark.parametrize("sort", [(), (SortSpec(column="n", direction="asc"),)], ids=["client", "server"])
-    def test_a_data_error_on_a_stored_value_does_not_quote_it(
+    def test_a_data_error_on_a_stored_value_quotes_its_hash(
         self, runner: QueryRunner, sort: tuple[SortSpec, ...]
     ) -> None:
         with pytest.raises(UiQueryError) as error:
             runner.run("q1", "select email::int as n from marts.dim_customers where email is not null", sort=sort)
 
-        assert error.value.message == (
-            "a value could not be converted or computed (InvalidTextRepresentation); check the literal format"
-        )
+        assert re.fullmatch(r'invalid input syntax for type integer: "[0-9a-f]{32}"', error.value.message)
 
     def test_error_in_the_wrapper_has_no_position(self, runner: QueryRunner) -> None:
+        # json is reachable only through attribute notation (`o.to_json`): the guard refuses to_json(...)
         with pytest.raises(UiQueryError) as error:
             runner.run(
-                "q1", "select '{}'::json as j from marts.fct_orders", sort=[SortSpec(column="j", direction="asc")]
+                "q1", "select o.to_json as j from marts.fct_orders o", sort=[SortSpec(column="j", direction="asc")]
             )
 
         assert error.value.code == "sql_error"
@@ -1173,34 +1161,36 @@ class TestQueryRunner:
         assert runner.running_query_ids() == frozenset()
         assert leaked_ui_backends() == 0
 
-    def test_pii_masked(self, runner: QueryRunner) -> None:
-        sql_text = "select customer_id, email, first_name, last_name, country_code from marts.dim_customers"
+    def test_pii_arrives_hashed_in_both_modes(self, runner: QueryRunner) -> None:
+        sql_text = "select customer_id, email, country_code from marts.dim_customers"
 
         client = runner.run("q1", sql_text + " order by customer_id limit 3")
         server = runner.run("q2", sql_text, filters=[FilterSpec(column="customer_id", operator="<=", value="3")])
 
+        assert len(client.rows) == 3
+        assert 1 <= len(server.rows) <= 3  # ids 1 to 3, less the test accounts left out of the mart
         for outcome in (client, server):
-            assert {row[1:4] for row in outcome.rows} == {("***", "***", "***")}
-            assert all(isinstance(row[0], int) and row[4] != "***" for row in outcome.rows)
+            for row in outcome.rows:
+                assert isinstance(row[0], int)
+                assert row[1] is None or re.fullmatch(r"[0-9a-f]{32}", str(row[1]))
+            assert any(row[1] is not None for row in outcome.rows)
 
-    @pytest.mark.parametrize(
-        ("sort", "filters"),
-        [
-            ((SortSpec(column="first_name", direction="asc"),), ()),
-            ((), (FilterSpec(column="email", operator="contains", value="@hotmail"),)),
-        ],
-        ids=["sort", "filter"],
-    )
-    def test_server_mode_refuses_masked_columns(
-        self,
-        runner: QueryRunner,
-        sort: tuple[SortSpec, ...],
-        filters: tuple[FilterSpec, ...],
-        leaked_ui_backends: Callable[[], int],
+    def test_server_mode_sorts_and_filters_a_hashed_column(
+        self, runner: QueryRunner, leaked_ui_backends: Callable[[], int]
     ) -> None:
-        with pytest.raises(PiiColumnError, match="holds personal data, shown as \\*\\*\\*"):
-            runner.run("q1", "select customer_id, email, first_name from marts.dim_customers", sort, filters)
+        sql_text = "select customer_id, email from marts.dim_customers where customer_id <= 200"
 
+        sorted_outcome = runner.run("q1", sql_text, sort=[SortSpec(column="email", direction="asc")])
+        filtered = runner.run("q2", sql_text, filters=[FilterSpec(column="email", operator="contains", value="@")])
+
+        emails = [row[1] for row in sorted_outcome.rows]
+        present = sorted(str(email) for email in emails if email is not None)
+        assert 150 <= len(emails) <= 200  # the ids up to 200, less the test accounts left out of the mart
+        assert present
+        assert all(re.fullmatch(r"[0-9a-f]{32}", email) for email in present)
+        assert sorted_outcome.mode == "server"
+        assert emails == [*present, *[None] * (len(emails) - len(present))]  # NULLs last
+        assert (filtered.mode, filtered.rows) == ("server", ())
         assert runner.running_query_ids() == frozenset()
         assert leaked_ui_backends() == 0
 
@@ -1224,18 +1214,20 @@ class TestQueryRunner:
     def test_null_cells_stay_null(self, runner: QueryRunner) -> None:
         outcome = runner.run(
             "q1",
-            "select null as a, null::int as b, null::numeric as c, null::date as d, null::text as email"
+            "select null as a, null::int as b, null::numeric as c, null::date as d, null::text as e"
             " from marts.fct_orders limit 2",
         )
 
-        assert outcome.rows == ((None, None, None, None, None),) * 2  # a NULL in a PII column is not masked either
+        assert outcome.rows == ((None, None, None, None, None),) * 2
         assert outcome.column_types == ("text", "number", "number", "date", "text")
 
     def test_column_types_reported(self, runner: QueryRunner) -> None:
+        # jsonb is reachable only through attribute notation (`s.to_jsonb`), not to_jsonb(...)
         outcome = runner.run(
             "q1",
             "select order_id, order_number, order_date, placed_at, is_cancelled, order_total, 1.5::float8 as f,"
-            " 2::int2 as s, 'x'::varchar(3) as v, 'y'::char(2) as c, interval '1 day' as i, '{}'::jsonb as j"
+            " 2::int2 as s, 'x'::varchar(3) as v, user as c, interval '1 day' as i,"
+            " (select s.to_jsonb from (select 1 as k) s) as j"
             " from marts.fct_orders limit 1",
         )
 
@@ -1255,13 +1247,14 @@ class TestQueryRunner:
         )
 
     def test_values_are_json_safe(self, runner: QueryRunner) -> None:
+        # jsonb is reachable only through attribute notation (`s.to_jsonb`), not to_jsonb(...)
         outcome = runner.run(
             "q1",
             "select 1.50::numeric(12,2) as d, date '2025-03-01' as day,"
-            " timestamptz '2025-03-01 04:05:00+00' as ts, true as b, '{\"k\": [1]}'::jsonb as j",
+            " timestamptz '2025-03-01 04:05:00+00' as ts, true as b, (select s.to_jsonb from (select 1 as k) s) as j",
         )
 
-        assert outcome.rows == (("1.50", "2025-03-01", "2025-03-01T04:05:00+00:00", True, {"k": [1]}),)
+        assert outcome.rows == (("1.50", "2025-03-01", "2025-03-01T04:05:00+00:00", True, {"k": 1}),)
 
     def test_an_int8_past_the_browser_s_precision_arrives_as_a_string_of_a_number_column(
         self, runner: QueryRunner

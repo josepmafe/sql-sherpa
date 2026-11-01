@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
-import { MASKED_HINT, ResultGrid } from "../src/components/ResultGrid";
+import { ResultGrid } from "../src/components/ResultGrid";
 import { CUT_MARKER, EMPTY_VIEW, type ResultView } from "../src/components/resultView";
 import { type QueryResponse, queryResponse } from "./fixtures/api";
 import { firstColumn, renderWithProviders } from "./fixtures/render";
@@ -24,9 +24,9 @@ function response(overrides: Partial<QueryResponse> = {}): QueryResponse {
   });
 }
 
-function Harness({ data, masked = new Set() }: { data: QueryResponse; masked?: ReadonlySet<string> }) {
+function Harness({ data }: { data: QueryResponse }) {
   const [view, setView] = useState<ResultView>(EMPTY_VIEW);
-  return <ResultGrid response={data} view={view} onViewChange={setView} masked={masked} />;
+  return <ResultGrid response={data} view={view} onViewChange={setView} />;
 }
 
 describe("ResultGrid", () => {
@@ -226,29 +226,6 @@ describe("ResultGrid", () => {
     await user.type(screen.getByRole("textbox", { name: "Filter value" }), ".5");
 
     expect(screen.getByRole("button", { name: "Add filter" })).toBeEnabled();
-  });
-
-  it("offers no sorting or filtering by a masked column, matched by name in any case", async () => {
-    const user = userEvent.setup();
-    const masked = response({
-      columns: ["name", "Email"],
-      column_types: ["text", "text"],
-      rows: [
-        ["b", "***"],
-        ["a", "***"],
-      ],
-      returned_rows: 2,
-    });
-    renderWithProviders(<Harness data={masked} masked={new Set(["email"])} />);
-
-    await user.click(screen.getByRole("columnheader", { name: "Email" }));
-    await user.click(screen.getByRole("combobox", { name: "Filter column" }));
-
-    expect(screen.getByRole("columnheader", { name: "Email" })).toHaveAttribute("aria-sort", "none");
-    expect(screen.getByTitle(MASKED_HINT)).toHaveTextContent("Email");
-    expect(screen.queryByRole("button", { name: "Email" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "Email (masked)" })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("option", { name: "name" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("renders only a window of 1,000 rows", () => {

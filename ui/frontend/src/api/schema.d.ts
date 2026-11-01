@@ -659,7 +659,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -740,7 +740,7 @@ export interface operations {
                     "application/json": components["schemas"]["LineageGraph"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -799,7 +799,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -857,7 +857,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -917,7 +917,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -986,7 +986,7 @@ export interface operations {
                     "application/json": components["schemas"]["FormatResponse"];
                 };
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1024,7 +1024,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, `unsupported_selector` */
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
             422: {
                 headers: {
                     [name: string]: unknown;

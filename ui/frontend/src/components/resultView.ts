@@ -1,7 +1,6 @@
 import type { components } from "../api/schema";
 
 export type QueryResponse = components["schemas"]["QueryResponse"];
-type CatalogTree = components["schemas"]["CatalogTree"];
 export type ColumnType = QueryResponse["column_types"][number];
 export type Operator = components["schemas"]["FilterSpec"]["operator"];
 export type Cell = unknown;
@@ -15,13 +14,6 @@ export type ResultView = { sort?: SortState; filters: FilterState[] };
 export const EMPTY_VIEW: ResultView = { filters: [] };
 export const VALUELESS_OPERATORS: readonly Operator[] = ["is_null", "is_not_null"];
 
-// The lower-cased names of the catalog's PII columns. The backend masks a result column by its name in any case, and
-// refuses to sort or filter by it on the server (UI spec §5), so the grid offers neither.
-export function maskedColumnNames(catalog: CatalogTree | undefined): ReadonlySet<string> {
-  const tables = catalog?.domains.flatMap((domain) => domain.tables) ?? [];
-  return new Set(tables.flatMap((table) => table.columns.filter((c) => c.is_pii).map((c) => c.name.toLowerCase())));
-}
-
 // Server mode wraps the SQL in a subquery, which duplicate column names would make ambiguous (UI spec §5).
 export function hasDuplicateColumns(columns: readonly string[]): boolean {
   return new Set(columns).size !== columns.length;
@@ -32,9 +24,9 @@ export function hasDuplicateColumns(columns: readonly string[]): boolean {
 export const CUT_MARKER = " …[cut at 10000 chars]";
 
 // Whether sorting and filtering `view` goes to the server (UI spec §5): the browser cannot reproduce Postgres's order
-// or text for an `other` column (interval, uuid, json, arrays, ...), nor `contains` on a number (JavaScript and
-// Postgres write a float differently), nor any column that holds a cut cell. A real value that ends with the marker
-// only costs a re-run.
+// or text for an `other` column (interval, json and jsonb (through attribute notation only), arrays, ...), nor
+// `contains` on a number (JavaScript and Postgres write a float differently), nor any column that holds a cut cell.
+// A real value that ends with the marker only costs a re-run.
 export function needsServer(view: ResultView, types: readonly ColumnType[], rows: readonly Row[]): boolean {
   const typeAt = (index: number): ColumnType => types[index] ?? "other";
   const hasCutCell = (index: number): boolean =>

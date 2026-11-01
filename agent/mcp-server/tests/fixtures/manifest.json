@@ -193,13 +193,13 @@
           "name": "email",
           "description": "Contact email.",
           "meta": {
-            "pii": true
+            "masked": true
           },
           "data_type": "text",
           "doc_blocks": [],
           "config": {
             "meta": {
-              "pii": true
+              "masked": true
             },
             "tags": []
           },
@@ -240,6 +240,59 @@
             "customer_id"
           ]
         },
+        "materialized": "table"
+      }
+    },
+    "model.sherpa.dim_customers_unmasked": {
+      "resource_type": "model",
+      "name": "dim_customers_unmasked",
+      "schema": "marts",
+      "relation_name": "\"sherpa\".\"marts\".\"dim_customers_unmasked\"",
+      "description": "Customer dimension with the real email; no reader can query it.",
+      "access": "protected",
+      "meta": {},
+      "depends_on": {
+        "macros": [],
+        "nodes": [
+          "model.sherpa.stg_shop__customers"
+        ]
+      },
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "description": "The customer.",
+          "meta": {},
+          "data_type": "bigint",
+          "doc_blocks": [],
+          "config": {
+            "meta": {},
+            "tags": []
+          },
+          "constraints": [],
+          "tags": []
+        },
+        "email": {
+          "name": "email",
+          "description": "Contact email.",
+          "meta": {
+            "pii": true
+          },
+          "data_type": "text",
+          "doc_blocks": [],
+          "config": {
+            "meta": {
+              "pii": true
+            },
+            "tags": []
+          },
+          "constraints": [],
+          "tags": []
+        }
+      },
+      "config": {
+        "enabled": true,
+        "schema": "marts",
+        "meta": {},
         "materialized": "table"
       }
     },
@@ -411,7 +464,7 @@
           "name": "supplier_email",
           "description": "Contact of the supplier.",
           "meta": {
-            "pii": true
+            "masked": true
           },
           "data_type": "text",
           "constraints": [],
@@ -419,7 +472,7 @@
           "doc_blocks": [],
           "config": {
             "meta": {
-              "pii": true
+              "masked": true
             },
             "tags": []
           }

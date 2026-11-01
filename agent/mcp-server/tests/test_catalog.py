@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sherpa_mcp.catalog import CatalogUnavailable, MartCatalog, MartCatalogLoader
+from sherpa_mcp.catalog import CatalogUnavailable, MartCatalog, MartCatalogLoader, UnmaskedArtifacts
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,9 +35,24 @@ def _make_orders_public(manifest: dict[str, Any]) -> None:
     manifest["nodes"]["model.sherpa.fct_orders"]["access"] = "public"
 
 
+# Data platform spec §6.5: the sentence that ends the description of every masked column.
+PSEUDONYMISED_SENTENCE = (
+    "Salted md5 hash (32 hex characters) of the customer's normalized email; null for deleted customers. "
+    "Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with "
+    "a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results "
+    "(some patterns match random rows). Identify customers by customer_id; questions about email domains "
+    "cannot be answered."
+)
+
+
 @pytest.mark.warehouse
-def test_pii_columns_are_the_specs(prod_loader: MartCatalogLoader) -> None:
-    assert prod_loader.load().pii_columns() == frozenset({"email", "first_name", "last_name"})
+def test_masked_columns_are_the_specs(prod_loader: MartCatalogLoader) -> None:
+    marts = prod_loader.load().marts
+
+    masked = [(mart.name, column) for mart in marts for column in mart.columns if column.is_pii]
+
+    assert {(name, column.name) for name, column in masked} == {("dim_customers", "email")}
+    assert all(PSEUDONYMISED_SENTENCE in column.description for _, column in masked)
 
 
 class TestMartCatalogLoader:
@@ -100,7 +116,7 @@ class TestMartCatalogLoader:
 
         loaded = MartCatalogLoader(fixture_target).load()
 
-        assert loaded.visible_names() == frozenset({"fct_orders"})
+        assert loaded.visible_marts() == frozenset({"fct_orders"})
 
     def test_reloads_on_mtime_change(self, fixture_target: Path) -> None:
         loader = MartCatalogLoader(fixture_target)
@@ -113,7 +129,7 @@ class TestMartCatalogLoader:
         reloaded = loader.load()
 
         assert reloaded is not first
-        assert reloaded.visible_names() == frozenset({"fct_orders"})
+        assert reloaded.visible_marts() == frozenset({"fct_orders"})
 
     def test_reloads_when_only_catalog_json_changes(self, fixture_target: Path) -> None:
         loader = MartCatalogLoader(fixture_target)
@@ -235,29 +251,21 @@ class TestMartCatalog:
         assert catalog.mart("stg_shop__customers") is None
         assert orders.column("nope") is None
 
-    def test_pii_columns(self, catalog: MartCatalog) -> None:
-        assert catalog.pii_columns() == frozenset({"email", "supplier_email"})
+    def test_is_pii_is_the_column_s_meta_masked(self, catalog: MartCatalog) -> None:
+        customers = catalog.mart("dim_customers")
+        products = catalog.mart("dim_products")
 
-    def test_pii_in_a_later_mart_is_found_when_the_first_mart_has_none(self, fixture_target: Path) -> None:
-        def clear_customer_email_pii(manifest: dict[str, Any]) -> None:
-            manifest["nodes"]["model.sherpa.dim_customers"]["columns"]["email"]["meta"]["pii"] = False
+        assert customers is not None
+        assert products is not None
+        assert [column.name for column in customers.columns if column.is_pii] == ["email"]
+        assert [column.name for column in products.columns if column.is_pii] == ["supplier_email"]
 
-        _edit_manifest(fixture_target, clear_customer_email_pii)
+    def test_an_unmasked_table_is_not_a_visible_mart(self, catalog: MartCatalog) -> None:
+        assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+        assert catalog.mart("dim_customers_unmasked") is None
 
-        catalog = MartCatalogLoader(fixture_target).load()
-
-        assert catalog.pii_columns() == frozenset({"supplier_email"})
-
-    def test_visible_names_and_domains(self, catalog: MartCatalog) -> None:
-        assert catalog.visible_names() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+    def test_domains(self, catalog: MartCatalog) -> None:
         assert catalog.domains() == ("customers", "products", "sales")
-
-    def test_mart_columns_name_every_column_of_every_visible_mart(self, catalog: MartCatalog) -> None:
-        assert catalog.mart_columns() == {
-            "fct_orders": frozenset({"order_id", "customer_id", "order_date", "net_revenue", "current_status"}),
-            "dim_customers": frozenset({"customer_id", "email", "customer_segment"}),
-            "dim_products": frozenset({"brand", "product_id", "supplier_email"}),
-        }
 
 
 class TestCatalogShape:
@@ -277,6 +285,33 @@ class TestCatalogShape:
 
         with pytest.raises(CatalogUnavailable, match=r"mart dim_customers has no meta.primary_key"):
             MartCatalogLoader(fixture_target).load()
+
+    @pytest.mark.parametrize(
+        ("folder", "command"), [("target-prod", "make build-prod"), ("target-eval", "make eval-db")]
+    )
+    def test_a_build_with_pii_in_a_visible_mart_replaces_the_cached_catalog(
+        self, fixture_target: Path, tmp_path_factory: pytest.TempPathFactory, folder: str, command: str
+    ) -> None:
+        target = tmp_path_factory.mktemp("targets") / folder
+        shutil.copytree(fixture_target, target)
+        loader = MartCatalogLoader(target)
+        loader.load()
+
+        def raw_order_id(manifest: dict[str, Any]) -> None:
+            manifest["nodes"]["model.sherpa.fct_orders"]["columns"]["order_id"]["meta"]["pii"] = True
+
+        _edit_manifest(target, raw_order_id)
+        _bump_mtime(target / "manifest.json", seconds=5)
+
+        for _ in range(2):  # the same refusal while the artifacts stay unchanged
+            with pytest.raises(UnmaskedArtifacts, match=rf"column with meta\.pii \(order_id\).*run {command}$"):
+                loader.load()
+
+        # The refused build dropped the cached catalog: a next unreadable manifest must not bring it back.
+        (target / "manifest.json").write_text("{", encoding="utf-8")
+        _bump_mtime(target / "manifest.json", seconds=10)
+        with pytest.raises(CatalogUnavailable, match=r"cannot read manifest\.json"):
+            loader.load()
 
     def test_message_does_not_expose_the_path(self, fixture_target: Path) -> None:
         (fixture_target / "catalog.json").unlink()

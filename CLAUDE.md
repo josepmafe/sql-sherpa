@@ -67,10 +67,10 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - **Data:**
   - `make advance DAYS=<n>` simulates `n` more days (`DAYS` is required), then snapshots the catalog.
   - `make backfill` simulates `DAYS` days (default 365) ending yesterday, in weekly chunks with a snapshot after each; it refuses to run on top of an existing simulation.
-  - `make reset` drops the dbt schemas (`dev_*`, the prod ones, `snapshots`, `test_failures`, `dev_test_failures`, `ops`) and the raw schemas, then recreates the raw schemas empty.
+  - `make reset` drops the dbt schemas (`dev_*`, the prod ones, `snapshots`, `test_failures`, `dev_test_failures`, `ops`) and the raw schemas, then recreates the raw schemas empty. `ops` also holds the generated PII salt, so a reset changes the hashes.
   - The simulated range and row counts: `uv run sherpa-generate status`.
 - **dbt:**
-  - `make build` checks source freshness, then runs `dbt build` (seeds, unit tests and the incremental models included) on dev. It reads the simulation's first day (`uv run sherpa-generate start-date`) into `SHERPA_SIMULATION_START_DATE`, the `begin` of the event model. When a simulated day older than 7 days before today that no earlier build loaded exists (for example after `make advance DAYS=n` with `n` above 7), `assert_every_source_event_is_staged` fails the build until you run `dbt build --select stg_events__events --event-time-start <first missing day> --event-time-end <day after the last missing day>` (the end is exclusive) from `data-platform/dbt/` (the building guide shows it).
+  - `make build` checks source freshness, then runs `dbt build` (seeds, unit tests and the incremental models included) on dev. It reads the simulation's first day (`uv run sherpa-generate start-date`) into `SHERPA_SIMULATION_START_DATE`, the `begin` of the event model. When a simulated day older than 7 days before today that no earlier build loaded exists (for example after `make advance DAYS=n` with `n` above 7), `assert_every_source_event_is_staged` fails the build until you run `dbt build --select stg_events__events --event-time-start <first missing day> --event-time-end <day after the last missing day>` (the end is exclusive) from `data-platform/dbt/` (the building guide shows it). Build a mart with PII together with its view (`--select <mart>_unmasked+`): rebuilding the table alone drops the view, and `dbt build --select dim_customers_unmasked+ --target prod --target-path target-prod` restores it.
   - `make build-prod` does the same on prod, then `dbt docs generate`, with artifacts in `target-prod`.
   - Both install the dbt packages first whenever `packages.yml` or `package-lock.yml` changed.
   - `make docs` generates and serves the dev docs.
@@ -94,11 +94,11 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
   - Commands run from the repository root; dbt runs from `data-platform/dbt/` (the Makefile does the `cd`).
 - Python 3.12, uv, single root `pyproject.toml` (dependency groups `generator`, `dbt`, `mcp`, `ui`, `dev`); the frontend has its own `ui/frontend/package.json` (npm). `sqlglot` is pinned exactly: its parser is the SQL guard's view of a query, so a bump is a guard change and a column-lineage change (rerun the guard's hostile-input tests and the column-lineage tests). Lint/format with ruff; SQL with sqlfluff (dbt templater, Postgres dialect).
-- dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`. YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
+- dbt naming: `stg_<source>__<entity>`, `int_<entity>__<verb>`, `fct_` / `dim_`; `<mart>_unmasked` is the table behind a mart with PII, whose view is `<mart>` (data platform spec §6.5). YAML per directory: `_<dir>__models.yml`, `_<source>__sources.yml`. Every model and column gets a description.
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
 - Time-relative columns use `as_of_date`, never `now()`.
-- dbt tests: singular tests are plain `SELECT`s of failing rows in `data-platform/dbt/tests/singular/`; unit tests sit in the model's YAML, with test names of at most 63 characters (Postgres' identifier limit). Every incremental model sets `on_schema_change: fail`.
+- dbt tests: singular tests are plain `SELECT`s of failing rows in `data-platform/dbt/tests/singular/`, and a test that reads an `_unmasked` table returns no value of its PII columns (`store_failures` keeps the failing rows); unit tests sit in the model's YAML, with test names of at most 63 characters (Postgres' identifier limit). Every incremental model sets `on_schema_change: fail`.
 - Money is `numeric(12,2)` EUR (Python `Decimal`, `ROUND_HALF_UP`). Timestamps are UTC.
 - Secrets live only in `.env` (gitignored). `profiles.yml` reads everything via `env_var()`.
 
@@ -116,7 +116,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 ### Structure
 - Keep **pure logic separate from I/O**, so most code is testable without a database or a model:
   - generator: `records/`, `RealismRules`, `SimulationCalendar`, `DeterministicRandom` and `OrderPricing` are pure; `database/`, `StoreSnapshotLoader` and `Simulator` do the I/O. `OrderPricing` lives in `behaviour/order_lifecycle.py` and `GeneratorError` in `simulation/simulator.py`
-  - MCP server: `sql_guard`, `masking`, the `examples` ranking and the `catalog` parsing are pure; `tools`, `database` and the file reads of the `catalog` loader and of `ExampleIndex.from_yaml` do the I/O
+  - MCP server: `sql_guard`, the `examples` ranking and the `catalog` parsing are pure; `tools`, `database` and the file reads of the `catalog` loader and of `ExampleIndex.from_yaml` do the I/O
   - UI backend: `readonly/sort_filter`, the `catalog_service` mapping, `lineage/manifest_graph`, `lineage/selector`, `lineage/node_status` and `lineage/column_lineage` are pure; `readonly/query_runner`, `build/build_status`, `lineage/manifest_loader`, `lineage/node_sql`, `lineage/column_lineage_loader`, `lineage/lineage_service` and the `api/` routers do the I/O
   - agent: `guards` and `outcomes` are pure; variants orchestrate
 - One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_ui`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.

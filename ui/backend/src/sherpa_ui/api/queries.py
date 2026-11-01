@@ -8,9 +8,9 @@ from fastapi import APIRouter, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from sherpa_ui.api.errors import PII_COLUMN_CODE, UNKNOWN_COLUMN_CODE, ApiException, error_responses
+from sherpa_ui.api.errors import UNKNOWN_COLUMN_CODE, ApiException, error_responses
 from sherpa_ui.readonly.query_runner import QueryOutcome
-from sherpa_ui.readonly.sort_filter import FilterSpec, PiiColumnError, SortSpec, UnknownColumnError
+from sherpa_ui.readonly.sort_filter import FilterSpec, SortSpec, UnknownColumnError
 
 if TYPE_CHECKING:
     from sherpa_ui.readonly.query_runner import QueryRunner
@@ -85,8 +85,6 @@ class QueryService:
             outcome = self._runner.run(body.query_id, body.sql, body.sort, body.filters)
         except UnknownColumnError as error:  # a sort or filter column that is not in the result
             raise ApiException(422, UNKNOWN_COLUMN_CODE, str(error)) from error
-        except PiiColumnError as error:  # a masked one: no fallback, the browser's rows are masked already
-            raise ApiException(422, PII_COLUMN_CODE, str(error)) from error
 
         return QueryResponse(**outcome.model_dump())
 

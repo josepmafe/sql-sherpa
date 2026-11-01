@@ -1,5 +1,5 @@
 """The read-only path for the SQL people write in the UI (UI spec §5): guard, `sherpa_ui` role, row cap and result
-size, masking, server-side sort and filter, cancel, and error positions in the SQL as written."""
+size, server-side sort and filter, cancel, and error positions in the SQL as written."""
 
 from __future__ import annotations
 
@@ -17,15 +17,12 @@ from psycopg import errors, sql
 from psycopg.postgres import types as postgres_types
 from pydantic import BaseModel, ConfigDict, JsonValue
 from sherpa_mcp.catalog import CatalogUnavailable
-from sherpa_mcp.database import data_error_message
-from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import DIALECT, SqlGuard
 from sqlglot.errors import SqlglotError
 
 from sherpa_ui.readonly.bounded_result import BoundedResult
 from sherpa_ui.readonly.sort_filter import (
     DuplicateColumnsError,
-    PiiColumnError,
     UnknownColumnError,
     build_wrapped_query,
     strip_terminators,
@@ -65,7 +62,6 @@ COLUMN_TYPES: Final[dict[str, ColumnType]] = {
     "float8": "number",
     "text": "text",
     "varchar": "text",
-    "bpchar": "text",
     "name": "text",
     "date": "date",
     "timestamp": "timestamp",
@@ -79,8 +75,8 @@ DECLARE_PREFIX: Final = f'DECLARE "{CURSOR_NAME}" CURSOR FOR '
 PROBE_SUFFIX: Final = " limit 0"  # server mode learns the result's column names without running the query
 # Rows a FETCH asks for: 1,000 fct_orders rows take ~20 ms in batches of 100, against ~10 ms in a single FETCH.
 FETCH_BATCH_ROWS: Final = 100
-# Cells a FETCH asks for, so a wide result comes in fewer rows at a time: a batch of 10,000-character cells (lpad's
-# longest) stays near 100 MB however many columns the query has.
+# Cells a FETCH asks for, so a wide result comes in fewer rows at a time: a batch of 10,000-character cells (the cell
+# cap) stays near 100 MB however many columns the query has.
 FETCH_BATCH_CELLS: Final = 10_000
 CANCEL_TIMEOUT_SECONDS: Final = 5.0
 # UI spec §5. Runs holding a connection at once, below the sherpa_ui role's CONNECTION LIMIT 10
@@ -138,7 +134,7 @@ class QueryOutcome(BaseModel):
     query_id: str
     columns: tuple[str, ...]
     column_types: tuple[ColumnType, ...]
-    rows: tuple[tuple[JsonValue, ...], ...]  # JSON-safe, PII-masked, and each cell cut to 10,000 characters
+    rows: tuple[tuple[JsonValue, ...], ...]  # JSON-safe, and each cell cut to 10,000 characters
     returned_rows: int
     truncated: bool
     elapsed_ms: int
@@ -174,16 +170,15 @@ class QueryRunner:
         run (same connection, same `query_id`) and says so in `warning`.
 
         Raises `UiQueryError` (`busy`, without connecting, while `MAX_CONCURRENT_QUERIES` runs hold a connection); in
-        server mode also `UnknownColumnError` for a sort or filter column that is not in the result and
-        `PiiColumnError` for one that is masked. Whatever else went wrong, a run that `cancel` reached raises
-        `UiQueryError` with code `cancelled`.
+        server mode also `UnknownColumnError` for a sort or filter column that is not in the result. Whatever else
+        went wrong, a run that `cancel` reached raises `UiQueryError` with code `cancelled`.
 
         Every run is logged by its id, outcome and duration; the SQL only by its length and hash.
         """
         started = time.monotonic()
         try:
             outcome = self._run(query_id, sql_text, sort, filters, started)
-        except (UiQueryError, UnknownColumnError, PiiColumnError) as error:
+        except (UiQueryError, UnknownColumnError) as error:
             _log_failure(query_id, sql_text, error, started)
             raise
 
@@ -238,15 +233,14 @@ class QueryRunner:
         holds_slot = False
         try:
             catalog = self._load_catalog()
-            masker = PiiMasker(catalog.pii_columns())
             self._check_guard(catalog, sql_text)
             self._raise_if_cancelled(query_id)  # before taking a slot and a connection the run would not use
             self._take_slot()
             holds_slot = True
             conn = self._connect()
             self._attach(query_id, conn)
-            fetched = self._execute(conn, query_id, strip_terminators(sql_text), sort, filters, masker)
-        except (UiQueryError, UnknownColumnError, PiiColumnError) as error:
+            fetched = self._execute(conn, query_id, strip_terminators(sql_text), sort, filters)
+        except (UiQueryError, UnknownColumnError) as error:
             if (isinstance(error, UiQueryError) and error.code == "cancelled") or not self._is_cancelled(query_id):
                 raise
 
@@ -288,7 +282,7 @@ class QueryRunner:
             raise UiQueryError("catalog_unavailable", str(error)) from error
 
     def _check_guard(self, catalog: MartCatalog, sql_text: str) -> None:
-        guard = SqlGuard(catalog.mart_columns()).check(sql_text)
+        guard = SqlGuard(catalog.visible_marts()).check(sql_text)
         if not guard.ok:
             raise UiQueryError("guard_rejected", "\n".join(guard.errors))
 
@@ -337,7 +331,6 @@ class QueryRunner:
         statement: str,
         sort: Sequence[SortSpec],
         filters: Sequence[FilterSpec],
-        masker: PiiMasker,
     ) -> _Fetched:
         try:
             with conn.transaction():
@@ -345,9 +338,9 @@ class QueryRunner:
                 conn.execute(sql.SQL("set local statement_timeout = {}").format(sql.Literal(timeout)))
                 if not sort and not filters:
                     # No parameters, so psycopg leaves every `%` of the user's SQL alone.
-                    return self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement), masker)
+                    return self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement))
 
-                probe = build_wrapped_query(statement, (), masker)
+                probe = build_wrapped_query(statement, ())
                 with self._declared(
                     conn,
                     query_id,
@@ -359,10 +352,10 @@ class QueryRunner:
                     columns = [column.name for column in cursor.description or ()]
 
                 try:
-                    wrapped = build_wrapped_query(statement, columns, masker, sort, filters)
+                    wrapped = build_wrapped_query(statement, columns, sort, filters)
                 except DuplicateColumnsError:
                     # `q.<name>` would be ambiguous: the browser sorts and filters the rows of the query as written.
-                    fetched = self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement), masker)
+                    fetched = self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement))
                     return replace(fetched, warning=DUPLICATE_COLUMNS_WARNING)
 
                 fetched = self._fetch(
@@ -372,7 +365,6 @@ class QueryRunner:
                     wrapped.params,
                     len(DECLARE_PREFIX) + wrapped.prefix_length,
                     len(statement),
-                    masker,
                 )
                 return replace(fetched, mode="server")
         except psycopg.Error as error:  # outside a cursor (the timeout, the commit): no position in the user's SQL
@@ -386,7 +378,6 @@ class QueryRunner:
         params: Sequence[object] | None,
         offset: int,
         length: int,
-        masker: PiiMasker,
     ) -> _Fetched:
         """The rows in batches, until the result is complete or `BoundedResult` says it is full. Postgres times each
         FETCH on its own, so fetching stops at the statement timeout too, checked before each FETCH, like a cancel."""
@@ -394,7 +385,7 @@ class QueryRunner:
         with self._declared(conn, query_id, query, params, offset, length) as cursor:
             description = cursor.description or ()
             columns = tuple(column.name for column in description)
-            result = BoundedResult(columns, masker, self._settings.ui_row_cap)
+            result = BoundedResult(self._settings.ui_row_cap)
             batch_rows = max(1, min(FETCH_BATCH_ROWS, FETCH_BATCH_CELLS // max(len(columns), 1)))
             deadline = time.monotonic() + timeout
             while True:
@@ -445,9 +436,6 @@ class QueryRunner:
         if _is_connection_failure(error):
             return UiQueryError("database_unavailable", UNREACHABLE_MESSAGE.format(reason=_first_line(error)))
 
-        if isinstance(error, errors.DataError):  # Postgres's text can quote the value, a masked one too (UI spec §5)
-            return UiQueryError("sql_error", data_error_message(error), position)
-
         message = error.diag.message_primary or str(error)
         if error.diag.message_hint:
             message = f"{message}; {error.diag.message_hint}"
@@ -470,7 +458,7 @@ def user_position(statement_position: str | None, offset: int, length: int) -> i
 class _Fetched:
     columns: tuple[str, ...]
     column_types: tuple[ColumnType, ...]
-    rows: tuple[tuple[object, ...], ...]  # JSON-safe, PII-masked and cut
+    rows: tuple[tuple[object, ...], ...]  # JSON-safe and cut
     truncated: bool
     mode: QueryMode = "client"
     warning: str | None = None

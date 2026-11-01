@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from sherpa_ui.api.errors import (
     INTERNAL_ERROR_CODE,
     INVALID_REQUEST_CODE,
-    PII_COLUMN_CODE,
     QUERY_ERROR_STATUS,
     UNKNOWN_COLUMN_CODE,
 )
@@ -184,7 +183,6 @@ class TestOpenapiErrors:
         codes = {
             **QUERY_ERROR_STATUS,
             UNKNOWN_COLUMN_CODE: 422,
-            PII_COLUMN_CODE: 422,
             INVALID_REQUEST_CODE: 422,
             INTERNAL_ERROR_CODE: 500,
         }

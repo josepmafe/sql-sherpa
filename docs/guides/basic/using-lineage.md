@@ -78,6 +78,8 @@ Every node has a chevron that expands it into its columns; **Expand all** and **
 | `partial` | some inputs were found and linked and the notes name the rest: the trace is incomplete |
 | `unresolved` | none was found; a note says why |
 
+A mart view's PII columns (`dim_customers.email`) read `partial` with the note "reads an unknown relation <database>.ops.pii_salt": the salt is a table outside the dbt project, and the rest of the trace (to `dim_customers_unmasked`) is linked.
+
 Notes that explain a gap: "reads an unknown relation <name>", "column <c> not found in <node>", "* is not expanded: ...", "not in the compiled SQL's output", "the compiled SQL did not parse", "the compiled SQL is not in the dbt target". "cast to numeric(12,2)" and "also reads its own previous rows (incremental)" are information, not failures. A note about the node as a whole (no catalog, no compiled SQL) shows above the panel's Columns table.
 
 **Select list only.** A column edge exists when the child's select expression reads the parent column, as in dbt Catalog. Not linked: a column used only in a `join`, `where` or `group by`, the partition or order of a *named* window (`WINDOW w AS (...)`), and the `count(*)` of an expression that also reads a column (`count(*) * sum(amount)` links `amount` only and is `transformed`; `count(*) * 2` reads no column and is a `row count`). A fixed legend on the canvas names joins, filters and group by. Examples on the real project, read the compiled SQL in the panel for the rest:
@@ -105,7 +107,7 @@ The panel sits below the graph, always, and scrolls on its own, so selecting a n
 - **Columns:** each column with its kind and resolution; click one to focus it.
 - **Tests** and **SQL:** raw and compiled SQL; when the compiled file is missing, the raw SQL shows with a note.
 
-Actions: **Copy dbt selector** copies the selector that selects the node (its name, or `source:<source>.<table>`); **Open in Explorer** (marts only) opens `/explorer?table=<name>`. In the Explorer, **Open in Lineage** (table menu and Inspector) opens `+<table>+`.
+Actions: **Copy dbt selector** copies the selector that selects the node (its name, or `source:<source>.<table>`); **Open in Explorer** (visible marts only, not an `_unmasked` table) opens `/explorer?table=<name>`. In the Explorer, **Open in Lineage** (table menu and Inspector) opens `+<table>+`.
 
 ## Troubleshooting
 

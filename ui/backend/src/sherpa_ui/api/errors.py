@@ -35,7 +35,6 @@ QUERY_ERROR_STATUS: Final[dict[str, int]] = {
 # 422: a request body over the cap, found while it was read (`api/body_limit.py`).
 HTTP_STATUS_CODES: Final[dict[int, str]] = {404: "not_found", 405: "method_not_allowed", 422: "invalid_request"}
 UNKNOWN_COLUMN_CODE: Final = "unknown_column"  # a sort or filter column that is not in the result
-PII_COLUMN_CODE: Final = "pii_column"  # a sort or filter column whose values the masking hides
 INVALID_REQUEST_CODE: Final = "invalid_request"
 DEFAULT_HTTP_CODE: Final = "http_error"
 INTERNAL_ERROR_CODE: Final = "internal_error"
@@ -44,10 +43,7 @@ INTERNAL_ERROR_MESSAGE: Final = "something went wrong on the server; see its log
 ERROR_STATUS_DESCRIPTIONS: Final[dict[int, str]] = {
     404: "Not found: `table_not_found`, `node_not_found`, `column_not_found`",
     409: "Conflict with a query of the same id: `duplicate_query_id`, `cancelled`",
-    422: (
-        "Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `pii_column`, "
-        "`unsupported_selector`"
-    ),
+    422: "Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector`",
     429: "Too many queries are running: `busy`",
     500: "Unexpected server error: `internal_error`",
     503: "A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections`",

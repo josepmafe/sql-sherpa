@@ -1,21 +1,21 @@
--- Soft-deleted customers (R6) stay in dim_customers, so facts keep their
--- customer, but without their PII. Returns a row per deleted customer that
--- still has an email or a name, and one per customer whose is_deleted
--- disagrees with staging.
+-- Soft-deleted customers (R6) stay in dim_customers_unmasked (the source of
+-- truth), so facts keep their customer, but without their PII. Returns a row
+-- per deleted customer that still has an email or a name, and one per
+-- customer whose is_deleted disagrees with staging.
 select
-    dim_customers.customer_id,
-    dim_customers.is_deleted,
+    dim_customers_unmasked.customer_id,
+    dim_customers_unmasked.is_deleted,
     customers.is_deleted as staging_is_deleted
-from {{ ref('dim_customers') }} as dim_customers
+from {{ ref('dim_customers_unmasked') }} as dim_customers_unmasked
 inner join {{ ref('stg_shop__customers') }} as customers
-    on dim_customers.customer_id = customers.customer_id
+    on dim_customers_unmasked.customer_id = customers.customer_id
 where
-    dim_customers.is_deleted is distinct from customers.is_deleted
+    dim_customers_unmasked.is_deleted is distinct from customers.is_deleted
     or (
-        dim_customers.is_deleted
+        dim_customers_unmasked.is_deleted
         and (
-            dim_customers.email is not null
-            or dim_customers.first_name is not null
-            or dim_customers.last_name is not null
+            dim_customers_unmasked.email is not null
+            or dim_customers_unmasked.first_name is not null
+            or dim_customers_unmasked.last_name is not null
         )
     )

@@ -11,7 +11,6 @@ Code is in `agent/mcp-server/src/sherpa_mcp/`; tests in `agent/mcp-server/tests/
 | `server.py` | `build_server` (registers the eight tools and their descriptions), `main` (logging, Logfire, startup check, transport) |
 | `tools.py` | `WarehouseTools` (one method per tool), the frozen output models, the scope texts `DOMAIN_SUBJECTS` (one phrase per `meta.domain`, `marketing_web` included), `DOES_NOT_COVER`, `NOTES` |
 | `sql_guard.py` | `SqlGuard`, `ALLOWED_FUNCTIONS`, the hint maps, the `[guard:<rule>]` codes; pure |
-| `masking.py` | `PiiMasker`; pure |
 | `catalog.py` | `MartCatalogLoader`, `MartCatalog`, built from `manifest.json` and `catalog.json` |
 | `database.py` | `AgentDatabase`: pool, read-only transactions, timeout, row, cell and result caps, error codes |
 | `examples.py`, `examples.yaml` | The few-shot index and its data |
@@ -21,7 +20,7 @@ Code is in `agent/mcp-server/src/sherpa_mcp/`; tests in `agent/mcp-server/tests/
 
 | Layer | Tests | Needs | Run |
 |---|---|---|---|
-| Pure | `test_sql_guard.py`, `test_masking.py`, `test_examples.py`, `test_catalog.py` | Python only | `uv run pytest agent/mcp-server/tests -q` |
+| Pure | `test_sql_guard.py`, `test_examples.py`, `test_catalog.py` | Python only | `uv run pytest agent/mcp-server/tests -q` |
 | Warehouse | `test_tools.py`, `test_server.py` | Postgres and `make build-prod` | `uv run --env-file .env pytest agent/mcp-server/tests -m warehouse` |
 | Container | `test_server.py` over the compose `mcp` service | `SHERPA_TEST_MCP_CONTAINER=1`, `mcp` service up | add the variable to the warehouse command |
 
@@ -53,7 +52,7 @@ Rules to follow:
 - Resolve user-given names with `_resolve_mart` / `_resolve_column`; build SQL with `psycopg.sql`; pass values as bound parameters.
 - Run every query through `AgentDatabase` (never open another connection). `fetch` and `scalar` are for the server's own queries; `fetch_for_model` is for rows the model reads (JSON-safe, cell cap, result budget); `explain` plans without running.
 - Raise `WarehouseToolError` for failures the model can act on, with a message saying what to do. Anything else reaches the model only as `Error executing tool <name>`.
-- Model-written SQL goes through `self._guard(...)` first, and its result through `PiiMasker`.
+- Model-written SQL goes through `self._guard(...)` first. Its result is not rewritten: the marts already hold hashes instead of personal values.
 
 **2. `server.py`: registration in `build_server`.** Import `RowCount` with the other models. The description is what the model reads when choosing: say when to call it, what it returns, what it does not check. Bound every input in its `Field` (`max_length`, `ge`/`le`).
 
@@ -84,7 +83,7 @@ A function not on the list fails with `[guard:function] function xyz is not allo
 
 - no side effects, file or network access;
 - no catalog or session introspection (`pg_*`, `current_setting`, `dblink*`, `lo_*`, `query_to_xml`);
-- no unbounded output (`generate_series`, `repeat`; `lpad`/`rpad` pass only with a literal length up to 10,000);
+- no unbounded output (`generate_series`, `repeat`, `lpad`, `rpad` stay off the list);
 - no running a nested query from a string.
 
 **1. `sql_guard.py`, `ALLOWED_FUNCTIONS`.** Names are the ones **sqlglot** reports, not always the Postgres spelling (`string_agg` is `group_concat`, `date_trunc` is `timestamp_trunc`, `~` is `regexp_like`; the comment above the list records the mapping). Ask sqlglot:
@@ -119,6 +118,8 @@ uv run pytest agent/mcp-server/tests/test_sql_guard.py -q
 ```
 
 The spec (§4.2) names categories, not functions; update it only for a new category.
+
+Casts are a closed list of their own, `CAST_TYPES` (with `CAST_HINT`): a cast to another type is `[guard:cast]`. To allow a type, add it to `CAST_TYPES` and to the spec's §4.2 list, and update `test_the_cast_types_are_exactly_the_specs`, which pins the list to the spec (`test_other_types_are_rejected` and `test_postgres_spellings_of_the_listed_types_pass` are the upgrade guards). A type that pads or reaches a catalog (`char(n)`, `reg*`, `json`) stays off.
 
 ## 3. Change a guard hint
 
@@ -160,7 +161,7 @@ docker compose up -d --build --wait --no-deps mcp
 
 The query code does not change: marts, domains, grains, PII flags, synonyms and metric references come from the dbt artifacts, and the guard's visible tables and columns from the same catalog.
 
-1. `make build-prod` refreshes `manifest.json` and `catalog.json` in `data-platform/dbt/target-prod/`. A running server, including the container (it mounts `data-platform/dbt` read-only), reloads when their modification time changes. Mark a new PII column `meta.pii: true` in the dbt YAML first; masking, `search_values` and `distinct_values` follow that flag.
+1. `make build-prod` refreshes `manifest.json` and `catalog.json` in `data-platform/dbt/target-prod/`. A running server, including the container (it mounts `data-platform/dbt` read-only), reloads when their modification time changes. A new PII column follows [Adding or changing a mart, section 8](adding-or-changing-a-mart.md#8-add-a-mart-with-pii): the catalog's PII flag, the `search_values` refusal and the hidden `distinct_values` follow `meta.masked` on the mart view's column, and a visible mart that still carries `meta.pii` makes the catalog unavailable.
 2. Update the `MARTS` lists in the tests: `data-platform/tests/dbt/test_reader_access.py` (read by `test_tools.py` to check `list_tables`) and `agent/mcp-server/tests/test_examples.py` (compared to the catalog).
 3. Update the scope texts in `tools.py`: add a `DOMAIN_SUBJECTS` phrase for a new domain, and drop the `DOES_NOT_COVER` entries the new marts now cover (the campaign entry stays until data-platform-4 adds its mart); add a `NOTES` line for a trap the marts have (sessions are web only). `test_get_context_as_of_and_scope` in `test_tools.py` checks them.
 4. Run `make test` and `uv run --env-file .env pytest -m warehouse`. Add an example if the mart brings a new pattern (section 5).

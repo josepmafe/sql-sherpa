@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalog, MartColumn, MetricDefinition
 from sherpa_mcp.database import WarehouseToolError
 from sherpa_mcp.examples import RankedExample
-from sherpa_mcp.masking import PiiMasker
 from sherpa_mcp.sql_guard import SqlGuard
 
 if TYPE_CHECKING:
@@ -52,6 +51,8 @@ DOES_NOT_COVER: Final = (
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
+    "customers' email addresses, domains and names: the email is available only as a salted hash and customer "
+    "names are not in the marts",
     "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
     "the utm_campaign slug)",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
@@ -238,8 +239,7 @@ class WarehouseTools:
             sql.Identifier(MARTS_SCHEMA), sql.Identifier(mart.name), order_by, sql.Literal(SAMPLE_ROWS)
         )
         result = self._database.fetch_for_model(query, max_rows=SAMPLE_ROWS)
-        masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
-        sample = SampleRows(columns=result.columns, rows=tuple(tuple(row) for row in masked))
+        sample = SampleRows(columns=result.columns, rows=result.rows)
         stored = self._stored_values(catalog, mart)
         return TableDescription(
             name=mart.name,
@@ -268,7 +268,10 @@ class WarehouseTools:
         mart = _resolve_mart(self._catalog(), table)
         found = _resolve_column(mart, column)
         if found.is_pii:
-            raise WarehouseToolError(f"{mart.name}.{found.name} holds PII and cannot be searched")
+            raise WarehouseToolError(
+                f"{mart.name}.{found.name} is a salted hash and cannot be searched; "
+                "questions about its values cannot be answered"
+            )
         if found.data_type != TEXT_TYPE:
             raise WarehouseToolError(
                 f"{mart.name}.{found.name} is {found.data_type}, not text; only text columns can be searched"
@@ -319,12 +322,11 @@ class WarehouseTools:
         if not guard.ok:
             raise WarehouseToolError("; ".join(guard.errors))
         result = self._database.fetch_for_model(executed)
-        masked = PiiMasker(catalog.pii_columns()).mask(result.columns, result.rows)
         return SqlResult(
             execution_id=execution_id,
             columns=result.columns,
             column_types=result.column_types,
-            rows=tuple(tuple(row) for row in masked),
+            rows=result.rows,
             returned_rows=result.returned_rows,
             truncated=result.truncated,
             elapsed_ms=result.elapsed_ms,
@@ -366,8 +368,8 @@ class WarehouseTools:
         """Run the guard inside a `sherpa.guard` span (agent spec §6). Never the SQL or the error texts on the trace:
         both can carry literals, and literals can be PII."""
         with logfire.span(GUARD_SPAN, tool=tool) as span:
-            # Built per call from the catalog of this call, so its columns always match the marts it checks against.
-            guard = SqlGuard(catalog.mart_columns()).check(executed)
+            # Built per call from the catalog of this call, so its marts always match the ones it checks against.
+            guard = SqlGuard(catalog.visible_marts()).check(executed)
             span.set_attributes({"ok": guard.ok, "error_count": len(guard.errors), "tables": guard.tables})
             if execution_id is not None:
                 span.set_attribute("execution_id", execution_id)

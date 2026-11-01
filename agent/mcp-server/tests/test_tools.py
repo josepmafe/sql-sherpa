@@ -40,6 +40,8 @@ DOES_NOT_COVER = [
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
+    "customers' email addresses, domains and names: the email is available only as a salted hash and customer "
+    "names are not in the marts",
     "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
     "the utm_campaign slug)",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
@@ -92,14 +94,16 @@ class TestWarehouseTools:
 
         assert sorted(names) == sorted(marts)
 
-    def test_describe_table_samples_are_ordered_by_pk_and_masked(self, tools: WarehouseTools) -> None:
+    def test_describe_table_samples_are_ordered_by_pk_and_pseudonymised(self, tools: WarehouseTools) -> None:
         description = tools.describe_table("dim_customers")
 
         columns = description.sample_rows.columns
         ids = [row[columns.index("customer_id")] for row in description.sample_rows.rows]
         assert ids == sorted(ids)
         assert len(ids) == 3
-        assert {row[columns.index("email")] for row in description.sample_rows.rows} == {"***"}
+        emails = [row[columns.index("email")] for row in description.sample_rows.rows]
+        assert all(email is None or re.fullmatch(r"[0-9a-f]{32}", str(email)) for email in emails)
+        assert any(email is not None for email in emails)
         assert any(column.name == "email" and column.is_pii for column in description.columns)
 
     def test_describe_table_lists_the_stored_values_of_small_text_columns(self, tools: WarehouseTools) -> None:
@@ -215,7 +219,7 @@ class TestWarehouseTools:
             tools.search_values("dim_products", "nope", "x")
 
     def test_search_values_refuses_pii_and_non_text(self, tools: WarehouseTools) -> None:
-        with pytest.raises(WarehouseToolError, match="PII"):
+        with pytest.raises(WarehouseToolError, match="salted hash"):
             tools.search_values("dim_customers", "email", "a")
         with pytest.raises(WarehouseToolError, match="text"):
             tools.search_values("dim_products", "current_list_price", "1")
@@ -269,7 +273,7 @@ class TestWarehouseTools:
             "derive periods from (select max(order_date) from marts.fct_orders)",
         )
 
-    def test_run_sql_truncates_masks_and_ids(self, tools: WarehouseTools) -> None:
+    def test_run_sql_truncates_pseudonymises_and_ids(self, tools: WarehouseTools) -> None:
         big = tools.run_sql("select * from marts.fct_order_items")
         emails = tools.run_sql("select email from marts.dim_customers limit 5")
         plain = tools.run_sql("select order_id from marts.fct_orders limit 2")
@@ -281,53 +285,38 @@ class TestWarehouseTools:
         assert big.returned_rows == 100
         assert big.truncated
         assert len(big.rows) == 100
-        assert [row[0] for row in emails.rows] == ["***"] * 5
+        assert len(emails.rows) == 5
+        assert all(re.fullmatch(r"[0-9a-f]{32}", str(row[0])) for row in emails.rows)
         assert plain.execution_id == spaced.execution_id
         assert plain.execution_id == hashlib.sha256(b"select order_id from marts.fct_orders limit 2").hexdigest()[:16]
 
-    def test_error_text_never_carries_pii_values(self, tools: WarehouseTools, admin: psycopg.Connection) -> None:
-        row = admin.execute("select email from marts.dim_customers where email is not null limit 1").fetchone()
-        assert row is not None
-        email = str(row[0])
-
+    def test_a_data_error_quotes_a_hash(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError) as error:
-            tools.run_sql("select cast(email as integer) from marts.dim_customers limit 1")
-        validation = tools.validate_sql("select cast(email as integer) from marts.dim_customers limit 1")
+            tools.run_sql("select cast(email as integer) from marts.dim_customers where email is not null limit 1")
 
-        assert email not in str(error.value)
-        assert "check the literal format" in str(error.value)
-        assert email not in " ".join(validation.errors)
+        assert re.search(r'invalid input syntax for type integer: "[0-9a-f]{32}"', str(error.value))
 
     @pytest.mark.parametrize(
         "query",
         [
             "select c from marts.dim_customers c limit 1",
             "select dim_customers from marts.dim_customers limit 1",
-            "select to_json(c) from marts.dim_customers c limit 1",
             "select c.*::text from marts.dim_customers c limit 1",
             "select concat(c.*) from marts.dim_customers c limit 1",
             "select (c.*)::text as x from marts.dim_customers c limit 1",
-            "select array_agg(c.*) from marts.dim_customers c",
+            "select array_agg(c.*) from marts.dim_customers c where c.customer_id <= 3",
             # attribute notation: Postgres reads c.f as f(c) when f is not a column of c
             "select c.row_to_json from marts.dim_customers c limit 1",
             "select c.record_out from marts.dim_customers c limit 1",
             "with x as (select * from marts.dim_customers) select x.to_jsonb from x limit 1",
         ],
     )
-    def test_run_sql_refuses_whole_row_pii_leaks(self, tools: WarehouseTools, query: str) -> None:
-        with pytest.raises(WarehouseToolError, match=r"whole-row reference|is not allowed|is not a column of"):
-            tools.run_sql(query)
+    def test_whole_row_forms_return_only_hashes(self, tools: WarehouseTools, query: str) -> None:
+        result = tools.run_sql(query)
 
-    def test_run_sql_reads_an_aggregate_column_by_the_name_postgres_gives_it(self, tools: WarehouseTools) -> None:
-        result = tools.run_sql(
-            "select t.count, t.sum is not null, t.avg is not null, t.min <= t.max from ("
-            "select count(*), sum(net_revenue), avg(net_revenue), min(order_date), max(order_date) "
-            "from marts.fct_orders) t"
-        )
-
-        assert result.columns == ("count", "?column?", "?column?", "?column?")
-        assert result.rows[0][0] > 0
-        assert result.rows[0][1:] == (True, True, True)
+        dumped = json.dumps(result.rows)
+        assert "@" not in dumped
+        assert re.search(r"[0-9a-f]{32}", dumped)
 
     def test_run_sql_rejects_hostile_sql_with_guard_errors(self, tools: WarehouseTools) -> None:
         with pytest.raises(WarehouseToolError, match="staging"):
@@ -355,10 +344,10 @@ class TestGuardTracing:
         assert "drop table" not in str(spans)
 
     def test_rejection_rule_comes_from_the_error_code(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
-        tools.validate_sql("select c.row_to_json from marts.dim_customers c")
+        tools.validate_sql("select pg_sleep(1) from marts.fct_orders")
 
         rejected = _only_span(capfire.exporter.exported_spans_as_dict(), "guard rejected")
-        assert rejected["attributes"]["rule"] == "column"
+        assert rejected["attributes"]["rule"] == "function"
 
     def test_accepted_query_is_traced_with_its_marts(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
         tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")
@@ -471,16 +460,6 @@ class TestDescribeTable:
         (query,) = fake_database.fetch_for_model.call_args.args
         assert query.as_string() == 'select * from "marts"."dim_products" order by "product_id" limit 3'
         assert fake_database.fetch_for_model.call_args.kwargs == {"max_rows": 3}
-
-    def test_sample_rows_mask_the_pii_of_every_mart(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        fake_database.fetch_for_model.return_value = _result(
-            ("brand", "product_id", "supplier_email"), [("acme", 1, "a@b.com"), ("zed", 2, None)]
-        )
-
-        description = fake_tools.describe_table("dim_products")
-
-        assert description.sample_rows.columns == ("brand", "product_id", "supplier_email")
-        assert description.sample_rows.rows == (("acme", 1, "***"), ("zed", 2, None))  # a NULL stays NULL
 
     def test_columns_carry_their_synonyms_types_and_metric_refs(
         self, fake_tools: WarehouseTools, fake_database: Mock
@@ -642,8 +621,18 @@ class TestSearchValues:
     @pytest.mark.parametrize(
         ("table", "column", "message"),
         [
-            ("dim_products", "supplier_email", r"^dim_products\.supplier_email holds PII and cannot be searched$"),
-            ("dim_customers", "EMAIL", r"^dim_customers\.email holds PII and cannot be searched$"),
+            (
+                "dim_products",
+                "supplier_email",
+                r"^dim_products\.supplier_email is a salted hash and cannot be searched; "
+                r"questions about its values cannot be answered$",
+            ),
+            (
+                "dim_customers",
+                "EMAIL",
+                r"^dim_customers\.email is a salted hash and cannot be searched; "
+                r"questions about its values cannot be answered$",
+            ),
             (
                 "dim_products",
                 "product_id",
@@ -667,11 +656,11 @@ class TestSearchValues:
 
 class TestValidateSql:
     def test_a_guard_refusal_never_reaches_explain(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        validation = fake_tools.validate_sql("select c from marts.dim_customers c")
+        validation = fake_tools.validate_sql("select pg_sleep(1) from marts.fct_orders")
 
         assert not validation.ok
         assert len(validation.errors) == 1
-        assert validation.errors[0].startswith("[guard:whole_row]")
+        assert validation.errors[0].startswith("[guard:function]")
         fake_database.explain.assert_not_called()
 
     def test_an_accepted_query_is_explained_as_executed(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
@@ -749,14 +738,12 @@ class TestRunSql:
         fake_database.fetch_for_model.assert_called_once_with(text)
 
     def test_a_refused_query_never_reaches_the_database(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
-        with pytest.raises(WarehouseToolError, match=r"^\[guard:whole_row\]"):
-            fake_tools.run_sql("select c from marts.dim_customers c")
+        with pytest.raises(WarehouseToolError, match=r"^\[guard:function\]"):
+            fake_tools.run_sql("select pg_sleep(1) from marts.fct_orders")
 
         fake_database.fetch_for_model.assert_not_called()
 
-    def test_rows_are_masked_by_the_pii_columns_of_every_mart(
-        self, fake_tools: WarehouseTools, fake_database: Mock
-    ) -> None:
+    def test_rows_and_flags_come_back_as_fetched(self, fake_tools: WarehouseTools, fake_database: Mock) -> None:
         fake_database.fetch_for_model.return_value = _result(
             ("brand", "supplier_email"), [("acme", "a@b.com")], column_types=("text", "text"), truncated=True
         )
@@ -765,7 +752,7 @@ class TestRunSql:
 
         assert result.columns == ("brand", "supplier_email")
         assert result.column_types == ("text", "text")
-        assert result.rows == (("acme", "***"),)
+        assert result.rows == (("acme", "a@b.com"),)
         assert result.returned_rows == 1
         assert result.truncated
 

@@ -1,12 +1,10 @@
 import { Alert, Box, Group, Loader, Stack, Text } from "@mantine/core";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
-import { useCatalog } from "../../api/queries";
 import { ResultGrid } from "../../components/ResultGrid";
 import {
   EMPTY_VIEW,
   isServerSide,
-  maskedColumnNames,
   type ResultView,
   toServerOptions,
 } from "../../components/resultView";
@@ -41,7 +39,6 @@ const ERROR_TITLES: Record<string, string> = {
   timeout: "Query timed out",
   busy: "Too many queries running",
   too_many_connections: "Warehouse connections full",
-  pii_column: "Masked column",
 };
 
 // One panel per worksheet, all kept mounted: each has its own editor history and its own run.
@@ -75,8 +72,6 @@ export const WorksheetPanel = memo(function WorksheetPanel({
   const running = status === "running";
   const rerunning = running && requested !== undefined;
   const shownView = rerunning ? requested : view;
-  const catalog = useCatalog();
-  const masked = useMemo(() => maskedColumnNames(catalog.data), [catalog.data]);
 
   // A Preview worksheet runs once when it opens. The timer keeps StrictMode's mount-unmount-mount probe from
   // starting (and then cancelling) a first run: only the last mount's timer fires.
@@ -154,13 +149,7 @@ export const WorksheetPanel = memo(function WorksheetPanel({
           re-run's grid stays usable, so its scroll and filter bar survive. */}
       {response && (
         <Box aria-busy={running} inert={running && !rerunning} style={{ opacity: running ? BUSY_OPACITY : 1 }}>
-          <ResultGrid
-            key={generation}
-            response={response}
-            view={shownView}
-            onViewChange={changeView}
-            masked={masked}
-          />
+          <ResultGrid key={generation} response={response} view={shownView} onViewChange={changeView} />
         </Box>
       )}
     </Stack>

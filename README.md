@@ -117,7 +117,7 @@ docs/
 - [Using the generator](docs/guides/basic/generator-cli.md): commands (`advance`, `backfill`, `start-date`), recipes, errors, and seeing the realism rules in the data
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions), which revenue to use, example queries, traps and fuzzy search
-- [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, masking, limitations and tracing
+- [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, PII, limitations and tracing
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, worksheets, running, sorting and filtering, and what it won't let you do
 - [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, expandable columns with their kinds, the column focus, the node panel and copying a selector for `dbt`
 

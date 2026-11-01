@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import create_autospec
@@ -266,6 +267,27 @@ class TestLineageServiceNode:
             ("assert_orders_match_customers", "singular", "warn", TestOutcome.WARNED),
             ("revenue_is_summed", "unit", "error", TestOutcome.NOT_RUN),
         }
+
+    def test_an_unmasked_node_is_not_offered_in_the_explorer(
+        self,
+        manifest: dict[str, Any],
+        builds: BuildStatusReader,
+        node_sql: NodeSql,
+        columns_loader: ColumnLineageLoader,
+    ) -> None:
+        unmasked = copy.deepcopy(manifest["nodes"]["model.p.dim_date"])
+        unmasked.update(name="dim_customers_unmasked", unique_id="model.p.dim_customers_unmasked")
+        unmasked["fqn"] = ["p", "marts", "dim_customers_unmasked"]
+        manifest["nodes"]["model.p.dim_customers_unmasked"] = unmasked
+        loader = create_autospec(ManifestLoader, instance=True)
+        loader.load.return_value = ManifestGraph.from_manifest(manifest)
+        service = LineageService(loader, builds, node_sql, columns_loader)
+
+        details = service.node("model.p.dim_customers_unmasked")
+
+        assert details is not None
+        assert details.layer == Layer.MARTS
+        assert details.is_mart is False
 
     def test_the_build_message_keeps_only_its_first_line(
         self, service: LineageService, builds: BuildStatusReader
