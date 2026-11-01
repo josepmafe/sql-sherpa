@@ -167,7 +167,7 @@ models:
         data_tests:
           - relationships:
               arguments:
-                to: ref('stg_marketing__campaigns')
+                to: ref('dim_campaigns')
                 field: campaign_id
               config:
                 where: "acquisition_campaign_id is not null"

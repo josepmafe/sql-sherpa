@@ -33,6 +33,7 @@ LARGE_OBJECT_FUNCTIONS = (
 # Spec §6.5: the marts built so far. Hard-coded on purpose: the MCP server and UI suites import it, and a list read
 # from the same manifest as their catalogs would pass when a mart disappears.
 MARTS = (
+    "dim_campaigns",
     "dim_customers",
     "dim_date",
     "dim_products",

@@ -1,6 +1,53 @@
 version: 2
 
 models:
+  - name: dim_campaigns
+    description: >
+      Marketing campaign dimension, one row per campaign, with its channel, run dates and planned
+      budget. Sessions, customers and promotions point at it through their campaign_id.
+    config:
+      meta:
+        domain: marketing_web
+        grain: one row per marketing campaign
+        primary_key: campaign_id
+        synonyms: [campaigns, marketing campaigns]
+    columns:
+      - name: campaign_id
+        description: The campaign. Primary key.
+        data_type: bigint
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests: [unique, not_null]
+      - name: campaign_name
+        description: Name of the campaign.
+        data_type: text
+      - name: utm_campaign
+        description: Slug used as utm_campaign in tracked links; identifies the campaign of a session.
+        data_type: text
+        data_tests: [unique, not_null]
+      - name: channel
+        description: >
+          Channel the campaign runs on: paid_search, paid_social, email, affiliate or display. Email
+          campaigns have no ad spend.
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid_search, paid_social, email, affiliate, display]
+      - name: starts_at
+        description: When the campaign starts (UTC).
+        data_type: timestamptz
+      - name: ends_at
+        description: When the campaign ends (UTC).
+        data_type: timestamptz
+      - name: budget
+        description: Planned budget of the campaign in EUR.
+        data_type: numeric(12,2)
+        config:
+          meta:
+            synonyms: [planned spend]
+
   - name: fct_sessions
     description: >
       Web session fact, one row per session: one device's events (anonymous_id) with no gap over 30
@@ -126,7 +173,7 @@ models:
         data_tests:
           - relationships:
               arguments:
-                to: ref('stg_marketing__campaigns')
+                to: ref('dim_campaigns')
                 field: campaign_id
               config:
                 where: "campaign_id is not null"
