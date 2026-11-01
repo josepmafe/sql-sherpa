@@ -40,8 +40,8 @@ DOES_NOT_COVER = [
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "customers' email addresses and names, which the marts hold only as pseudonymised hashes (comparing one with a "
-    "plain value matches nothing)",
+    "customers' email addresses, domains and names: the email is available only as a salted hash and customer "
+    "names are not in the marts",
     "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
     "the utm_campaign slug)",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
@@ -101,10 +101,9 @@ class TestWarehouseTools:
         ids = [row[columns.index("customer_id")] for row in description.sample_rows.rows]
         assert ids == sorted(ids)
         assert len(ids) == 3
-        assert all(
-            row[columns.index("email")] is None or re.fullmatch(r"[0-9a-f]{32}", str(row[columns.index("email")]))
-            for row in description.sample_rows.rows
-        )
+        emails = [row[columns.index("email")] for row in description.sample_rows.rows]
+        assert all(email is None or re.fullmatch(r"[0-9a-f]{32}", str(email)) for email in emails)
+        assert any(email is not None for email in emails)
         assert any(column.name == "email" and column.is_pii for column in description.columns)
 
     def test_describe_table_lists_the_stored_values_of_small_text_columns(self, tools: WarehouseTools) -> None:
@@ -220,7 +219,7 @@ class TestWarehouseTools:
             tools.search_values("dim_products", "nope", "x")
 
     def test_search_values_refuses_pii_and_non_text(self, tools: WarehouseTools) -> None:
-        with pytest.raises(WarehouseToolError, match="PII"):
+        with pytest.raises(WarehouseToolError, match="salted hash"):
             tools.search_values("dim_customers", "email", "a")
         with pytest.raises(WarehouseToolError, match="text"):
             tools.search_values("dim_products", "current_list_price", "1")
@@ -622,8 +621,18 @@ class TestSearchValues:
     @pytest.mark.parametrize(
         ("table", "column", "message"),
         [
-            ("dim_products", "supplier_email", r"^dim_products\.supplier_email holds PII and cannot be searched$"),
-            ("dim_customers", "EMAIL", r"^dim_customers\.email holds PII and cannot be searched$"),
+            (
+                "dim_products",
+                "supplier_email",
+                r"^dim_products\.supplier_email is a salted hash and cannot be searched; "
+                r"questions about its values cannot be answered$",
+            ),
+            (
+                "dim_customers",
+                "EMAIL",
+                r"^dim_customers\.email is a salted hash and cannot be searched; "
+                r"questions about its values cannot be answered$",
+            ),
             (
                 "dim_products",
                 "product_id",

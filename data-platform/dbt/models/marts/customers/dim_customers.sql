@@ -1,11 +1,9 @@
 {{ config(materialized='view') }}
 
--- The published customer dimension, PII pseudonymised (spec 6.5).
+-- The published customer dimension, email hashed, names left out (spec 6.5).
 select
     customer_id,
     {{ mask_pii('email') }} as email,
-    {{ mask_pii('first_name') }} as first_name,
-    {{ mask_pii('last_name') }} as last_name,
     country_code,
     country_name,
     region,

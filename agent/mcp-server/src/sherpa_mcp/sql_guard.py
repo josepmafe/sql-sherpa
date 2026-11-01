@@ -65,6 +65,9 @@ FUNCTION_HINTS: Final[dict[str, str]] = {
     "generate_series": "use marts.dim_date for a series of dates",
     "to_timestamp": "use to_char, make_date or date_trunc",
     "grouping": "use a plain GROUP BY, or one query per grouping level",
+    "lpad": "use to_char(order_date, 'YYYY-MM') for a label, or to_char(n, 'FM00') to zero-pad",
+    "rpad": "use to_char(order_date, 'YYYY-MM') for a label, or to_char(n, 'FM00') to zero-pad",
+    "md5": "email is already a salted hash; a hash of a plain value never matches it",
 }
 JSON_FUNCTION_PREFIXES: Final = ("json", "to_json", "row_to_json", "array_to_json")
 JSON_HINT: Final = "aggregate with string_agg, or select the columns"
@@ -226,7 +229,7 @@ class SqlGuard:
                     _error(
                         "field",
                         f"field selection `{_cut(node.sql(dialect=DIALECT))}` is not allowed",
-                        "select named columns",
+                        "write alias.column (c.email), or extract(field from x)",
                     )
                 ]
             case exp.Func() if not isinstance(node, _OPERATOR_NODES):

@@ -179,16 +179,16 @@ Run on the dev target (the default), it compares `dev_marts.fct_sessions`, which
 
 ## 8. Add a mart with PII
 
-Example: a mart `dim_leads` with an `email` column. A mart with personal data is a pair ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)), so the readers get hashes and never the values:
+Example: a mart `fct_leads` with an `email` column. A mart with personal data is a pair ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)), so the readers get hashes and never the values:
 
-1. **The table**, `models/marts/<domain>/dim_leads_unmasked.sql`: the model of section 2, named `<mart>_unmasked`, with `{{ config(grants={'select': []}) }}` (never `+select`, which would append to the project-level grants and let the readers read the table). Its YAML entry sets `meta.pii: true` on each personal column, as in `dim_customers_unmasked`.
-2. **The view**, `models/marts/<domain>/dim_leads.sql`: `{{ config(materialized='view') }}`, the same columns in the same order, each personal one as `{{ mask_pii('email') }} as email`, from `{{ ref('dim_leads_unmasked') }}`. Its YAML entry repeats the columns with `meta.masked: true` on exactly the `meta.pii` ones; the description ends with the pseudonymised sentence of `dim_customers` (copy it). Do not make it `security_invoker`: the view reads `ops.pii_salt` with the owner's rights.
-3. **The singular test** `tests/singular/assert_pii_marts_are_masked_views.sql` reads the graph, so add two lines for the pair: `-- depends_on: {{ ref('dim_leads') }}` and `-- depends_on: {{ ref('dim_leads_unmasked') }}`.
-4. **Registry.** `dim_leads` goes in `MARTS` and `dim_leads_unmasked` in `UNMASKED` in `data-platform/tests/dbt/test_reader_access.py`; the new columns go in the expected set of `test_masked_columns_are_the_specs` (`agent/mcp-server/tests/test_catalog.py`); the spec's §6.5 gets the pair.
+1. **The table**, `models/marts/<domain>/fct_leads_unmasked.sql`: the model of section 2, named `<mart>_unmasked`, with `grants: {select: []}` under `config:` in its YAML entry (never `+select`, which would append to the project-level grants and let the readers read the table), and `meta.pii: true` on each personal column, as in `dim_customers_unmasked`.
+2. **The view**, `models/marts/<domain>/fct_leads.sql`: `{{ config(materialized='view') }}`, the table's columns in the same order, each personal one as `{{ mask_pii('email') }} as email`, from `{{ ref('fct_leads_unmasked') }}`. Leave out a personal column that only invites wrong answers (`dim_customers` omits the names). Its YAML entry repeats the columns with `meta.masked: true` on exactly the `meta.pii` ones it keeps; their description says it is a 32-character hash (copy the `email` description of `dim_customers`). Do not make it `security_invoker`: the view reads `ops.pii_salt` with the owner's rights.
+3. **The singular test** `tests/singular/assert_pii_marts_are_masked_views.sql` reads the graph, so add two lines for the pair: `-- depends_on: {{ ref('fct_leads') }}` and `-- depends_on: {{ ref('fct_leads_unmasked') }}`.
+4. **Registry.** `fct_leads` goes in `MARTS` and `fct_leads_unmasked` in `UNMASKED` in `data-platform/tests/dbt/test_reader_access.py`; the new columns go in the expected set of `test_masked_columns_are_the_specs` (`agent/mcp-server/tests/test_catalog.py`); the spec's §6.5 gets the pair.
 5. **Prove it:**
 
    ```bash
-   dbt build --select dim_leads_unmasked+
+   dbt build --select fct_leads_unmasked+
    ```
 
    The `+` is required: building the table alone drops its view. Then `make build-prod` and, from the repository root, `uv run --env-file .env pytest data-platform/tests/dbt/test_reader_access.py -m warehouse` (`TestMaskedMarts`: no reader privilege on the table or the salt, only hashes through the view) and `uv run --env-file .env pytest agent/mcp-server/tests/test_catalog.py -m warehouse` (the catalog marks exactly the view's masked columns as PII, and refuses a visible mart that still carries `meta.pii`). The singular test runs in every build and fails with `(model, problem)` rows, never a value.

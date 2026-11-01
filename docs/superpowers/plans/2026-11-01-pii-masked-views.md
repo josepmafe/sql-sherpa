@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Postgres hides personal values, not the code that reads results. `dim_customers` becomes a view that hashes `email`, `first_name` and `last_name` with a salt generated inside Postgres, over a table no reader can read. Then the name-based masking, the data-error rewrite and the guard rules that only existed to protect PII or to cap padding are deleted. The change has to remove more code than it adds, with no loss of safety or function.
+**Goal:** Postgres hides personal values, not the code that reads results. `dim_customers` becomes a view that hashes `email` (the names stay in `dim_customers_unmasked` only) with a salt generated inside Postgres, over a table no reader can read. Then the name-based masking, the data-error rewrite and the guard rules that only existed to protect PII or to cap padding are deleted. The change has to remove more code than it adds, with no loss of safety or function.
 
 **Architecture:** the data side comes first: the `ensure_pii_salt` hook and `ops.pii_salt`, the `mask_pii` macro, the `dim_customers_unmasked` table and `dim_customers` view, per-relation grants, a structural singular test and a privilege pytest. The catalog then sees only the views. From that commit on the warehouse alone protects PII. Every later task only deletes code:
 1. result masking and the data-error rewrite in the MCP server and the UI;
@@ -19,13 +19,15 @@ The old masking and the new hashing overlap for a while and never leave a gap.
 
 **`CLAUDE.md` is binding.**
 
-**Base:** `main` (ui-3 merged), branch `pii-masked-views`. The spec edits are on the branch but not committed; Task 1 commits them with this plan. Do **not** run `make build-prod` from `main` or from the dp-4 worktree against the shared warehouse until this merges and dp-4 is rebased: their `grant_read_access` grants `all tables in schema marts`, which includes `dim_customers_unmasked`.
+**Base:** `main` (ui-3 merged), branch `pii-masked-views`. The spec edits are on the branch but not committed; Task 1 commits them with this plan. Every branch cut before this merges (`main`, the dp-4 worktree) grants `all tables in schema marts`, which includes `dim_customers_unmasked`, so run none of these there against the shared warehouse until this merges and the branch is rebased: `make build-prod`, `make eval-db`, `make advance` / `make backfill` (they run `dbt snapshot --target prod`), `dbt source freshness --target prod`, `pytest -m warehouse` (the audit test runs dbt on prod), `dbt run-operation grant_read_access --target prod`. Rebase data-platform-4 onto main first.
 
 **Notes for the owner, not tasks:**
 - **data-platform-4.** The `data-platform-4-marketing` branch (`.claude/worktrees/data-platform-4`) is not touched here. After this merges, rebase it. Its `fct_leads` then follows the pair:
   - `fct_leads_unmasked` (a table, `meta.pii` on `email`, `grants: {select: []}`) and a `fct_leads` view with `{{ mask_pii('email') }}`;
   - the two `-- depends_on:` lines in `assert_pii_marts_are_masked_views`;
-  - its groups make the table `private`.
+  - its groups make the table `private`;
+  - see guide `adding-or-changing-a-mart` §8 for the registry steps (`MARTS`/`UNMASKED` in `test_reader_access.py`, the expected set in `test_catalog.py`);
+  - join leads to customers on `lead_id`, not on the hashed email.
 - **agent-design-2:**
   - add an `unanswerable` gold case such as "how many customers use gmail?";
   - no gold SQL may hold a 32-character hex literal;
@@ -56,7 +58,7 @@ The dbt side breaks down as: view 30, two macros 20, `grant_read_access` +30, th
   - a missing view means "relation does not exist" for readers;
   - a visible mart that is still a table next to an `_unmasked` sibling (an older build) gets its privileges revoked;
   - the catalog refuses a build whose visible marts carry `meta.pii`, and drops its cached catalog when it does.
-  - `grant_read_access` **never raises**, so `make build-prod` (whose `source freshness` runs the hooks first) can always repair the warehouse.
+  - `grant_read_access` **never fails on a missing mart or view**, so `make build-prod` (whose `source freshness` runs the hooks first) can always repair the warehouse.
 - **A visible mart is a `marts` model whose name does not end in `_unmasked`.** Do not use dbt `access:` or groups: they are a data-platform-4 feature.
 - **Tests:**
   - assert the spec's literals, never the module constant;
@@ -92,7 +94,7 @@ The dbt side breaks down as: view 30, two macros 20, `grant_read_access` +30, th
 data-platform/dbt/
   dbt_project.yml                                   # on-run-start: [ensure_extensions, ensure_pii_salt]
   macros/ensure_pii_salt.sql, macros/mask_pii.sql   # new
-  macros/grant_read_access.sql                      # per relation; _unmasked revoked first; never raises
+  macros/grant_read_access.sql                      # per relation; _unmasked revoked first; never fails on a missing mart or view
   models/marts/customers/dim_customers_unmasked.sql # git mv of today's dim_customers.sql
   models/marts/customers/dim_customers.sql          # new: the view
   models/marts/customers/_customers__models.yml     # the pair; the unit test moves to the table
@@ -212,7 +214,7 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
     - `test_reading_an_unmasked_table_or_the_salt_is_denied`, parametrized over `("marts", "dim_customers_unmasked")` and `("ops", "pii_salt")`: `_exists(admin, …)`, then `errors.InsufficientPrivilege` for the reader.
     - `test_pg_stats_shows_readers_no_personal_column`: as the reader, `select count(*) from pg_stats where attname in ('email', 'first_name', 'last_name')` is 0. That covers every schema: views have no statistics, and the readers hold no privilege on a table with those columns. On main this needs `make build` too, because `dev_marts` holds a table today.
     - `test_pii_columns_are_md5_of_the_value_and_the_salt(admin, reader)`:
-      - the reader reads `customer_id, email, first_name, last_name` from the view for one deleted customer (precondition: one exists) and 20 others;
+      - the reader reads `customer_id, email` from the view for one deleted customer (precondition: one exists) and 20 others;
       - every non-NULL value matches `^[0-9a-f]{32}$`;
       - admin answers with one boolean, `bool_and((v_email is not distinct from md5(t.email || s.salt)) and …)` over the table, `ops.pii_salt` and the reader's values passed as parameters, and it is true. The salt and the real values never leave Postgres.
     - `test_counts_survive_the_hashing`: `count(email)` and `count(distinct email)` read as the reader from the view equal admin's from the table.
@@ -235,7 +237,7 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
     - the same refusal under a folder named `target-eval` says `run make eval-db`;
     - existing edits of `["meta"]["pii"]` become `masked`.
   - Warehouse `test_masked_columns_are_the_specs`:
-    - `{(m.name, c.name) for m in marts for c in m.columns if c.is_pii} == {("dim_customers", "email"), ("dim_customers", "first_name"), ("dim_customers", "last_name")}`;
+    - `{(m.name, c.name) for m in marts for c in m.columns if c.is_pii} == {("dim_customers", "email")}`;
     - each of their descriptions ends with the sentence from Step 3.
   - `test_tools.py`: the `does_not_cover` literal lists in the tests (`:40`, `:393`) gain the new line from Step 4.
   - `test_examples.py`: `_yaml_mart_columns` skips models whose name ends in `_unmasked`, so both example tests stay green. Task 4 deletes the helper.
@@ -246,7 +248,7 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
   - The two macros as in Interfaces.
   - **`dim_customers.sql`:**
     - `{{ config(materialized='view') }}`, with a one-line comment: the published customer dimension, PII pseudonymised (spec §6.5);
-    - it selects the 24 columns of `dim_customers_unmasked` in order, `email`, `first_name` and `last_name` as `{{ mask_pii('<col>') }} as <col>`.
+    - it selects the columns of `dim_customers_unmasked` in order except `first_name` and `last_name`, with `email` as `{{ mask_pii('email') }} as email`.
   - **`_customers__models.yml`, `dim_customers_unmasked`:**
     - a short description: what it computes, real PII, no reader can query it, only the view reads it;
     - `config: grants: {select: []}`;
@@ -270,7 +272,7 @@ Run in a scratch dbt project `/tmp/sherpa-pii-spike/` against a scratch database
        - the graph has a `<name>_unmasked` sibling and the relation is a table (an older build's raw values): `revoke all … from <agent>, <ui>, public` and log it;
        - otherwise: `grant select`.
     5. The `ops` grants as now.
-    It never raises. Update the header comment.
+    It never fails on a missing mart or view. Update the header comment.
   - **`assert_pii_marts_are_masked_views.sql`.** Failing rows `(model text, problem text)` hold only literals. It starts with `-- depends_on: {{ ref('dim_customers') }}` and `-- depends_on: {{ ref('dim_customers_unmasked') }}`. Under `{% if execute %}`, over `graph.nodes`, one literal row or one SQL arm per broken rule (spec §6.5 Checks):
     - (a) a model with a `meta.pii` column that is not a table named `*_unmasked`;
     - (b) its sibling missing from the graph or not a view;
@@ -452,7 +454,7 @@ The walk visits the element type too, so `jsonb[]` fails on `JSONB`.
   - **`test_string_builders_are_rejected`,** parametrized over `repeat('a', 5)`, `lpad('a', 5)` and `rpad('a', 5, 'b')`: `[guard:function] function <name> is not allowed; rewrite it with the common aggregate, window, string, date and math functions`. It replaces `test_repeat_stays_rejected`.
   - **`test_forms_the_marts_make_harmless_pass`:** it pins that the guard has no PII rule. Each of these passes:
     - `select c from marts.dim_customers c`, `select c.*::text from marts.dim_customers c`;
-    - `select c.row_to_json from marts.dim_customers c`, `select (c).email from marts.dim_customers c`;
+    - `select c.row_to_json from marts.dim_customers c`; `select (c).email from marts.dim_customers c` is rejected by the restored `field` rule (`[guard:field]`);
     - `select U&"c" from marts.dim_customers c`, `select s.e from (select email from marts.dim_customers) s(e)`;
     - `select 1_000 from marts.fct_orders`, `select 1 as {"a" * 64} from marts.fct_orders`.
   - **`TestAttributeNotationReach`** (`integration`, next to `TestFunctionsThePostgresRoleCanRun`), `test_whole_row_functions_the_role_can_call_only_read_the_row`:
@@ -471,7 +473,7 @@ The walk visits the element type too, so `jsonb[]` fails on `JSONB`.
   - Run. Expected: the cast, string-builder, harmless-form and `_unmasked` rows FAIL. The reach test passes, and must fail on a throwaway edit of its literal.
 - [ ] **Step 2: Delete the tests of removed rules first.** The two tables `REJECTED_QUERIES` and `REMEDY_HINTS` stay apart: merged they would be larger.
   - **In the tables:**
-    - delete every row whose rule is `whole_row`, `field`, `column`, `pad`, `number`, `type_length` or `identifier_length`, with `LONG_NAME`, `BYTE_LIMIT_NAME` and `WIDE_NAME`;
+    - delete every row whose rule is `whole_row`, `column`, `pad`, `number`, `type_length` or `identifier_length`, with `LONG_NAME`, `BYTE_LIMIT_NAME` and `WIDE_NAME`;
     - the `unicode_escape` rows in table and alias positions, and `select U&"!0063" uescape '!' …`, become `parse` rows; copy sqlglot's first line from a run;
     - the expression-position ones are covered by the harmless-form test;
     - the `cast` row of `REMEDY_HINTS` gets `CAST_HINT`'s literal.
@@ -502,7 +504,7 @@ The walk visits the element type too, so `jsonb[]` fails on `JSONB`.
     - from `SqlGuard`: `_qualified_column_errors`, `_unresolved_columns`, `_outputs`, `_select_outputs`;
     - the functions `_number_errors`, `_escaped_identifier_errors`, `_is_word_char`, `_enclosing_scope`, `_find_source`, `_alias_columns`, `_not_a_column`, `_output_name`, `_is_small_literal`, `_type_params`, `_is_projection_item`, `_is_whole_row`, `_relations`, `_is_built_in_type`;
     - the constants `MAX_PAD_LENGTH`, `WHOLE_ROW_NAME_HINT`, `ESCAPED_IDENTIFIER_*`, `NUMBER_HINT`, `_ALIAS_LIST_HINT`, `_AGGREGATE_NAMES`, `_POSTGRES`, `MAX_IDENTIFIER_BYTES`;
-    - the `pad`, `type_length`, `identifier_length`, `field` (`exp.Dot()` non-Func) and both `whole_row` cases;
+    - the `pad`, `type_length`, `identifier_length` and both `whole_row` cases (the `field` rule stays: `exp.Dot()` outside a type name);
     - the number and escape pre-checks in `check()`, and the unused imports;
     - `lpad`, `rpad` and `pad` from `ALLOWED_FUNCTIONS` and from its comment.
   - **Keep:** `Dot(Func)`, `complexity`, and the function allow-list.
@@ -546,7 +548,7 @@ Rewrite in place to the current state, with no "previously". The length rules of
     - Known limitations: delete the `pg_stats` line, and replace `replace(lpad(...))` with "nested string functions such as `replace` over a literal".
     - Troubleshooting: drop "name columns instead of `select c`".
   - `basic/querying-the-marts.md`:
-    - `email`, `first_name` and `last_name` are hashes, so count or group by them and identify customers by `customer_id`;
+    - `email` is a hash and names are not published, so count or group by `email` and identify customers by `customer_id`;
     - add `agent_psql -c "select * from marts.dim_customers_unmasked"   # ERROR:  permission denied`.
   - `basic/building-the-warehouse.md`:
     - Hooks and grants: `ensure_pii_salt`, and the per-relation grants with the revoke;
@@ -608,7 +610,7 @@ Rewrite in place to the current state, with no "previously". The length rules of
     - `search_values`' refusal;
     - the new `does_not_cover` line and the column descriptions.
   - **Analytics domain expert:**
-    - what hashed `email`, `first_name` and `last_name` still answer (distinct counts, joins on one salt, group by);
+    - what the hashed `email` still answers (distinct counts, joins on one salt, group by);
     - the normalisation before hashing;
     - NULL for deleted customers;
     - the descriptions the agent reads.

@@ -121,11 +121,6 @@ class TestErrorMapping:
 
         assert str(error) == "[timeout] the query took longer than 5 s; aggregate or filter more narrowly"
 
-    def test_a_data_exception_keeps_postgres_message(self) -> None:
-        error = to_tool_error(errors.InvalidTextRepresentation('invalid input syntax for type integer: "x"'))
-
-        assert str(error) == '[sql] invalid input syntax for type integer: "x"'
-
     @pytest.mark.parametrize(
         "error",
         [
@@ -143,10 +138,16 @@ class TestErrorMapping:
 
         assert str(error) == '[sql] column "no_such" does not exist'
 
-    def test_other_errors_keep_postgres_message(self) -> None:
-        error = to_tool_error(errors.InsufficientPrivilege("permission denied for table x"))
-
-        assert str(error) == "[sql] permission denied for table x"
+    @pytest.mark.parametrize(
+        "error",
+        [
+            errors.InsufficientPrivilege("permission denied for table x"),
+            errors.InvalidTextRepresentation('invalid input syntax for type integer: "x"'),
+        ],
+        ids=["privilege", "data_exception"],
+    )
+    def test_other_errors_keep_postgres_message(self, error: psycopg.Error) -> None:
+        assert str(to_tool_error(error)) == f"[sql] {error}"
 
 
 class TestSessionOptions:

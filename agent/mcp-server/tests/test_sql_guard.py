@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 VISIBLE_MARTS = frozenset({"fct_orders", "dim_customers", "fct_order_items"})
 MARTS_HINT = "query only the marts that list_tables returns"
+ZERO_PAD_HINT = "use to_char(order_date, 'YYYY-MM') for a label, or to_char(n, 'FM00') to zero-pad"
 FUNCTION_HINT = "rewrite it with the common aggregate, window, string, date and math functions"
 # sqlglot node names that are not the Postgres spelling of a function
 SQLGLOT_NODE_NAME = re.compile(
@@ -406,6 +407,21 @@ REMEDY_HINTS = [
     ("select * from generate_series(1, 3)", "function", "use marts.dim_date for a series of dates"),
     ("select * from public.lower('a')", "function", "call functions without a schema"),
     ("select to_timestamp(0) from marts.fct_orders", "function", "use to_char, make_date or date_trunc"),
+    (
+        "select lpad('a', 5) from marts.fct_orders",
+        "function",
+        "use to_char(order_date, 'YYYY-MM') for a label, or to_char(n, 'FM00') to zero-pad",
+    ),
+    (
+        "select rpad('a', 5, 'b') from marts.fct_orders",
+        "function",
+        "use to_char(order_date, 'YYYY-MM') for a label, or to_char(n, 'FM00') to zero-pad",
+    ),
+    (
+        "select md5(email) from marts.dim_customers",
+        "function",
+        "email is already a salted hash; a hash of a plain value never matches it",
+    ),
     ("select json_agg(order_id) from marts.fct_orders", "function", "aggregate with string_agg, or select the columns"),
     (
         "select jsonb_build_object('a', 1) from marts.fct_orders",
@@ -442,7 +458,11 @@ REMEDY_HINTS = [
     ("select * from fct_orders", "table", "qualify it as marts.fct_orders"),
     ("select * from pg_catalog.pg_roles", "table", "query only the marts that list_tables returns"),
     ("select * from a.b.c.d", "table", "use marts.<name>"),
-    ("select (c.email).x from marts.dim_customers c", "field", "select named columns"),
+    (
+        "select (c.email).x from marts.dim_customers c",
+        "field",
+        "write alias.column (c.email), or extract(field from x)",
+    ),
     ("select 1 from", "parse", "write one Postgres SELECT"),
     ("select 1 from marts.fct_orders; select 2", "statement_count", "send one SELECT"),
     ("delete from marts.fct_orders", "not_select", "write one SELECT"),
@@ -750,12 +770,22 @@ class TestSqlGuard:
         ) in result.errors
 
     @pytest.mark.parametrize(
-        ("call", "name"), [("repeat('a', 5)", "repeat"), ("lpad('a', 5)", "lpad"), ("rpad('a', 5, 'b')", "rpad")]
+        ("call", "name", "hint"),
+        [
+            ("repeat('a', 5)", "repeat", FUNCTION_HINT),
+            ("lpad('a', 5)", "lpad", ZERO_PAD_HINT),
+            ("rpad('a', 5, 'b')", "rpad", ZERO_PAD_HINT),
+        ],
     )
-    def test_string_builders_are_rejected(self, guard: SqlGuard, call: str, name: str) -> None:
+    def test_string_builders_are_rejected(self, guard: SqlGuard, call: str, name: str, hint: str) -> None:
         result = guard.check(f"select {call} from marts.fct_orders")
 
-        assert result.errors == (f"[guard:function] function {name} is not allowed; {FUNCTION_HINT}",)
+        assert result.errors == (f"[guard:function] function {name} is not allowed; {hint}",)
+
+    def test_a_zero_padded_month_label_passes(self, guard: SqlGuard) -> None:
+        result = guard.check("select to_char(extract(month from order_date), 'FM00') from marts.fct_orders")
+
+        assert result.ok, result.errors
 
     def test_session_identity_values_pass(self, guard: SqlGuard) -> None:
         result = guard.check("select user, current_role, system_user from marts.fct_orders")
@@ -905,7 +935,8 @@ class TestSqlGuard:
 
 class TestCastTypes:
     def test_the_cast_types_are_exactly_the_specs(self) -> None:
-        # Agent spec §4.2 item 2; a sqlglot upgrade that adds a member to the list must fail here.
+        # Agent spec §4.2 item 2: the list is the spec's. The upgrade guards are test_other_types_are_rejected and
+        # test_postgres_spellings_of_the_listed_types_pass.
         expected = {
             exp.DataType.Type.SMALLINT,
             exp.DataType.Type.INT,

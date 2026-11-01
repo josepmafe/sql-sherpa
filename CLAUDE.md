@@ -98,7 +98,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - Schemas: `dev_`-prefixed on the `dev` target, verbatim on `prod`, snapshots always in `snapshots`. Prod dbt commands use `--target-path target-prod`.
 - Generator determinism: never use Python's built-in `hash()` (use `stable_int` / `DeterministicRandom`). The generator assigns its own primary keys. Nothing may be timestamped after yesterday (UTC).
 - Time-relative columns use `as_of_date`, never `now()`.
-- dbt tests: singular tests are plain `SELECT`s of failing rows in `data-platform/dbt/tests/singular/`, and those rows hold only literals (`store_failures` keeps them); unit tests sit in the model's YAML, with test names of at most 63 characters (Postgres' identifier limit). Every incremental model sets `on_schema_change: fail`.
+- dbt tests: singular tests are plain `SELECT`s of failing rows in `data-platform/dbt/tests/singular/`, and a test that reads an `_unmasked` table returns no value of its PII columns (`store_failures` keeps the failing rows); unit tests sit in the model's YAML, with test names of at most 63 characters (Postgres' identifier limit). Every incremental model sets `on_schema_change: fail`.
 - Money is `numeric(12,2)` EUR (Python `Decimal`, `ROUND_HALF_UP`). Timestamps are UTC.
 - Secrets live only in `.env` (gitignored). `profiles.yml` reads everything via `env_var()`.
 

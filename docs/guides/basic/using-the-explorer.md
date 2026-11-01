@@ -66,7 +66,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 - **Get more than 1,000 rows.** The 1,001st row marks the result `truncated`. A cell is cut at 10,000 characters and rows past 2,000,000 characters in all are left out. Aggregate, select fewer columns, or sort and filter on the server. The cap is `SHERPA_UI_ROW_CAP`.
 - **Run longer than 30 s.** The timeout is `SHERPA_UI_STATEMENT_TIMEOUT_S` (whole seconds, default 30). Set either variable in `.env`; `make up` passes it on.
 - **Run more than 8 queries at once.** The `sherpa_ui` login holds 10 connections and 2 stay free for the health check. A 9th query is refused at once; wait or cancel one.
-- **See personal data.** `email`, `first_name` and `last_name` of `dim_customers` are salted hashes in every query; the real values sit in a table the `sherpa_ui` login cannot read. Equal values hash equally, so count or group by them.
+- **See personal data.** `email` of `dim_customers` is a salted hash in every query and customer names are not in the view; the real values sit in a table the `sherpa_ui` login cannot read. Equal values hash equally, so count or group by it.
 - **Keep work on the server.** Nothing is saved server-side; there are no accounts.
 
 ## Troubleshooting
@@ -82,6 +82,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 | "Too many queries running" | Wait for one to finish or cancel one (any tab or browser counts) |
 | "the warehouse refused a connection: too many are open" | Another client of the `sherpa_ui` login (a second UI, a test run) holds connections; stop it |
 | Permission error on `marts` | The read grants were lost: `make build-prod` re-applies them |
+| A filter on email returns 0 rows or random rows | It is a salted hash, so filter by `customer_id` |
 
 ## Next
 

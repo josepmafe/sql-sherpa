@@ -91,7 +91,7 @@ Errors start with a code: `[guard:<rule>]` (the hint after the `;` says what to 
 
 ## PII
 
-`dim_customers` is a view: `email`, `first_name` and `last_name` are salted hashes (`md5` of the value and a secret salt, `NULL` stays `NULL`) in every query, whatever its shape, and the real values sit in a table the agent's role cannot read ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Equal values hash equally, so counting, grouping and joining work. A comparison with a plain value (`email = 'a@b.com'`), `LIKE` or a string function matches nothing: identify customers by `customer_id`. `search_values` refuses PII columns, and `describe_table` flags them with `is_pii`.
+`dim_customers` is a view: `email` is a salted hash (`md5` of the value and a secret salt, `NULL` stays `NULL`) and customer names are not in it, in every query, whatever its shape, and the real values sit in a table the agent's role cannot read ([spec §6.5](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Equal values hash equally, so counting, grouping and joining work. The hash is 32 hex characters, so a comparison with a plain value (`email = 'a@b.com'`), `LIKE`/`ILIKE`, a string function, `length()` or sorting gives meaningless results (some patterns match random rows): identify customers by `customer_id`; questions about email domains or names cannot be answered. `search_values` refuses PII columns, and `describe_table` flags them with `is_pii`.
 
 ## Known limitations
 

@@ -93,7 +93,8 @@ class MartCatalogLoader:
 
     A rebuild that fails (a file half-written by a running `make build-prod`, or gone) keeps the last catalog that
     loaded, with a warning, and is tried again on the next call; only a loader that never loaded one raises
-    `CatalogUnavailable`.
+    `CatalogUnavailable`. A build whose mart has a `meta.pii` column raises `UnmaskedArtifacts` and drops the
+    cached catalog, which describes a warehouse that no longer exists.
     """
 
     def __init__(self, target_path: Path) -> None:

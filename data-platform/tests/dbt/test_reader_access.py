@@ -252,9 +252,9 @@ class TestMaskedMarts:
         ).fetchone()
         assert deleted is not None
         rows = reader.execute(
-            "(select customer_id, email, first_name, last_name from marts.dim_customers where customer_id = %(id)s)"
+            "(select customer_id, email from marts.dim_customers where customer_id = %(id)s)"
             " union all"
-            " (select customer_id, email, first_name, last_name from marts.dim_customers"
+            " (select customer_id, email from marts.dim_customers"
             " where not is_deleted order by customer_id limit 20)",
             {"id": deleted[0]},
         ).fetchall()
@@ -265,23 +265,29 @@ class TestMaskedMarts:
         assert all(re.fullmatch("[0-9a-f]{32}", value) for value in values)
 
         row = admin.execute(
-            "select bool_and((v.email is not distinct from md5(t.email || s.salt))"
-            " and (v.first_name is not distinct from md5(t.first_name || s.salt))"
-            " and (v.last_name is not distinct from md5(t.last_name || s.salt)))"
-            " from unnest(%s::bigint[], %s::text[], %s::text[], %s::text[])"
-            " as v(customer_id, email, first_name, last_name)"
+            "select bool_and(v.email is not distinct from md5(t.email || s.salt))"
+            " from unnest(%s::bigint[], %s::text[]) as v(customer_id, email)"
             " left join marts.dim_customers_unmasked t on t.customer_id = v.customer_id"
             " cross join ops.pii_salt s",
-            [[r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows], [r[3] for r in rows]],
+            [[r[0] for r in rows], [r[1] for r in rows]],
         ).fetchone()
 
         assert row == (True,)
 
-    def test_counts_survive_the_hashing(self, admin: psycopg.Connection, reader: psycopg.Connection) -> None:
-        query = "select count(email), count(distinct email) from marts.{}"
+    def test_the_view_publishes_no_customer_name(self, reader: psycopg.Connection) -> None:
+        row = reader.execute(
+            "select count(*) from information_schema.columns"
+            " where table_schema = 'marts' and table_name = 'dim_customers'"
+            " and column_name in ('first_name', 'last_name')"
+        ).fetchone()
 
-        as_reader = reader.execute(query.format("dim_customers")).fetchone()  # type: ignore[call-overload]
-        as_admin = admin.execute(query.format("dim_customers_unmasked")).fetchone()  # type: ignore[call-overload]
+        assert row == (0,)
+
+    def test_counts_survive_the_hashing(self, admin: psycopg.Connection, reader: psycopg.Connection) -> None:
+        query = "select count(email), count(distinct email) from {}"
+
+        as_reader = reader.execute(sql.SQL(query).format(sql.Identifier("marts", "dim_customers"))).fetchone()
+        as_admin = admin.execute(sql.SQL(query).format(sql.Identifier("marts", "dim_customers_unmasked"))).fetchone()
 
         assert as_reader == as_admin
         assert as_reader is not None

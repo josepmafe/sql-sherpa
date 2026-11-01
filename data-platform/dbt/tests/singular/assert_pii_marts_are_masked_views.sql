@@ -1,6 +1,7 @@
 -- Spec 6.5 "Checks": a model with a meta.pii column is a table named
 -- *_unmasked behind a plain view that hashes it. Failing rows are
--- (model, problem) and hold literals only, never a value of the table.
+-- (model, problem) and hold literals only; the arm that reads the table
+-- returns no value of its PII columns.
 -- depends_on: {{ ref('dim_customers') }}
 -- depends_on: {{ ref('dim_customers_unmasked') }}
 -- noqa: disable=LT02,LT05
@@ -24,11 +25,17 @@
 {%- do arms.append("select '" ~ table.name ~ "', 'missing in Postgres' where " ~ table_rel ~ " is null") -%}
 {%- do arms.append("select '" ~ view_name ~ "', 'is not a plain view' from pg_class where oid = " ~ view_rel ~ " and (relkind <> 'v' or reloptions is not null)") -%}
 {%- do arms.append("select '" ~ table.name ~ "', 'is not a table' from pg_class where oid = " ~ table_rel ~ " and relkind <> 'r'") -%}
-{%- set columns_of = "(select array_agg(attname::text order by attnum) from pg_attribute where attnum > 0 and not attisdropped and attrelid = " -%}
-{%- do arms.append("select '" ~ view_name ~ "', 'has other columns than " ~ table.name ~ ", or in another order' where " ~ columns_of ~ view_rel ~ ") is distinct from " ~ columns_of ~ table_rel ~ ")") -%}
-{#- (d) the view marks as masked exactly what the table marks as pii -#}
+{%- set attrs = "(select attname::text from pg_attribute where attnum > 0 and not attisdropped and attrelid = " -%}
+{%- set pii_list = [] -%}
+{%- for column in pii -%}
+{%- do pii_list.append("'" ~ column ~ "'") -%}
+{%- endfor -%}
+{#- the view's columns are the table's, in the table's order, minus pii columns the view leaves out -#}
+{%- do arms.append("select '" ~ view_name ~ "', 'has a column that " ~ table.name ~ " lacks, or the table columns in another order' where (select array_agg(attname::text order by attnum) from pg_attribute where attnum > 0 and not attisdropped and attrelid = " ~ view_rel ~ ") is distinct from (select array_agg(attname::text order by attnum) from pg_attribute where attnum > 0 and not attisdropped and attrelid = " ~ table_rel ~ " and attname::text in " ~ attrs ~ view_rel ~ "))") -%}
+{%- do arms.append("select '" ~ view_name ~ "', 'leaves out a column of " ~ table.name ~ " that is not pii' where exists (select 1 from pg_attribute where attnum > 0 and not attisdropped and attrelid = " ~ table_rel ~ " and attname::text <> all(array[" ~ pii_list | join(', ') ~ "]) and attname::text not in " ~ attrs ~ view_rel ~ "))") -%}
+{#- (d) the view marks as masked exactly the pii columns it exposes -#}
 {%- set masked = view.columns.values() | selectattr('meta.masked') | map(attribute='name') | list -%}
-{%- for column in pii if column not in masked -%}
+{%- for column in pii if column in view.columns and column not in masked -%}
 {%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " is pii in " ~ table.name ~ " but not masked here'") -%}
 {%- endfor -%}
 {%- for column in masked if column not in pii -%}
@@ -41,7 +48,7 @@
 {%- for key in keys -%}
 {%- do on.append("v." ~ adapter.quote(key) ~ " = t." ~ adapter.quote(key)) -%}
 {%- endfor -%}
-{%- for column in pii -%}
+{%- for column in masked -%}
 {%- set quoted = adapter.quote(column) -%}
 {%- do arms.append("select '" ~ view_name ~ "', 'column " ~ column ~ " shows the real value or none where there is one' where exists (select 1 from " ~ view.relation_name ~ " as v inner join " ~ table.relation_name ~ " as t on " ~ on | join(' and ') ~ " where t." ~ quoted ~ " is not null and (v." ~ quoted ~ " is null or v." ~ quoted ~ " = t." ~ quoted ~ "))") -%}
 {%- endfor -%}

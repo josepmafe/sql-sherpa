@@ -61,9 +61,9 @@ models:
   - name: dim_customers
     description: >
       Customer dimension, one row per customer except test accounts, with their order history
-      (non-cancelled orders only), lifecycle segment, VIP flag and how they were acquired.
-      Soft-deleted customers are kept, with their email and name removed, so facts keep their
-      customer. Recency is measured against as_of_date, the latest order_date in fct_orders,
+      (non-cancelled orders only), lifecycle segment, VIP flag and how they were acquired. The email is a
+      salted hash and customer names are not published in this view. Soft-deleted customers are kept,
+      with their email removed, so facts keep their customer. Recency is measured against as_of_date, the latest order_date in fct_orders,
       so results never depend on when the query runs.
     config:
       meta:
@@ -77,24 +77,11 @@ models:
         data_tests: [unique, not_null]
       - name: email
         description: >-
-          Normalized (trimmed, lower-case) email address; null when the customer is deleted.
-          Pseudonymised: an md5 hash of the value and a secret salt. Equal values hash equally, so counts, joins and group by work, but comparing it with a plain value, LIKE or a string function matches nothing; identify customers by customer_id.
-        data_type: text
-        config:
-          meta:
-            masked: true
-      - name: first_name
-        description: >-
-          First name; null when the customer is deleted.
-          Pseudonymised: an md5 hash of the value and a secret salt. Equal values hash equally, so counts, joins and group by work, but comparing it with a plain value, LIKE or a string function matches nothing; identify customers by customer_id.
-        data_type: text
-        config:
-          meta:
-            masked: true
-      - name: last_name
-        description: >-
-          Last name; null when the customer is deleted.
-          Pseudonymised: an md5 hash of the value and a secret salt. Equal values hash equally, so counts, joins and group by work, but comparing it with a plain value, LIKE or a string function matches nothing; identify customers by customer_id.
+          Salted md5 hash (32 hex characters) of the customer's normalized email; null for deleted customers.
+          Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with
+          a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results
+          (some patterns match random rows). Identify customers by customer_id; questions about email domains
+          cannot be answered.
         data_type: text
         config:
           meta:
@@ -134,7 +121,7 @@ models:
         description: True when the customer agreed to receive marketing emails.
         data_type: boolean
       - name: is_deleted
-        description: True when the customer deleted their account; their email and name are then null.
+        description: True when the customer deleted their account; their email is then null.
         data_type: boolean
       - name: lead_id
         description: >

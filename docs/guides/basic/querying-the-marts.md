@@ -127,7 +127,7 @@ agent_psql -c "select count(*) from marts.fct_orders"
 agent_psql -c "select count(*) from dev_marts.fct_orders"   # ERROR:  permission denied for schema dev_marts
 ```
 
-`dim_customers` is a view: `email`, `first_name` and `last_name` are salted hashes (the same value always gives the same hash), so count or group by them and identify customers by `customer_id`. The table behind it is closed to the role:
+`dim_customers` is a view: `email` is a salted hash (the same value always gives the same hash) and customer names are not in it. Count or group by `email`, identify customers by `customer_id`, and do not compare it with a value, a pattern or a string function (it gives meaningless results). The table behind it is closed to the role:
 
 ```bash
 agent_psql -c "select * from marts.dim_customers_unmasked"   # ERROR:  permission denied for table dim_customers_unmasked
@@ -141,7 +141,7 @@ For the eval database add `-d sherpa_eval` (see [the frozen eval database](build
 |---|---|
 | `relation "marts.fct_orders" does not exist` | The prod warehouse is not built: `make build-prod`. |
 | Revenue is too high | Missing `where not is_cancelled`, or an order column summed after a line join. |
-| `where email = 'a@b.com'` finds nothing | `email`, `first_name` and `last_name` are hashes; look the customer up by `customer_id` |
+| `where email = 'a@b.com'` finds nothing, or a `LIKE` on it finds random rows | `email` is a 32-character hash; look the customer up by `customer_id` |
 | `permission denied for schema ...` as `sherpa_agent` | Expected outside `marts`; rebuild prod (`make build-prod`) if `marts` itself is refused. |
 | `canceling statement due to statement timeout` | The agent role stops queries after 5 seconds; add filters. |
 

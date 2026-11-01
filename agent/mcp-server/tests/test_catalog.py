@@ -37,9 +37,11 @@ def _make_orders_public(manifest: dict[str, Any]) -> None:
 
 # Data platform spec §6.5: the sentence that ends the description of every masked column.
 PSEUDONYMISED_SENTENCE = (
-    "Pseudonymised: an md5 hash of the value and a secret salt. Equal values hash equally, so counts, joins and "
-    "group by work, but comparing it with a plain value, LIKE or a string function matches nothing; identify "
-    "customers by customer_id."
+    "Salted md5 hash (32 hex characters) of the customer's normalized email; null for deleted customers. "
+    "Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with "
+    "a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results "
+    "(some patterns match random rows). Identify customers by customer_id; questions about email domains "
+    "cannot be answered."
 )
 
 
@@ -49,12 +51,8 @@ def test_masked_columns_are_the_specs(prod_loader: MartCatalogLoader) -> None:
 
     masked = [(mart.name, column) for mart in marts for column in mart.columns if column.is_pii]
 
-    assert {(name, column.name) for name, column in masked} == {
-        ("dim_customers", "email"),
-        ("dim_customers", "first_name"),
-        ("dim_customers", "last_name"),
-    }
-    assert all(column.description.endswith(PSEUDONYMISED_SENTENCE) for _, column in masked)
+    assert {(name, column.name) for name, column in masked} == {("dim_customers", "email")}
+    assert all(PSEUDONYMISED_SENTENCE in column.description for _, column in masked)
 
 
 class TestMartCatalogLoader:
@@ -266,8 +264,7 @@ class TestMartCatalog:
         assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
         assert catalog.mart("dim_customers_unmasked") is None
 
-    def test_visible_marts_and_domains(self, catalog: MartCatalog) -> None:
-        assert catalog.visible_marts() == frozenset({"fct_orders", "dim_customers", "dim_products"})
+    def test_domains(self, catalog: MartCatalog) -> None:
         assert catalog.domains() == ("customers", "products", "sales")
 
 
@@ -306,9 +303,15 @@ class TestCatalogShape:
         _edit_manifest(target, raw_order_id)
         _bump_mtime(target / "manifest.json", seconds=5)
 
-        for _ in range(2):  # the second call proves the cached catalog is gone, not kept
+        for _ in range(2):  # the same refusal while the artifacts stay unchanged
             with pytest.raises(UnmaskedArtifacts, match=rf"column with meta\.pii \(order_id\).*run {command}$"):
                 loader.load()
+
+        # The refused build dropped the cached catalog: a next unreadable manifest must not bring it back.
+        (target / "manifest.json").write_text("{", encoding="utf-8")
+        _bump_mtime(target / "manifest.json", seconds=10)
+        with pytest.raises(CatalogUnavailable, match=r"cannot read manifest\.json"):
+            loader.load()
 
     def test_message_does_not_expose_the_path(self, fixture_target: Path) -> None:
         (fixture_target / "catalog.json").unlink()

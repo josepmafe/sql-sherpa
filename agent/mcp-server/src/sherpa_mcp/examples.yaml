@@ -136,7 +136,8 @@
         and order_count >= 1
   notes: >-
     By default a customer is a customer who is not deleted and has at least one non-cancelled order (order_count
-    counts only those). dim_customers also holds prospects without an order and soft-deleted customers.
+    counts only those). dim_customers also holds prospects without an order and soft-deleted customers. email is a
+    salted hash: count or group by it, never compare it with a value.
 
 - question: How many customers sit in each lifecycle stage?
   sql: |

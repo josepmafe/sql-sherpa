@@ -5,11 +5,12 @@
     Order of the grants, so the hook fails closed:
       1. Every relation named *_unmasked (a table with real PII) is revoked from both roles and public first.
       2. Each graph model of marts that is not *_unmasked gets SELECT, unless it is not built (skipped, logged) or
-         it has an *_unmasked sibling and is still a table (an older build's raw values): then it is revoked.
+         it has an *_unmasked sibling and is not a view (a table is an older build's raw values): then it is
+         revoked.
     The UI role also gets USAGE on ops and SELECT on ops.dbt_run_results (written by record_run_results), for its
     build status; the agent role never sees ops, nor ops.pii_salt.
     Runs as the on-run-end hook and as `dbt run-operation grant_read_access`. It runs its SQL
-    itself and returns '' so the hook has nothing left to execute. It never raises.
+    itself and returns '' so the hook has nothing left to execute. It never fails on a missing mart or view.
 -#}
 {% macro grant_read_access() -%}
     {%- if execute -%}
@@ -40,9 +41,9 @@
             {%- for name in modelled if not name.endswith('_unmasked') -%}
                 {%- if name not in built -%}
                     {%- do log('grant_read_access: marts.' ~ name ~ ' not built yet, no grant on ' ~ target.name, info=true) -%}
-                {%- elif (name ~ '_unmasked') in modelled and built[name] == 'table' -%}
+                {%- elif (name ~ '_unmasked') in modelled and built[name] != 'view' -%}
                     {%- do run_query('revoke all on marts.' ~ adapter.quote(name) ~ ' from ' ~ readers ~ ', public;') -%}
-                    {%- do log('grant_read_access: revoked all on marts.' ~ name ~ ' (a table, so an older build with real PII) from '
+                    {%- do log('grant_read_access: revoked all on marts.' ~ name ~ ' (not a view, so an older build with real PII) from '
                         ~ readers ~ ' and public on ' ~ target.name, info=true) -%}
                 {%- else -%}
                     {%- do run_query('grant select on marts.' ~ adapter.quote(name) ~ ' to ' ~ readers ~ ';') -%}

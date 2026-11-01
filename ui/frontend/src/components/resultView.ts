@@ -24,7 +24,7 @@ export function hasDuplicateColumns(columns: readonly string[]): boolean {
 export const CUT_MARKER = " …[cut at 10000 chars]";
 
 // Whether sorting and filtering `view` goes to the server (UI spec §5): the browser cannot reproduce Postgres's order
-// or text for an `other` column (interval, uuid, json, arrays, ...), nor `contains` on a number (JavaScript and
+// or text for an `other` column (interval, json (through attribute notation only), arrays, ...), nor `contains` on a number (JavaScript and
 // Postgres write a float differently), nor any column that holds a cut cell. A real value that ends with the marker
 // only costs a re-run.
 export function needsServer(view: ResultView, types: readonly ColumnType[], rows: readonly Row[]): boolean {

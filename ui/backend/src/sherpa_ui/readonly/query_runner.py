@@ -170,9 +170,8 @@ class QueryRunner:
         run (same connection, same `query_id`) and says so in `warning`.
 
         Raises `UiQueryError` (`busy`, without connecting, while `MAX_CONCURRENT_QUERIES` runs hold a connection); in
-        server mode also `UnknownColumnError` for a sort or filter column that is not in the result.
-        Whatever else went wrong, a run that `cancel` reached raises
-        `UiQueryError` with code `cancelled`.
+        server mode also `UnknownColumnError` for a sort or filter column that is not in the result. Whatever else
+        went wrong, a run that `cancel` reached raises `UiQueryError` with code `cancelled`.
 
         Every run is logged by its id, outcome and duration; the SQL only by its length and hash.
         """
@@ -341,10 +340,7 @@ class QueryRunner:
                     # No parameters, so psycopg leaves every `%` of the user's SQL alone.
                     return self._fetch(conn, query_id, statement, None, len(DECLARE_PREFIX), len(statement))
 
-                probe = build_wrapped_query(
-                    statement,
-                    (),
-                )
+                probe = build_wrapped_query(statement, ())
                 with self._declared(
                     conn,
                     query_id,

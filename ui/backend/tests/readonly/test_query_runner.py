@@ -793,9 +793,7 @@ class TestQueryRunner:
         assert (over_cap.returned_rows, over_cap.truncated) == (1000, True)
 
     @pytest.mark.parametrize("sort", [(), (SortSpec(column="c0", direction="asc"),)], ids=["client", "server"])
-    def test_a_wide_padded_result_stops_at_its_character_budget(
-        self, runner: QueryRunner, sort: tuple[SortSpec, ...]
-    ) -> None:
+    def test_a_wide_result_stops_at_its_character_budget(self, runner: QueryRunner, sort: tuple[SortSpec, ...]) -> None:
         # each replace turns every 'b' into ten: four of them make a 10,000-character cell
         cell = (
             "replace(replace(replace(replace('b', 'b', 'bbbbbbbbbb'), 'b', 'bbbbbbbbbb'), "
@@ -877,6 +875,7 @@ class TestQueryRunner:
         assert re.fullmatch(r'invalid input syntax for type integer: "[0-9a-f]{32}"', error.value.message)
 
     def test_error_in_the_wrapper_has_no_position(self, runner: QueryRunner) -> None:
+        # json is reachable only through attribute notation (`o.to_json`): the guard refuses to_json(...)
         with pytest.raises(UiQueryError) as error:
             runner.run(
                 "q1", "select o.to_json as j from marts.fct_orders o", sort=[SortSpec(column="j", direction="asc")]
@@ -1163,15 +1162,18 @@ class TestQueryRunner:
         assert leaked_ui_backends() == 0
 
     def test_pii_arrives_hashed_in_both_modes(self, runner: QueryRunner) -> None:
-        sql_text = "select customer_id, email, first_name, last_name, country_code from marts.dim_customers"
+        sql_text = "select customer_id, email, country_code from marts.dim_customers"
 
         client = runner.run("q1", sql_text + " order by customer_id limit 3")
         server = runner.run("q2", sql_text, filters=[FilterSpec(column="customer_id", operator="<=", value="3")])
 
+        assert len(client.rows) == 3
+        assert 1 <= len(server.rows) <= 3  # ids 1 to 3, less the test accounts left out of the mart
         for outcome in (client, server):
             for row in outcome.rows:
                 assert isinstance(row[0], int)
-                assert all(cell is None or re.fullmatch(r"[0-9a-f]{32}", str(cell)) for cell in row[1:4])
+                assert row[1] is None or re.fullmatch(r"[0-9a-f]{32}", str(row[1]))
+            assert any(row[1] is not None for row in outcome.rows)
 
     def test_server_mode_sorts_and_filters_a_hashed_column(
         self, runner: QueryRunner, leaked_ui_backends: Callable[[], int]
@@ -1183,6 +1185,9 @@ class TestQueryRunner:
 
         emails = [row[1] for row in sorted_outcome.rows]
         present = sorted(str(email) for email in emails if email is not None)
+        assert 150 <= len(emails) <= 200  # the ids up to 200, less the test accounts left out of the mart
+        assert present
+        assert all(re.fullmatch(r"[0-9a-f]{32}", email) for email in present)
         assert sorted_outcome.mode == "server"
         assert emails == [*present, *[None] * (len(emails) - len(present))]  # NULLs last
         assert (filtered.mode, filtered.rows) == ("server", ())
@@ -1217,6 +1222,7 @@ class TestQueryRunner:
         assert outcome.column_types == ("text", "number", "number", "date", "text")
 
     def test_column_types_reported(self, runner: QueryRunner) -> None:
+        # jsonb is reachable only through attribute notation (`s.to_jsonb`), not to_jsonb(...)
         outcome = runner.run(
             "q1",
             "select order_id, order_number, order_date, placed_at, is_cancelled, order_total, 1.5::float8 as f,"
@@ -1241,6 +1247,7 @@ class TestQueryRunner:
         )
 
     def test_values_are_json_safe(self, runner: QueryRunner) -> None:
+        # jsonb is reachable only through attribute notation (`s.to_jsonb`), not to_jsonb(...)
         outcome = runner.run(
             "q1",
             "select 1.50::numeric(12,2) as d, date '2025-03-01' as day,"

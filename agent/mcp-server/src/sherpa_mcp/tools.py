@@ -51,8 +51,8 @@ DOES_NOT_COVER: Final = (
     "inventory and stock levels",
     "product reviews",
     "currencies other than EUR",
-    "customers' email addresses and names, which the marts hold only as pseudonymised hashes (comparing one with a "
-    "plain value matches nothing)",
+    "customers' email addresses, domains and names: the email is available only as a salted hash and customer "
+    "names are not in the marts",
     "campaign names, budgets and ad spend (customers and promotions carry only a campaign id; sessions also carry "
     "the utm_campaign slug)",
     "app visits and on-site events below the session, such as which products or pages were viewed or carted "
@@ -268,7 +268,10 @@ class WarehouseTools:
         mart = _resolve_mart(self._catalog(), table)
         found = _resolve_column(mart, column)
         if found.is_pii:
-            raise WarehouseToolError(f"{mart.name}.{found.name} holds PII and cannot be searched")
+            raise WarehouseToolError(
+                f"{mart.name}.{found.name} is a salted hash and cannot be searched; "
+                "questions about its values cannot be answered"
+            )
         if found.data_type != TEXT_TYPE:
             raise WarehouseToolError(
                 f"{mart.name}.{found.name} is {found.data_type}, not text; only text columns can be searched"

@@ -58,11 +58,11 @@ Hooks in `dbt_project.yml` work outside the models:
 
 - `on-run-start` runs `ensure_extensions` (the `extensions` schema with `pg_trgm`) and `ensure_pii_salt` (creates `ops.pii_salt`, the secret salt of the PII hashes, once; no reader role can read it).
 - `post-hook: analyze {{ this }}` on every mart refreshes table statistics.
-- `on-run-end` runs `record_run_results` (every target) and `grant_read_access` (`prod` and `eval` only): per visible mart, `SELECT` for `sherpa_agent` and `sherpa_ui`, after revoking every privilege on each `*_unmasked` table.
+- `on-run-end` runs `record_run_results` (every target) and `grant_read_access` (`prod` and `eval` only): per visible mart, `SELECT` for `sherpa_agent` and `sherpa_ui`, after revoking every privilege on each `*_unmasked` table. It also revokes a relation that is not a view but is named like a PII mart (an older build's raw table), and never fails on a missing mart or view.
 
 Re-apply the grants without a build with `dbt run-operation grant_read_access --target prod --target-path target-prod` (the prefix is explained under "Running dbt directly").
 
-A mart with personal data is a pair: the table `dim_customers_unmasked` (real values, nobody can read it) and the view `dim_customers` (salted hashes of `email`, `first_name`, `last_name`). Dropping `ops` (`make reset`) makes a new salt, so the hashes change.
+A mart with personal data is a pair: the table `dim_customers_unmasked` (real values, nobody can read it) and the view `dim_customers` (a salted hash of `email`; names are not in the view). Dropping `ops` (`make reset`) makes a new salt, so the hashes change.
 
 The table `ops.dbt_run_results` keeps one row per node of every invocation (`target_name`, `command`, `is_full_run`, `unique_id`, `status`, ...), the history that `run_results.json` overwrites.
 

@@ -119,7 +119,7 @@ uv run pytest agent/mcp-server/tests/test_sql_guard.py -q
 
 The spec (§4.2) names categories, not functions; update it only for a new category.
 
-Casts are a closed list of their own, `CAST_TYPES` (with `CAST_HINT`): a cast to another type is `[guard:cast]`. To allow a type, add it to `CAST_TYPES` and to the spec's §4.2 list, and update `test_the_cast_types_are_exactly_the_specs`, which pins the list so a sqlglot upgrade cannot widen it. A type that pads or reaches a catalog (`char(n)`, `reg*`, `json`) stays off.
+Casts are a closed list of their own, `CAST_TYPES` (with `CAST_HINT`): a cast to another type is `[guard:cast]`. To allow a type, add it to `CAST_TYPES` and to the spec's §4.2 list, and update `test_the_cast_types_are_exactly_the_specs`, which pins the list to the spec (`test_other_types_are_rejected` and `test_postgres_spellings_of_the_listed_types_pass` are the upgrade guards). A type that pads or reaches a catalog (`char(n)`, `reg*`, `json`) stays off.
 
 ## 3. Change a guard hint
 
