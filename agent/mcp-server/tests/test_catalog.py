@@ -35,14 +35,20 @@ def _make_orders_public(manifest: dict[str, Any]) -> None:
     manifest["nodes"]["model.sherpa.fct_orders"]["access"] = "public"
 
 
-# Data platform spec §6.5: the sentence that ends the description of every masked column.
-PSEUDONYMISED_SENTENCE = (
-    "Salted md5 hash (32 hex characters) of the customer's normalized email; null for deleted customers. "
+# Data platform spec §6.5: the sentence that ends the description of every masked column, and per column the
+# sentence that names its subject.
+HASH_SENTENCE = (
     "Equal emails hash equally, so counting, count(distinct ...), group by and joins work; comparing it with "
     "a plain value, a pattern (LIKE/ILIKE), a string function, length() or sorting gives meaningless results "
-    "(some patterns match random rows). Identify customers by customer_id; questions about email domains "
-    "cannot be answered."
+    "(some patterns match random rows)."
 )
+SUBJECT_SENTENCES = {
+    ("dim_customers", "email"): "Identify customers by customer_id; questions about email domains cannot be answered.",
+    ("fct_leads", "email"): (
+        "Identify leads by lead_id and their customers by converted_customer_id; "
+        "questions about email domains cannot be answered."
+    ),
+}
 
 
 @pytest.mark.warehouse
@@ -51,8 +57,9 @@ def test_masked_columns_are_the_specs(prod_loader: MartCatalogLoader) -> None:
 
     masked = [(mart.name, column) for mart in marts for column in mart.columns if column.is_pii]
 
-    assert {(name, column.name) for name, column in masked} == {("dim_customers", "email")}
-    assert all(PSEUDONYMISED_SENTENCE in column.description for _, column in masked)
+    assert {(name, column.name) for name, column in masked} == {("dim_customers", "email"), ("fct_leads", "email")}
+    assert all(HASH_SENTENCE in column.description for _, column in masked)
+    assert all(SUBJECT_SENTENCES[name, column.name] in column.description for name, column in masked)
 
 
 class TestMartCatalogLoader:
