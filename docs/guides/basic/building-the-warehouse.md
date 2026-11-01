@@ -24,7 +24,7 @@ make build-prod  # the same on prod, then dbt docs generate
 
 ### Building only what changed
 
-`make slim` builds on dev only the models that differ from the last prod build, and their children. Their unchanged parents are read from prod's tables, so a change to one mart does not rebuild the sources, staging and intermediate models behind it (dbt's `state:modified+` selection with `--defer --state target-prod`). Use it in the edit-and-check loop; use `make build` for a complete dev warehouse.
+`make slim` builds on dev only the models that differ from the last prod build, and their children. Their unchanged parents are read from prod's tables, so a change to one mart does not rebuild the sources, staging and intermediate models behind it (dbt's `state:modified+` selection with `--defer --state target-prod`). Each `make build-prod` refreshes the state it compares against. Use it in the edit-and-check loop; `make build` gives a complete dev warehouse.
 
 ```
 make slim        # right after make build-prod:

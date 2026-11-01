@@ -126,11 +126,11 @@ from marts.fct_refunds where refund_date between '2026-01-01' and '2026-01-31';
 
 ### Sessions are web only
 
-App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders) leave them out; compare orders per channel with `fct_orders`. `is_first_session` and `customer_id` are explained in the column comments; the definition is in `get_metric_definitions` and the spec's §6.6.
+App orders (R12) have no session, so session counts and `conversion_rate` (purchased sessions / all sessions, not orders) leave them out (a session whose order was later cancelled still counts as purchased); compare orders per channel with `fct_orders`, and join `fct_orders` to `fct_sessions` on `session_id`. Anonymous visitors never return, so every session of a non-customer is a first session. `customer_id` and `is_first_session` are explained in the column comments; the definition is in `get_metric_definitions` and the spec's §6.6.
 
 ### Line grain against order grain
 
-Joining `fct_orders` to `fct_order_items` repeats each order's columns once per line, so summing an order column after the join multiplies it (in the 365-day dataset, gross revenue came out at 1,589,281.58 instead of 717,784.62). Sum each column in its own mart, or aggregate the lines in a subquery first; `fct_order_discounts` fans out the same way.
+Joining `fct_orders` to `fct_order_items` repeats each order's columns once per line, so summing an order column after the join multiplies it (in the 365-day dataset, gross revenue came out at 1,589,281.58 instead of 717,784.62). Sum order columns in `fct_orders` alone and line columns (`gross_amount`, `net_amount`, `quantity`) in `fct_order_items`, or aggregate the lines in a subquery first. `fct_order_discounts` fans out the same way when an order has several discounts: filter to one promotion, or use `where exists (...)`.
 
 ### Campaigns and leads
 
