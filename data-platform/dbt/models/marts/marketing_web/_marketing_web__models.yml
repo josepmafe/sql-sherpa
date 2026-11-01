@@ -258,9 +258,18 @@ models:
         data_type: date
         constraints:
           - type: not_null
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
       - name: channel
         description: Channel of the campaign, from dim_campaigns (never email, which has no ad spend).
         data_type: text
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid_search, paid_social, affiliate, display]
       - name: spend
         description: >
           Amount the ad platform charged that day, in EUR. {{ doc('metric_cac') }}

@@ -1,7 +1,8 @@
 -- Spec 6.5 "Checks": the sherpa_agent exposure lists exactly the visible
 -- marts, the ones grant_read_access gives the agent (schema marts, name not
 -- ending in _unmasked). A visible mart must be public and an _unmasked table
--- private. Failing rows are (unique_id, problem), literals only.
+-- private with no select grant. Failing rows are (unique_id, problem),
+-- literals only.
 -- noqa: disable=LT02,LT05
 {% set arms = [] -%}
 {%- if execute -%}
@@ -12,6 +13,9 @@
 {%- if node.name.endswith('_unmasked') -%}
 {%- if node.access | string != 'private' -%}
 {%- do arms.append("select '" ~ node.unique_id ~ "', 'unmasked but not private'") -%}
+{%- endif -%}
+{%- if node.config.grants.get('select') -%}
+{%- do arms.append("select '" ~ node.unique_id ~ "', 'unmasked but granted'") -%}
 {%- endif -%}
 {%- else -%}
 {%- do visible.append(node.unique_id) -%}

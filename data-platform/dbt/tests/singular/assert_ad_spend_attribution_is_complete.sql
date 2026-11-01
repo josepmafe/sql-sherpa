@@ -32,7 +32,7 @@ session_totals as (
 
     select
         sessions.campaign_id,
-        count(*) as sessions,
+        count(distinct sessions.session_id) as sessions,
         count(orders.order_id) as orders,
         coalesce(sum(orders.net_revenue), 0) as attributed_net_revenue
     from {{ ref('fct_sessions') }} as sessions
