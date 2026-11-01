@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/frontend/package-lock.json
+
+      # The throwaway container takes the change-me passwords; the PII salt is generated on the first dbt run.
+      - name: Environment
+        run: cp .env.example .env
+
+      - name: Postgres
+        run: docker compose up -d --wait postgres
+
+      - name: Dependencies
+        run: |
+          uv sync --locked
+          cd ui/frontend && npm ci
+
+      - name: Data
+        run: |
+          uv run --env-file .env python data-platform/scripts/backfill.py --days 30 --scale 0.05
+          echo "SHERPA_SIMULATION_START_DATE=$(uv run --env-file .env sherpa-generate start-date)" >> "$GITHUB_ENV"
+
+      # `run --empty` creates every relation without rows; the full refresh then loads all 30 days, because a plain
+      # build would run the empty incremental models incrementally and load only the last 7 days.
+      - name: dbt
+        working-directory: data-platform/dbt
+        env:
+          DBT_PROFILES_DIR: .
+        run: |
+          uv run --env-file ../../.env dbt deps
+          uv run --env-file ../../.env dbt seed
+          uv run --env-file ../../.env dbt run --empty
+          uv run --env-file ../../.env dbt build --full-refresh --selector ci --warn-error
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Frontend tests
+        working-directory: ui/frontend
+        run: npm test
