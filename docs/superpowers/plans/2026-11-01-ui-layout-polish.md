@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Resizable, collapsible panes on the Explorer and Lineage screens, a collapsible navigation rail with hover-peek, a flatter Lineage layout, and a richer node panel (disabled empty tabs, column types for every node, test definitions on expand).
+**Goal:** Resizable, collapsible panes on the Explorer and Lineage screens, a collapsible navigation rail with hover-peek, a Lineage layout where no edge passes behind a node, and a richer node panel (disabled empty tabs, column types for every node, test definitions on expand).
 
-**Architecture:** one small pane toolkit (`src/components/panes/`, on `react-resizable-panels`) used by the shell, the Explorer and Lineage. Sizes persist in `localStorage` under `sherpa.v1.layout.*` and are clamped when read. The Lineage layout keeps ELK's order and changes only the heights, with a pure least-squares placement in `stackBands`. Column types and test definitions are read by the existing lineage service from `catalog.json` and the dbt artifacts; one new endpoint serves a test's content.
+**Architecture:** one small pane toolkit (`src/components/panes/`, on `react-resizable-panels`) used by the shell, the Explorer and Lineage. Sizes persist in `localStorage` under `sherpa.v1.layout.*` and are clamped when read. The Lineage layout reserves a gap for each long edge in every column it crosses, places nodes and gaps with a pure least-squares fit, and draws each edge as one monotone curve through its gaps. Column types and test definitions are read by the existing lineage service from `catalog.json` and the dbt artifacts; one new endpoint serves a test's content.
 
 **Tech Stack:** React 19, TypeScript, Mantine 9, `react-resizable-panels` (4.x at planning time), `@xyflow/react`, `elkjs`, Vitest, Playwright; FastAPI, pytest.
 
@@ -15,7 +15,7 @@
 - **Narrow screens (2):** below 1280 px the Inspector is a collapsed pane that opens as an overlay; the drawer goes.
 - **Splitters (3):** also a horizontal handle between the editor and the results, and one between the graph and the node panel.
 - **Sizes (4):** remembered in `localStorage`, double-click resets, stored values are clamped on read.
-- **Layout (5):** measured before the plan, results in Task 8.
+- **Layout (5):** measured and rendered before the plan. The owner chose B straightened (gaps for long edges, no edge behind a node), plus a time-boxed attempt at curves that bend inside the columns (Task 8).
 - **Also:** `sherpa › marts` is the tree heading with the domains smaller and dimmed (2), modes in the order Whole project · Domain · Table path (5), column types for every node (7), empty tabs disabled with a reason (8), tests that expand to their definition (9).
 
 **Not a numbered milestone:** like the audits it is named by date, so Home stays ui-4. Build it before Home, so Home is made in the final shell.
@@ -55,7 +55,8 @@ ui/frontend/src/
   components/panes/                 # new: PaneGroup.tsx, Pane.tsx, PaneHandle.tsx, CollapseToggle.tsx, usePeek.ts, layoutStorage.ts
   app/AppShell.tsx, navItems.ts     # collapsible rail, icons
   screens/explorer/ExplorerScreen.tsx, CatalogTree.tsx, WorksheetPanel.tsx
-  screens/lineage/LineageScreen.tsx, SelectorBar.tsx, NodePanel.tsx, layout.ts
+  screens/lineage/LineageScreen.tsx, SelectorBar.tsx, NodePanel.tsx, layout.ts, useGraphLayout.ts, LineageCanvas.tsx
+  screens/lineage/edgeRoute.ts, RoutedEdge.tsx   # new: the monotone edge curve, the routed edge
   api/queries.ts, schema.d.ts       # useTestDetails; regenerated client
 ui/frontend/tests/panes/, tests/lineage/layoutMetrics.ts, tests/fixtures/lineage_project.json
 ui/frontend/e2e/layout.spec.ts, lineage.spec.ts, explorer.spec.ts
@@ -234,38 +235,88 @@ By kind:
 
 ---
 
-### Task 8: A flatter Lineage layout
+### Task 8: A Lineage layout where no edge passes behind a node
 
-**Model:** implementer `sonnet` · reviewer **`opus`** (the placement is an optimisation with invariants the reviewer re-derives)
+**Model:** implementer `sonnet` · reviewer **`opus`** (the placement and routing carry invariants the reviewer re-derives)
 
-**Files:** `src/screens/lineage/layout.ts`; `tests/lineage/layout.test.ts`; new `tests/lineage/layoutMetrics.ts`, `tests/fixtures/lineage_project.json`.
+**Files:**
+- Modify: `src/screens/lineage/layout.ts`, `src/screens/lineage/useGraphLayout.ts`, `src/screens/lineage/LineageCanvas.tsx`
+- Create: `src/screens/lineage/edgeRoute.ts`, `src/screens/lineage/RoutedEdge.tsx`
+- Test: `tests/lineage/layout.test.ts`, `tests/lineage/edgeRoute.test.ts`, `tests/lineage/LineageCanvasEdges.test.tsx`; new `tests/lineage/layoutMetrics.ts`, `tests/fixtures/lineage_project.json`
 
-**Measured at planning** (this project's whole graph: 66 nodes, 87 edges, collapsed, edges as straight lines from a node's right edge to the next one's left edge). The old plain stack against two prototypes:
+**Measured at planning** on this project's whole graph (66 nodes, 87 edges, collapsed). The edges are measured as drawn: today's React Flow bezier, and B's routes through their gaps. The owner chose **B straightened** (renders kept outside the repo):
 
-| | crossings | total vertical edge travel (px) | canvas height (px) | edges behind a node |
+| | crossings | edges behind a node | vertical edge travel (px) | height (px) |
 |---|---|---|---|---|
-| plain stack (today) | 235 | 38,016 | 2,244 | 32 |
-| **placement (this task)** | **123** | **16,686** | 2,251 | 29 |
-| placement + reordering | 113 | 12,683 | 2,451 | 30 |
+| plain stack (today) | 259 | 40 | 38,016 | 2,244 |
+| placement near neighbours only | 122 | 32 | 16,686 | 2,251 |
+| B: gaps for long edges, reordering | 106 | 0 | 16,978 | 2,276 |
+| **B straightened (this task)** | **100** | **0** | **17,781** | **2,313** |
+| today's single curves on B's positions | 104 | 34 | 16,024 | 2,276 |
 
-Reordering adds 8% fewer crossings for a 9% taller canvas, so it is out. The change does not fix edges that pass behind a node.
+**Interfaces — Produces** (`layout.ts`, `edgeRoute.ts`):
+- `orderNodes(nodes, edges)` is unchanged: ELK gives the starting order.
+- `placeBands(nodes: BandNode[], edges: LayoutEdge[], order: Map<string, number>): BandPlacement`, pure and synchronous. It runs once per graph, as ELK does. `BandPlacement` holds the x of each column, each column's items in order (node ids and gap ids), and each item's collapsed top y.
+- `stackBands(placement: BandPlacement, heights: Map<string, number>): { positions: Map<string, Point>; routes: Map<string, Point[]> }`, pure. It reruns on every height change. `routes` is keyed by `edgeKey(source, target)` and holds an edge's inner waypoints: for each gap, the column's left and right x at the gap's y. It is empty for an edge between adjacent columns.
+- `useGraphLayout(nodes, edges, heights)` returns `{ positions, routes, state }`.
+- `edgeRoute.ts`:
+  - `edgePoints(start: Point, waypoints: Point[], end: Point): Point[]`, the monotone cubic (Fritsch–Carlson) through the points, sampled
+  - `edgePath(start, waypoints, end): string`, the same curve as SVG cubic commands
+- `RoutedEdge`: a custom React Flow edge. `BaseEdge` keeps the `react-flow__edge-path` class and the marker. Its path is `edgePath({sourceX, sourceY}, data.waypoints, {targetX, targetY})`, so the ends stay on the real handles. Table edges and column-focus edges both use it; a column edge takes the waypoints of its table edge (parent node → child node).
 
-**Algorithm.** `stackBands(nodes, edges, order, heights)` keeps its signature and its x positions. For y:
-1. Start from the stack of the collapsed heights (`NODE_HEIGHT`; `heights` is ignored here).
-2. For each column (a band's sub-column), in sweeps that alternate left-to-right and right-to-left (12 sweeps), set each node's wish to the mean centre-y of all its neighbours (its current y if it has none). Then fit the column: the least-squares y that keeps the column's order and its gaps (`ROW_GAP`), which is isotonic regression on `wish - cumulative height`.
-3. Shift everything so the smallest y is 0.
-4. Finally, make room for taller (expanded) nodes: in each column, from the top, push a node down when it would overlap the one above. Nothing else moves, so expanding a node still moves only the nodes below it in its own column.
+**Algorithm** (constants at the top of `layout.ts`: `SLOT_HEIGHT = 2`, `SLOT_NODE_GAP = 12`, `SLOT_SLOT_GAP = 8`, `SWEEPS = 12`, `STRAIGHTEN_SWEEPS = 8`; `ROW_GAP` and `BAND_GAP` unchanged):
+1. **Columns.** Each band's sub-columns, with today's x.
+2. **Gaps.** An edge from column a to column b > a + 1 gets a gap item (height `SLOT_HEIGHT`) in each column between them, one per edge.
+3. **Start.** The real nodes start from the plain stack in ELK's order. Each gap starts on the straight line between its edge's ends.
+4. **Sweeps.** `SWEEPS` times, alternating left-to-right and right-to-left, for each column:
+   - each item's wish is the mean centre-y of its neighbours: a node's linked nodes or first and last gaps, a gap's two neighbours along its edge
+   - the column is re-sorted by wish; a source system's tables stay together, as today
+   - the column is fitted: the least-squares centres that keep its order and its spacing (`ROW_GAP` between nodes, `SLOT_NODE_GAP` between a node and a gap, `SLOT_SLOT_GAP` between gaps). This is isotonic regression (pool adjacent violators) on `wish − cumulative offset`.
+5. **Straighten.** `STRAIGHTEN_SWEEPS` more sweeps without re-sorting, in which a gap's wish is the mean y of all gaps of its own edge, so a long edge rises once, runs level and comes down once.
+6. **Normalise.** Shift everything so the smallest top is 0.
+7. **Heights** (`stackBands`). In each column, from the top, push an item down when it would overlap the one above, with that pair's spacing. Nothing moves upwards and no other column moves, so expanding a node moves only the nodes and gaps below it in its own column.
 
-- [ ] **Step 1: Fixture and metrics.** Save the whole-project graph from the running stack (`curl http://127.0.0.1:8090/api/lineage`) as `tests/fixtures/lineage_project.json`, keeping only `{ nodes: [{ id, layer, sourceName }], edges: [{ source, target }] }` (names only). In `layoutMetrics.ts` write `layoutMetrics(positions, nodes, edges) → { crossings, edgeTravel, edgesBehindNodes, height }` with the definitions in the table. Test the helper on tiny graphs: two crossing edges → 1; two parallel → 0; edges sharing a node never cross; an edge through another node counts as behind it.
-- [ ] **Step 2: Baseline.** With the old `stackBands`, compute the metrics on the fixture (real `orderNodes`) and write them in the acceptance test as literals `BASELINE`. On the planning graph they are 235 / 38,016 / 2,244 / 32; if yours differ much, check the helper against the table first.
-- [ ] **Step 3: Tests first** (`layout.test.ts`):
-  - **Acceptance (the fixture):** `crossings ≤ 0.6 × BASELINE.crossings`, `edgeTravel ≤ 0.55 × BASELINE.edgeTravel`, `height ≤ 1.15 × BASELINE.height`, `edgesBehindNodes ≤ BASELINE.edgesBehindNodes`.
-  - **Placement:** a node whose only parent sits at y = 500 is centred on it; the order of ELK's ranks is kept in every column; no two nodes of a column are closer than `ROW_GAP`; the same input gives the same positions; the smallest y is 0; a node without edges keeps a sensible place (no `NaN`); no nodes → an empty map; the x of every node equals the old algorithm's.
-  - **Expansion:** expanding one node changes the y only of the nodes below it in its own column.
+No edge passes behind a node, by construction: a route is level through a column, inside its gap, and the monotone curve between two columns stays between its two waypoints' y.
 
-  Run them. Expected: the acceptance and placement tests FAIL.
-- [ ] **Step 4: Implement,** keeping `layout.ts` top-down (public first). `useGraphLayout` and the canvas stay as they are.
-- [ ] **Step 5:** `npm test`, lint, the `lineage` and `layout` Playwright specs. Look at the whole project, a domain and a table path in the browser, and put the three screenshots in the PR description. Commit `feat: Lineage nodes sit near their neighbours, so edges run flatter and cross less`.
+- [ ] **Step 1: Fixture and metrics.**
+  - **Fixture:** save the whole-project graph from the running stack (`curl http://127.0.0.1:8090/api/lineage`) as `tests/fixtures/lineage_project.json`. Keep only `{ nodes: [{ id, layer, sourceName }], edges: [{ source, target }] }`: names only.
+  - **Metrics:** in `layoutMetrics.ts` write `layoutMetrics(rects, curves) → { crossings, edgesBehindNodes, edgeTravel, height }`. Each curve is a sampled polyline with its source and target. Crossings count segment intersections between edges that share no node; an edge is behind a node when a sample point falls strictly inside a node it doesn't touch.
+  - **Helper tests:** two crossing edges give 1; two parallel give 0; edges sharing a node never cross; an edge through a third node counts as behind it.
+- [ ] **Step 2: Baseline.** With the plain stack and today's bezier (React Flow's default: control points at half the horizontal distance, horizontal tangents), compute the metrics on the fixture with the real `orderNodes`. Write them in the acceptance test as the literal `BASELINE`. On the planning graph they are 259 / 40 / 38,016 / 2,244; if yours differ much, check the helper against the table first.
+- [ ] **Step 3: Tests first.**
+  - **`edgeRoute.test.ts`:**
+    - the curve passes through every waypoint
+    - between two consecutive points its y stays between theirs (no overshoot)
+    - it is level between a gap's left and right waypoint
+    - with no waypoints it is one S-curve, start and end tangents horizontal
+    - `edgePath` is valid SVG whose sampled points match `edgePoints` within 0.5 px
+  - **`layout.test.ts`, acceptance (the fixture, the edges as drawn):**
+    - `edgesBehindNodes === 0`
+    - `crossings ≤ 0.45 × BASELINE.crossings`
+    - `edgeTravel ≤ 0.55 × BASELINE.edgeTravel`
+    - `height ≤ 1.10 × BASELINE.height`
+    - with every node expanded to 10 rows, `edgesBehindNodes === 0` still
+  - **`layout.test.ts`, placement:**
+    - a node whose only parent sits at y = 500 is centred on it
+    - in every column the spacing rules hold
+    - a source system's tables are contiguous
+    - the same input gives the same output
+    - the smallest top is 0; no `NaN`; no nodes gives empty maps
+    - every node's x equals today's
+    - an edge between adjacent columns has no waypoints
+    - an edge skipping two columns has exactly 4 waypoints, level in pairs
+    - an empty `order` (the ELK mock other tests use) still lays out
+  - **`layout.test.ts`, expansion:** expanding one node changes the y only of the items below it in its own column.
+  - **`LineageCanvasEdges.test.tsx`:** table and column edges are of the routed type and carry their waypoints; a column edge carries its table edge's waypoints. The existing handle assertions stay.
+
+  Run them. Expected: FAIL.
+- [ ] **Step 4: Implement,** keeping `layout.ts` top-down (public first) and the constants named. `useGraphLayout` runs `orderNodes` and then `placeBands` when the nodes or edges change, and `stackBands` when the heights change. The superseded-run guard stays.
+- [ ] **Step 5: Verify.** `npm test` and lint, then the `lineage` and `layout` Playwright specs; the e2e reads edge paths through `react-flow__edge-path`, which `BaseEdge` keeps. Take browser screenshots of the whole project, a domain and a table path for the PR description. Commit `feat: Lineage edges keep clear of nodes, through gaps the layout reserves for them`.
+- [ ] **Step 6: Time-boxed attempt, "curves that bend inside columns too"** (owner, 2026-11-01). One implementer attempt, no fix rounds, on a scratch branch off this commit.
+  - **Idea:** today's look, one long S-curve, with the same guarantee. A gap's height becomes the stretch of the edge's curve that crosses its column, nodes keep clear of that stretch, and the edge is drawn as one smooth curve through the gaps' centres.
+  - **Known risk:** a naive version diverged at planning, because the gaps move the nodes, which moves the curves, which moves the gaps. Damp it (blend each update with the previous one, at most 20 iterations) and stop when no item moves more than 1 px.
+  - **It is kept only if** it passes every acceptance test of Step 3, it converges on the fixture, and the owner prefers its screenshot to Step 5's. Then it is merged into this branch as `feat: lineage edges curve through the columns`.
+  - **Otherwise** the scratch branch is deleted, and the PR description gets one line on what was tried and why it was dropped.
 
 ---
 
@@ -281,7 +332,7 @@ Reordering adds 8% fewer crossings for a 9% taller canvas, so it is out. The cha
     - stored layout is read defensively and clamped, so every pane has a clamp test.
 - [ ] **Step 2: Guides** (short; one symptom → fix row each).
   - **`basic/using-the-explorer.md`:** the panes, resizing (drag, keys, double-click to reset), collapsing, the tree's peek, the Inspector overlay below 1280 px. Symptom: "the layout is odd after a resize" → double-click the handle, or clear `sherpa.v1.layout.*` in the browser's site data.
-  - **`basic/using-lineage.md`:** the mode order, the panel's handle and fold, disabled tabs and their reasons, column types, expanding a test. Symptom: a type column is empty → the node is an ephemeral model.
+  - **`basic/using-lineage.md`:** how to read the layout (a long edge runs level through the gaps reserved for it, so no edge hides behind a node), the mode order, the panel's handle and fold, disabled tabs and their reasons, column types, expanding a test. Symptom: a type column is empty → the node is an ephemeral model.
   - **`advanced/extending-the-ui.md`:** adding a pane (the toolkit, the storage id, its clamp test), the layout metrics test and how to read it, and the tests endpoint.
 - [ ] **Step 3:** `make lint`. Commit `docs: panes, layout, node panel and test definitions`.
 
@@ -296,6 +347,7 @@ Reordering adds 8% fewer crossings for a 9% taller canvas, so it is out. The cha
   - **Software engineer:** the tests endpoint and service, `NodeSql` path safety, the column types rule, the backend tests and the `warehouse` twins, and the API client regeneration.
   - **Data engineer:** `NodeTest` against dbt's real artifacts (generic, singular and unit tests, shortened names, `original_file_path` versus `path`), `catalog.json` types versus contract types, and the selector of a test.
   - **Security engineer:** the new endpoint (what it reads and returns, unit-test rows, id handling), `localStorage` contents, the dependency.
+  - **Frontend engineer, layout:** the placement and routing invariants (spacing, no edge behind a node also when expanded, determinism), the metrics helper's honesty, and the edge rendering against React Flow's handles and markers.
   - **Devil's advocate:** what a user does that the tests don't (stored layout from an older build, two browser tabs, a 3-monitor setup, a very long test name), whether the placement beats a simpler tweak, and which tests restate the code.
 - [ ] **Step 2: Devil's advocate,** with the diff and every finding.
-- [ ] **Step 3: Triage and fix:** `make lint`, `make test`, `npm test` three times, `make e2e` all green. The triage table, the three layout screenshots and the metrics table (before and after) go in the PR description.
+- [ ] **Step 3: Triage and fix:** `make lint`, `make test`, `npm test` three times, `make e2e` all green. The triage table, the three layout screenshots, the metrics table (before and after) and the result of Task 8's time-boxed attempt go in the PR description.
