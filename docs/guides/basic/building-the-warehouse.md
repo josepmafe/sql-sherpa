@@ -22,6 +22,17 @@ make build-prod  # the same on prod, then dbt docs generate
 
 `dbt build` runs seeds (CSVs in `data-platform/dbt/seeds/`), the snapshot, models, unit tests and data tests in DAG order and skips whatever depends on a failure. A unit test runs on fixed rows before its model builds; a failing one prints the differing cells as `actual differs from expected`. The first build takes about two minutes on a year of data, later ones under a minute. `make build-prod` also writes `target-prod/catalog.json`, which the MCP server and the UI read.
 
+### Building only what changed
+
+`make slim` builds on dev only the models that differ from the last prod build, and their children. Their unchanged parents are read from prod's tables, so a change to one mart does not rebuild the sources, staging and intermediate models behind it (dbt's `state:modified+` selection with `--defer --state target-prod`). Use it in the edit-and-check loop; use `make build` for a complete dev warehouse.
+
+```
+make slim        # right after make build-prod:
+WARNING: Nothing to do. Try checking your model configs and model specification args
+```
+
+Edit one model and `make slim` builds that model, its children and their tests. A prod build refreshes the state it compares against.
+
 ### Keeping it current
 
 Three models are incremental, so a build processes only what is new ([why each strategy](../advanced/adding-or-changing-a-mart.md#7-change-an-incremental-model)). `stg_events__events` is a microbatch model: each run reprocesses today and the 7 days before (8 batches), counted from today (not from the data), one batch per day, with `begin` set to the simulation's first day by `make build`:
@@ -62,7 +73,7 @@ Hooks in `dbt_project.yml` work outside the models:
 
 Re-apply the grants without a build with `dbt run-operation grant_read_access --target prod --target-path target-prod` (the prefix is explained under "Running dbt directly").
 
-A mart with personal data is a pair: the table `dim_customers_unmasked` (real values, nobody can read it) and the view `dim_customers` (a salted hash of `email`; names are not in the view). Dropping `ops` (`make reset`) makes a new salt, so the hashes change.
+A mart with personal data is a pair: the table `dim_customers_unmasked` (real values, nobody can read it) and the view `dim_customers` (a salted hash of `email`; names are not in the view); `fct_leads` is the second pair. Dropping `ops` (`make reset`) makes a new salt, so the hashes change.
 
 The table `ops.dbt_run_results` keeps one row per node of every invocation (`target_name`, `command`, `is_full_run`, `unique_id`, `status`, ...), the history that `run_results.json` overwrites.
 
@@ -117,6 +128,7 @@ dbt compares each mart's YAML columns and `data_type`s with the model's real col
 
 | Symptom | Fix |
 |---|---|
+| `make slim` stops with `make slim defers to prod: run make build-prod first` | There is no prod build to compare with (`data-platform/dbt/target-prod/manifest.json`): `make build-prod` once |
 | `make build` stops with `ERROR STALE` | Source data is older than 72 h: `make advance DAYS=<n>`. A break of up to 7 days then recovers on its own; after a longer one the next build fails the guard test below, which is the normal path |
 | `assert_every_source_event_is_staged` fails: a simulated day older than 7 days before today that no earlier build loaded | The failing rows list the days. Stage them, then build again: `dbt build --select stg_events__events --event-time-start 2026-10-19 --event-time-end 2026-10-23` (`--event-time-end` is exclusive: the day after the last missing day; for prod add `--target prod --target-path target-prod`). `lookback` in the model config is the knob ([spec §6.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)). Never build the downstream models alone after this failure; if you did, `--full-refresh --select int_events__sessionized+` and the map |
 | `on_schema_change` fail on `int_events__sessionized` or `stg_events__events`, or `fct_sessions` missing (after merging or switching checkouts), or every variant has one snapshot version | Reset sequence on the shared warehouse: `make reset && make backfill && make build && make build-prod` |

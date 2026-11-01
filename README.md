@@ -10,7 +10,7 @@ The answers can be trusted because of the platform underneath: one documented, t
 
 It is a learning project held to production standards: a realistic synthetic e-commerce business, dbt Core features used the way practitioners use them, and an agent where observability and evaluation come first. All data is synthetic.
 
-> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage) and ui-3 (column lineage) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
+> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), data-platform-4 (Marketing, governance and CI), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage) and ui-3 (column lineage) are built. agent-design-2 (gold set and evals) is next. Each spec's milestones section lists the rest.
 
 ## How it works
 
@@ -27,7 +27,7 @@ It is a learning project held to production standards: a realistic synthetic e-c
    - a CRM
 
    It injects the problems real data has: duplicate and late events, messy emails and country codes, test accounts, split payments and price changes.
-2. **dbt.** Cleans and models that data into documented, contract-enforced marts (`fct_orders`, `dim_customers`, `fct_sessions`, …), with every metric defined once: net revenue, margin, conversion rate, ROAS, CAC.
+2. **dbt.** Cleans and models that data into documented, contract-enforced marts (`fct_orders`, `dim_customers`, `fct_sessions`, `dim_campaigns`, `fct_ad_spend_daily`, `fct_leads`, …), with every metric defined once: net revenue, margin, conversion rate, ROAS, CAC.
 3. **Agent.** A read-only MCP server exposes the marts, their dbt documentation and a guarded SQL tool. A PydanticAI agent running Claude on Amazon Bedrock plans an answer, takes your corrections, then answers. Every technique it uses has to raise its score on an execution-accuracy eval set.
 4. **Web app.** It has four screens:
    - **Home:** headline numbers and data health
@@ -48,7 +48,7 @@ Tools arrive with the milestone that first needs them. Those marked *planned* ar
 | Agent | the MCP Python SDK; PydanticAI and Claude on Amazon Bedrock *planned* |
 | Web app | React + TypeScript + Vite, Mantine, CodeMirror, TanStack Query and Table, FastAPI, React Flow, ELK |
 | Observability & evals | Pydantic Logfire (OpenTelemetry); the execution-accuracy eval runner *planned* |
-| Tooling | uv, ruff, mypy, sqlfluff, ESLint, pre-commit; GitHub Actions *planned* |
+| Tooling | uv, ruff, mypy, sqlfluff, ESLint, pre-commit, GitHub Actions |
 
 ## Quickstart
 
@@ -66,7 +66,8 @@ Open <http://127.0.0.1:8090> for the Explorer; Lineage is at `/lineage`. The MCP
 From there:
 - **Develop:**
   - Run `uv run pre-commit install` once.
-  - `make build` builds your own dev schemas, and `make lint` and `make test` check your changes.
+  - `make build` builds your own dev schemas, `make slim` only the models you changed (after one `make build-prod`), and `make lint` and `make test` check your changes.
+  - CI runs on every pull request: a tiny-data dbt build with warnings as errors, then lint, tests and the frontend tests ([CI guide](docs/guides/advanced/ci.md)).
   - For frontend work, run `cd ui/frontend && npm ci` once (Node 22+).
   - `CLAUDE.md` lists every Make target.
 - **Add days:** `make advance DAYS=<n>`, then `make build-prod`.
@@ -86,6 +87,8 @@ From there:
 Code is grouped by spec; the rest of `agent/` appears with its milestones.
 
 ```
+.github/
+  workflows/       ci.yml, the pull-request gate
 data-platform/
   postgres/        database roles: roles.sql, and the init script that runs it on a new volume
   generator/       the synthetic-data generator (Python package, CLI and tests)
@@ -115,8 +118,8 @@ docs/
 ### Basic: using it
 
 - [Using the generator](docs/guides/basic/generator-cli.md): commands (`advance`, `backfill`, `start-date`), recipes, errors, and seeing the realism rules in the data
-- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
-- [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions), which revenue to use, example queries, traps and fuzzy search
+- [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, `make slim`, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
+- [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions, campaigns and ad spend, leads), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, PII, limitations and tracing
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, worksheets, running, sorting and filtering, and what it won't let you do
 - [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, expandable columns with their kinds, the column focus, the node panel and copying a selector for `dbt`
@@ -126,4 +129,5 @@ docs/
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, and keeping the generator deterministic
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests, intermediate models and incremental models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and new marts
+- [CI: the pull-request gate](docs/guides/advanced/ci.md): what the gate runs and why, reproducing a failing step locally, and adding a check
 - [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers
