@@ -186,6 +186,16 @@ describe("LineageScreen", () => {
     expect(document.querySelector(".mantine-Loader-root")).toBeNull();
   });
 
+  it("Failing only with nothing failed says so in the default view, where exposures are off but available", async () => {
+    get.mockImplementation(
+      answerNodes(lineageGraph({ nodes: [], layers_available: ["staging", "marts", "exposure"] })),
+    );
+
+    mount("/lineage?failing=1");
+
+    expect(await screen.findByText("Nothing failed in the last full build")).toBeInTheDocument();
+  });
+
   it("a node= that the graph does not hold clears itself", async () => {
     get.mockImplementation(answerNodes());
 
@@ -468,6 +478,15 @@ describe("LineageScreen", () => {
       await open();
       expect(px()).toBeCloseTo(1200 - 260, 0);
       expect(warn).toHaveBeenCalled();
+    });
+
+    it("a node= in the address opens a panel that was left folded", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 260 }, collapsed: { panel: true } }));
+
+      await open("/lineage?node=model.s.a");
+
+      expect(await screen.findByText("Model a.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
     });
 
     it("a folded panel stays folded after a reload", async () => {

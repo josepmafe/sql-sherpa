@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { orderNodes } from "../../src/screens/lineage/layout";
@@ -109,6 +109,33 @@ describe("the Lineage viewport across redraws", () => {
     await buttons();
 
     await waitFor(() => expect(transform()).not.toMatch(/-50000/));
+    expect(transform()).not.toMatch(/translate\(0px,0px\)/);
+  });
+
+  it("paints a kept view in place at the first render, not at the origin", () => {
+    keepView(SUBJECT, KEPT);
+
+    render(canvas());
+
+    expect(transform()).toBe(KEPT_TRANSFORM);
+  });
+
+  it("a pan that ends while another subject is still being laid out is not kept under that subject", async () => {
+    keepView(SUBJECT, KEPT);
+    const view = render(canvas());
+    await waitFor(() => expect(transform()).toBe(KEPT_TRANSFORM));
+    let finish: (order: Map<string, number>) => void = () => {};
+    vi.mocked(orderNodes).mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    view.rerender(canvas({ nodes: [A, B, C], subject: "+c+" }));
+
+    fireEvent.wheel(document.querySelector(".react-flow__renderer")!, { deltaY: 400, ctrlKey: true });
+    await waitFor(() => expect(transform()).not.toBe(KEPT_TRANSFORM));
+    const panned = transform();
+    await new Promise((resolve) => setTimeout(resolve, 400)); // the wheel's end event comes 150 ms after its last tick
+    await act(async () => finish(new Map([A, B, C].map((n, index) => [n.unique_id, index]))));
+    await screen.findByRole("button", { name: /^c\b/ });
+
+    await waitFor(() => expect(transform()).not.toBe(panned));
     expect(transform()).not.toMatch(/translate\(0px,0px\)/);
   });
 

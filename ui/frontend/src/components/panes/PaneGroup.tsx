@@ -28,6 +28,8 @@ export type PaneGroupContext = {
   /** The layout stored for this group as last written (a pane clamps its own entry): a pane that comes back reads it. */
   latest: () => StoredLayout | undefined;
   collapsed: Readonly<Record<string, boolean>>;
+  /** The panes that have registered: until then a request to fold or open them is lost. */
+  registered: Readonly<Record<string, boolean>>;
   register: (paneId: string, entry: PaneEntry) => void;
   unregister: (paneId: string) => void;
   /** A pane's size changed: tracks its collapsed flag (the library folds a pane dragged below its minimum). */
@@ -54,11 +56,13 @@ export function usePaneGroup(): PaneGroupContext {
  */
 export function usePaneCollapse(id: string): {
   collapsed: boolean;
+  /** Whether the pane has registered with its group, so `setOpen` takes effect (the pane's own first effects run before). */
+  ready: boolean;
   toggle: () => void;
   setOpen: (open: boolean) => void;
   toggleRef: RefObject<HTMLButtonElement | null>;
 } {
-  const { collapsed, setCollapsed } = usePaneGroup();
+  const { collapsed, registered, setCollapsed } = usePaneGroup();
   const isCollapsed = collapsed[id] === true;
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const refocus = useRef(false);
@@ -69,6 +73,7 @@ export function usePaneCollapse(id: string): {
   }, [isCollapsed]);
   return {
     collapsed: isCollapsed,
+    ready: registered[id] === true,
     toggle: () => {
       refocus.current = true;
       setCollapsed(id, !isCollapsed);
@@ -90,6 +95,7 @@ type Props = {
 export function PaneGroup({ id, domId, direction, children }: Props) {
   const panes = useRef(new Map<string, PaneEntry>());
   const [collapsed, setCollapsedState] = useState<Record<string, boolean>>({});
+  const [registered, setRegistered] = useState<Record<string, boolean>>({});
   const [initial] = useState(() => loadLayout(id));
   const latest = useRef(initial);
 
@@ -127,8 +133,14 @@ export function PaneGroup({ id, domId, direction, children }: Props) {
       setCollapsedState((current) => (current[paneId] === flag ? current : { ...current, [paneId]: flag }));
     return {
       persist,
-      register: (paneId: string, entry: PaneEntry) => void panes.current.set(paneId, entry),
-      unregister: (paneId: string) => void panes.current.delete(paneId),
+      register: (paneId: string, entry: PaneEntry) => {
+        panes.current.set(paneId, entry);
+        setRegistered((current) => (current[paneId] ? current : { ...current, [paneId]: true }));
+      },
+      unregister: (paneId: string) => {
+        panes.current.delete(paneId);
+        setRegistered((current) => (current[paneId] ? { ...current, [paneId]: false } : current));
+      },
       report: setFlag,
       startCollapsed: (paneId: string) => setFlag(paneId, true),
       setCollapsed: (paneId: string, next: boolean) => {
@@ -157,6 +169,7 @@ export function PaneGroup({ id, domId, direction, children }: Props) {
       groupId: id,
       latest: () => latest.current,
       collapsed,
+      registered,
       register: actions.register,
       unregister: actions.unregister,
       report: actions.report,
@@ -164,7 +177,7 @@ export function PaneGroup({ id, domId, direction, children }: Props) {
       setCollapsed: actions.setCollapsed,
       persistSoon: () => queueMicrotask(() => actions.persist()),
     }),
-    [id, collapsed, actions],
+    [id, collapsed, registered, actions],
   );
 
   return (

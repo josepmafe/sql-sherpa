@@ -22,8 +22,6 @@ const GRAPH_MAX = 4000;
 const PANEL_DEFAULT = 260;
 const PANEL_MIN = 120;
 const PANEL_MAX = 2000;
-// The screen fills the viewport below the header and the main area's padding, as the Explorer does.
-const SCREEN_HEIGHT = "calc(100vh - 100px)";
 
 export function LineageScreen() {
   const [params, update] = useLineageParams();
@@ -102,7 +100,7 @@ export function LineageScreen() {
   };
 
   return (
-    <Flex direction="column" gap="md" h={SCREEN_HEIGHT}>
+    <Flex direction="column" gap="md" style={{ flex: 1, minHeight: 0 }}>
       <SelectorBar select={params.select} onSelect={(select) => update({ select })} error={error} columns={columns} />
       <LayerFilter
         available={graph?.layers_available ?? []}
@@ -147,7 +145,7 @@ export function LineageScreen() {
                   }}
                   columnsUnavailable={columnsUnavailable}
                   failingOnly={params.failingOnly}
-                  layersFiltered={graph.layers_available.some((layer) => !layers.includes(layer))}
+                  layersFiltered={graph.layers_available.some((layer) => DEFAULT_LAYERS.includes(layer) && !layers.includes(layer))}
                   buildState={graph.build.state}
                 />
               </Pane>

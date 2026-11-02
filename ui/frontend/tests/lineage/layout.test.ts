@@ -333,6 +333,35 @@ describe("expansion", () => {
   });
 });
 
+// The default view hides the exposure (the exposures layer is off), so it is the graph a person sees first.
+describe("the project's default view, without the exposure", () => {
+  const nodes = () => fixtureNodes().filter((n) => n.layer !== "exposure");
+  const edges = () => {
+    const hidden = new Set(fixtureNodes().filter((n) => n.layer === "exposure").map((n) => n.id));
+    return fixtureEdges().filter((e) => !hidden.has(e.source) && !hidden.has(e.target));
+  };
+  let order = new Map<string, number>();
+
+  beforeAll(async () => {
+    order = await orderNodes(nodes(), edges());
+  }, 30_000);
+
+  it("keeps the whole-graph thresholds against its own plain stack", () => {
+    const baseline = layoutMetrics(
+      rectsOf(plainStack(placeBands(nodes(), edges(), order), order), NO_HEIGHTS),
+      curvesOf(plainStack(placeBands(nodes(), edges(), order), order), defaultBezier, edges()),
+    );
+
+    const { positions, routes } = layout(nodes(), edges(), order);
+    const metrics = layoutMetrics(rectsOf(positions, NO_HEIGHTS), curvesOf(positions, routed(routes), edges()));
+
+    expect(metrics.edgesBehindNodes).toBe(0);
+    expect(metrics.crossings).toBeLessThanOrEqual(0.4 * baseline.crossings);
+    expect(metrics.edgeTravel).toBeLessThanOrEqual(0.7 * baseline.edgeTravel);
+    expect(metrics.height).toBeLessThanOrEqual(1.1 * baseline.height);
+  });
+});
+
 describe("the project's whole graph", () => {
   // Measured with the plain stack and React Flow's default curve on this fixture, in the API's order, the order the app
   // feeds ELK (UI spec §6.5). ELK's ranks depend on the input order, so these numbers are for that order only.
@@ -404,11 +433,11 @@ beforeAll(async () => {
 type CurveFn = (start: Point, end: Point, key: string) => Point[];
 
 // Today's stacking: every column's real nodes in order, ROW_GAP apart, gaps ignored.
-function plainStack(placement: ReturnType<typeof placeBands>): Map<string, Point> {
+function plainStack(placement: ReturnType<typeof placeBands>, order = fixtureOrder): Map<string, Point> {
   const positions = new Map<string, Point>();
   for (const column of placement.columns) {
     let y = 0;
-    const real = column.items.filter((i) => i.edge === undefined).sort((a, b) => fixtureOrder.get(a.id)! - fixtureOrder.get(b.id)!);
+    const real = column.items.filter((i) => i.edge === undefined).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
     for (const item of real) {
       positions.set(item.id, { x: column.x, y });
       y += NODE_HEIGHT + ROW_GAP;
@@ -422,8 +451,8 @@ function rectsOf(positions: Map<string, Point>, heights: Map<string, number>): R
 }
 
 // Every edge from its source handle to its target handle, drawn by `curve`.
-function curvesOf(positions: Map<string, Point>, curve: CurveFn): Curve[] {
-  return fixtureEdges().map(({ source, target }) => {
+function curvesOf(positions: Map<string, Point>, curve: CurveFn, edges = fixtureEdges()): Curve[] {
+  return edges.map(({ source, target }) => {
     const [s, t] = [positions.get(source)!, positions.get(target)!];
     const start = { x: s.x + NODE_WIDTH, y: s.y + HANDLE_Y };
     const end = { x: t.x, y: t.y + HANDLE_Y };

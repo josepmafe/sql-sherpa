@@ -93,12 +93,13 @@ interface NodePanelProps {
 // Folded, it is its title bar; selecting a node opens it.
 export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }: NodePanelProps) {
   const node = useLineageNode(uniqueId);
-  const { collapsed, toggle } = usePaneCollapse(NODE_PANEL);
-  // Only the selection is a dependency: toggling must not rerun it.
+  const { collapsed, toggle, setOpen, ready } = usePaneCollapse(NODE_PANEL);
+  // Selecting a node opens a folded panel, also one folded by the stored layout (once the pane is there to open). Only
+  // the selection and the pane's arrival are dependencies: folding it by hand must not reopen it.
   useEffect(() => {
-    if (uniqueId !== undefined && collapsed) toggle();
+    if (uniqueId !== undefined && ready && collapsed) setOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uniqueId]);
+  }, [uniqueId, ready]);
   // The tab stays while another node is selected, so the same tab can be read across nodes. A focused column opens
   // the Columns tab, where it is marked.
   const [tab, setTab] = useState<string | null>(column === undefined ? OVERVIEW : COLUMNS);

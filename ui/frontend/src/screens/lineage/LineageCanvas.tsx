@@ -236,7 +236,11 @@ function Canvas({
         deleteKeyCode={null}
         selectionKeyCode={null}
         minZoom={MIN_ZOOM}
-        onMoveEnd={(_, viewport) => keepView(subject, viewport)}
+        // Only a view placed for this layout is the subject's: a pan during the layout is still the old graph's.
+        onMoveEnd={(_, viewport) => {
+          if (fittedFor.current === layoutNodes) keepView(subject, viewport);
+        }}
+        defaultViewport={keptViewport(subject)}
         // A click or Enter on a node button bubbles up to here (and gives the node wrapper its pointer events).
         onNodeClick={(_, node) => node.type === GRAPH_NODE && onSelect(node.id)}
         onPaneClick={() => onSelect(undefined)}
