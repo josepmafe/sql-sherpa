@@ -770,22 +770,26 @@ test("a failing test turns its node red and a warning stays out of Failing only"
   }
 });
 
-test("the tests of dim_date expand to their SQL and their definition", async ({ page }) => {
+test("the tests of dim_date open in a dialog with their SQL and their definition", async ({ page }) => {
   await page.goto("/lineage");
   await graphNode(page, "dim_date").click();
   const panel = page.getByRole("complementary", { name: "Node details" });
   await panel.getByRole("tab", { name: /^Tests/ }).click();
 
-  await panel.getByRole("button", { name: "assert_dim_date_black_friday_weeks" }).click();
+  await panel.getByRole("button", { name: "Show assert_dim_date_black_friday_weeks" }).click();
 
-  const singular = panel.getByRole("tabpanel", { name: /^Tests/ });
+  const singular = page.getByRole("dialog", { name: "assert_dim_date_black_friday_weeks" });
   await expect(singular.getByRole("tab", { name: "Raw SQL" })).toBeVisible();
   await expect(singular.locator(".cm-content").first()).toContainText("select");
   await expect(singular.getByText("tests/singular/assert_dim_date_black_friday_weeks.sql")).toBeVisible();
+  await page.screenshot({ path: "shots/test-dialog-dim-date.png" });
+  await page.keyboard.press("Escape");
+  await expect(singular).toBeHidden();
+  await expect(panel.getByRole("heading", { name: "dim_date", level: 4 })).toBeVisible();
 
-  await panel.getByRole("button", { name: /^unique_dim_date_/ }).first().click();
+  await panel.getByRole("button", { name: /^Show unique_dim_date_/ }).first().click();
 
-  await expect(panel.getByLabel("Definition").first()).toContainText('"name": "unique"');
+  await expect(page.getByRole("dialog").getByLabel("Definition")).toContainText('"name": "unique"');
 });
 
 const viewportTransform = (page: Page) =>

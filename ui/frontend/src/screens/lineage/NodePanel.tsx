@@ -9,6 +9,7 @@ import {
   Flex,
   Group,
   Loader,
+  Modal,
   ScrollArea,
   Stack,
   Table,
@@ -24,10 +25,11 @@ import {
   IconCircleCheck,
   IconCircleDashed,
   IconCircleX,
+  IconEye,
   IconPlayerSkipForward,
   IconX,
 } from "@tabler/icons-react";
-import { useClipboard } from "@mantine/hooks";
+import { useClipboard, useDisclosure } from "@mantine/hooks";
 import { type ComponentType, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -63,6 +65,9 @@ const NO_TESTS = "No test is defined on this node.";
 const NO_SQL = "Sources, seeds and exposures have no SQL.";
 // gray-7 on white and dark-1 on the dark surface both clear 4.5:1 (WCAG AA); a faded opacity would not.
 const DISABLED_TAB_COLOR = "light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1))";
+// A test's dialog: about 80vw up to 900 px, its body scrolling on its own (UI spec §6.5).
+const TEST_DIALOG_WIDTH = "min(80vw, 900px)";
+const TEST_DIALOG_BODY_HEIGHT = "70vh";
 const RAW = "raw";
 const COMPILED = "compiled";
 
@@ -109,12 +114,12 @@ export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }:
     if (column !== undefined) setTab(COLUMNS);
   }
 
-  // Esc clears the column focus, then the selection, unless it was meant for a text field or a menu.
+  // Esc clears the column focus, then the selection, unless it was meant for a text field, a menu or a dialog.
   useEffect(() => {
     if (uniqueId === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (event.key !== "Escape" || event.defaultPrevented || target.closest("input, textarea, [role=listbox]")) return;
+      if (event.key !== "Escape" || event.defaultPrevented || target.closest("input, textarea, [role=listbox], [role=dialog]")) return;
       if (column === undefined) onClose();
       else onFocusColumn(undefined);
     };
@@ -220,7 +225,7 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
           <ColumnsTable columns={d.columns} focused={column} onFocusColumn={onFocusColumn} />
         </Tabs.Panel>
         <Tabs.Panel value={TESTS} pt="xs">
-          <TestList tests={d.tests} />
+          <TestList key={d.unique_id} tests={d.tests} />
         </Tabs.Panel>
         <Tabs.Panel value={SQL} pt="xs">
           <SqlTabs d={d} />
@@ -426,28 +431,40 @@ function TestList({ tests }: { tests: TestInfo[] }) {
   );
 }
 
-// A test row expands to where the test is written and what it checks; the request waits for the first expansion.
+// An eye button opens the test in a dialog, which has the room to read where it is written and what it checks; the
+// request waits for the first opening.
 function TestRow({ test }: { test: TestInfo }) {
-  const [expanded, setExpanded] = useState(false);
-  const panelId = `test-${test.unique_id}`;
+  const [opened, { open, close }] = useDisclosure(false);
   return (
-    <Box>
+    <Group gap={4} wrap="nowrap" align="baseline">
+      <ActionIcon
+        variant="subtle"
+        color="gray"
+        size="xs"
+        aria-label={`Show ${test.name}`}
+        aria-haspopup="dialog"
+        onClick={open}
+      >
+        <IconEye size={14} />
+      </ActionIcon>
       <Text size="xs">
-        <UnstyledButton
-          aria-expanded={expanded}
-          aria-controls={panelId}
-          onClick={() => setExpanded((open) => !open)}
-          style={{ font: "inherit" }}
-        >
-          <span data-testid="test-name">{test.name}</span>
-        </UnstyledButton>
+        <span data-testid="test-name">{test.name}</span>
         <Text component="span" size="xs" c="dimmed">
           {" "}
           {[test.kind, test.column, test.severity === "warn" ? "warn" : null].filter(Boolean).join(" · ")}
         </Text>
       </Text>
-      <div id={panelId}>{expanded && <TestDefinition uniqueId={test.unique_id} />}</div>
-    </Box>
+      <Modal
+        opened={opened}
+        onClose={close}
+        title={test.name}
+        size={TEST_DIALOG_WIDTH}
+        closeButtonProps={{ "aria-label": "Close" }}
+        styles={{ body: { maxHeight: TEST_DIALOG_BODY_HEIGHT, overflowY: "auto" } }}
+      >
+        <TestDefinition uniqueId={test.unique_id} />
+      </Modal>
+    </Group>
   );
 }
 
@@ -465,9 +482,12 @@ function TestBody({ t }: { t: TestDetails }) {
   const clipboard = useClipboard();
   return (
     <Stack gap="xs" my="xs">
-      <Text size="xs">
-        <b>File:</b> <Code>{t.file_path}</Code>
-      </Text>
+      <Group gap="xs">
+        <Badge variant="light">{t.kind}</Badge>
+        <Text size="xs">
+          <b>File:</b> <Code>{t.file_path}</Code>
+        </Text>
+      </Group>
       <Group gap="xs">
         <Button size="xs" variant="default" onClick={() => clipboard.copy(t.selector)}>
           {clipboard.copied ? "Copied" : "Copy dbt selector"}

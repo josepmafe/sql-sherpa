@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -243,8 +243,9 @@ describe("NodePanel", () => {
   });
 
   describe("a test row", () => {
-    const row = (name: string) => screen.getByRole("button", { name });
-    const viewer = () => screen.getByRole("tabpanel", { name: "Tests (3)" }).querySelector(".cm-content");
+    const eye = (name: string) => screen.getByRole("button", { name: `Show ${name}` });
+    const dialog = (name: string) => screen.getByRole("dialog", { name });
+    const viewer = (name: string) => dialog(name).querySelector(".cm-content");
     const testCalls = () => get.mock.calls.filter(([path]) => path === "/api/lineage/tests/{unique_id}");
 
     async function openTests() {
@@ -252,10 +253,17 @@ describe("NodePanel", () => {
       await openTab("Tests (3)");
     }
 
-    it("is a collapsed button that asks for nothing until it is expanded", async () => {
+    it("is its name as plain text after an eye button that opens a dialog, and asks for nothing yet", async () => {
       await openTests();
 
-      expect(row("assert_totals")).toHaveAttribute("aria-expanded", "false");
+      expect(eye("assert_totals")).toHaveAttribute("aria-haspopup", "dialog");
+      const tests = within(screen.getByRole("tabpanel", { name: "Tests (3)" }));
+      expect(tests.getByText("assert_totals")).toBeVisible();
+      expect(tests.queryByRole("button", { name: "assert_totals" })).toBeNull();
+      expect(eye("assert_totals").compareDocumentPosition(tests.getAllByTestId("test-name")[0]!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
       expect(testCalls()).toHaveLength(0);
     });
 
@@ -273,17 +281,18 @@ describe("NodePanel", () => {
       );
       await openTests();
 
-      await user.click(row("assert_totals"));
+      await user.click(eye("assert_totals"));
 
-      expect(row("assert_totals")).toHaveAttribute("aria-expanded", "true");
-      expect(await screen.findByRole("tab", { name: "Raw SQL" })).toHaveAttribute("aria-selected", "true");
-      expect(viewer()).toHaveTextContent("select * from {{ ref('fct_orders') }}");
-      expect(screen.getByRole("tab", { name: "Compiled SQL" })).toBeVisible();
-      expect(screen.getByText("tests/singular/assert_totals.sql")).toBeVisible();
+      const view = within(dialog("assert_totals"));
+      expect(await view.findByRole("tab", { name: "Raw SQL" })).toHaveAttribute("aria-selected", "true");
+      expect(viewer("assert_totals")).toHaveTextContent("select * from {{ ref('fct_orders') }}");
+      expect(view.getByRole("tab", { name: "Compiled SQL" })).toBeVisible();
+      expect(view.getByText("tests/singular/assert_totals.sql")).toBeVisible();
+      expect(view.getByText("singular")).toBeVisible();
       expect(testCalls()).toEqual([
         ["/api/lineage/tests/{unique_id}", { params: { path: { unique_id: "test.sherpa.assert_totals" } } }],
       ]);
-      await user.click(screen.getByRole("button", { name: "Copy dbt selector" }));
+      await user.click(view.getByRole("button", { name: "Copy dbt selector" }));
       expect(await navigator.clipboard.readText()).toBe("assert_totals");
     });
 
@@ -302,11 +311,12 @@ describe("NodePanel", () => {
       );
       await openTests();
 
-      await user.click(row("unique_order_id"));
+      await user.click(eye("unique_order_id"));
 
-      expect(await screen.findByLabelText("Definition")).toHaveTextContent('"name": "unique"');
-      expect(viewer()).toHaveTextContent("having count(*) > 1");
-      expect(screen.queryByRole("tab", { name: "Raw SQL" })).toBeNull();
+      const view = within(dialog("unique_order_id"));
+      expect(await view.findByLabelText("Definition")).toHaveTextContent('"name": "unique"');
+      expect(viewer("unique_order_id")).toHaveTextContent("having count(*) > 1");
+      expect(view.queryByRole("tab", { name: "Raw SQL" })).toBeNull();
     });
 
     it("a unit test shows what it gives and expects, and no SQL", async () => {
@@ -322,13 +332,13 @@ describe("NodePanel", () => {
       );
       await openTests();
 
-      await user.click(row("recent_orders"));
+      await user.click(eye("recent_orders"));
 
-      const definition = await screen.findByLabelText("Definition");
+      const definition = await within(dialog("recent_orders")).findByLabelText("Definition");
       expect(definition).toHaveTextContent('"given"');
       expect(definition).toHaveTextContent('"revenue": 5');
-      expect(viewer()).toBeNull();
-      expect(screen.queryByRole("note")).toBeNull();
+      expect(viewer("recent_orders")).toBeNull();
+      expect(within(dialog("recent_orders")).queryByRole("note")).toBeNull();
     });
 
     it("says why a compiled test has no SQL to show", async () => {
@@ -336,40 +346,98 @@ describe("NodePanel", () => {
       get.mockResolvedValue(ok(testDetails({ sql_note: "the compiled SQL is not in the dbt target" })));
       await openTests();
 
-      await user.click(row("assert_totals"));
+      await user.click(eye("assert_totals"));
 
-      expect(await screen.findByRole("note")).toHaveTextContent("the compiled SQL is not in the dbt target");
+      expect(await within(dialog("assert_totals")).findByRole("note")).toHaveTextContent(
+        "the compiled SQL is not in the dbt target",
+      );
     });
 
-    it("collapsing and expanding again asks once", async () => {
+    it("closing and opening again asks once", async () => {
       const user = userEvent.setup();
       get.mockResolvedValue(ok(testDetails({ raw_sql: "select 1" })));
       await openTests();
 
-      await user.click(row("assert_totals"));
+      await user.click(eye("assert_totals"));
       await screen.findByRole("tab", { name: "Raw SQL" });
-      await user.click(row("assert_totals"));
-      expect(screen.queryByRole("tab", { name: "Raw SQL" })).toBeNull();
-      await user.click(row("assert_totals"));
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await user.click(eye("assert_totals"));
 
       expect(await screen.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
       expect(testCalls()).toHaveLength(1);
     });
 
-    it("a failed request shows the error with a retry that asks again", async () => {
+    it("a failed request shows the error with a retry that asks again, inside the dialog", async () => {
       const user = userEvent.setup();
       get
         .mockResolvedValueOnce(apiFailure("test_not_found", "no test with id 'test.sherpa.assert_totals'", 404))
         .mockResolvedValueOnce(ok(testDetails({ raw_sql: "select 1" })));
       await openTests();
 
-      await user.click(row("assert_totals"));
-      expect(await screen.findByText("Could not load the test")).toBeVisible();
-      expect(screen.getByText("test_not_found")).toBeVisible();
-      await user.click(screen.getByRole("button", { name: "Retry" }));
+      await user.click(eye("assert_totals"));
+      const view = within(dialog("assert_totals"));
+      expect(await view.findByText("Could not load the test")).toBeVisible();
+      expect(view.getByText("test_not_found")).toBeVisible();
+      await user.click(view.getByRole("button", { name: "Retry" }));
 
-      expect(await screen.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
+      expect(await view.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
       expect(testCalls()).toHaveLength(2);
+    });
+
+    describe("the dialog", () => {
+      beforeEach(() => {
+        get.mockResolvedValue(ok(testDetails({ raw_sql: "select 1" })));
+      });
+
+      it("closes on Escape without closing the node panel, and the focus returns to the eye button", async () => {
+        const user = userEvent.setup();
+        const { onClose } = mount();
+        await openTab("Tests (3)");
+        await user.click(eye("assert_totals"));
+        await screen.findByRole("tab", { name: "Raw SQL" });
+
+        await user.keyboard("{Escape}");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(onClose).not.toHaveBeenCalled();
+        await waitFor(() => expect(eye("assert_totals")).toHaveFocus());
+      });
+
+      it("closes with its close button and the focus returns to the eye button", async () => {
+        const user = userEvent.setup();
+        await openTests();
+        await user.click(eye("assert_totals"));
+
+        await user.click(within(dialog("assert_totals")).getByRole("button", { name: "Close" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        await waitFor(() => expect(eye("assert_totals")).toHaveFocus());
+      });
+
+      it("closes on a click outside it", async () => {
+        const user = userEvent.setup();
+        await openTests();
+        await user.click(eye("assert_totals"));
+        await screen.findByRole("dialog");
+
+        await user.click(document.querySelector(".mantine-Modal-overlay") as HTMLElement);
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      });
+
+      it("selecting another node closes it", async () => {
+        const user = userEvent.setup();
+        const { select } = mount();
+        await openTab("Tests (3)");
+        await user.click(eye("assert_totals"));
+        await screen.findByRole("dialog");
+        useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, unique_id: "model.sherpa.other", name: "other" }) });
+
+        select("model.sherpa.other");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      });
     });
   });
 
