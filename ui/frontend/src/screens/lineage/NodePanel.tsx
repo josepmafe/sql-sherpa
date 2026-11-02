@@ -113,7 +113,7 @@ export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }:
     if (uniqueId === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (event.key !== "Escape" || target.closest("input, textarea, [role=listbox]")) return;
+      if (event.key !== "Escape" || event.defaultPrevented || target.closest("input, textarea, [role=listbox]")) return;
       if (column === undefined) onClose();
       else onFocusColumn(undefined);
     };

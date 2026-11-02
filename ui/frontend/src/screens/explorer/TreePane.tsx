@@ -2,7 +2,7 @@ import { Box, ScrollArea, Stack } from "@mantine/core";
 import { IconListTree } from "@tabler/icons-react";
 import { type ComponentProps, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { CollapseToggle, usePaneCollapse, usePeek } from "../../components/panes";
+import { CollapseToggle, isFreeEscape, usePaneCollapse, usePeek } from "../../components/panes";
 import { CatalogTree } from "./CatalogTree";
 
 export const TREE_PANE = "tree";
@@ -20,14 +20,19 @@ type Props = Omit<TreeProps, "headerAction">;
 
 /** The tree as a pane. Folded, it is a strip with its icon; the strip opens the tree over the editor on hover or focus (UI spec §6.1). */
 export function TreePane({ onSelect, ...tree }: Props) {
-  const { collapsed, toggle } = usePaneCollapse(TREE_PANE);
+  const { collapsed, toggle, toggleRef } = usePaneCollapse(TREE_PANE);
   const { peeking, peekProps } = usePeek(collapsed);
   const [dismissed, setDismissed] = useState(false);
   const open = peeking && !dismissed;
   const strip = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<DOMRect>();
   useLayoutEffect(() => {
-    if (open) setAnchor(strip.current?.getBoundingClientRect());
+    if (!open) return;
+    const measure = () => setAnchor(strip.current?.getBoundingClientRect());
+    measure();
+    // The strip moves with the window (a resize changes the layout above it).
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, [open]);
 
   // A dismissed peek stays dismissed until the pointer and the focus have left, so the next peek can open.
@@ -39,11 +44,14 @@ export function TreePane({ onSelect, ...tree }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    // Innermost layer: it takes the Escape before the layers under it see it.
     const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDismissed(true);
+      if (!isFreeEscape(event)) return;
+      event.preventDefault();
+      setDismissed(true);
     };
-    document.addEventListener("keydown", close);
-    return () => document.removeEventListener("keydown", close);
+    document.addEventListener("keydown", close, true);
+    return () => document.removeEventListener("keydown", close, true);
   }, [open]);
 
   if (!collapsed) {
@@ -53,7 +61,13 @@ export function TreePane({ onSelect, ...tree }: Props) {
           {...tree}
           onSelect={onSelect}
           headerAction={
-            <CollapseToggle collapsed={false} onToggle={toggle} foldLabel={FOLD_LABEL} openLabel={OPEN_LABEL} />
+            <CollapseToggle
+              collapsed={false}
+              onToggle={toggle}
+              foldLabel={FOLD_LABEL}
+              openLabel={OPEN_LABEL}
+              buttonRef={toggleRef}
+            />
           }
         />
       </ScrollArea>
@@ -62,7 +76,13 @@ export function TreePane({ onSelect, ...tree }: Props) {
 
   return (
     <Stack ref={strip} align="center" gap="xs" pt="xs" h="100%" {...peekProps}>
-      <CollapseToggle collapsed onToggle={toggle} foldLabel={FOLD_LABEL} openLabel={OPEN_LABEL} />
+      <CollapseToggle
+        collapsed
+        onToggle={toggle}
+        foldLabel={FOLD_LABEL}
+        openLabel={OPEN_LABEL}
+        buttonRef={toggleRef}
+      />
       <IconListTree size={ICON_SIZE} aria-hidden />
       {/* Fixed, so the pane's clipping does not cut it; it stays here in the DOM so the Tab key goes from the strip's
           button into the tree. */}

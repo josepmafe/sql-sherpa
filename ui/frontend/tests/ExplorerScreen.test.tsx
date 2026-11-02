@@ -15,7 +15,7 @@ import {
 } from "../src/screens/explorer/worksheetStore";
 import { catalog, health, noContent, ok, queryResponse, table } from "./fixtures/api";
 import { stubPaneLayout } from "./fixtures/panes";
-import { editors, isShown, renderWithProviders, wideScreen } from "./fixtures/render";
+import { editors, isShown, renderWithProviders, shownEditor, wideScreen } from "./fixtures/render";
 
 // UI spec §6.4: the width that fits the widest column row of the marts, below the 480 px maximum.
 const TREE_DEFAULT_PX = 380;
@@ -614,6 +614,117 @@ describe("ExplorerScreen overlay", () => {
 
     expect(screen.queryByRole("menuitem", { name: "Preview 100 rows" })).not.toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Table details" })).toBeInTheDocument();
+  });
+});
+
+describe("ExplorerScreen keyboard and window changes", () => {
+  const LAYOUT_KEY = "sherpa.v1.layout.explorer";
+  const press = (name: string) => screen.getByRole("button", { name });
+  const tableRow = () => screen.queryByRole("button", { name: "fct_orders" });
+
+  beforeEach(() => {
+    localStorage.clear();
+    useHealth.mockReset().mockReturnValue({ data: health() });
+    post.mockReset();
+    post.mockImplementation(() => new Promise(() => {}));
+    stubPaneLayout();
+  });
+
+  it.each([
+    ["the table tree", "Collapse the table tree", "Open the table tree"],
+    ["the Inspector", "Collapse the Inspector", "Open the Inspector"],
+  ])("Enter on the button of %s moves the focus to the button that replaces it, folding and opening", async (_pane, fold, open) => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
+    renderScreen();
+    await settleLayout();
+    act(() => press(fold).focus());
+
+    await user.keyboard("{Enter}");
+    expect(press(open)).toHaveFocus();
+    expect(screen.queryByRole("region", { name: "Table tree" })).not.toBeInTheDocument(); // the focus did not start a peek
+
+    await user.keyboard("{Enter}");
+    expect(press(fold)).toHaveFocus();
+  });
+
+  it("narrowing the window past 1280 px after a click on a table opens no overlay and leaves the focus in the editor", async () => {
+    const setWide = controllableScreen(true);
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+    act(() => shownEditor().focus());
+
+    setWide(false);
+    await settleLayout();
+
+    expect(screen.queryByRole("complementary", { name: "Table details" })).not.toBeInTheDocument();
+    expect(shownEditor().hasFocus).toBe(true);
+  });
+
+  it("widening the window with the focus in the Inspector overlay puts it back on the table's row", async () => {
+    const setWide = controllableScreen(false);
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+    expect(screen.getByRole("heading", { name: "Table details" })).toHaveFocus();
+
+    setWide(true);
+    await settleLayout();
+
+    expect(screen.getByRole("button", { name: "fct_orders" })).toHaveFocus();
+  });
+
+  it("Escape closes only the innermost layer: the tree's peek, then the Inspector overlay", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 280 }, collapsed: { tree: true } }));
+    renderScreen("/explorer?table=fct_orders");
+    await settleLayout();
+    const strip = await screen.findByRole("button", { name: "Open the table tree" });
+    act(() => strip.focus());
+    expect(await screen.findByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Table details" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(tableRow()).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Table details" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("complementary", { name: "Table details" })).not.toBeInTheDocument();
+  });
+
+  it("the tree's peek leaves an Escape that closes a menu inside it to the menu", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 280 }, collapsed: { tree: true } }));
+    renderScreen();
+    await settleLayout();
+    act(() => press("Open the table tree").focus());
+    await user.click(await screen.findByRole("button", { name: "Actions for fct_orders" }));
+    expect(await screen.findByRole("menuitem", { name: "Preview 100 rows" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menuitem", { name: "Preview 100 rows" })).not.toBeInTheDocument();
+    expect(tableRow()).toBeInTheDocument();
+  });
+
+  it("the tree's peek follows its strip when the window is resized", async () => {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 280 }, collapsed: { tree: true } }));
+    renderScreen();
+    await settleLayout();
+    const strip = press("Open the table tree").parentElement!;
+    const rect = vi.spyOn(strip, "getBoundingClientRect");
+    rect.mockReturnValue(new DOMRect(0, 100, 40, 500));
+    act(() => press("Open the table tree").focus());
+    const region = () => screen.getByRole("region", { name: "Table tree" });
+    expect(region()).toHaveStyle({ top: "100px", height: "500px", left: "40px" });
+
+    rect.mockReturnValue(new DOMRect(0, 160, 40, 440));
+    act(() => void window.dispatchEvent(new Event("resize")));
+
+    expect(region()).toHaveStyle({ top: "160px", height: "440px" });
   });
 });
 

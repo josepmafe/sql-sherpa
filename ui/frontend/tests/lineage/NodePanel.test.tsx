@@ -428,6 +428,21 @@ describe("NodePanel", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("Esc that a layer above it already took does not close it", async () => {
+    const user = userEvent.setup();
+    const { onClose } = mount();
+    const take = (event: KeyboardEvent) => event.preventDefault();
+    document.addEventListener("keydown", take, true);
+
+    try {
+      await user.keyboard("{Escape}");
+    } finally {
+      document.removeEventListener("keydown", take, true);
+    }
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("Esc does nothing with no node selected", async () => {
     const user = userEvent.setup();
     const { onClose } = mount(null);

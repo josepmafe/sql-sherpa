@@ -1,11 +1,11 @@
 import { Alert, Box, Button, Flex, Group, Tabs } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useSearchParams } from "react-router-dom";
 
 import { useCatalog, useHealth } from "../../api/queries";
-import { Pane, PaneGroup, PaneHandle } from "../../components/panes";
+import { isFreeEscape, Pane, PaneGroup, PaneHandle } from "../../components/panes";
 import { INSPECTOR_PANE, InspectorOverlay, InspectorPane } from "./InspectorPane";
 import { QueryHistory } from "./QueryHistory";
 import { TREE_PANE, TREE_STRIP_WIDTH, TreePane } from "./TreePane";
@@ -54,7 +54,6 @@ const VISUALLY_HIDDEN_STYLE = {
   border: 0,
 } as const;
 const SKIP_SHOWN_STYLE = { position: "fixed", top: 8, left: 8, zIndex: 1000 } as const;
-const POPUP_SELECTOR = '[role="menu"], [role="listbox"], .cm-tooltip';
 const DATABASE_DOWN = "Database unavailable: queries run again once it is back";
 
 export function ExplorerScreen() {
@@ -106,6 +105,12 @@ export function ExplorerScreen() {
     setInspecting(true);
     setInspectCount((previous) => previous + 1);
   };
+  // A click in a wide window does not carry over to a narrow one: crossing 1280 px opens no overlay.
+  const [wasWide, setWasWide] = useState(wide);
+  if (wasWide !== wide) {
+    setWasWide(wide);
+    setInspecting(false);
+  }
   const overlayOpen = !wide && inspecting;
   // Closing the overlay puts the focus back on the row of the table that opened it.
   const closeInspector = useCallback(() => {
@@ -117,12 +122,19 @@ export function ExplorerScreen() {
   useEffect(() => {
     if (overlayOpen) inspectorHeading.current?.focus();
   }, [overlayOpen, selected]);
+  // Widening the window removes the overlay: a focus that was in it goes back to the table's row, not to the page.
+  const overlayWasOpen = useRef(false);
+  useLayoutEffect(() => {
+    if (wide && overlayWasOpen.current && document.activeElement === document.body && selected !== undefined) {
+      document.querySelector<HTMLElement>(`[data-table="${CSS.escape(selected)}"]`)?.focus();
+    }
+    overlayWasOpen.current = overlayOpen;
+  }, [wide, overlayOpen, selected]);
   useEffect(() => {
     if (!overlayOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      // Escape that closes a completion list or a menu is theirs, not the overlay's.
-      const inPopup = event.target instanceof Element && event.target.closest(POPUP_SELECTOR) !== null;
-      if (event.key === "Escape" && !event.defaultPrevented && !inPopup) closeInspector();
+      // Escape that closes a completion list, a menu or a peek is theirs, not the overlay's.
+      if (isFreeEscape(event)) closeInspector();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);

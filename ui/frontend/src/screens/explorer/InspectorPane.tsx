@@ -19,11 +19,11 @@ type PaneProps = {
 
 /** The Inspector as the Explorer's right-hand pane (from 1280 px); folded, it is a strip with its icon. */
 export function InspectorPane({ table, inspectCount }: PaneProps) {
-  const { collapsed, toggle } = usePaneCollapse(INSPECTOR_PANE);
+  const { collapsed, toggle, setOpen, toggleRef } = usePaneCollapse(INSPECTOR_PANE);
 
   // The click that selects a table also opens the Inspector. Only the count is a dependency: toggling must not rerun it.
   useEffect(() => {
-    if (inspectCount > 0 && collapsed) toggle();
+    if (inspectCount > 0 && collapsed) setOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inspectCount]);
 
@@ -37,6 +37,7 @@ export function InspectorPane({ table, inspectCount }: PaneProps) {
             foldLabel="Collapse the Inspector"
             openLabel="Open the Inspector"
             side="right"
+            buttonRef={toggleRef}
           />
           <IconInfoCircle size={ICON_SIZE} aria-hidden />
         </Stack>
@@ -57,6 +58,7 @@ export function InspectorPane({ table, inspectCount }: PaneProps) {
               foldLabel="Collapse the Inspector"
               openLabel="Open the Inspector"
               side="right"
+              buttonRef={toggleRef}
             />
           </Group>
           <Inspector table={table} />
