@@ -1,7 +1,7 @@
 import { Button, Chip, Group, Switch, Text, VisuallyHidden } from "@mantine/core";
 import { useId } from "react";
 
-import type { Layer } from "./url";
+import { DEFAULT_LAYERS, type Layer } from "./url";
 
 type BuildState = "ok" | "no_build" | "unavailable";
 
@@ -11,7 +11,7 @@ const BUILD_NOTES: Record<Exclude<BuildState, "ok">, string> = {
 };
 
 interface LayerFilterProps {
-  // The layers the graph has (UI spec §6.5); `layers` undefined means all of them are shown.
+  // The layers the graph has (UI spec §6.5); `layers` undefined means the default ones (all but the exposures) are shown.
   available: Layer[];
   layers: Layer[] | undefined;
   onLayers: (layers: Layer[] | undefined) => void;
@@ -41,7 +41,8 @@ export function LayerFilter({
   const why = useId();
   const unavailable = columnsUnavailable !== undefined;
   const describedBy = unavailable ? why : undefined;
-  const shown = layers ?? available;
+  const byDefault = available.filter((layer) => DEFAULT_LAYERS.includes(layer));
+  const shown = layers ?? byDefault;
   return (
     <Group gap="md" align="center">
       <Chip.Group
@@ -50,7 +51,7 @@ export function LayerFilter({
         onChange={(value) => {
           const next = available.filter((layer) => value.includes(layer));
           if (next.length === 0) return; // no layer shown is not a view
-          onLayers(next.length === available.length ? undefined : next);
+          onLayers(next.length === byDefault.length && next.every((layer) => byDefault.includes(layer)) ? undefined : next);
         }}
       >
         <Group gap="xs">

@@ -43,6 +43,7 @@ type CanvasProps = ComponentProps<typeof LineageCanvas>;
 export function canvasProps(overrides: Partial<CanvasProps> = {}): CanvasProps {
   return {
     nodes: NO_NODES,
+    subject: "",
     edges: NO_EDGES,
     selected: undefined,
     column: undefined,

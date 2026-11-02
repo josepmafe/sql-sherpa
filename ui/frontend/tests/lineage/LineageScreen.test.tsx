@@ -310,6 +310,57 @@ describe("LineageScreen", () => {
     expect(screen.getByLabelText("Lineage graph")).toBeInTheDocument();
   });
 
+  describe("exposures", () => {
+    const AGENT = lineageNode({ unique_id: "exposure.s.sherpa_agent", name: "sherpa_agent", layer: "exposure", domain: null, materialization: null });
+    const WITH_EXPOSURE = lineageGraph({
+      build: { state: "ok", node_count: 3, started_at: null },
+      layers_available: ["staging", "marts", "exposure"],
+      nodes: [...GRAPH.nodes, AGENT],
+      edges: [{ source: B, target: AGENT.unique_id }],
+    });
+    // The server keeps the nodes of the layers asked for (all of them without a filter) and the edges between them.
+    const filtered = (path: string, options: Options) => {
+      const asked = options.params.query?.layers?.split(",");
+      const nodes = WITH_EXPOSURE.nodes.filter((n) => asked === undefined || asked.includes(n.layer));
+      const kept = new Set(nodes.map((n) => n.unique_id));
+      const edges = WITH_EXPOSURE.edges.filter((e) => kept.has(e.source) && kept.has(e.target));
+      return path === LINEAGE ? Promise.resolve(ok({ ...WITH_EXPOSURE, nodes, edges })) : Promise.resolve(ok(DETAILS("")));
+    };
+    const graphNode = (name: string) => within(screen.getByLabelText("Lineage graph")).queryByRole("button", { name: new RegExp(`^${name}\b`) });
+
+    it("the default view has no exposure and the layer filter shows the layer unchecked", async () => {
+      get.mockImplementation(filtered);
+
+      mount("/lineage");
+
+      expect(await screen.findByText("2 nodes")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "exposure" })).not.toBeChecked();
+      expect(graphNode("sherpa_agent")).toBeNull();
+    });
+
+    it("switching the layer on asks for the exposures and shows them", async () => {
+      get.mockImplementation(filtered);
+      mount("/lineage");
+      await screen.findByText("2 nodes");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "exposure" }));
+
+      expect(await screen.findByText("3 nodes")).toBeInTheDocument();
+      expect(await nodeButton("sherpa_agent")).toBeVisible();
+      expect(lineageCalls().at(-1)?.layers?.split(",")).toContain("exposure");
+      expect(screen.getByRole("checkbox", { name: "exposure" })).toBeChecked();
+    });
+
+    it("a table-path view follows the same default", async () => {
+      get.mockImplementation(filtered);
+
+      mount("/lineage?select=%2Bb%2B");
+
+      expect(await screen.findByText("2 nodes")).toBeInTheDocument();
+      expect(graphNode("sherpa_agent")).toBeNull();
+    });
+  });
+
   it("a node= that the graph holds stays", async () => {
     get.mockImplementation(answerNodes());
 
@@ -322,7 +373,7 @@ describe("LineageScreen", () => {
   it("a load error hides the graph instead of showing a stale one", async () => {
     get.mockImplementation((_, options) =>
       Promise.resolve(
-        options.params.query?.layers === undefined ? ok(GRAPH) : apiFailure("internal", "boom", 500),
+        options.params.query?.layers === "staging" ? apiFailure("internal", "boom", 500) : ok(GRAPH),
       ),
     );
     mount("/lineage");

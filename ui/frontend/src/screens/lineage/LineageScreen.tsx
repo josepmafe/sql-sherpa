@@ -9,7 +9,7 @@ import { LayerFilter } from "./LayerFilter";
 import { LineageCanvas } from "./LineageCanvas";
 import { NODE_PANEL, NodePanel, PANEL_TITLE_BAR } from "./NodePanel";
 import { SelectorBar } from "./SelectorBar";
-import { useLineageParams } from "./url";
+import { DEFAULT_LAYERS, useLineageParams } from "./url";
 
 const UNSUPPORTED_SELECTOR = "unsupported_selector";
 const COLUMN_NOT_FOUND = "column_not_found";
@@ -32,11 +32,17 @@ export function LineageScreen() {
   const [wantColumns, setWantColumns] = useState(false);
   if (!wantColumns && params.column !== undefined) setWantColumns(true);
   const columns = wantColumns || params.column !== undefined;
-  const lineage = useLineage(params, { columns });
+  const layers = params.layers ?? DEFAULT_LAYERS;
+  const lineage = useLineage({ ...params, layers: [...layers] }, { columns });
   const error = lineage.error;
   // The last good graph stays while a selector fails (or loads), so the controls and the count do not vanish.
+  // The selector it answered is the graph's subject: while a new one loads, the old graph keeps its own.
   const [lastGood, setLastGood] = useState(lineage.data);
-  if (lineage.data !== undefined && lineage.data !== lastGood) setLastGood(lineage.data);
+  const [subject, setSubject] = useState(params.select);
+  if (lineage.data !== undefined && lineage.data !== lastGood) {
+    setLastGood(lineage.data);
+    setSubject(params.select);
+  }
   const graph = lineage.data ?? lastGood;
   // An unsupported selector shows under the selector box; the graph of the last good selector stays.
   const loadError = error !== null && !(error instanceof ApiRequestError && error.code === UNSUPPORTED_SELECTOR);
@@ -127,6 +133,7 @@ export function LineageScreen() {
                 <LineageCanvas
                   nodes={graph.nodes}
                   edges={graph.edges}
+                  subject={subject}
                   selected={params.node}
                   column={params.column}
                   onSelect={(node) => (node === undefined ? clearSelection() : update({ node, column: undefined }))}
@@ -140,7 +147,7 @@ export function LineageScreen() {
                   }}
                   columnsUnavailable={columnsUnavailable}
                   failingOnly={params.failingOnly}
-                  layersFiltered={params.layers !== undefined}
+                  layersFiltered={graph.layers_available.some((layer) => !layers.includes(layer))}
                   buildState={graph.build.state}
                 />
               </Pane>

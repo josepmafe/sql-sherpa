@@ -13,6 +13,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
   useStore,
+  useStoreApi,
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
 
@@ -25,6 +26,7 @@ import { type BandNode, edgeKey, type LayoutEdge, NODE_WIDTH, nodeHeight, type P
 import { useKeepSelectedInView } from "./reveal";
 import { ROUTED_EDGE, RoutedEdge } from "./RoutedEdge";
 import { useGraphLayout } from "./useGraphLayout";
+import { keepView, keptViewport, showsAnyNode } from "./viewport";
 
 type ApiNode = components["schemas"]["LineageNode"];
 type ApiEdge = components["schemas"]["LineageEdge"];
@@ -45,6 +47,8 @@ const LEGEND = "Column lineage follows the select list: columns used only in joi
 interface LineageCanvasProps {
   nodes: ApiNode[];
   edges: ApiEdge[];
+  // What the graph is about (its selector): a different one is fitted afresh, the same keeps the user's zoom and pan.
+  subject: string;
   selected: string | undefined;
   // The focused column of the selected node.
   column: string | undefined;
@@ -81,6 +85,7 @@ export function LineageCanvas(props: LineageCanvasProps) {
 }
 
 function Canvas({
+  subject,
   nodes,
   edges,
   selected,
@@ -116,21 +121,29 @@ function Canvas({
     [rows],
   );
   const { positions, routes, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
-  const { fitView } = useReactFlow();
+  const { fitView, getViewport, setViewport } = useReactFlow();
+  const store = useStoreApi();
   const measured = useStore(useMemo(() => measuredIn(layoutNodes), [layoutNodes]));
   const related = useMemo(() => relatedOf(edges, selected, focus), [edges, selected, focus]);
 
-  // Fit once per new order of the nodes, not after a selection or a restack, and only once React Flow has measured
-  // every node: a node reports its handles on its own (useUpdateNodeInternals), and a fit asked for earlier is
+  // Place the view once per new order of the nodes, not after a selection or a restack, and only once React Flow has
+  // measured every node: a node reports its handles on its own (useUpdateNodeInternals), and a fit asked for earlier is
   // answered by the first node that reports, framing that node alone. The nodes of this layout, not of the previous one,
-  // must be in the store. (useNodesInitialized never turns true here: the
-  // band labels have no handles.)
+  // must be in the store. (useNodesInitialized never turns true here: the band labels have no handles.)
+  // The subject's kept zoom and pan return after a redraw (a layer, "Failing only"); a new subject, or a kept view that
+  // shows no node, is fitted.
   const fittedFor = useRef<unknown>(undefined);
   useEffect(() => {
-    if (state !== "ready" || !measured || fittedFor.current === layoutNodes) return;
+    if (state !== "ready" || !measured || positions === undefined || fittedFor.current === layoutNodes) return;
     fittedFor.current = layoutNodes;
-    void fitView({ maxZoom: FIT_MAX_ZOOM });
-  }, [state, layoutNodes, measured, fitView]);
+    const { width, height } = store.getState();
+    const view = keptViewport(subject);
+    if (view !== undefined && showsAnyNode(positions, heights, view, { width, height })) {
+      void setViewport(view);
+      return;
+    }
+    void fitView({ maxZoom: FIT_MAX_ZOOM }).then(() => keepView(subject, getViewport()));
+  }, [state, layoutNodes, measured, positions, heights, subject, store, fitView, getViewport, setViewport]);
 
   useKeepSelectedInView(selected, state === "ready" && measured);
 
@@ -223,6 +236,7 @@ function Canvas({
         deleteKeyCode={null}
         selectionKeyCode={null}
         minZoom={MIN_ZOOM}
+        onMoveEnd={(_, viewport) => keepView(subject, viewport)}
         // A click or Enter on a node button bubbles up to here (and gives the node wrapper its pointer events).
         onNodeClick={(_, node) => node.type === GRAPH_NODE && onSelect(node.id)}
         onPaneClick={() => onSelect(undefined)}
