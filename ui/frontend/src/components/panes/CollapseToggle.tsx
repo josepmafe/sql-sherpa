@@ -1,4 +1,5 @@
 import { ActionIcon } from "@mantine/core";
+import type { Ref } from "react";
 import {
   IconLayoutBottombarCollapse,
   IconLayoutBottombarExpand,
@@ -23,15 +24,18 @@ type Props = {
   openLabel: string;
   /** The edge the pane folds to; its icon points that way. */
   side?: "left" | "right" | "bottom";
+  /** The button, for a pane whose open and folded states each render their own toggle (see `usePaneCollapse`). */
+  buttonRef?: Ref<HTMLButtonElement>;
 };
 
-export function CollapseToggle({ collapsed, onToggle, foldLabel, openLabel, side = "left" }: Props) {
+export function CollapseToggle({ collapsed, onToggle, foldLabel, openLabel, side = "left", buttonRef }: Props) {
   const Icon = ICONS[side][collapsed ? "expand" : "collapse"];
   return (
     <ActionIcon
       variant="subtle"
       color="gray"
       size="sm"
+      ref={buttonRef}
       aria-expanded={!collapsed}
       aria-label={collapsed ? openLabel : foldLabel}
       onClick={onToggle}

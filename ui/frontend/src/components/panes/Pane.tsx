@@ -17,9 +17,12 @@ type Props = {
 };
 
 export function Pane({ id, domId, defaultSize, minSize, maxSize, collapsedSize, children }: Props) {
-  const { stored: storedLayout, register, unregister, report, startCollapsed } = usePaneGroup();
+  const { latest, register, unregister, report, startCollapsed } = usePaneGroup();
   const panelRef = usePanelRef();
-  const [stored] = useState(() => storedLayout && clampLayout(storedLayout, { [id]: { min: minSize, max: maxSize } }));
+  const [stored] = useState(() => {
+    const layout = latest();
+    return layout && clampLayout(layout, { [id]: { min: minSize, max: maxSize } });
+  });
   const startsCollapsed = collapsedSize !== undefined && stored?.collapsed[id] === true;
   // A pane without a default size takes what the others leave: a pixel size stored under another window width would not add up.
   const sized = defaultSize !== undefined;
@@ -47,6 +50,8 @@ export function Pane({ id, domId, defaultSize, minSize, maxSize, collapsedSize, 
       id={domId ?? id}
       panelRef={panelRef}
       defaultSize={startsCollapsed ? collapsedSize : openSize}
+      // A window resize changes the pane that takes what is left, not the sized ones (UI spec §6.4).
+      groupResizeBehavior={sized ? "preserve-pixel-size" : undefined}
       minSize={minSize}
       maxSize={maxSize}
       collapsible={collapsedSize !== undefined}

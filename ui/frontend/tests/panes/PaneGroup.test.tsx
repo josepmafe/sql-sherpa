@@ -28,6 +28,34 @@ function Panes() {
   );
 }
 
+function ExtraToggle() {
+  const { collapsed, toggle } = usePaneCollapse("extra");
+  return (
+    <CollapseToggle collapsed={collapsed} onToggle={toggle} foldLabel="Fold the extra" openLabel="Open the extra" />
+  );
+}
+
+// A pane that comes and goes, like the Explorer's Inspector across 1280 px.
+function PanesWithExtra({ present }: { present: boolean }) {
+  return (
+    <MantineProvider env="test">
+      <PaneGroup id="test" direction="horizontal">
+        <Pane id="main" minSize={200} maxSize={2000}>
+          <div>main</div>
+        </Pane>
+        {present && (
+          <>
+            <PaneHandle label="Resize the extra" />
+            <Pane id="extra" defaultSize={300} minSize={200} maxSize={500} collapsedSize={48}>
+              <ExtraToggle />
+            </Pane>
+          </>
+        )}
+      </PaneGroup>
+    </MantineProvider>
+  );
+}
+
 async function renderPanes(): Promise<void> {
   render(<Panes />);
   await act(async () => {});
@@ -166,6 +194,38 @@ describe("PaneGroup", () => {
     expect(layout.sizes.side).toBeGreaterThan(300);
     expect(layout.sizes.extra).toBe(250);
     expect(layout.collapsed.extra).toBe(true);
+  });
+
+  it("moves the keyboard focus to the toggle that replaces the one pressed, folding and opening", async () => {
+    const user = userEvent.setup();
+    await renderPanes();
+    screen.getByRole("button", { name: "Fold the side" }).focus();
+
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Open the side" })).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Fold the side" })).toHaveFocus();
+  });
+
+  it("brings back a pane that left the group folded, with the size the user gave it", async () => {
+    const user = userEvent.setup();
+    const view = render(<PanesWithExtra present />);
+    await act(async () => {});
+    screen.getByRole("separator", { name: "Resize the extra" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    const dragged = (stored() as { sizes: { extra: number } }).sizes.extra;
+    await user.click(screen.getByRole("button", { name: "Fold the extra" }));
+
+    view.rerender(<PanesWithExtra present={false} />);
+    await act(async () => {});
+    view.rerender(<PanesWithExtra present />);
+    await act(async () => {});
+
+    expect(dragged).toBeGreaterThan(300);
+    expect((stored() as { collapsed: { extra: boolean } }).collapsed.extra).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Open the extra" }));
+    expect((stored() as { sizes: { extra: number } }).sizes.extra).toBe(dragged);
   });
 
   it("gives a group and its panes the DOM ids it is told, and stores under the layout ids", async () => {

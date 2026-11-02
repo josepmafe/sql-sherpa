@@ -1,4 +1,13 @@
-import { createContext, type ReactNode, useContext, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  type RefObject,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Group, type PanelImperativeHandle } from "react-resizable-panels";
 import { loadLayout, type StoredLayout, writeLayout } from "./layoutStorage";
 
@@ -16,8 +25,8 @@ export type PaneEntry = {
 
 export type PaneGroupContext = {
   groupId: string;
-  /** The layout stored for this group, as written (a pane clamps its own entry). */
-  stored: StoredLayout | undefined;
+  /** The layout stored for this group as last written (a pane clamps its own entry): a pane that comes back reads it. */
+  latest: () => StoredLayout | undefined;
   collapsed: Readonly<Record<string, boolean>>;
   register: (paneId: string, entry: PaneEntry) => void;
   unregister: (paneId: string) => void;
@@ -38,16 +47,34 @@ export function usePaneGroup(): PaneGroupContext {
   return context;
 }
 
-/** Whether pane `id` is folded, and a function that folds or opens it. Call it below the PaneGroup. */
+/**
+ * Whether pane `id` is folded, and functions that fold or open it. Call it below the PaneGroup.
+ * `toggle` is for the user's press: the toggle that replaces the pressed one (pass `toggleRef` to it) takes the
+ * focus, so a keyboard user stays where they were. `setOpen` changes the pane without moving the focus.
+ */
 export function usePaneCollapse(id: string): {
   collapsed: boolean;
   toggle: () => void;
+  setOpen: (open: boolean) => void;
+  toggleRef: RefObject<HTMLButtonElement | null>;
 } {
   const { collapsed, setCollapsed } = usePaneGroup();
   const isCollapsed = collapsed[id] === true;
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const refocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    toggleRef.current?.focus();
+  }, [isCollapsed]);
   return {
     collapsed: isCollapsed,
-    toggle: () => setCollapsed(id, !isCollapsed),
+    toggle: () => {
+      refocus.current = true;
+      setCollapsed(id, !isCollapsed);
+    },
+    setOpen: (open) => setCollapsed(id, !open),
+    toggleRef,
   };
 }
 
@@ -63,7 +90,8 @@ type Props = {
 export function PaneGroup({ id, domId, direction, children }: Props) {
   const panes = useRef(new Map<string, PaneEntry>());
   const [collapsed, setCollapsedState] = useState<Record<string, boolean>>({});
-  const [stored] = useState(() => loadLayout(id));
+  const [initial] = useState(() => loadLayout(id));
+  const latest = useRef(initial);
 
   // The functions do not depend on `collapsed`, so a pane's effects that call them do not rerun when a flag changes.
   const actions = useMemo(() => {
@@ -88,10 +116,12 @@ export function PaneGroup({ id, domId, direction, children }: Props) {
       }
       // A pane that is not in the group now (the Explorer's Inspector below 1280 px) keeps what was stored for it.
       const previous = loadLayout(id);
-      writeLayout(id, {
+      const written = {
         sizes: { ...previous?.sizes, ...sizes },
         collapsed: { ...previous?.collapsed, ...flags },
-      });
+      };
+      writeLayout(id, written);
+      latest.current = written;
     };
     const setFlag = (paneId: string, flag: boolean): void =>
       setCollapsedState((current) => (current[paneId] === flag ? current : { ...current, [paneId]: flag }));
@@ -125,7 +155,7 @@ export function PaneGroup({ id, domId, direction, children }: Props) {
   const context = useMemo<PaneGroupContext>(
     () => ({
       groupId: id,
-      stored,
+      latest: () => latest.current,
       collapsed,
       register: actions.register,
       unregister: actions.unregister,
@@ -134,7 +164,7 @@ export function PaneGroup({ id, domId, direction, children }: Props) {
       setCollapsed: actions.setCollapsed,
       persistSoon: () => queueMicrotask(() => actions.persist()),
     }),
-    [id, stored, collapsed, actions],
+    [id, collapsed, actions],
   );
 
   return (

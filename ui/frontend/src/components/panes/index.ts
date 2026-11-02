@@ -1,4 +1,5 @@
 export { CollapseToggle } from "./CollapseToggle";
+export { isFreeEscape } from "./escape";
 export { readLayout, writeLayout } from "./layoutStorage";
 export { Pane } from "./Pane";
 export { PaneGroup, usePaneCollapse } from "./PaneGroup";

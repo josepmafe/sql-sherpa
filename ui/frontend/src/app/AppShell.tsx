@@ -3,7 +3,7 @@ import { IconPin, IconPinFilled } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { NavLink as RouterLink, Outlet } from "react-router-dom";
 
-import { CollapseToggle, readLayout, usePeek, writeLayout } from "../components/panes";
+import { CollapseToggle, isFreeEscape, readLayout, usePeek, writeLayout } from "../components/panes";
 import { HealthBanner } from "./HealthBanner";
 import { NAV_ITEMS } from "./navItems";
 
@@ -33,13 +33,15 @@ export function AppShell() {
 
   useEffect(() => {
     if (!open) return;
+    // The outermost layer, but the topmost on screen: it takes the Escape in the capture phase.
     const close = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (!isFreeEscape(event)) return;
+      event.preventDefault();
       setPinned(false);
       setDismissed(true);
     };
-    document.addEventListener("keydown", close);
-    return () => document.removeEventListener("keydown", close);
+    document.addEventListener("keydown", close, true);
+    return () => document.removeEventListener("keydown", close, true);
   }, [open]);
 
   const toggle = () => {

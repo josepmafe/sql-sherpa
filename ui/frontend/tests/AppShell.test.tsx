@@ -145,6 +145,16 @@ describe("AppShell navigation rail", () => {
     expect(storedFlag()).toBe(true);
   });
 
+  it("takes the Escape that closes its peek, so the screen under it does not see it", () => {
+    localStorage.setItem(LAYOUT_KEY, COLLAPSED_LAYOUT);
+    renderAt("/lineage");
+    act(() => screen.getByRole("link", { name: "Explorer" }).focus());
+
+    const notPrevented = fireEvent.keyDown(screen.getByRole("navigation"), { key: "Escape" });
+
+    expect(notPrevented).toBe(false);
+  });
+
   it("keeps a peeking rail open after focus leaves while it is pinned, until the pin is clicked again", () => {
     vi.useFakeTimers();
     try {

@@ -261,6 +261,26 @@ test.describe("the navigation rail at 1440 x 900", () => {
   });
 });
 
+test.describe("a window resize", () => {
+  test.use({ viewport: { width: 1600, height: 900 } });
+
+  test("keeps the tree and the Inspector at their pixel widths and stores nothing new", async ({ page }) => {
+    await page.goto("/explorer");
+    await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.explorer"));
+    await page.reload();
+    const panel = (name: string) =>
+      page.getByRole("button", { name }).locator("xpath=ancestor::*[@data-panel]").evaluate((element) => element.getBoundingClientRect().width);
+    const treeBefore = await panel("Collapse the table tree");
+    const inspectorBefore = await panel("Collapse the Inspector");
+
+    await page.setViewportSize({ width: 1300, height: 900 });
+
+    await expect.poll(async () => Math.abs((await panel("Collapse the table tree")) - treeBefore)).toBeLessThan(1);
+    expect(Math.abs((await panel("Collapse the Inspector")) - inspectorBefore)).toBeLessThan(1);
+    expect(await page.evaluate(() => localStorage.getItem("sherpa.v1.layout.explorer"))).toBeNull();
+  });
+});
+
 test.describe("the Explorer panes", () => {
   const widths = async (page: Page) => ({
     tree: (await page
