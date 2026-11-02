@@ -22,6 +22,7 @@ import { type FocusViewResult, nodeRows } from "./columnFocus";
 import { GraphNode, type GraphNodeData, NODE_HANDLE } from "./GraphNode";
 import { edgeAppearance, edgeId, FOCUS_EDGE, type Related, relatedNodes } from "./highlight";
 import { type BandNode, type LayoutEdge, NODE_WIDTH, nodeHeight } from "./layout";
+import { useKeepSelectedInView } from "./reveal";
 import { useGraphLayout } from "./useGraphLayout";
 
 type ApiNode = components["schemas"]["LineageNode"];
@@ -125,6 +126,8 @@ function Canvas({
     fittedFor.current = layoutNodes;
     void fitView({ maxZoom: FIT_MAX_ZOOM });
   }, [state, layoutNodes, measured, fitView]);
+
+  useKeepSelectedInView(selected, state === "ready" && measured);
 
   // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (a band splits into sub-columns,
   // so the band alone does not give the order). A band label sorts before its band's first node.

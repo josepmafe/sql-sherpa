@@ -1,5 +1,5 @@
-import { useReactFlow, useStoreApi } from "@xyflow/react";
-import { useCallback, useRef } from "react";
+import { useReactFlow, useStore, useStoreApi } from "@xyflow/react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { COLUMN_ROW_HEIGHT, NODE_HEIGHT, NODE_WIDTH, type Point } from "./layout";
 
@@ -52,6 +52,21 @@ export function useRevealNode(): (id: string, row?: number) => void {
     },
     [getNode, getViewport, setCenter, store],
   );
+}
+
+// When the canvas changes height (the node panel opens or the handle moves), the selected node is revealed if the new
+// size hides it. A node still in view leaves the viewport alone, so a plain drag of the handle does not pan the graph.
+export function useKeepSelectedInView(selected: string | undefined, ready: boolean): void {
+  const reveal = useRevealNode();
+  const height = useStore((state) => state.height);
+  const previous = useRef(height);
+  useEffect(() => {
+    const resized = previous.current !== height;
+    previous.current = height;
+    if (resized && ready && selected !== undefined) reveal(selected);
+    // Only a new height is a trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height]);
 }
 
 type RevealOnKeyboardFocusProps = Record<"onPointerDown" | "onMouseUp" | "onPointerCancel" | "onFocus" | "onBlur", () => void>;

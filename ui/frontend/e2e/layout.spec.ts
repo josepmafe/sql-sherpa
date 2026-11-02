@@ -121,6 +121,29 @@ test.describe("Lineage at 1280 x 800", () => {
     expect(canvas!.height).toBeGreaterThan(239);
   });
 
+  test("selecting a node that the folded panel's opening would hide keeps it in the canvas", async ({ page }) => {
+    await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.lineage"));
+    await page.goto("/lineage");
+    await page.getByRole("button", { name: "Collapse the node panel" }).click();
+    await expect(page.locator(".react-flow__node-graph").first()).toBeVisible();
+    // The lowest node of the graph, the one the shrinking canvas hides first.
+    const lowest = await page.locator(".react-flow__node-graph").evaluateAll((nodes) => {
+      const bottoms = nodes.map((node) => ({ id: node.getAttribute("data-id")!, bottom: node.getBoundingClientRect().bottom }));
+      return bottoms.sort((a, b) => b.bottom - a.bottom)[0]!.id;
+    });
+
+    await page.locator(`[data-id="${lowest}"] button`).first().click();
+
+    await expect(page.getByRole("button", { name: "Collapse the node panel" })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const canvas = (await page.getByLabel("Lineage graph").boundingBox())!;
+        const node = (await page.locator(`[data-id="${lowest}"]`).boundingBox())!;
+        return node.y >= canvas.y && node.y + node.height <= canvas.y + canvas.height;
+      })
+      .toBe(true);
+  });
+
   test("dragging the handle 100 px up and down leaves the graph's pan and zoom and the selected node in view", async ({
     page,
   }) => {

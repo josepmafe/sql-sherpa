@@ -22,8 +22,6 @@ import {
   IconCircleCheck,
   IconCircleDashed,
   IconCircleX,
-  IconChevronDown,
-  IconChevronUp,
   IconPlayerSkipForward,
   IconX,
 } from "@tabler/icons-react";
@@ -33,7 +31,7 @@ import { Link } from "react-router-dom";
 
 import { useLineageNode } from "../../api/queries";
 import type { components } from "../../api/schema";
-import { usePaneCollapse } from "../../components/panes";
+import { CollapseToggle, usePaneCollapse } from "../../components/panes";
 import { ReadOnlySql } from "../../components/SqlEditor";
 import { LoadError } from "../explorer/LoadError";
 import { KindLabel, ResolutionLabel } from "./ColumnLabels";
@@ -48,7 +46,6 @@ type TestOutcome = components["schemas"]["TestOutcome"];
 const NODE_NOT_FOUND = "node_not_found";
 export const NODE_PANEL = "panel";
 const PANEL_TITLE = "Node details";
-const ICON_SIZE = 16;
 // The folded pane is its title bar (UI spec §6.5).
 export const PANEL_TITLE_BAR = 40;
 const FOLD_LABEL = "Collapse the node panel";
@@ -116,21 +113,11 @@ export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }:
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [uniqueId, column, onClose, onFocusColumn]);
 
-  const FoldIcon = collapsed ? IconChevronUp : IconChevronDown;
   return (
     <Flex component="aside" aria-label={PANEL_TITLE} direction="column" h="100%">
       <Group justify="space-between" wrap="nowrap" gap="xs" px="xs" h={PANEL_TITLE_BAR} style={{ flex: "none" }}>
         <Group gap="xs" wrap="nowrap">
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="sm"
-            aria-expanded={!collapsed}
-            aria-label={collapsed ? OPEN_LABEL : FOLD_LABEL}
-            onClick={toggle}
-          >
-            <FoldIcon size={ICON_SIZE} />
-          </ActionIcon>
+          <CollapseToggle collapsed={collapsed} onToggle={toggle} foldLabel={FOLD_LABEL} openLabel={OPEN_LABEL} side="bottom" />
           <Text size="sm" fw={600}>
             {PANEL_TITLE}
           </Text>

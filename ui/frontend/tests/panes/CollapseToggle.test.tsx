@@ -5,7 +5,7 @@ import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { CollapseToggle } from "../../src/components/panes";
 
-function Harness({ startCollapsed, side }: { startCollapsed: boolean; side?: "left" | "right" }) {
+function Harness({ startCollapsed, side }: { startCollapsed: boolean; side?: "left" | "right" | "bottom" }) {
   const [collapsed, setCollapsed] = useState(startCollapsed);
   return (
     <MantineProvider env="test">
@@ -48,6 +48,8 @@ describe("CollapseToggle", () => {
     ["left", true, "layout-sidebar-left-expand"],
     ["right", false, "layout-sidebar-right-collapse"],
     ["right", true, "layout-sidebar-right-expand"],
+    ["bottom", false, "layout-bottombar-collapse"],
+    ["bottom", true, "layout-bottombar-expand"],
   ] as const)("on the %s side, collapsed %s, points the way the pane folds (%s)", (side, collapsed, icon) => {
     render(<Harness startCollapsed={collapsed} side={side} />);
 

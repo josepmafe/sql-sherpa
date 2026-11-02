@@ -1,5 +1,7 @@
 import { ActionIcon } from "@mantine/core";
 import {
+  IconLayoutBottombarCollapse,
+  IconLayoutBottombarExpand,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
   IconLayoutSidebarRightCollapse,
@@ -9,6 +11,7 @@ import {
 const ICONS = {
   left: { collapse: IconLayoutSidebarLeftCollapse, expand: IconLayoutSidebarLeftExpand },
   right: { collapse: IconLayoutSidebarRightCollapse, expand: IconLayoutSidebarRightExpand },
+  bottom: { collapse: IconLayoutBottombarCollapse, expand: IconLayoutBottombarExpand },
 } as const;
 
 type Props = {
@@ -19,7 +22,7 @@ type Props = {
   /** The name while the pane is folded, e.g. "Open the table tree". */
   openLabel: string;
   /** The edge the pane folds to; its icon points that way. */
-  side?: "left" | "right";
+  side?: "left" | "right" | "bottom";
 };
 
 export function CollapseToggle({ collapsed, onToggle, foldLabel, openLabel, side = "left" }: Props) {

@@ -5,8 +5,8 @@ const HANDLE_RECT = new DOMRect(-10_000, -10_000, 1, 1);
 
 /**
  * jsdom has no layout, so a pane group would measure nothing. This gives every group PANE_GROUP_WIDTH px (and height)
- * and each pane its share of that (its flex weight over the sum), and has every ResizeObserver report what it observes once, in a microtask (`await act(async () => {})` after render). Undone after
- * each test (`unstubGlobals`, `restoreMocks`).
+ * and each pane its share of that (its flex weight over the sum), and has every ResizeObserver report what it
+ * observes once, in a microtask (`await act(async () => {})` after render). Undone after each test (`unstubGlobals`, `restoreMocks`).
  */
 export function stubPaneLayout({ pointerOnHandles = false }: { pointerOnHandles?: boolean } = {}): void {
   const size = (element: HTMLElement): number => {
@@ -45,7 +45,10 @@ export function stubPaneLayout({ pointerOnHandles = false }: { pointerOnHandles?
         const borderBoxSize = [{ inlineSize: 0, blockSize: 0 }] as unknown as ReadonlyArray<ResizeObserverSize>;
         // After the library has registered its group, as a browser does.
         queueMicrotask(() =>
-          this.callback([{ target, borderBoxSize, contentRect: new DOMRect() } as ResizeObserverEntry], this as unknown as ResizeObserver),
+          this.callback(
+            [{ target, borderBoxSize, contentRect: new DOMRect() } as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          ),
         );
       }
       unobserve(): void {}

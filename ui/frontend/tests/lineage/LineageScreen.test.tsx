@@ -384,12 +384,13 @@ describe("LineageScreen", () => {
     it("the arrow keys resize the panes and the size is remembered", async () => {
       await open();
       const before = valueNow();
+      const panelBefore = 1200 - px();
 
       handle().focus();
       await userEvent.keyboard("{ArrowUp}");
 
       expect(valueNow()).toBeLessThan(before);
-      expect((storedLayout() as { sizes: Record<string, number> }).sizes.panel).toBeGreaterThan(260);
+      expect((storedLayout() as { sizes: Record<string, number> }).sizes.panel).toBeGreaterThan(panelBefore);
     });
 
     it("restores a remembered panel size", async () => {
