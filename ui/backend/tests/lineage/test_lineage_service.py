@@ -392,7 +392,7 @@ class TestLineageServiceTestDetails:
         assert details is not None
         assert (details.kind, details.raw_sql, details.compiled_sql, details.sql_note) == ("unit", None, None, None)
         assert details.definition is not None
-        assert '"revenue": 5' in details.definition
+        assert "revenue: 5" in details.definition
         node_sql.compiled_test.assert_not_called()  # type: ignore[attr-defined]
 
     def test_a_missing_compiled_file_gives_the_note(self, service: LineageService, node_sql: NodeSql) -> None:

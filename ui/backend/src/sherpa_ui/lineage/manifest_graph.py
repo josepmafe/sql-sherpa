@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
@@ -15,7 +16,8 @@ MODEL_FOLDER_INDEX = 1  # a model's fqn is [package, folder under models/, ...]
 DEFAULT_SEVERITY = "error"
 EPHEMERAL = "ephemeral"
 _GENERIC_IMPLICIT_ARGUMENTS = frozenset({"model", "column_name"})  # dbt fills them in from where the test is written
-_UNIT_TEST_DEFINITION_KEYS = ("model", "given", "expect", "overrides")
+DEFAULT_ROW_FORMAT = "dict"  # dbt fills it in on a unit test's given and expect
+TestKind = Literal["generic", "singular", "unit"]
 _NODE_SECTIONS = ("nodes", "sources", "exposures")
 _GRAPH_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot", "source", "exposure"})
 _MATERIALIZED_TYPES = frozenset({"model", "seed", "snapshot"})
@@ -89,7 +91,7 @@ class NodeTest(BaseModel):
 
     unique_id: str
     name: str
-    kind: Literal["generic", "singular", "unit"]
+    kind: TestKind
     column: str | None
     severity: Literal["error", "warn"]
     counts_against: tuple[str, ...]
@@ -97,7 +99,7 @@ class NodeTest(BaseModel):
     package_name: str
     path: str | None  # a generic test's compiled file under `file_path`; dbt shortens long names with a hash
     raw_sql: str | None  # singular tests only: a generic test's SQL is a macro call
-    definition: str | None  # JSON text; None for a singular test
+    definition: str | None  # JSON text for a generic test, YAML for a unit test; None for a singular test
 
 
 class ManifestGraph:
@@ -249,7 +251,7 @@ def _build_unit_test(raw: dict[str, Any], nodes: Mapping[str, GraphNode]) -> Nod
         package_name=raw["package_name"],
         path=None,
         raw_sql=None,
-        definition=_json({key: raw.get(key) for key in _UNIT_TEST_DEFINITION_KEYS}),
+        definition=_unit_test_definition(raw),
     )
 
 
@@ -259,7 +261,7 @@ def _generic_definition(raw: dict[str, Any]) -> str:
     set_config = {
         "severity": _severity(raw) if _severity(raw) != DEFAULT_SEVERITY else None,
         "where": config.get("where"),
-        "tags": config.get("tags") or None,
+        "tags": list(dict.fromkeys(config.get("tags", []))) or None,  # dbt adds a tag a second time
     }
     return _json(
         {
@@ -269,6 +271,37 @@ def _generic_definition(raw: dict[str, Any]) -> str:
             "config": {key: value for key, value in set_config.items() if value is not None},
         }
     )
+
+
+def _unit_test_definition(raw: dict[str, Any]) -> str:
+    """The unit test as written in the YAML: what dbt filled in (`format: dict`, empty fixtures, overrides) is out."""
+    overrides = {key: value for key, value in (raw.get("overrides") or {}).items() if value}
+    definition = {
+        "model": raw["model"],
+        "given": [_written(entry) for entry in raw["given"]],
+        "expect": _written(raw["expect"]),
+        **({"overrides": overrides} if overrides else {}),
+    }
+    return yaml.dump(definition, Dumper=_LiteralBlockDumper, sort_keys=False, allow_unicode=True)
+
+
+def _written(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in entry.items()
+        if value is not None and not (key == "format" and value == DEFAULT_ROW_FORMAT)
+    }
+
+
+class _LiteralBlockDumper(yaml.SafeDumper):
+    """A multi-line string (a `format: sql` given) is dumped as a `|` block, as one writes it in the YAML."""
+
+
+def _represent_str(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|" if "\n" in value else None)
+
+
+_LiteralBlockDumper.add_representer(str, _represent_str)
 
 
 def _severity(raw: dict[str, Any]) -> Literal["error", "warn"]:

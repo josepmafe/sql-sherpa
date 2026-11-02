@@ -10,7 +10,7 @@ from sherpa_mcp.catalog import UNMASKED_SUFFIX, CatalogUnavailable
 from sherpa_ui.build.build_status import BuildStatusUnavailable
 from sherpa_ui.lineage.column_lineage import ColumnKind, ColumnRef, Resolution
 from sherpa_ui.lineage.column_lineage_loader import SQL_RESOURCE_TYPES
-from sherpa_ui.lineage.manifest_graph import Layer
+from sherpa_ui.lineage.manifest_graph import Layer, TestKind
 from sherpa_ui.lineage.node_status import NodeStatus, StatusDeriver, TestOutcome
 from sherpa_ui.lineage.selector import SelectorEvaluator
 
@@ -88,7 +88,7 @@ class TestInfo(BaseModel):
 
     unique_id: str
     name: str
-    kind: Literal["generic", "singular", "unit"]
+    kind: TestKind
     column: str | None
     severity: Literal["error", "warn"]
     outcome: TestOutcome
@@ -102,7 +102,7 @@ class TestDetails(BaseModel):
 
     unique_id: str
     name: str
-    kind: Literal["generic", "singular", "unit"]
+    kind: TestKind
     severity: Literal["error", "warn"]
     column: str | None
     file_path: str
@@ -110,7 +110,7 @@ class TestDetails(BaseModel):
     raw_sql: str | None  # singular tests only
     compiled_sql: str | None  # singular and generic tests
     sql_note: str | None  # set when a singular or generic test has no compiled file
-    definition: str | None  # JSON text: a generic test's arguments and config, a unit test's YAML
+    definition: str | None  # a generic test's arguments and config as JSON, a unit test as YAML
 
 
 class NodeBuildInfo(BaseModel):

@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -84,6 +85,8 @@ class TestTestDetailsWarehouse:
             }[body["kind"]]
             if has != expected or body["sql_note"] is not None:
                 problems.append((unique_id, has, body["sql_note"]))
+            if body["kind"] == "unit" and not _is_written_yaml(body["definition"]):
+                problems.append((unique_id, "definition is not the YAML as written"))
 
         assert len(ids) > 300
         assert problems == []
@@ -95,3 +98,14 @@ class TestTestDetailsWarehouse:
 
         assert tests
         assert statuses == {200}
+
+
+def _is_written_yaml(definition: str) -> bool:
+    parsed = yaml.safe_load(definition)
+
+    return (
+        isinstance(parsed, dict)
+        and {"model", "given", "expect"} <= parsed.keys()
+        and "fixture:" not in definition
+        and "format: dict" not in definition
+    )
