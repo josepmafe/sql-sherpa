@@ -153,4 +153,42 @@ describe("PaneGroup", () => {
 
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the stored size and flag of a pane that is not in the group now", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(KEY, JSON.stringify({ sizes: { side: 300, extra: 250 }, collapsed: { extra: true } }));
+    await renderPanes();
+
+    screen.getByRole("separator", { name: "Resize the side" }).focus();
+    await user.keyboard("{ArrowRight}");
+
+    const layout = stored() as { sizes: Record<string, number>; collapsed: Record<string, boolean> };
+    expect(layout.sizes.side).toBeGreaterThan(300);
+    expect(layout.sizes.extra).toBe(250);
+    expect(layout.collapsed.extra).toBe(true);
+  });
+
+  it("gives a group and its panes the DOM ids it is told, and stores under the layout ids", async () => {
+    const user = userEvent.setup();
+    render(
+      <MantineProvider env="test">
+        <PaneGroup id="test" domId="test-one" direction="horizontal">
+          <Pane id="side" domId="side-one" defaultSize={300} minSize={200} maxSize={400}>
+            <div>side</div>
+          </Pane>
+          <PaneHandle label="Resize the side" />
+          <Pane id="main" domId="main-one" minSize={200} maxSize={2000}>
+            <div>main</div>
+          </Pane>
+        </PaneGroup>
+      </MantineProvider>,
+    );
+    await act(async () => {});
+
+    expect(document.querySelector("[data-group]")).toHaveAttribute("id", "test-one");
+    expect(Array.from(document.querySelectorAll("[data-panel]"), (panel) => panel.id)).toEqual(["side-one", "main-one"]);
+    screen.getByRole("separator", { name: "Resize the side" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(Object.keys((stored() as { sizes: object }).sizes)).toEqual(["side"]);
+  });
 });

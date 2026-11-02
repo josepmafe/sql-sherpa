@@ -53,12 +53,14 @@ export function usePaneCollapse(id: string): {
 
 type Props = {
   id: string;
+  /** The DOM id, when several groups store under the same `id` and must not share an element id. */
+  domId?: string;
   direction: "horizontal" | "vertical";
   children: ReactNode;
 };
 
 /** Panes and handles side by side (horizontal) or stacked (vertical). Sizes and collapsed flags persist under `id`. */
-export function PaneGroup({ id, direction, children }: Props) {
+export function PaneGroup({ id, domId, direction, children }: Props) {
   const panes = useRef(new Map<string, PaneEntry>());
   const [collapsed, setCollapsedState] = useState<Record<string, boolean>>({});
   const [stored] = useState(() => loadLayout(id));
@@ -84,7 +86,12 @@ export function PaneGroup({ id, direction, children }: Props) {
         if (pane.sized) sizes[paneId] = pane.lastOpenSize;
         if (pane.collapsedSize !== undefined) flags[paneId] = folded;
       }
-      writeLayout(id, { sizes, collapsed: flags });
+      // A pane that is not in the group now (the Explorer's Inspector below 1280 px) keeps what was stored for it.
+      const previous = loadLayout(id);
+      writeLayout(id, {
+        sizes: { ...previous?.sizes, ...sizes },
+        collapsed: { ...previous?.collapsed, ...flags },
+      });
     };
     const setFlag = (paneId: string, flag: boolean): void =>
       setCollapsedState((current) => (current[paneId] === flag ? current : { ...current, [paneId]: flag }));
@@ -134,7 +141,7 @@ export function PaneGroup({ id, direction, children }: Props) {
     <GroupContext.Provider value={context}>
       <Group
         orientation={direction}
-        id={id}
+        id={domId ?? id}
         onLayoutChanged={(_layout, meta) => {
           // A drag or an arrow key. A toggle persists for itself, and a constraint change is not the user's choice.
           // The library calls this before it has applied the new sizes, so the sizes are read a microtask later.

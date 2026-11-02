@@ -5,6 +5,8 @@ import { COLLAPSED_TOLERANCE_PX, type PaneEntry, usePaneGroup } from "./PaneGrou
 
 type Props = {
   id: string;
+  /** The DOM id, when several groups hold a pane of this `id` (it keys the stored layout). */
+  domId?: string;
   /** Pixels (the width of a horizontal group's pane, the height of a vertical one's). Left out, the pane takes what the others leave. */
   defaultSize?: number;
   minSize: number;
@@ -14,7 +16,7 @@ type Props = {
   children: ReactNode;
 };
 
-export function Pane({ id, defaultSize, minSize, maxSize, collapsedSize, children }: Props) {
+export function Pane({ id, domId, defaultSize, minSize, maxSize, collapsedSize, children }: Props) {
   const { stored: storedLayout, register, unregister, report, startCollapsed } = usePaneGroup();
   const panelRef = usePanelRef();
   const [stored] = useState(() => storedLayout && clampLayout(storedLayout, { [id]: { min: minSize, max: maxSize } }));
@@ -42,7 +44,7 @@ export function Pane({ id, defaultSize, minSize, maxSize, collapsedSize, childre
 
   return (
     <Panel
-      id={id}
+      id={domId ?? id}
       panelRef={panelRef}
       defaultSize={startsCollapsed ? collapsedSize : openSize}
       minSize={minSize}
