@@ -22,6 +22,8 @@ export type PaneGroupContext = {
   /** A pane that starts folded from the stored layout. */
   startCollapsed: (paneId: string) => void;
   setCollapsed: (paneId: string, collapsed: boolean) => void;
+  /** Saves the live sizes: for a change the library does not report as the user's (the double-click reset). */
+  persistSoon: () => void;
 };
 
 const GroupContext = createContext<PaneGroupContext | undefined>(undefined);
@@ -70,7 +72,10 @@ export function PaneGroup({ id, direction, children }: Props) {
             : pane.collapsedSize !== undefined &&
               size !== undefined &&
               size <= pane.collapsedSize + COLLAPSED_TOLERANCE_PX;
-        if (!folded && size !== undefined) pane.lastOpenSize = size;
+        // A pane the library has not yet opened still reads its strip size: that is not a size to open back to.
+        const stripSize =
+          pane.collapsedSize !== undefined && size !== undefined && size <= pane.collapsedSize + COLLAPSED_TOLERANCE_PX;
+        if (!folded && !stripSize && size !== undefined) pane.lastOpenSize = size;
         sizes[paneId] = pane.lastOpenSize;
         if (pane.collapsedSize !== undefined) flags[paneId] = folded;
       }
@@ -99,7 +104,8 @@ export function PaneGroup({ id, direction, children }: Props) {
           handle.resize(entry.lastOpenSize);
         }
         setFlag(paneId, next);
-        persist({ paneId, collapsed: next });
+        // The library applies the new sizes after this call.
+        queueMicrotask(() => persist({ paneId, collapsed: next }));
       },
     };
   }, [id]);
@@ -113,6 +119,7 @@ export function PaneGroup({ id, direction, children }: Props) {
       report: actions.report,
       startCollapsed: actions.startCollapsed,
       setCollapsed: actions.setCollapsed,
+      persistSoon: () => queueMicrotask(() => actions.persist()),
     }),
     [id, collapsed, actions],
   );

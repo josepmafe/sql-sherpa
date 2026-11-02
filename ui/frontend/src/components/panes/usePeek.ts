@@ -19,6 +19,7 @@ export function usePeek(collapsed: boolean): {
   const [open, setOpen] = useState(false);
   const pointerIn = useRef(false);
   const focusIn = useRef(false);
+  const isCollapsed = useRef(collapsed);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const clear = useCallback(() => {
@@ -33,6 +34,7 @@ export function usePeek(collapsed: boolean): {
   const peekProps = useMemo<PeekProps>(
     () => ({
       onPointerEnter: () => {
+        if (!isCollapsed.current) return; // an open pane has nothing to peek at
         pointerIn.current = true;
         clear();
         timer.current = setTimeout(() => setOpen(true), PEEK_DELAY_MS);
@@ -42,6 +44,7 @@ export function usePeek(collapsed: boolean): {
         settle();
       },
       onFocus: () => {
+        if (!isCollapsed.current) return;
         focusIn.current = true;
         clear();
         setOpen(true);
@@ -58,6 +61,7 @@ export function usePeek(collapsed: boolean): {
 
   useEffect(() => clear, [clear]);
   useEffect(() => {
+    isCollapsed.current = collapsed;
     if (!collapsed) {
       clear();
       pointerIn.current = false;

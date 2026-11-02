@@ -93,11 +93,37 @@ describe("PaneGroup", () => {
     await renderPanes();
 
     await user.click(screen.getByRole("button", { name: "Fold the side" }));
-
     expect(screen.getByRole("button", { name: "Open the side" })).toHaveAttribute("aria-expanded", "false");
-    expect(stored()).toEqual({
-      sizes: { side: 300, main: 900 },
-      collapsed: { side: true },
-    });
+
+    const layout = stored() as { sizes: { side: number }; collapsed: { side: boolean } };
+    expect(layout.sizes.side).toBe(300);
+    expect(layout.collapsed.side).toBe(true);
+  });
+
+  it("opens back to the size it had and remembers that size", async () => {
+    const user = userEvent.setup();
+    await renderPanes();
+    await user.click(screen.getByRole("button", { name: "Fold the side" }));
+
+    await user.click(screen.getByRole("button", { name: "Open the side" }));
+
+    expect(screen.getByRole("button", { name: "Fold the side" })).toHaveAttribute("aria-expanded", "true");
+    expect(valueNow()).toBeCloseTo((300 / 1200) * 100, 0);
+    const layout = stored() as { sizes: { side: number }; collapsed: { side: boolean } };
+    expect(layout.sizes.side).toBe(300);
+    expect(layout.collapsed.side).toBe(false);
+  });
+
+  it("remembers the default sizes after a double-click on the handle", async () => {
+    const user = userEvent.setup();
+    await renderPanes();
+    const handle = screen.getByRole("separator", { name: "Resize the side" });
+    handle.focus();
+    await user.keyboard("{ArrowRight}");
+    expect((stored() as { sizes: { side: number } }).sizes.side).toBeGreaterThan(300);
+
+    await user.dblClick(handle);
+
+    expect((stored() as { sizes: { side: number } }).sizes.side).toBeCloseTo(300, 0);
   });
 });

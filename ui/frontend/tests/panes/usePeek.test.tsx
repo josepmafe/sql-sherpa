@@ -107,6 +107,26 @@ describe("usePeek", () => {
     expect(isOpen()).toBe(false);
   });
 
+  it("does not peek when the pane folds while the pointer is already on it", () => {
+    const { rerender } = render(<Strip collapsed={false} />);
+    fireEvent.pointerEnter(screen.getByTestId("strip"));
+    advance(200);
+
+    rerender(<Strip collapsed />);
+    advance(1000);
+
+    expect(isOpen()).toBe(false);
+  });
+
+  it("does not peek when the pane folds while focus is already on it", () => {
+    const { rerender } = render(<Strip collapsed={false} />);
+    fireEvent.focus(screen.getByText("inside"));
+
+    rerender(<Strip collapsed />);
+
+    expect(isOpen()).toBe(false);
+  });
+
   it("closes when the pane is expanded while peeking", () => {
     const { rerender } = render(<Strip collapsed />);
     fireEvent.focus(screen.getByText("inside"));
