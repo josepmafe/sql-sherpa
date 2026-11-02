@@ -130,4 +130,4 @@ docs/
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests, intermediate models and incremental models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and new marts
 - [CI: the pull-request gate](docs/guides/advanced/ci.md): what the gate runs and why, reproducing a failing step locally, and adding a check
-- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers
+- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a pane, the layout metrics, a test definition, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers

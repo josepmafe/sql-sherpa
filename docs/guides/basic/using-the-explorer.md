@@ -34,7 +34,7 @@ The tree is `sherpa > marts > <domain> > table > column`: descriptions from dbt'
 The tree, the editor with its results, and the Inspector are panes, and so is the navigation rail on the left ([UI spec §6.1](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md), §6.4).
 
 - **Resize** by dragging the line between two panes, or focus it (Tab) and press the arrow keys; Home and End jump to the limits. A **double-click** on the line restores the default sizes. The tree is 380 px by default (280 px below 1280 px), between 200 and 480; the editor is 260 px, at least 120, and the results at least 160.
-- **Collapse** a pane with the button in its corner: it folds to a strip with its icon, and the same button opens it. Selecting a table opens a folded Inspector.
+- **Collapse** a pane with the button in its corner: it folds to a strip with its icon, and the same button opens it. Selecting a table unfolds a folded Inspector.
 - **Peek:** a folded tree (or rail) opens over the editor when the pointer rests on its strip for about 200 ms or the keyboard focus enters it, and closes shortly after both leave. Clicking a table in it selects the table and closes it; Esc closes it too.
 - **Below 1280 px** the Inspector takes no room: it starts folded, and clicking a table opens it over the editor and moves the focus to its heading. Esc or its button closes it and returns the focus to the table's row.
 - Sizes and folded panes are remembered in the browser (`sherpa.v1.layout.*`); the editor height is shared by all worksheets.

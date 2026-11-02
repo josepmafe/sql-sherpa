@@ -8,11 +8,11 @@
 
 **Tech Stack:** React 19, TypeScript, Mantine 9, `react-resizable-panels` (4.x at planning time), `@xyflow/react`, `elkjs`, Vitest, Playwright; FastAPI, pytest.
 
-**Spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`: §4 (the tests endpoint), §6.1 (rail and panes), §6.4 (Explorer), §6.5 (Lineage: modes, layout, node panel), §7 (layout storage), §8 (tests). **This plan's commit changes that spec.** The edits are the items above plus the Inspector below 1280 px (an overlay, no drawer).
+**Spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`: §4 (the tests endpoint), §6.1 (rail and panes), §6.4 (Explorer), §6.5 (Lineage: modes, layout, node panel), §7 (layout storage), §8 (tests). **This plan's commit changes that spec.** The edits are the items above plus the Inspector below 1280 px (an overlay).
 
 **Decisions (owner, 2026-11-01), all of the recommended options:**
 - **Collapse (1):** the rail, the Explorer's tree and Inspector, and Lineage's node panel collapse. Hover-peek applies to the rail and the tree only.
-- **Narrow screens (2):** below 1280 px the Inspector is a collapsed pane that opens as an overlay; the drawer goes.
+- **Narrow screens (2):** below 1280 px the Inspector is a collapsed pane that opens as an overlay and takes no layout width.
 - **Splitters (3):** also a horizontal handle between the editor and the results, and one between the graph and the node panel.
 - **Sizes (4):** remembered in `localStorage`, double-click resets, stored values are clamped on read.
 - **Layout (5):** measured and rendered before the plan. The owner chose B straightened (gaps for long edges, no edge behind a node), plus a time-boxed attempt at curves that bend inside the columns (Task 8).
@@ -146,14 +146,14 @@ ui/backend/tests/lineage/
   - **Three panes (from 1280 px, `wideScreen`):** the tree (default 380, or 280 below 1280 px; min 200, max 480; collapsible to a 40 px strip with its icon), the centre (min 360), the Inspector (default 300, min 240, max 520, collapsible). Each handle is named: "Resize the tree", "Resize the Inspector". Keyboard arrows change `aria-valuenow`; the collapse buttons set `aria-expanded` and hide the content.
   - **Tree peek:** the collapsed tree strip opens over the editor on focus; clicking a table in it selects the table and the strip closes.
   - **Remembered:** a resized tree is restored on the next render from `sherpa.v1.layout.explorer`; a stored 5000 is clamped; corrupt JSON gives the defaults.
-  - **Narrow (below 1280 px):** the Inspector takes no layout width; clicking a table opens it as an overlay and moves the focus to its heading ("Table details"); Esc and the toggle close it and return the focus to the table's row. (This replaces the drawer tests.)
+  - **Narrow (below 1280 px):** the Inspector takes no layout width; clicking a table opens it as an overlay and moves the focus to its heading ("Table details"); Esc and the toggle close it and return the focus to the table's row.
   - **Editor and results:** a vertical group with a handle named "Resize the editor and the results" (editor min 120, results min 160); after the handle moves, the last result is still shown and the query is not re-run (`api` called once).
   - **Heading:** the existing assertions on the tree's text stay; the heading change is typography only, with no test (checked by eye and in the panel).
 - [ ] **Step 2: Implement.**
   - The breadcrumb `sherpa › marts` becomes the tree's heading (`size="sm"`, weight 600). The domain labels become `size="xs"`, dimmed.
   - The `wide` query decides layout versus overlay.
   - CodeMirror and the memoized result grid must survive resizing (`ResultGrid.test.tsx` stays green).
-- [ ] **Step 3: e2e.** Drag the tree handle by 100 px: the tree is about 100 px wider and a reload keeps it. At 1024 × 700 the Inspector is an overlay and the editor is at least the width the existing layout spec expects. Update `layout.spec.ts` for the drawer's removal.
+- [ ] **Step 3: e2e.** Drag the tree handle by 100 px: the tree is about 100 px wider and a reload keeps it. At 1024 × 700 the Inspector is an overlay and the editor is at least the width the existing layout spec expects. Update `layout.spec.ts` for the Inspector overlay.
 - [ ] **Step 4:** `npm test`, lint, the `explorer` and `layout` Playwright specs. Commit `feat: Explorer panes (tree, editor and results, Inspector) with remembered sizes`.
 
 ---
@@ -270,7 +270,7 @@ By kind:
 - Create: `src/screens/lineage/edgeRoute.ts`, `src/screens/lineage/RoutedEdge.tsx`
 - Test: `tests/lineage/layout.test.ts`, `tests/lineage/edgeRoute.test.ts`, `tests/lineage/LineageCanvasEdges.test.tsx`; new `tests/lineage/layoutMetrics.ts`, `tests/fixtures/lineage_project.json`
 
-**Measured at planning** on this project's whole graph after #21 (71 nodes, 109 edges, collapsed; the `sherpa_agent` exposure reads all 13 visible marts). The edges are measured as drawn: today's React Flow bezier, and B's routes through their gaps. The owner chose **B straightened** (renders kept outside the repo):
+**Measured** on this project's whole graph (71 nodes, 109 edges, collapsed; the `sherpa_agent` exposure reads all 13 visible marts). The edges are measured as drawn: today's React Flow bezier, and B's routes through their gaps. The owner chose **B straightened** (renders kept outside the repo):
 
 | | crossings | edges behind a node | vertical edge travel (px) | height (px) |
 |---|---|---|---|---|
@@ -281,7 +281,7 @@ By kind:
 
 The exposure's 13 edges converge on one node, so they keep most of the vertical travel that is left.
 Straightening is about the look (one rise, a level run, one landing), not the numbers.
-Today's single curves drawn on B's positions brought a third of the hidden edges back on the earlier graph, so the curve follows the gaps.
+Today's single curves drawn on B's positions brought a third of the hidden edges back on this graph, so the curve follows the gaps.
 
 **Interfaces — Produces** (`layout.ts`, `edgeRoute.ts`):
 - `orderNodes(nodes, edges)` is unchanged: ELK gives the starting order.
