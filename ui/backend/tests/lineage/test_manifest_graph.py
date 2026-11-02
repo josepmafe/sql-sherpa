@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sherpa_ui.lineage.manifest_graph import Layer, ManifestGraph, Relation
@@ -141,3 +142,93 @@ class TestManifestGraph:
         graph = ManifestGraph.from_manifest(manifest)
 
         assert graph.generated_at.isoformat() == "2026-10-27T10:58:39.861036+00:00"
+
+
+class TestManifestGraphTestDefinitions:
+    def test_singular_test_keeps_its_sql_and_file(self, manifest: dict[str, Any]) -> None:
+        graph = ManifestGraph.from_manifest(manifest)
+
+        test = graph.test("test.p.assert_orders_match_customers")
+
+        assert test is not None
+        assert test.kind == "singular"
+        assert test.raw_sql == "select * from {{ ref('fct_orders') }} where false"
+        assert test.file_path == "tests/singular/assert_orders_match_customers.sql"
+        assert test.package_name == "p"
+        assert test.definition is None
+
+    def test_generic_test_has_a_definition_without_the_model_and_column(self, manifest: dict[str, Any]) -> None:
+        raw = manifest["nodes"]["test.p.unique_dim_customers_id"]
+        raw["test_metadata"] = {
+            "name": "accepted_values",
+            "kwargs": {"column_name": "id", "model": "{{ get_where_subquery(ref('x')) }}", "values": ["a", "b"]},
+            "namespace": "dbt_utils",
+        }
+        raw["config"] = {"severity": "WARN", "where": "id > 1", "tags": ["nightly"]}
+        graph = ManifestGraph.from_manifest(manifest)
+
+        test = graph.test("test.p.unique_dim_customers_id")
+
+        assert test is not None
+        assert test.raw_sql is None
+        assert test.file_path == "models/marts/_models.yml"
+        assert json.loads(test.definition or "") == {
+            "name": "accepted_values",
+            "namespace": "dbt_utils",
+            "arguments": {"values": ["a", "b"]},
+            "config": {"severity": "warn", "where": "id > 1", "tags": ["nightly"]},
+        }
+
+    def test_generic_definition_leaves_out_config_keys_that_are_not_set(self, manifest: dict[str, Any]) -> None:
+        graph = ManifestGraph.from_manifest(manifest)
+
+        test = graph.test("test.p.not_null_fct_orders_order_id")
+
+        assert test is not None
+        assert json.loads(test.definition or "")["config"] == {}
+
+    def test_a_shortened_generic_name_keeps_the_manifest_path(self, manifest: dict[str, Any]) -> None:
+        raw = manifest["nodes"]["test.p.not_null_fct_orders_order_id"]
+        raw["path"] = "not_null_fct_orders_e1f2a3b4c5.sql"
+        graph = ManifestGraph.from_manifest(manifest)
+
+        test = graph.test("test.p.not_null_fct_orders_order_id")
+
+        assert test is not None
+        assert test.name == "not_null_fct_orders_order_id"
+        assert test.path == "not_null_fct_orders_e1f2a3b4c5.sql"
+
+    def test_paths_written_on_windows_use_forward_slashes(self, manifest: dict[str, Any]) -> None:
+        singular = manifest["nodes"]["test.p.assert_orders_match_customers"]
+        singular["original_file_path"] = "tests\\singular\\assert_orders_match_customers.sql"
+        manifest["nodes"]["test.p.not_null_fct_orders_order_id"]["path"] = "sub\\not_null_fct_orders_order_id.sql"
+        graph = ManifestGraph.from_manifest(manifest)
+
+        singular_test = graph.test("test.p.assert_orders_match_customers")
+        generic_test = graph.test("test.p.not_null_fct_orders_order_id")
+
+        assert singular_test is not None
+        assert generic_test is not None
+        assert singular_test.file_path == "tests/singular/assert_orders_match_customers.sql"
+        assert generic_test.path == "sub/not_null_fct_orders_order_id.sql"
+
+    def test_unit_test_definition_is_its_yaml(self, manifest: dict[str, Any]) -> None:
+        graph = ManifestGraph.from_manifest(manifest)
+
+        test = graph.test("unit_test.p.fct_orders.revenue_is_summed")
+
+        assert test is not None
+        assert test.raw_sql is None
+        assert test.file_path == "models/marts/_models.yml"
+        assert json.loads(test.definition or "") == {
+            "model": "fct_orders",
+            "given": [{"input": "ref('int_orders__enriched')", "rows": [{"amount": 5}], "format": "dict"}],
+            "expect": {"rows": [{"revenue": 5}], "format": "dict"},
+            "overrides": {"vars": {"as_of": "2026-01-01"}},
+        }
+
+    def test_unknown_id_and_node_id_are_not_tests(self, manifest: dict[str, Any]) -> None:
+        graph = ManifestGraph.from_manifest(manifest)
+
+        assert graph.test("test.p.nope") is None
+        assert graph.test("model.p.fct_orders") is None

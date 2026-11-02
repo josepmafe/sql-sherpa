@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
+    from sherpa_ui.settings import UiSettings
 
 pytestmark = pytest.mark.warehouse
 
@@ -55,3 +57,41 @@ class TestLineageWarehouse:
         assert body["materialization"] == "ephemeral"
         assert body["status"] == "inlined"
         assert body["build"] is None
+
+
+class TestTestDetailsWarehouse:
+    def test_every_test_of_the_graph_resolves_with_its_kind_s_definition(
+        self, warehouse_client: TestClient, warehouse_settings: UiSettings
+    ) -> None:
+        manifest = json.loads((warehouse_settings.ui_dbt_target_path / "manifest.json").read_text(encoding="utf-8"))
+        ids = [uid for uid, raw in manifest["nodes"].items() if raw["resource_type"] == "test"] + list(
+            manifest["unit_tests"]
+        )
+
+        problems = []
+        for unique_id in ids:
+            response = warehouse_client.get(f"/api/lineage/tests/{unique_id}")
+            body = response.json()
+            if response.status_code != 200:
+                problems.append((unique_id, response.status_code))
+                continue
+
+            has = {key: bool(body[key]) for key in ("raw_sql", "compiled_sql", "definition")}
+            expected = {
+                "singular": {"raw_sql": True, "compiled_sql": True, "definition": False},
+                "generic": {"raw_sql": False, "compiled_sql": True, "definition": True},
+                "unit": {"raw_sql": False, "compiled_sql": False, "definition": True},
+            }[body["kind"]]
+            if has != expected or body["sql_note"] is not None:
+                problems.append((unique_id, has, body["sql_note"]))
+
+        assert len(ids) > 300
+        assert problems == []
+
+    def test_a_node_s_tests_carry_ids_that_resolve(self, warehouse_client: TestClient) -> None:
+        tests = warehouse_client.get("/api/lineage/nodes/model.sherpa.fct_orders").json()["tests"]
+
+        statuses = {warehouse_client.get(f"/api/lineage/tests/{test['unique_id']}").status_code for test in tests}
+
+        assert tests
+        assert statuses == {200}

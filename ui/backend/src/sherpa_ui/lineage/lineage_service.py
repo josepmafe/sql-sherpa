@@ -86,11 +86,31 @@ class TestInfo(BaseModel):
     __test__ = False  # not a pytest class, despite the name
     model_config = ConfigDict(frozen=True)
 
+    unique_id: str
     name: str
     kind: Literal["generic", "singular", "unit"]
     column: str | None
     severity: Literal["error", "warn"]
     outcome: TestOutcome
+
+
+class TestDetails(BaseModel):
+    """What a test row of the node panel expands to: where the test is written and what it checks."""
+
+    __test__ = False  # not a pytest class, despite the name
+    model_config = ConfigDict(frozen=True)
+
+    unique_id: str
+    name: str
+    kind: Literal["generic", "singular", "unit"]
+    severity: Literal["error", "warn"]
+    column: str | None
+    file_path: str
+    selector: str  # the test's name, which `dbt --select` takes
+    raw_sql: str | None  # singular tests only
+    compiled_sql: str | None  # singular and generic tests
+    sql_note: str | None  # set when a singular or generic test has no compiled file
+    definition: str | None  # JSON text: a generic test's arguments and config, a unit test's YAML
 
 
 class NodeBuildInfo(BaseModel):
@@ -235,6 +255,7 @@ class LineageService:
             column_lineage_note=reason or (lineage.node_note(unique_id) if lineage is not None else None),
             tests=[
                 TestInfo(
+                    unique_id=test.unique_id,
                     name=test.name,
                     kind=test.kind,
                     column=test.column,
@@ -246,6 +267,27 @@ class LineageService:
             build=self._node_build(build, unique_id),
             is_mart=node.layer == Layer.MARTS and not node.name.endswith(UNMASKED_SUFFIX),
             selector=_selector(node),
+        )
+
+    def test_details(self, unique_id: str) -> TestDetails | None:
+        test = self._loader.load().test(unique_id)
+        if test is None:
+            return None
+
+        has_sql = test.kind != "unit"
+        compiled = self._node_sql.compiled_test(test) if has_sql else None
+        return TestDetails(
+            unique_id=test.unique_id,
+            name=test.name,
+            kind=test.kind,
+            severity=test.severity,
+            column=test.column,
+            file_path=test.file_path,
+            selector=test.name,
+            raw_sql=test.raw_sql,
+            compiled_sql=compiled,
+            sql_note=SQL_NOTE if has_sql and compiled is None else None,
+            definition=test.definition,
         )
 
     def column_focus(self, unique_id: str, column: str) -> ColumnFocusView | None:

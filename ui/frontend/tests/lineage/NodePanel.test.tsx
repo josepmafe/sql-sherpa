@@ -31,9 +31,9 @@ const DETAILS = nodeDetails({
     columnDetail({ name: "orders", data_type: null, kind: "row_count", counts: "model.sherpa.stg_orders" }),
   ],
   tests: [
-    { name: "unique_order_id", kind: "generic", severity: "error", column: "order_id", outcome: "passed" },
-    { name: "assert_totals", kind: "singular", severity: "error", column: null, outcome: "failed" },
-    { name: "recent_orders", kind: "generic", severity: "warn", column: null, outcome: "warned" },
+    { unique_id: "test.sherpa.unique_order_id", name: "unique_order_id", kind: "generic", severity: "error", column: "order_id", outcome: "passed" },
+    { unique_id: "test.sherpa.assert_totals", name: "assert_totals", kind: "singular", severity: "error", column: null, outcome: "failed" },
+    { unique_id: "test.sherpa.recent_orders", name: "recent_orders", kind: "generic", severity: "warn", column: null, outcome: "warned" },
   ],
   raw_sql: "select * from {{ ref('stg_orders') }}",
   compiled_sql: "select * from stg_orders",

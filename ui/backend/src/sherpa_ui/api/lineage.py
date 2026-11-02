@@ -4,7 +4,13 @@ from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 
 from sherpa_ui.api.errors import INVALID_REQUEST_CODE, ApiException, error_responses
-from sherpa_ui.lineage.lineage_service import ColumnFocusView, LineageGraph, LineageService, NodeDetails
+from sherpa_ui.lineage.lineage_service import (
+    ColumnFocusView,
+    LineageGraph,
+    LineageService,
+    NodeDetails,
+    TestDetails,
+)
 from sherpa_ui.lineage.manifest_graph import Layer
 from sherpa_ui.lineage.selector import UnsupportedSelector
 
@@ -33,6 +39,16 @@ async def get_node(unique_id: str, request: Request) -> NodeDetails:
     details = await run_in_threadpool(service.node, unique_id)
     if details is None:
         raise ApiException(404, "node_not_found", f"no graph node with id {unique_id!r}")
+
+    return details
+
+
+@router.get("/tests/{unique_id}", responses=error_responses(404, 422))
+async def get_test(unique_id: str, request: Request) -> TestDetails:
+    service: LineageService = request.app.state.lineage_service
+    details = await run_in_threadpool(service.test_details, unique_id)
+    if details is None:
+        raise ApiException(404, "test_not_found", f"no test with id {unique_id!r}")
 
     return details
 

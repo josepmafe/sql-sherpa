@@ -67,6 +67,7 @@ def lineage_client(
 ) -> TestClient:
     node_sql = create_autospec(NodeSql, instance=True)
     node_sql.compiled.return_value = None
+    node_sql.compiled_test.return_value = None
     app.state.lineage_service = LineageService(manifest_loader, builds, node_sql, columns_loader)
     return client
 
@@ -85,6 +86,26 @@ class TestLineageApi:
 
         assert response.status_code == 404
         assert response.json()["code"] == "node_not_found"
+
+    def test_test_details_by_kind(self, lineage_client: TestClient) -> None:
+        singular = lineage_client.get("/api/lineage/tests/test.p.assert_orders_match_customers").json()
+        generic = lineage_client.get("/api/lineage/tests/test.p.unique_dim_customers_id").json()
+        unit = lineage_client.get("/api/lineage/tests/unit_test.p.fct_orders.revenue_is_summed").json()
+
+        assert singular["raw_sql"] == "select * from {{ ref('fct_orders') }} where false"
+        assert singular["definition"] is None
+        assert singular["selector"] == "assert_orders_match_customers"
+        assert generic["raw_sql"] is None
+        assert generic["definition"]
+        assert generic["sql_note"]
+        assert (unit["kind"], unit["definition"] is not None, unit["sql_note"]) == ("unit", True, None)
+
+    @pytest.mark.parametrize("unique_id", ["test.p.nope", "model.p.fct_orders"])
+    def test_unknown_test_and_node_id_are_404(self, lineage_client: TestClient, unique_id: str) -> None:
+        response = lineage_client.get(f"/api/lineage/tests/{unique_id}")
+
+        assert response.status_code == 404
+        assert response.json()["code"] == "test_not_found"
 
     def test_graph_without_a_database_has_no_status(self, lineage_client: TestClient) -> None:
         body = lineage_client.get("/api/lineage", params={"select": "fct_orders"}).json()
@@ -130,9 +151,13 @@ class TestLineageApi:
     def test_missing_manifest_is_503(self, lineage_client: TestClient, manifest_loader: ManifestLoader) -> None:
         manifest_loader.load.side_effect = CatalogUnavailable("no manifest")  # type: ignore[attr-defined]
 
-        responses = [lineage_client.get("/api/lineage"), lineage_client.get("/api/lineage/nodes/model.p.fct_orders")]
+        responses = [
+            lineage_client.get("/api/lineage"),
+            lineage_client.get("/api/lineage/nodes/model.p.fct_orders"),
+            lineage_client.get("/api/lineage/tests/test.p.assert_orders_match_customers"),
+        ]
 
-        assert [response.status_code for response in responses] == [503, 503]
+        assert [response.status_code for response in responses] == [503, 503, 503]
         assert responses[0].json()["code"] == "catalog_unavailable"
 
     def test_columns_flag_adds_columns(self, lineage_client: TestClient) -> None:

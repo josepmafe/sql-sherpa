@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lineage/tests/{unique_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Test */
+        get: operations["get_test_api_lineage_tests__unique_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/queries": {
         parameters: {
             query?: never;
@@ -560,6 +577,40 @@ export interface components {
             /** Primary Key */
             primary_key: string[];
         };
+        /**
+         * TestDetails
+         * @description What a test row of the node panel expands to: where the test is written and what it checks.
+         */
+        TestDetails: {
+            /** Column */
+            column: string | null;
+            /** Compiled Sql */
+            compiled_sql: string | null;
+            /** Definition */
+            definition: string | null;
+            /** File Path */
+            file_path: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "generic" | "singular" | "unit";
+            /** Name */
+            name: string;
+            /** Raw Sql */
+            raw_sql: string | null;
+            /** Selector */
+            selector: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warn";
+            /** Sql Note */
+            sql_note: string | null;
+            /** Unique Id */
+            unique_id: string;
+        };
         /** TestInfo */
         TestInfo: {
             /** Column */
@@ -577,6 +628,8 @@ export interface components {
              * @enum {string}
              */
             severity: "error" | "warn";
+            /** Unique Id */
+            unique_id: string;
         };
         /**
          * TestOutcome
@@ -650,7 +703,7 @@ export interface operations {
                     "application/json": components["schemas"]["TableDetails"];
                 };
             };
-            /** @description Not found: `table_not_found`, `node_not_found`, `column_not_found` */
+            /** @description Not found: `table_not_found`, `node_not_found`, `test_not_found`, `column_not_found` */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -790,7 +843,7 @@ export interface operations {
                     "application/json": components["schemas"]["ColumnFocusView"];
                 };
             };
-            /** @description Not found: `table_not_found`, `node_not_found`, `column_not_found` */
+            /** @description Not found: `table_not_found`, `node_not_found`, `test_not_found`, `column_not_found` */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -848,7 +901,65 @@ export interface operations {
                     "application/json": components["schemas"]["NodeDetails"];
                 };
             };
-            /** @description Not found: `table_not_found`, `node_not_found`, `column_not_found` */
+            /** @description Not found: `table_not_found`, `node_not_found`, `test_not_found`, `column_not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Refused: `invalid_request`, `guard_rejected`, `sql_error`, `unknown_column`, `unsupported_selector` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dependency is unavailable: `catalog_unavailable`, `database_unavailable`, `too_many_connections` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_test_api_lineage_tests__unique_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                unique_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDetails"];
+                };
+            };
+            /** @description Not found: `table_not_found`, `node_not_found`, `test_not_found`, `column_not_found` */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, Literal
@@ -13,6 +14,8 @@ _FQN_GROUP_PARTS = 2  # dbt's bare-name match reads fqn[0] and fqn[1] (and the l
 MODEL_FOLDER_INDEX = 1  # a model's fqn is [package, folder under models/, ...]
 DEFAULT_SEVERITY = "error"
 EPHEMERAL = "ephemeral"
+_GENERIC_IMPLICIT_ARGUMENTS = frozenset({"model", "column_name"})  # dbt fills them in from where the test is written
+_UNIT_TEST_DEFINITION_KEYS = ("model", "given", "expect", "overrides")
 _NODE_SECTIONS = ("nodes", "sources", "exposures")
 _GRAPH_RESOURCE_TYPES = frozenset({"model", "seed", "snapshot", "source", "exposure"})
 _MATERIALIZED_TYPES = frozenset({"model", "seed", "snapshot"})
@@ -90,6 +93,11 @@ class NodeTest(BaseModel):
     column: str | None
     severity: Literal["error", "warn"]
     counts_against: tuple[str, ...]
+    file_path: str  # the SQL file of a singular test, the YAML of a generic or unit test
+    package_name: str
+    path: str | None  # a generic test's compiled file under `file_path`; dbt shortens long names with a hash
+    raw_sql: str | None  # singular tests only: a generic test's SQL is a macro call
+    definition: str | None  # JSON text; None for a singular test
 
 
 class ManifestGraph:
@@ -111,7 +119,9 @@ class ManifestGraph:
                 self._children[parent].append(node.unique_id)
 
         self._tests: dict[str, list[NodeTest]] = {unique_id: [] for unique_id in nodes}
+        self._tests_by_id: dict[str, NodeTest] = {}
         for test in tests:
+            self._tests_by_id[test.unique_id] = test
             for unique_id in test.counts_against:
                 self._tests[unique_id].append(test)
 
@@ -138,6 +148,9 @@ class ManifestGraph:
     def tests_of(self, unique_id: str) -> tuple[NodeTest, ...]:
         return tuple(self._tests[unique_id])
 
+    def test(self, unique_id: str) -> NodeTest | None:
+        return self._tests_by_id.get(unique_id)
+
     def layers(self) -> tuple[Layer, ...]:
         present = {node.layer for node in self.nodes.values()}
         return tuple(layer for layer in Layer if layer in present)
@@ -156,7 +169,7 @@ def _build_node(raw: dict[str, Any], graph_ids: KeysView[str]) -> GraphNode:
         materialization=config.get("materialized") if resource_type in _MATERIALIZED_TYPES else None,
         domain=meta.get("domain"),
         description=raw.get("description", ""),
-        file_path=raw["original_file_path"].replace("\\", "/"),  # dbt writes the separator of the machine it ran on
+        file_path=_posix(raw["original_file_path"]),  # dbt writes the separator of the machine it ran on
         package_name=raw["package_name"],
         source_name=raw.get("source_name") if resource_type == "source" else None,
         raw_sql=raw.get("raw_code") or None,
@@ -210,8 +223,13 @@ def _build_test(raw: dict[str, Any], nodes: Mapping[str, GraphNode]) -> NodeTest
         name=raw["name"],
         kind=kind,
         column=raw.get("column_name"),
-        severity="warn" if str(raw.get("config", {}).get("severity", DEFAULT_SEVERITY)).lower() == "warn" else "error",
+        severity=_severity(raw),
         counts_against=counts_against,
+        file_path=_posix(raw["original_file_path"]),
+        package_name=raw["package_name"],
+        path=_posix(raw["path"]) if kind == "generic" else None,
+        raw_sql=raw.get("raw_code") if kind == "singular" else None,
+        definition=_generic_definition(raw) if kind == "generic" else None,
     )
 
 
@@ -227,4 +245,39 @@ def _build_unit_test(raw: dict[str, Any], nodes: Mapping[str, GraphNode]) -> Nod
             for unique_id in raw["depends_on"]["nodes"]
             if unique_id in nodes and nodes[unique_id].name == raw["model"]
         ),
+        file_path=_posix(raw["original_file_path"]),
+        package_name=raw["package_name"],
+        path=None,
+        raw_sql=None,
+        definition=_json({key: raw.get(key) for key in _UNIT_TEST_DEFINITION_KEYS}),
     )
+
+
+def _generic_definition(raw: dict[str, Any]) -> str:
+    metadata = raw["test_metadata"]
+    config = raw.get("config", {})
+    set_config = {
+        "severity": _severity(raw) if _severity(raw) != DEFAULT_SEVERITY else None,
+        "where": config.get("where"),
+        "tags": config.get("tags") or None,
+    }
+    return _json(
+        {
+            "name": metadata["name"],
+            "namespace": metadata.get("namespace"),
+            "arguments": {k: v for k, v in metadata.get("kwargs", {}).items() if k not in _GENERIC_IMPLICIT_ARGUMENTS},
+            "config": {key: value for key, value in set_config.items() if value is not None},
+        }
+    )
+
+
+def _severity(raw: dict[str, Any]) -> Literal["error", "warn"]:
+    return "warn" if str(raw.get("config", {}).get("severity", DEFAULT_SEVERITY)).lower() == "warn" else "error"
+
+
+def _json(value: object) -> str:
+    return json.dumps(value, indent=2, default=str)
+
+
+def _posix(path: str) -> str:
+    return path.replace("\\", "/")  # dbt writes the separator of the machine it ran on

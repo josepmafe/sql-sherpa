@@ -45,6 +45,11 @@ def _test(
         column=None,
         severity="error",
         counts_against=counts_against,
+        file_path="tests/x.sql",
+        package_name="p",
+        path=None,
+        raw_sql=None,
+        definition=None,
     )
 
 
