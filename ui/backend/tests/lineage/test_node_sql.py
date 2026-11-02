@@ -46,6 +46,16 @@ class TestNodeSql:
 
         assert NodeSql(tmp_path).compiled(graph.nodes["model.p.fct_orders"]) is None
 
+    def test_an_absolute_package_name_does_not_escape_compiled(self, manifest: dict[str, Any], tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        (outside / "models" / "marts").mkdir(parents=True)
+        (outside / "models" / "marts" / "fct_orders.sql").write_text("select secret", encoding="utf-8")
+        (tmp_path / "compiled").mkdir()
+        manifest["nodes"]["model.p.fct_orders"]["package_name"] = outside.as_posix()
+        graph = ManifestGraph.from_manifest(manifest)
+
+        assert NodeSql(tmp_path).compiled(graph.nodes["model.p.fct_orders"]) is None
+
     def test_a_file_that_is_not_utf8_is_none(self, manifest: dict[str, Any], tmp_path: Path) -> None:
         graph = ManifestGraph.from_manifest(manifest)
         path = tmp_path / "compiled" / "p" / "models" / "marts" / "fct_orders.sql"

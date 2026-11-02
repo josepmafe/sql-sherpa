@@ -41,8 +41,9 @@ class NodeSql:
 
     def _read(self, package: str, relative: str) -> str | None:
         try:
-            path = (self._root / package / relative).resolve()
-            if not path.is_relative_to(self._root / package) or not path.is_file():
+            base = (self._root / package).resolve()  # the package folder itself must stay under compiled/
+            path = (base / relative).resolve()
+            if not base.is_relative_to(self._root) or not path.is_relative_to(base) or not path.is_file():
                 return None
 
             return path.read_text(encoding="utf-8")
