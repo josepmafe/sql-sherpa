@@ -31,7 +31,7 @@ const now = () => Number(handle().getAttribute("aria-valuenow"));
 
 beforeEach(() => {
   localStorage.clear();
-  stubPaneLayout();
+  stubPaneLayout({ pointerOnHandles: true });
 });
 
 describe("PaneHandle", () => {

@@ -38,7 +38,7 @@ const stored = () => JSON.parse(localStorage.getItem(KEY) ?? "null") as unknown;
 
 beforeEach(() => {
   localStorage.clear();
-  stubPaneLayout();
+  stubPaneLayout({ pointerOnHandles: true });
 });
 
 describe("PaneGroup", () => {

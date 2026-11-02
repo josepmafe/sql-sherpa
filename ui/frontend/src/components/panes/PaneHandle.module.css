@@ -1,9 +1,17 @@
-/* A 6 px hit area around a 1 px line. Hover, drag and focus use the theme's primary colour (3:1 against the page in both themes). */
+/* A 6 px hit area around a 1 px line. Hover, drag and focus use the theme's primary colour (3:1 against the page in both themes).
+   The library's inline `flex: 0 0 auto` leaves the size to the width or the height. */
 .handle {
   position: relative;
-  flex: 0 0 6px;
   background: transparent;
   outline: none;
+}
+
+.handle[aria-orientation="vertical"] {
+  width: 6px;
+}
+
+.handle[aria-orientation="horizontal"] {
+  height: 6px;
 }
 
 .handle::after {

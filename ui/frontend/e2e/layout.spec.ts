@@ -24,7 +24,9 @@ test.describe("at 1024 x 700", () => {
   test("the editor keeps a usable width, its buttons one row and History its label", async ({ page }) => {
     const editor = await page.locator(".cm-editor").boundingBox();
     const tops = await Promise.all(
-      ["Run", "Run selection", "Format"].map(async (name) => (await page.getByRole("button", { name, exact: true }).boundingBox())?.y),
+      ["Run", "Run selection", "Format"].map(
+        async (name) => (await page.getByRole("button", { name, exact: true }).boundingBox())?.y,
+      ),
     );
     const history = page.getByRole("button", { name: /^History/ });
 
@@ -33,13 +35,37 @@ test.describe("at 1024 x 700", () => {
     expect(await history.evaluate((button) => button.scrollWidth <= button.clientWidth)).toBe(true);
   });
 
-  test("the Inspector opens as a drawer over the editor and closes with Escape", async ({ page }) => {
+  test("the Inspector opens as an overlay without moving the editor, and closes with Escape", async ({ page }) => {
+    const editorBefore = await page.locator(".cm-editor").first().boundingBox();
+
     await page.getByRole("button", { name: "fct_orders", exact: true }).click();
 
-    const drawer = page.getByRole("dialog", { name: "Table details" });
-    await expect(drawer.getByText("Grain:")).toBeVisible();
+    const overlay = page.getByRole("complementary", { name: "Table details" });
+    await expect(overlay.getByText("Grain:")).toBeVisible();
+    await expect(overlay.getByRole("heading", { name: "Table details" })).toBeFocused();
+    expect(await page.locator(".cm-editor").first().boundingBox()).toEqual(editorBefore);
     await page.keyboard.press("Escape");
-    await expect(drawer).toBeHidden();
+    await expect(overlay).toBeHidden();
+    await expect(page.getByRole("button", { name: "fct_orders", exact: true })).toBeFocused();
+  });
+
+  test("a layout stored by a wider window does not break this one", async ({ page }) => {
+    await page.evaluate(() =>
+      localStorage.setItem(
+        "sherpa.v1.layout.explorer",
+        JSON.stringify({ sizes: { tree: 480, inspector: 520 }, collapsed: {} }),
+      ),
+    );
+    await page.reload();
+
+    const editor = await page.locator(".cm-editor").first().boundingBox();
+    const root = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    // The centre pane's minimum (360 px) less its padding.
+    expect(editor!.width).toBeGreaterThanOrEqual(340);
+    expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
   });
 
   test("opening the Lineage node panel keeps the selected node inside the canvas", async ({ page }) => {
@@ -51,7 +77,9 @@ test.describe("at 1024 x 700", () => {
 test.describe("Lineage at 1280 x 800", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("the whole project's bands do not scroll the page sideways and the panel stays under the canvas", async ({ page }) => {
+  test("the whole project's bands do not scroll the page sideways and the panel stays under the canvas", async ({
+    page,
+  }) => {
     await page.goto("/lineage?node=model.sherpa.fct_orders");
     const panel = page.getByRole("complementary", { name: "Node details" });
     await expect(panel.getByRole("heading", { name: "fct_orders", level: 4 })).toBeVisible();
@@ -104,7 +132,9 @@ async function expectSelectedNodeInCanvas(page: Page): Promise<void> {
     .toBe(true);
 }
 
-async function lineageWidths(page: Page): Promise<Record<"canvasRight" | "panelRight" | "scrollWidth" | "clientWidth", number>> {
+async function lineageWidths(
+  page: Page,
+): Promise<Record<"canvasRight" | "panelRight" | "scrollWidth" | "clientWidth", number>> {
   await page.goto("/lineage?select=%2Bfct_orders%2B&node=model.sherpa.fct_orders");
   const panel = page.getByRole("complementary", { name: "Node details" });
   await expect(panel.getByRole("heading", { name: "fct_orders", level: 4 })).toBeVisible();
@@ -124,7 +154,9 @@ async function lineageWidths(page: Page): Promise<Record<"canvasRight" | "panelR
 test.describe("the navigation rail at 1440 x 900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("stays collapsed after a reload, and hovering it opens the labels without moving the editor", async ({ page }) => {
+  test("stays collapsed after a reload, and hovering it opens the labels without moving the editor", async ({
+    page,
+  }) => {
     await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.shell"));
     await page.reload();
     await page.getByRole("button", { name: "Collapse the navigation" }).click();
@@ -142,4 +174,100 @@ test.describe("the navigation rail at 1440 x 900", () => {
     expect((await rail.boundingBox())!.width).toBeGreaterThan(railBefore!.width);
     expect((await page.locator(".cm-editor").boundingBox())!.x).toBe(editorBefore!.x);
   });
+});
+
+test.describe("the Explorer panes", () => {
+  const widths = async (page: Page) => ({
+    tree: (await page
+      .getByRole("button", { name: "Collapse the table tree" })
+      .locator("xpath=ancestor::*[@data-panel]")
+      .boundingBox())!.width,
+    editor: (await page.locator(".cm-editor").first().boundingBox())!.width,
+  });
+  const dragBy = async (page: Page, name: string, dx: number, dy = 0) => {
+    const box = (await page.getByRole("separator", { name }).boundingBox())!;
+    expect(Math.min(box.width, box.height)).toBe(6);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx, y + dy, { steps: 8 });
+    await page.mouse.up();
+  };
+
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 1440, height: 900 },
+  ]) {
+    test.describe(`at ${viewport.width} x ${viewport.height}`, () => {
+      test.use({ viewport });
+
+      test.beforeEach(async ({ page }) => {
+        await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.explorer"));
+        await page.reload();
+      });
+
+      test("dragging the tree's handle by 100 px widens the tree by about 100 px, and a reload keeps it", async ({
+        page,
+      }) => {
+        const before = await widths(page);
+
+        await dragBy(page, "Resize the tree", 100);
+
+        const after = await widths(page);
+        expect(Math.abs(after.tree - before.tree - 100)).toBeLessThan(6);
+        await page.reload();
+        expect(Math.abs((await widths(page)).tree - after.tree)).toBeLessThan(2);
+      });
+
+      test("the largest stored tree and Inspector still leave the editor its minimum width and the page no scrollbar", async ({
+        page,
+      }) => {
+        await page.evaluate(() =>
+          localStorage.setItem(
+            "sherpa.v1.layout.explorer",
+            JSON.stringify({ sizes: { tree: 480, inspector: 520 }, collapsed: {} }),
+          ),
+        );
+        await page.reload();
+
+        const editor = await page.locator(".cm-editor").first().boundingBox();
+        const root = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+        }));
+        expect(editor!.width).toBeGreaterThanOrEqual(340);
+        expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+      });
+
+      test("the tree folds to a strip that opens over the editor on hover without moving it", async ({ page }) => {
+        await page.getByRole("button", { name: "Collapse the table tree" }).click();
+        await page.reload();
+        const editorBefore = await page.locator(".cm-editor").first().boundingBox();
+        await expect(page.getByRole("button", { name: "fct_orders", exact: true })).toBeHidden();
+
+        await page.getByRole("button", { name: "Open the table tree" }).hover();
+        await expect(page.getByRole("button", { name: "fct_orders", exact: true })).toBeVisible();
+
+        expect(await page.locator(".cm-editor").first().boundingBox()).toEqual(editorBefore);
+        await page.getByRole("button", { name: "fct_orders", exact: true }).click();
+        await expect(page.getByRole("complementary", { name: "Table details" }).getByText("Grain:")).toBeVisible();
+        await page.mouse.move(viewport.width - 5, viewport.height - 5);
+        await expect(page.getByRole("button", { name: "fct_orders", exact: true })).toBeHidden();
+      });
+
+      test("dragging the editor's handle down makes the editor taller, and the editor and its text survive", async ({
+        page,
+      }) => {
+        const editor = page.locator(".cm-editor").first();
+        await page.locator(".cm-content").first().fill("select 1");
+        const before = (await editor.boundingBox())!.height;
+
+        await dragBy(page, "Resize the editor and the results", 0, 60);
+
+        expect((await editor.boundingBox())!.height).toBeGreaterThan(before + 40);
+        await expect(page.locator(".cm-content").first()).toHaveText("select 1");
+      });
+    });
+  }
 });

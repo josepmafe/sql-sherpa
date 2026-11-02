@@ -1,13 +1,9 @@
 import { Alert, Box, Group, Loader, Stack, Text } from "@mantine/core";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
+import { Pane, PaneGroup, PaneHandle } from "../../components/panes";
 import { ResultGrid } from "../../components/ResultGrid";
-import {
-  EMPTY_VIEW,
-  isServerSide,
-  type ResultView,
-  toServerOptions,
-} from "../../components/resultView";
+import { EMPTY_VIEW, isServerSide, type ResultView, toServerOptions } from "../../components/resultView";
 import { errorHighlight, SqlEditor } from "../../components/SqlEditor";
 import { useWorksheetRun, type RunOutcome } from "./useWorksheetRun";
 import type { Worksheet } from "./worksheetStore";
@@ -33,6 +29,12 @@ const POSITION_HINT = "Postgres stopped at the highlighted spot in the editor.";
 // The guard's reasons start with their rule's code (`[guard:not_select] …`), which is for logs, not people.
 const GUARD_RULE_PREFIX = /^\[guard:[^\]]*\]\s*/;
 const BUSY_OPACITY = 0.5;
+// The editor above and the results below, in pixels (UI spec §6.4).
+const EDITOR_DEFAULT = 260;
+const EDITOR_MIN = 120;
+const EDITOR_MAX = 2000;
+const RESULTS_MIN = 160;
+const RESULTS_MAX = 4000;
 const CANCELLED_TEXT = "The query was stopped in the warehouse.";
 const ERROR_TITLES: Record<string, string> = {
   guard_rejected: "Query not allowed",
@@ -95,7 +97,10 @@ export const WorksheetPanel = memo(function WorksheetPanel({
         return;
       }
       setRequested(next);
-      void run(origin.sql, { ...toServerOptions(next, response.columns), onApplied: () => setView(next) });
+      void run(origin.sql, {
+        ...toServerOptions(next, response.columns),
+        onApplied: () => setView(next),
+      });
     },
     [response, rerunning, origin.sql, run],
   );
@@ -109,49 +114,56 @@ export const WorksheetPanel = memo(function WorksheetPanel({
   );
 
   return (
-    <Stack gap="sm">
-      <SqlEditor
-        value={worksheet.sql}
-        onChange={(sql) => onSqlChange(id, sql)}
-        running={running}
-        blockedReason={blockedReason}
-        highlight={highlight}
-        activeTable={activeTable}
-        onRun={(sql, offset) => {
-          setOrigin({ sql, offset });
-          setRequested(undefined);
-          void run(sql);
-        }}
-        onCancel={cancel}
-      />
-      {running && (
-        <Group gap="xs" role="status">
-          <Loader size="xs" />
-          <Text size="sm">Running… {elapsedSeconds} s</Text>
-        </Group>
-      )}
-      {status === "cancelled" && (
-        <Alert color="gray" role="status" title={`Cancelled after ${elapsedSeconds} s`}>
-          {CANCELLED_TEXT}
-        </Alert>
-      )}
-      {status === "error" && error && (
-        <Alert color="red" title={ERROR_TITLES[error.code] ?? "Query failed"}>
-          <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-            {error.message.replace(GUARD_RULE_PREFIX, "")}
-          </Text>
-          {error.code === "timeout" && <Text size="sm">{TIMEOUT_HINT}</Text>}
-          {error.code === "guard_rejected" && <Text size="sm">{GUARD_HINT}</Text>}
-          {highlight && <Text size="sm">{POSITION_HINT}</Text>}
-        </Alert>
-      )}
-      {/* While anything runs the last rows stay, dimmed. A Run's are inert (they belong to the SQL before); a server
+    <PaneGroup id="explorer-editor" direction="vertical">
+      <Pane id="editor" defaultSize={EDITOR_DEFAULT} minSize={EDITOR_MIN} maxSize={EDITOR_MAX}>
+        <SqlEditor
+          value={worksheet.sql}
+          onChange={(sql) => onSqlChange(id, sql)}
+          running={running}
+          blockedReason={blockedReason}
+          highlight={highlight}
+          activeTable={activeTable}
+          onRun={(sql, offset) => {
+            setOrigin({ sql, offset });
+            setRequested(undefined);
+            void run(sql);
+          }}
+          onCancel={cancel}
+        />
+      </Pane>
+      <PaneHandle label="Resize the editor and the results" />
+      <Pane id="results" minSize={RESULTS_MIN} maxSize={RESULTS_MAX}>
+        <Stack gap="sm" pt="xs">
+          {running && (
+            <Group gap="xs" role="status">
+              <Loader size="xs" />
+              <Text size="sm">Running… {elapsedSeconds} s</Text>
+            </Group>
+          )}
+          {status === "cancelled" && (
+            <Alert color="gray" role="status" title={`Cancelled after ${elapsedSeconds} s`}>
+              {CANCELLED_TEXT}
+            </Alert>
+          )}
+          {status === "error" && error && (
+            <Alert color="red" title={ERROR_TITLES[error.code] ?? "Query failed"}>
+              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                {error.message.replace(GUARD_RULE_PREFIX, "")}
+              </Text>
+              {error.code === "timeout" && <Text size="sm">{TIMEOUT_HINT}</Text>}
+              {error.code === "guard_rejected" && <Text size="sm">{GUARD_HINT}</Text>}
+              {highlight && <Text size="sm">{POSITION_HINT}</Text>}
+            </Alert>
+          )}
+          {/* While anything runs the last rows stay, dimmed. A Run's are inert (they belong to the SQL before); a server
           re-run's grid stays usable, so its scroll and filter bar survive. */}
-      {response && (
-        <Box aria-busy={running} inert={running && !rerunning} style={{ opacity: running ? BUSY_OPACITY : 1 }}>
-          <ResultGrid key={generation} response={response} view={shownView} onViewChange={changeView} />
-        </Box>
-      )}
-    </Stack>
+          {response && (
+            <Box aria-busy={running} inert={running && !rerunning} style={{ opacity: running ? BUSY_OPACITY : 1 }}>
+              <ResultGrid key={generation} response={response} view={shownView} onViewChange={changeView} />
+            </Box>
+          )}
+        </Stack>
+      </Pane>
+    </PaneGroup>
   );
 });

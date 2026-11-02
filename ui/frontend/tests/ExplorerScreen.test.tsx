@@ -14,6 +14,7 @@ import {
   updateWorksheet,
 } from "../src/screens/explorer/worksheetStore";
 import { catalog, health, noContent, ok, queryResponse, table } from "./fixtures/api";
+import { stubPaneLayout } from "./fixtures/panes";
 import { editors, isShown, renderWithProviders, wideScreen } from "./fixtures/render";
 
 const post = vi.fn();
@@ -40,6 +41,11 @@ vi.mock("../src/components/resultView", async (importOriginal) => {
 const CATALOG = catalog({ domains: [{ name: "sales", tables: [table()] }] });
 const RESPONSE = queryResponse();
 
+// jsdom has no layout: the pane groups measure the stubbed sizes once the render has settled.
+async function settleLayout(): Promise<void> {
+  await act(async () => {});
+}
+
 function renderScreen(path = "/explorer") {
   return renderWithProviders(<ExplorerScreen />, { path });
 }
@@ -48,6 +54,7 @@ describe("ExplorerScreen", () => {
   beforeEach(() => {
     localStorage.clear();
     useHealth.mockReset().mockReturnValue({ data: health() });
+    stubPaneLayout();
     post.mockReset();
     post.mockImplementation((path: string) =>
       path === "/api/queries" ? new Promise(() => {}) : Promise.resolve(noContent()),
@@ -215,18 +222,47 @@ describe("ExplorerScreen", () => {
     expect(screen.getByRole("button", { name: "Run" })).toHaveAccessibleDescription("Ctrl/Cmd+Enter runs");
   });
 
-  it("below 1280 px the Inspector opens as a drawer when a table is clicked", async () => {
+  it("below 1280 px a click on a table opens the Inspector as an overlay and moves the focus to its heading", async () => {
     const user = userEvent.setup();
     renderScreen();
-    expect(screen.queryByText("Select a table to inspect it.")).not.toBeInTheDocument();
+    await settleLayout();
+    expect(screen.queryByRole("heading", { name: "Table details" })).not.toBeInTheDocument();
+    const widthBefore = screen.getByRole("separator", { name: "Resize the tree" }).getAttribute("aria-valuenow");
 
     await user.click(screen.getByRole("button", { name: "fct_orders" }));
 
-    const drawer = screen.getByRole("dialog", { name: "Table details" });
-    expect(drawer).toHaveTextContent("Loading fct_orders…");
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const overlay = screen.getByRole("complementary", { name: "Table details" });
+    expect(overlay).toHaveTextContent("Loading fct_orders…");
+    expect(within(overlay).getByRole("heading", { name: "Table details" })).toHaveFocus();
+    expect(screen.queryByRole("separator", { name: "Resize the Inspector" })).not.toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize the tree" })).toHaveAttribute("aria-valuenow", widthBefore);
   });
+
+  it("below 1280 px Escape closes the Inspector overlay and the focus goes back to the table's row", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+    expect(screen.getByRole("complementary", { name: "Table details" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Table details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "fct_orders" })).toHaveFocus();
+  });
+
+  it("below 1280 px the overlay's toggle closes it and the focus goes back to the table's row", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+
+    await user.click(screen.getByRole("button", { name: "Close the table details" }));
+
+    expect(screen.queryByRole("complementary", { name: "Table details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "fct_orders" })).toHaveFocus();
+  });
+
 
   it("?table= selects and inspects a known mart", async () => {
     vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
@@ -282,5 +318,132 @@ describe("ExplorerScreen", () => {
     expect(panelRenders(first!.id)).toBeLessThanOrEqual(before.first + 4);
     expect(panelRenders(second!.id)).toBe(before.second);
     expect(cellText).not.toHaveBeenCalled();
+  });
+});
+
+describe("ExplorerScreen panes", () => {
+  const LAYOUT_KEY = "sherpa.v1.layout.explorer";
+  const handle = (name: string) => screen.getByRole("separator", { name });
+  const valueNow = (name: string) => Number(handle(name).getAttribute("aria-valuenow"));
+  const storedLayout = () => JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as unknown;
+
+  beforeEach(() => {
+    localStorage.clear();
+    useHealth.mockReset().mockReturnValue({ data: health() });
+    post.mockReset();
+    post.mockImplementation(() => new Promise(() => {}));
+    stubPaneLayout();
+    vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
+  });
+
+  it("from 1280 px the tree, the worksheets and the Inspector are three panes with named handles", async () => {
+    renderScreen();
+    await settleLayout();
+
+    expect(valueNow("Resize the tree")).toBeCloseTo((280 / 1200) * 100, 0);
+    expect(valueNow("Resize the Inspector")).toBeCloseTo((620 / 1200) * 100, 0);
+  });
+
+  it("the arrow keys resize the tree and the Inspector, and the sizes are remembered", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    const treeBefore = valueNow("Resize the tree");
+    const inspectorBefore = valueNow("Resize the Inspector");
+
+    handle("Resize the tree").focus();
+    await user.keyboard("{ArrowRight}");
+    handle("Resize the Inspector").focus();
+    await user.keyboard("{ArrowLeft}");
+
+    expect(valueNow("Resize the tree")).toBeGreaterThan(treeBefore);
+    expect(valueNow("Resize the Inspector")).toBeLessThan(inspectorBefore);
+    const layout = storedLayout() as { sizes: Record<string, number> };
+    expect(layout.sizes.tree).toBeGreaterThan(280);
+    expect(layout.sizes.inspector).toBeGreaterThan(300);
+  });
+
+  it("restores a remembered tree width, clamps a stored 5000 to the maximum and ignores corrupt JSON", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 400 }, collapsed: {} }));
+    const first = renderScreen();
+    await settleLayout();
+    expect(valueNow("Resize the tree")).toBeCloseTo((400 / 1200) * 100, 0);
+    first.unmount();
+
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 5000 }, collapsed: {} }));
+    const second = renderScreen();
+    await settleLayout();
+    expect(valueNow("Resize the tree")).toBeCloseTo((480 / 1200) * 100, 0);
+    second.unmount();
+
+    localStorage.setItem(LAYOUT_KEY, '{"sizes":');
+    renderScreen();
+    await settleLayout();
+    expect(valueNow("Resize the tree")).toBeCloseTo((280 / 1200) * 100, 0);
+    warn.mockRestore();
+  });
+
+  it("the tree's button folds it to a strip and opens it again", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    expect(screen.getByRole("button", { name: "Collapse the table tree" })).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(screen.getByRole("button", { name: "Collapse the table tree" }));
+
+    expect(screen.getByRole("button", { name: "Open the table tree" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "fct_orders" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Search tables and columns" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open the table tree" }));
+    expect(screen.getByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+  });
+
+  it("the Inspector's button folds it, and a click on a table opens it again", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+
+    await user.click(screen.getByRole("button", { name: "Collapse the Inspector" }));
+
+    expect(screen.getByRole("button", { name: "Open the Inspector" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Select a table to inspect it.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+    expect(screen.getByRole("button", { name: "Collapse the Inspector" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("complementary", { name: "Table details" })).toHaveTextContent("Loading fct_orders…");
+  });
+
+  it("a folded tree opens over the editor on focus, and a click on a table selects it and closes the strip", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 280 }, collapsed: { tree: true } }));
+    renderScreen();
+    await settleLayout();
+    expect(screen.queryByRole("button", { name: "fct_orders" })).not.toBeInTheDocument();
+
+    act(() => screen.getByRole("button", { name: "Open the table tree" }).focus());
+    await user.click(await screen.findByRole("button", { name: "fct_orders" }));
+
+    expect(screen.getByRole("complementary", { name: "Table details" })).toHaveTextContent("Loading fct_orders…");
+    expect(screen.queryByRole("button", { name: "fct_orders" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open the table tree" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("the editor and the results are two panes: moving the handle neither clears the result nor runs the query again", async () => {
+    const user = userEvent.setup();
+    post.mockImplementation(() => Promise.resolve(ok(RESPONSE)));
+    const seeded = freshState();
+    saveExplorerState(updateWorksheet(seeded, seeded.activeId, { sql: "select 1" }));
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText("2 rows in 5 ms")).toBeInTheDocument();
+    const before = valueNow("Resize the editor and the results");
+
+    handle("Resize the editor and the results").focus();
+    await user.keyboard("{ArrowDown}");
+
+    expect(valueNow("Resize the editor and the results")).toBeGreaterThan(before);
+    expect(screen.getByText("2 rows in 5 ms")).toBeInTheDocument();
+    expect(post.mock.calls.filter(([path]) => path === "/api/queries")).toHaveLength(1);
   });
 });

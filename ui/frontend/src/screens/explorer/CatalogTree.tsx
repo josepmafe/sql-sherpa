@@ -1,6 +1,6 @@
 import { ActionIcon, Box, CloseButton, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconDots } from "@tabler/icons-react";
-import { useId, useRef, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useCatalog } from "../../api/queries";
@@ -24,9 +24,18 @@ const SUMMARY_MAX_CHARS = 200;
 type TreeProps = EditorActions & {
   selected?: string;
   onSelect: (table: string) => void;
+  // Sits at the heading's right edge: the pane's collapse button.
+  headerAction?: ReactNode;
 };
 
-export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, previewBlocked }: TreeProps) {
+export function CatalogTree({
+  selected,
+  onSelect,
+  onPreview,
+  onInsertSelect,
+  previewBlocked,
+  headerAction,
+}: TreeProps) {
   const catalog = useCatalog();
   const [search, setSearch] = useState("");
   const searchBox = useRef<HTMLInputElement>(null);
@@ -34,13 +43,18 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
   const needle = search.trim().toLowerCase();
 
   if (catalog.isError) {
-    return <LoadError title="Could not load the catalog" error={catalog.error} onRetry={() => void catalog.refetch()} />;
+    return (
+      <LoadError title="Could not load the catalog" error={catalog.error} onRetry={() => void catalog.refetch()} />
+    );
   }
   if (!catalog.data) return <Text c="dimmed">Loading catalog…</Text>;
 
   const { database, schema_name: schema } = catalog.data;
   const domains = catalog.data.domains
-    .map((domain) => ({ ...domain, tables: domain.tables.flatMap((t) => filterTable(t, needle)) }))
+    .map((domain) => ({
+      ...domain,
+      tables: domain.tables.flatMap((t) => filterTable(t, needle)),
+    }))
     .filter((domain) => domain.tables.length > 0);
 
   const toggle = (name: string) =>
@@ -72,9 +86,12 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
           )
         }
       />
-      <Text size="xs" c="dimmed">
-        {database} › {schema}
-      </Text>
+      <Group justify="space-between" wrap="nowrap" gap="xs">
+        <Text size="sm" fw={600}>
+          {database} › {schema}
+        </Text>
+        {headerAction}
+      </Group>
       {needle !== "" && domains.length === 0 && (
         <Text size="sm" c="dimmed">
           No table or column matches “{search.trim()}”.
@@ -82,7 +99,7 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
       )}
       {domains.map((domain) => (
         <Box key={domain.name}>
-          <Text fw={600} size="sm" tt="capitalize">
+          <Text size="xs" c="dimmed" tt="capitalize">
             {domain.name}
           </Text>
           {domain.tables.map((table) => (
@@ -190,6 +207,7 @@ function TableRow(props: TableRowProps) {
             size="sm"
             fw={selected ? 700 : 500}
             aria-expanded={open}
+            data-table={table.name}
             style={NAME_STYLE}
             onClick={onClick}
           >
