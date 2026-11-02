@@ -50,28 +50,21 @@ const VISUALLY_HIDDEN_STYLE = {
   whiteSpace: "nowrap",
   border: 0,
 } as const;
-const SKIP_SHOWN_STYLE = {
-  position: "fixed",
-  top: 8,
-  left: 8,
-  zIndex: 1000,
-} as const;
+const SKIP_SHOWN_STYLE = { position: "fixed", top: 8, left: 8, zIndex: 1000 } as const;
+const POPUP_SELECTOR = '[role="menu"], [role="listbox"], .cm-tooltip';
 const DATABASE_DOWN = "Database unavailable: queries run again once it is back";
 
 export function ExplorerScreen() {
   const [selected, setSelected] = useState<string>();
   const [inspecting, setInspecting] = useState(false);
   const [inspectCount, setInspectCount] = useState(0);
-  const [peekHost, setPeekHost] = useState<HTMLElement | null>(null);
   const inspectorHeading = useRef<HTMLHeadingElement>(null);
   const [unknownTable, setUnknownTable] = useState<string>();
   // "Open in Explorer" from Lineage arrives with ?table=<name>; it is read once, when the catalog is there to check it.
   const catalog = useCatalog();
   const [search] = useSearchParams();
   const requested = useRef(search.get("table"));
-  const wide = useMediaQuery(WIDE_QUERY, undefined, {
-    getInitialValueInEffect: false,
-  });
+  const wide = useMediaQuery(WIDE_QUERY, undefined, { getInitialValueInEffect: false });
   // UI spec §3: a database that is down disables only what needs it (Run, Run selection, Preview). Health is polled,
   // so they come back on their own.
   const health = useHealth();
@@ -94,12 +87,7 @@ export function ExplorerScreen() {
   // Stable across renders, so the memoized panels skip a render that changes none of their props.
   const record = useCallback(
     (outcome: RunOutcome) =>
-      setState((previous) =>
-        appendHistory(previous, {
-          ...outcome,
-          ranAt: new Date().toISOString(),
-        }),
-      ),
+      setState((previous) => appendHistory(previous, { ...outcome, ranAt: new Date().toISOString() })),
     [],
   );
   const changeSql = useCallback(
@@ -129,7 +117,9 @@ export function ExplorerScreen() {
   useEffect(() => {
     if (!overlayOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeInspector();
+      // Escape that closes a completion list or a menu is theirs, not the overlay's.
+      const inPopup = event.target instanceof Element && event.target.closest(POPUP_SELECTOR) !== null;
+      if (event.key === "Escape" && !event.defaultPrevented && !inPopup) closeInspector();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -142,6 +132,7 @@ export function ExplorerScreen() {
     if (catalog.data.domains.some((domain) => domain.tables.some((table) => table.name === name))) {
       setSelected(name);
       setInspecting(true);
+      setInspectCount((previous) => previous + 1);
     } else setUnknownTable(name);
   }, [catalog.data]);
 
@@ -150,10 +141,9 @@ export function ExplorerScreen() {
     centre.current?.querySelector<HTMLElement>(`[data-worksheet="${active.id}"] .cm-content`)?.focus();
 
   return (
-    <Box ref={setPeekHost} pos="relative" h="calc(100vh - 100px)">
+    <Box pos="relative" h="calc(100vh - 100px)">
       <SkipToEditor onSkip={skipToEditor} />
-      {/* A new group when the layout changes between wide and narrow: its panes differ. */}
-      <PaneGroup key={wide ? "wide" : "narrow"} id={LAYOUT_ID} direction="horizontal">
+      <PaneGroup id={LAYOUT_ID} direction="horizontal">
         <Pane
           id={TREE_PANE}
           defaultSize={TREE_DEFAULT}
@@ -162,7 +152,6 @@ export function ExplorerScreen() {
           collapsedSize={TREE_STRIP_WIDTH}
         >
           <TreePane
-            peekHost={peekHost}
             selected={selected}
             onSelect={inspect}
             onPreview={(name) => setState((previous) => openPreview(previous, name))}

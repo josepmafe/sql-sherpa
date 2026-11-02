@@ -3,7 +3,12 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { Pane, PaneGroup, PaneHandle } from "../../components/panes";
 import { ResultGrid } from "../../components/ResultGrid";
-import { EMPTY_VIEW, isServerSide, type ResultView, toServerOptions } from "../../components/resultView";
+import {
+  EMPTY_VIEW,
+  isServerSide,
+  type ResultView,
+  toServerOptions,
+} from "../../components/resultView";
 import { errorHighlight, SqlEditor } from "../../components/SqlEditor";
 import { useWorksheetRun, type RunOutcome } from "./useWorksheetRun";
 import type { Worksheet } from "./worksheetStore";
@@ -97,10 +102,7 @@ export const WorksheetPanel = memo(function WorksheetPanel({
         return;
       }
       setRequested(next);
-      void run(origin.sql, {
-        ...toServerOptions(next, response.columns),
-        onApplied: () => setView(next),
-      });
+      void run(origin.sql, { ...toServerOptions(next, response.columns), onApplied: () => setView(next) });
     },
     [response, rerunning, origin.sql, run],
   );
@@ -114,8 +116,10 @@ export const WorksheetPanel = memo(function WorksheetPanel({
   );
 
   return (
-    <PaneGroup id="explorer-editor" direction="vertical">
-      <Pane id="editor" defaultSize={EDITOR_DEFAULT} minSize={EDITOR_MIN} maxSize={EDITOR_MAX}>
+    // Every worksheet's group stores under one key (`explorer-editor`), so a height set in one is the next one's start;
+    // the DOM ids carry the worksheet's id, since all the panels stay mounted.
+    <PaneGroup id="explorer-editor" domId={`explorer-editor-${id}`} direction="vertical">
+      <Pane id="editor" domId={`editor-${id}`} defaultSize={EDITOR_DEFAULT} minSize={EDITOR_MIN} maxSize={EDITOR_MAX}>
         <SqlEditor
           value={worksheet.sql}
           onChange={(sql) => onSqlChange(id, sql)}
@@ -132,7 +136,7 @@ export const WorksheetPanel = memo(function WorksheetPanel({
         />
       </Pane>
       <PaneHandle label="Resize the editor and the results" />
-      <Pane id="results" minSize={RESULTS_MIN} maxSize={RESULTS_MAX}>
+      <Pane id="results" domId={`results-${id}`} minSize={RESULTS_MIN} maxSize={RESULTS_MAX}>
         <Stack gap="sm" pt="xs">
           {running && (
             <Group gap="xs" role="status">

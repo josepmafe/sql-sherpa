@@ -28,14 +28,7 @@ type TreeProps = EditorActions & {
   headerAction?: ReactNode;
 };
 
-export function CatalogTree({
-  selected,
-  onSelect,
-  onPreview,
-  onInsertSelect,
-  previewBlocked,
-  headerAction,
-}: TreeProps) {
+export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, previewBlocked, headerAction }: TreeProps) {
   const catalog = useCatalog();
   const [search, setSearch] = useState("");
   const searchBox = useRef<HTMLInputElement>(null);
@@ -43,18 +36,13 @@ export function CatalogTree({
   const needle = search.trim().toLowerCase();
 
   if (catalog.isError) {
-    return (
-      <LoadError title="Could not load the catalog" error={catalog.error} onRetry={() => void catalog.refetch()} />
-    );
+    return <LoadError title="Could not load the catalog" error={catalog.error} onRetry={() => void catalog.refetch()} />;
   }
   if (!catalog.data) return <Text c="dimmed">Loading catalog…</Text>;
 
   const { database, schema_name: schema } = catalog.data;
   const domains = catalog.data.domains
-    .map((domain) => ({
-      ...domain,
-      tables: domain.tables.flatMap((t) => filterTable(t, needle)),
-    }))
+    .map((domain) => ({ ...domain, tables: domain.tables.flatMap((t) => filterTable(t, needle)) }))
     .filter((domain) => domain.tables.length > 0);
 
   const toggle = (name: string) =>

@@ -1,4 +1,4 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -263,7 +263,6 @@ describe("ExplorerScreen", () => {
     expect(screen.getByRole("button", { name: "fct_orders" })).toHaveFocus();
   });
 
-
   it("?table= selects and inspects a known mart", async () => {
     vi.spyOn(window, "matchMedia").mockImplementation(wideScreen);
     renderScreen("/explorer?table=fct_orders");
@@ -446,4 +445,183 @@ describe("ExplorerScreen panes", () => {
     expect(screen.getByText("2 rows in 5 ms")).toBeInTheDocument();
     expect(post.mock.calls.filter(([path]) => path === "/api/queries")).toHaveLength(1);
   });
+
+  // The stub gives every group 1200 px, so a handle's aria-value* (a percentage) times 12 is pixels.
+  const px = (name: string, attribute = "aria-valuenow") => Number(handle(name).getAttribute(attribute)) * 12;
+
+  it.each([
+    ["under their minimums", { tree: 10, inspector: 10 }, 200, 1200 - 200 - 240],
+    ["over the tree's maximum", { tree: 5000 }, 480, 1200 - 480 - 300],
+    ["over the Inspector's maximum", { inspector: 5000 }, 280, 1200 - 280 - 520],
+  ])(
+    "the tree is 200 to 480 px wide and the Inspector 240 to 520 px: sizes stored %s",
+    async (_case, sizes, tree, centre) => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes, collapsed: {} }));
+      renderScreen();
+      await settleLayout();
+
+      expect(px("Resize the tree")).toBeCloseTo(tree, 0);
+      expect(px("Resize the Inspector")).toBeCloseTo(centre, 0);
+    },
+  );
+
+  it("the worksheets keep at least 360 px when the tree and the Inspector are stored at their maximums", async () => {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 480, inspector: 520 }, collapsed: {} }));
+    renderScreen();
+    await settleLayout();
+
+    expect(px("Resize the Inspector")).toBeCloseTo(360, 0);
+  });
+
+  it("the editor starts 260 px high, between 120 px and what leaves the results 160 px", async () => {
+    renderScreen();
+    await settleLayout();
+    const name = "Resize the editor and the results";
+
+    expect(px(name)).toBeCloseTo(260, 0);
+    expect(px(name, "aria-valuemin")).toBeCloseTo(120, 0);
+    expect(px(name, "aria-valuemax")).toBeCloseTo(1200 - 160, 0);
+  });
+
+  it("an editor height stored under 120 px is raised to 120", async () => {
+    localStorage.setItem("sherpa.v1.layout.explorer-editor", JSON.stringify({ sizes: { editor: 5 }, collapsed: {} }));
+    renderScreen();
+    await settleLayout();
+
+    expect(px("Resize the editor and the results")).toBeCloseTo(120, 0);
+  });
+
+  it("crossing 1280 px keeps the editor's text and the result on screen and does not run the query again", async () => {
+    const user = userEvent.setup();
+    const setWide = controllableScreen(true);
+    post.mockImplementation(() => Promise.resolve(ok(RESPONSE)));
+    const seeded = freshState();
+    saveExplorerState(updateWorksheet(seeded, seeded.activeId, { sql: "select 1" }));
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText("2 rows in 5 ms")).toBeInTheDocument();
+    act(() => editors()[0]!.dispatch({ changes: { from: 0, insert: "-- note\n" } }));
+
+    setWide(false);
+    await settleLayout();
+    setWide(true);
+    await settleLayout();
+
+    expect(screen.getByText("2 rows in 5 ms")).toBeInTheDocument();
+    expect(editors()[0]!.state.doc.toString()).toBe("-- note\nselect 1");
+    expect(post.mock.calls.filter(([path]) => path === "/api/queries")).toHaveLength(1);
+  });
+
+  it("a folded tree opens by focus and the Tab key goes into it, so the keyboard reaches the tables", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 280 }, collapsed: { tree: true } }));
+    renderScreen();
+    await settleLayout();
+
+    act(() => screen.getByRole("button", { name: "Open the table tree" }).focus());
+    await user.tab();
+
+    expect(screen.getByRole("textbox", { name: "Search tables and columns" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+    act(() => screen.getByRole("separator", { name: "Resize the tree" }).focus());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "fct_orders" })).not.toBeInTheDocument());
+  });
+
+  it("Escape closes the peek, which stays closed while the focus stays and opens again on the next focus", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { tree: 280 }, collapsed: { tree: true } }));
+    renderScreen();
+    await settleLayout();
+    const toggle = screen.getByRole("button", { name: "Open the table tree" });
+    act(() => toggle.focus());
+    expect(screen.getByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+
+    fireEvent.keyDown(toggle, { key: "Escape" });
+
+    expect(screen.queryByRole("button", { name: "fct_orders" })).not.toBeInTheDocument();
+    act(() => toggle.blur());
+    act(() => void vi.advanceTimersByTime(300));
+    act(() => toggle.focus());
+    expect(screen.getByRole("button", { name: "fct_orders" })).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("?table= opens a folded Inspector", async () => {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { inspector: 300 }, collapsed: { inspector: true } }));
+    renderScreen("/explorer?table=fct_orders");
+    await settleLayout();
+
+    expect(await screen.findByRole("button", { name: "Collapse the Inspector" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("complementary", { name: "Table details" })).toHaveTextContent("Loading fct_orders…");
+  });
+
+  it("each worksheet's panes have DOM ids of their own", async () => {
+    saveExplorerState(addWorksheet(freshState()));
+    renderScreen();
+    await settleLayout();
+
+    const ids = Array.from(document.querySelectorAll("[id]"), (element) => element.id);
+    expect(ids.filter((id, index) => ids.indexOf(id) !== index)).toEqual([]);
+  });
 });
+
+describe("ExplorerScreen overlay", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useHealth.mockReset().mockReturnValue({ data: health() });
+    post.mockReset();
+    post.mockImplementation(() => new Promise(() => {}));
+    stubPaneLayout();
+  });
+
+  it("Escape that another widget already handled does not close the Inspector overlay", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+    const heading = screen.getByRole("heading", { name: "Table details" });
+    heading.addEventListener("keydown", (event) => event.preventDefault());
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByRole("complementary", { name: "Table details" })).toBeInTheDocument();
+  });
+
+  it("Escape that closes a table's menu leaves the Inspector overlay open", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await settleLayout();
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+    await user.click(screen.getByRole("button", { name: "Actions for fct_orders" }));
+    expect(await screen.findByRole("menuitem", { name: "Preview 100 rows" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menuitem", { name: "Preview 100 rows" })).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Table details" })).toBeInTheDocument();
+  });
+});
+
+// A viewport that crosses 1280 px on demand: the media query's listeners hear the change.
+function controllableScreen(initiallyWide: boolean): (wide: boolean) => void {
+  let wide = initiallyWide;
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query) =>
+      ({
+        ...wideScreen(query),
+        matches: wide && query === "(min-width: 80em)",
+        addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+        removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) =>
+          listeners.delete(listener),
+      }) as MediaQueryList,
+  );
+  return (next) => {
+    wide = next;
+    act(() => listeners.forEach((listener) => listener({ matches: next } as MediaQueryListEvent)));
+  };
+}

@@ -24,9 +24,7 @@ test.describe("at 1024 x 700", () => {
   test("the editor keeps a usable width, its buttons one row and History its label", async ({ page }) => {
     const editor = await page.locator(".cm-editor").boundingBox();
     const tops = await Promise.all(
-      ["Run", "Run selection", "Format"].map(
-        async (name) => (await page.getByRole("button", { name, exact: true }).boundingBox())?.y,
-      ),
+      ["Run", "Run selection", "Format"].map(async (name) => (await page.getByRole("button", { name, exact: true }).boundingBox())?.y),
     );
     const history = page.getByRole("button", { name: /^History/ });
 
@@ -77,9 +75,7 @@ test.describe("at 1024 x 700", () => {
 test.describe("Lineage at 1280 x 800", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("the whole project's bands do not scroll the page sideways and the panel stays under the canvas", async ({
-    page,
-  }) => {
+  test("the whole project's bands do not scroll the page sideways and the panel stays under the canvas", async ({ page }) => {
     await page.goto("/lineage?node=model.sherpa.fct_orders");
     const panel = page.getByRole("complementary", { name: "Node details" });
     await expect(panel.getByRole("heading", { name: "fct_orders", level: 4 })).toBeVisible();
@@ -132,9 +128,7 @@ async function expectSelectedNodeInCanvas(page: Page): Promise<void> {
     .toBe(true);
 }
 
-async function lineageWidths(
-  page: Page,
-): Promise<Record<"canvasRight" | "panelRight" | "scrollWidth" | "clientWidth", number>> {
+async function lineageWidths(page: Page): Promise<Record<"canvasRight" | "panelRight" | "scrollWidth" | "clientWidth", number>> {
   await page.goto("/lineage?select=%2Bfct_orders%2B&node=model.sherpa.fct_orders");
   const panel = page.getByRole("complementary", { name: "Node details" });
   await expect(panel.getByRole("heading", { name: "fct_orders", level: 4 })).toBeVisible();
@@ -154,9 +148,7 @@ async function lineageWidths(
 test.describe("the navigation rail at 1440 x 900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("stays collapsed after a reload, and hovering it opens the labels without moving the editor", async ({
-    page,
-  }) => {
+  test("stays collapsed after a reload, and hovering it opens the labels without moving the editor", async ({ page }) => {
     await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.shell"));
     await page.reload();
     await page.getByRole("button", { name: "Collapse the navigation" }).click();
@@ -254,6 +246,18 @@ test.describe("the Explorer panes", () => {
         await expect(page.getByRole("complementary", { name: "Table details" }).getByText("Grain:")).toBeVisible();
         await page.mouse.move(viewport.width - 5, viewport.height - 5);
         await expect(page.getByRole("button", { name: "fct_orders", exact: true })).toBeHidden();
+      });
+
+      test("a second worksheet's editor fills its pane and its handle moves it", async ({ page }) => {
+        await page.getByRole("button", { name: "New worksheet" }).click();
+        const editor = page.locator("[data-worksheet]:visible .cm-editor");
+        await expect(editor).toBeVisible();
+        const before = (await editor.boundingBox())!.height;
+
+        await dragBy(page, "Resize the editor and the results", 0, 60);
+
+        expect(before).toBeGreaterThan(100);
+        expect((await editor.boundingBox())!.height).toBeGreaterThan(before + 40);
       });
 
       test("dragging the editor's handle down makes the editor taller, and the editor and its text survive", async ({

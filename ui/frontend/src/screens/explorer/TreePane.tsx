@@ -1,7 +1,6 @@
 import { Box, ScrollArea, Stack } from "@mantine/core";
 import { IconListTree } from "@tabler/icons-react";
-import { type ComponentProps, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { type ComponentProps, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { CollapseToggle, usePaneCollapse, usePeek } from "../../components/panes";
 import { CatalogTree } from "./CatalogTree";
@@ -17,17 +16,19 @@ const OPEN_LABEL = "Open the table tree";
 
 type TreeProps = ComponentProps<typeof CatalogTree>;
 
-type Props = Omit<TreeProps, "headerAction"> & {
-  // The element a peek opens in: the Explorer's root, outside the pane, which would clip it.
-  peekHost: HTMLElement | null;
-};
+type Props = Omit<TreeProps, "headerAction">;
 
 /** The tree as a pane. Folded, it is a strip with its icon; the strip opens the tree over the editor on hover or focus (UI spec §6.1). */
-export function TreePane({ peekHost, onSelect, ...tree }: Props) {
+export function TreePane({ onSelect, ...tree }: Props) {
   const { collapsed, toggle } = usePaneCollapse(TREE_PANE);
   const { peeking, peekProps } = usePeek(collapsed);
   const [dismissed, setDismissed] = useState(false);
   const open = peeking && !dismissed;
+  const strip = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<DOMRect>();
+  useLayoutEffect(() => {
+    if (open) setAnchor(strip.current?.getBoundingClientRect());
+  }, [open]);
 
   // A dismissed peek stays dismissed until the pointer and the focus have left, so the next peek can open.
   const [wasPeeking, setWasPeeking] = useState(peeking);
@@ -60,41 +61,40 @@ export function TreePane({ peekHost, onSelect, ...tree }: Props) {
   }
 
   return (
-    <Stack align="center" gap="xs" pt="xs" h="100%" {...peekProps}>
+    <Stack ref={strip} align="center" gap="xs" pt="xs" h="100%" {...peekProps}>
       <CollapseToggle collapsed onToggle={toggle} foldLabel={FOLD_LABEL} openLabel={OPEN_LABEL} />
       <IconListTree size={ICON_SIZE} aria-hidden />
-      {open &&
-        peekHost &&
-        createPortal(
-          <Box
-            role="region"
-            aria-label="Table tree"
-            bg="var(--mantine-color-body)"
-            style={{
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: TREE_STRIP_WIDTH,
-              width: PEEK_WIDTH,
-              zIndex: PEEK_Z_INDEX,
-              borderRight: "1px solid var(--mantine-color-default-border)",
-              boxShadow: "var(--mantine-shadow-md)",
-            }}
-          >
-            <ScrollArea h="100%" offsetScrollbars="y" p="xs">
-              <CatalogTree
-                {...tree}
-                onSelect={(table) => {
-                  onSelect(table);
-                  // A click ends the peek: the focus leaves the row that is about to disappear.
-                  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-                  setDismissed(true);
-                }}
-              />
-            </ScrollArea>
-          </Box>,
-          peekHost,
-        )}
+      {/* Fixed, so the pane's clipping does not cut it; it stays here in the DOM so the Tab key goes from the strip's
+          button into the tree. */}
+      {open && (
+        <Box
+          role="region"
+          aria-label="Table tree"
+          bg="var(--mantine-color-body)"
+          style={{
+            position: "fixed",
+            top: anchor?.top,
+            height: anchor?.height,
+            left: anchor?.right,
+            width: PEEK_WIDTH,
+            zIndex: PEEK_Z_INDEX,
+            borderRight: "1px solid var(--mantine-color-default-border)",
+            boxShadow: "var(--mantine-shadow-md)",
+          }}
+        >
+          <ScrollArea h="100%" offsetScrollbars="y" p="xs">
+            <CatalogTree
+              {...tree}
+              onSelect={(table) => {
+                onSelect(table);
+                // A click ends the peek: the focus leaves the row that is about to disappear.
+                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                setDismissed(true);
+              }}
+            />
+          </ScrollArea>
+        </Box>
+      )}
     </Stack>
   );
 }
