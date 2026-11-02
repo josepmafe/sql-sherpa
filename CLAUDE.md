@@ -91,7 +91,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
 - **Repository layout, grouped by spec:**
   - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt (`dbt/`, `scripts/`) and the SQL tests of `postgres/`.
-  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, `tests/` for Vitest and `e2e/` for Playwright), `parity/` (`sort_filter_cases.json`, the sort/filter case file that pytest and Vitest both run) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
+  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, with the pane toolkit in `src/components/panes/`; `tests/` for Vitest and `e2e/` for Playwright), `parity/` (`sort_filter_cases.json`, the sort/filter case file that pytest and Vitest both run) and the `Dockerfile`; `agent/core/` and `agent/evals/` appear with their first milestones.
   - `.github/workflows/ci.yml` is the pull-request gate.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
@@ -183,6 +183,9 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
   - Every limit or default the spec names has a behaviour test that fails when the value changes.
   - An unreachable database is simulated by making `psycopg.connect` raise, never by connecting to a closed port.
   - No sleep proves that something did not happen: use fake timers or a positive signal.
+  - A pane or a handle is tested by keyboard in Vitest, and by a real drag only in Playwright.
+  - Hover and focus timing (the peek) is tested on fake timers.
+  - Stored layout is read defensively and clamped, so every pane has a clamp test.
   - Vitest's `restoreMocks` restores `vi.spyOn` spies after each test; a module-level `vi.fn()` is reset in its file's `beforeEach`. Timeouts are set explicitly, and ELK is mocked outside layout tests.
   - Assert what the user sees or what goes over the wire, not a render count or a library's CSS variable.
   - E2E specs read expected values from the warehouse at run time.

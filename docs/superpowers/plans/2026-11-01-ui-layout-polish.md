@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Resizable, collapsible panes on the Explorer and Lineage screens, a collapsible navigation rail with hover-peek, a Lineage layout where no edge passes behind a node, and a richer node panel (disabled empty tabs, column types for every node, test definitions on expand).
+**Goal:** Resizable, collapsible panes on the Explorer and Lineage screens, a collapsible navigation rail with hover-peek, a Lineage layout where no edge passes behind a node, and a richer node panel (disabled empty tabs, column types for every node, test definitions on expand), an Explorer whose tree columns line up, and a Lineage that keeps its zoom and pan across redraws and starts with the exposures hidden.
 
-**Architecture:** one small pane toolkit (`src/components/panes/`, on `react-resizable-panels`) used by the shell, the Explorer and Lineage. Sizes persist in `localStorage` under `sherpa.v1.layout.*` and are clamped when read. The Lineage layout reserves a gap for each long edge in every column it crosses, places nodes and gaps with a pure least-squares fit, and draws each edge as one monotone curve through its gaps. Column types and test definitions are read by the existing lineage service from `catalog.json` and the dbt artifacts; one new endpoint serves a test's content.
+**Architecture:** one small pane toolkit (`src/components/panes/`, on `react-resizable-panels`) used by the shell, the Explorer and Lineage. Sizes persist in `localStorage` under `sherpa.v1.layout.*` and are clamped when read. The Lineage layout reserves a gap for each long edge in every column it crosses, places nodes and gaps with a pure least-squares fit that then closes the holes under tables nothing reads, and draws each edge as one monotone curve through its gaps. The canvas keeps the user's view for a subject (the selector) in memory. Column types and test definitions are read by the existing lineage service from `catalog.json` and the dbt artifacts; one new endpoint serves a test's content.
 
 **Tech Stack:** React 19, TypeScript, Mantine 9, `react-resizable-panels` (4.x at planning time), `@xyflow/react`, `elkjs`, Vitest, Playwright; FastAPI, pytest.
 
@@ -143,7 +143,7 @@ ui/backend/tests/lineage/
 **Files:** `src/screens/explorer/ExplorerScreen.tsx`, `CatalogTree.tsx`, `WorksheetPanel.tsx`; `tests/ExplorerScreen.test.tsx`, `tests/Explorer.test.tsx`; `e2e/explorer.spec.ts`, `e2e/layout.spec.ts`.
 
 - [ ] **Step 1: Tests first.**
-  - **Three panes (from 1280 px, `wideScreen`):** the tree (default 280, min 200, max 480, collapsible to a 40 px strip with its icon), the centre (min 360), the Inspector (default 300, min 240, max 520, collapsible). Each handle is named: "Resize the tree", "Resize the Inspector". Keyboard arrows change `aria-valuenow`; the collapse buttons set `aria-expanded` and hide the content.
+  - **Three panes (from 1280 px, `wideScreen`):** the tree (default 380, or 280 below 1280 px; min 200, max 480; collapsible to a 40 px strip with its icon), the centre (min 360), the Inspector (default 300, min 240, max 520, collapsible). Each handle is named: "Resize the tree", "Resize the Inspector". Keyboard arrows change `aria-valuenow`; the collapse buttons set `aria-expanded` and hide the content.
   - **Tree peek:** the collapsed tree strip opens over the editor on focus; clicking a table in it selects the table and the strip closes.
   - **Remembered:** a resized tree is restored on the next render from `sherpa.v1.layout.explorer`; a stored 5000 is clamped; corrupt JSON gives the defaults.
   - **Narrow (below 1280 px):** the Inspector takes no layout width; clicking a table opens it as an overlay and moves the focus to its heading ("Table details"); Esc and the toggle close it and return the focus to the table's row. (This replaces the drawer tests.)
@@ -166,7 +166,7 @@ ui/backend/tests/lineage/
 
 - [ ] **Step 1: Tests first.**
   - **Mode order:** the segmented control lists Whole project, Domain, Table path, in that order; the default stays Whole project.
-  - **Panes:** the graph and the node panel are a vertical group with a handle named "Resize the graph and the node panel". The panel (default 38%, folds to its title bar) has a collapse button with `aria-expanded`. Selecting a node opens a collapsed panel. The selection, `Esc` behaviour and "Select a node…" text are unchanged.
+  - **Panes:** the graph and the node panel are a vertical group with a handle named "Resize the graph and the node panel". The panel (default 260 px, min 120, max 2000; folds to its 40 px title bar) has a collapse button with `aria-expanded`. Selecting a node opens a collapsed panel. The selection, `Esc` behaviour and "Select a node…" text are unchanged.
   - **Remembered / clamped:** as in Task 3, under `sherpa.v1.layout.lineage`.
 - [ ] **Step 2: Implement.**
   - `MODE_LABELS` in the new order.
@@ -248,6 +248,19 @@ By kind:
 
 ---
 
+### Task 7b: Explorer polish
+
+**Model:** implementer `sonnet` · reviewer `sonnet`
+
+**Files:** `src/screens/explorer/CatalogTree.tsx`, `ExplorerScreen.tsx`, `Inspector.tsx`; `tests/Explorer.test.tsx`, `tests/ExplorerScreen.test.tsx`.
+
+- **Aligned column rows:** the columns of an expanded table are one grid (name, type, markers) with no separators, so types and badges line up across rows.
+- **Tree width:** 380 px by default from 1280 px up, 280 px below, between 200 and 480.
+- **Inspector:** the domain is small, dimmed text; there is no Tests section (Lineage's node panel has the tests).
+- Commit `feat: Explorer tree columns align, quieter Inspector domain, no Tests section`.
+
+---
+
 ### Task 8: A Lineage layout where no edge passes behind a node
 
 **Model:** implementer `sonnet` · reviewer **`opus`** (the placement and routing carry invariants the reviewer re-derives)
@@ -289,8 +302,9 @@ Today's single curves drawn on B's positions brought a third of the hidden edges
    - the column is re-sorted by wish; a source system's tables stay together, as today
    - the column is fitted: the least-squares centres that keep its order and its spacing (`ROW_GAP` between nodes, `SLOT_NODE_GAP` between a node and a gap, `SLOT_SLOT_GAP` between gaps). This is isotonic regression (pool adjacent violators) on `wish − cumulative offset`.
 5. **Straighten.** `STRAIGHTEN_SWEEPS` more sweeps without re-sorting, in which a gap's wish is the mean y of all gaps of its own edge, so a long edge rises once, runs level and comes down once.
-6. **Normalise.** Shift everything so the smallest top is 0.
-7. **Heights** (`stackBands`). In each column, from the top, push an item down when it would overlap the one above, with that pair's spacing. Nothing moves upwards and no other column moves, so expanding a node moves only the nodes and gaps below it in its own column.
+6. **Close holes** (`closeHoles`). A run of items linked to nothing outside it (a table nothing reads, its gaps and the node they lead to, all at one y) slides up as far as the spacing rules of every column it crosses allow, for at most `COMPACT_PASSES` passes.
+7. **Normalise.** Shift everything so the smallest top is 0.
+8. **Heights** (`stackBands`). In each column, from the top, push an item down when it would overlap the one above, with that pair's spacing. Nothing moves upwards and no other column moves, so expanding a node moves only the nodes and gaps below it in its own column.
 
 No edge passes behind a node, by construction: a route is level through a column, inside its gap, and the monotone curve between two columns stays between its two waypoints' y.
 
@@ -329,10 +343,22 @@ No edge passes behind a node, by construction: a route is level through a column
 - [ ] **Step 4: Implement,** keeping `layout.ts` top-down (public first) and the constants named. `useGraphLayout` runs `orderNodes` and then `placeBands` when the nodes or edges change, and `stackBands` when the heights change. The superseded-run guard stays.
 - [ ] **Step 5: Verify.** `npm test` and lint, then the `lineage` and `layout` Playwright specs; the e2e reads edge paths through `react-flow__edge-path`, which `BaseEdge` keeps. Take browser screenshots of the whole project, a domain and a table path for the PR description. Commit `feat: Lineage edges keep clear of nodes, through gaps the layout reserves for them`.
 - [ ] **Step 6: Time-boxed attempt, "curves that bend inside columns too"** (owner, 2026-11-01). One implementer attempt, no fix rounds, on a scratch branch off this commit.
-  - **Idea:** today's look, one long S-curve, with the same guarantee. A gap's height becomes the stretch of the edge's curve that crosses its column, nodes keep clear of that stretch, and the edge is drawn as one smooth curve through the gaps' centres.
-  - **Known risk:** a naive version diverged at planning, because the gaps move the nodes, which moves the curves, which moves the gaps. Damp it (blend each update with the previous one, at most 20 iterations) and stop when no item moves more than 1 px.
-  - **It is kept only if** it passes every acceptance test of Step 3, it converges on the fixture, and the owner prefers its screenshot to Step 5's. Then it is merged into this branch as `feat: lineage edges curve through the columns`.
-  - **Otherwise** the scratch branch is deleted, and the PR description gets one line on what was tried and why it was dropped.
+  - **Idea:** today's look, one long S-curve, with the same guarantee: a gap's height is the stretch of the edge's curve that crosses its column, nodes keep clear of it, and the edge is one smooth curve through the gaps' centres. The update is damped and stops when no item moves more than 1 px.
+  - **Outcome:** dropped: sloped gaps need height ∝ slope, ~30 long edges cross each column, the update loop's gain exceeds 1 (not converging at damping 0.02).
+
+---
+
+### Task 8b: Lineage keeps its view; exposures hidden by default
+
+**Model:** implementer `sonnet` · reviewer `sonnet`
+
+**Files:** `src/screens/lineage/LineageCanvas.tsx`, `viewport.ts`, `url.ts`, `LayerFilter.tsx`; `tests/lineage/LineageCanvasViewport.test.tsx`, `url.test.tsx`, `LayerFilter.test.tsx`, `layout.test.ts`.
+
+- **Kept view:** the user's zoom and pan are kept in memory (`viewport.ts`) for the page session, never in `localStorage`, under the graph's subject (its selector). A redraw with the same subject (a layer chip, "Failing only", a refetch) restores them; a new subject (another mode, domain, or table-path node or depth) fits again, and so does a kept view that shows no node.
+- **Zoom floor:** `MIN_ZOOM = 0.05`, so the whole project fits the canvas.
+- **Exposures:** with no `layers` in the URL, every layer but the exposures is shown, in every mode; the exposures chip switches them on.
+- **Holes:** the layout test "closes the hole under a table nothing reads" and "fits the whole project in the smallest canvas above the minimum zoom" pin step 6 of Task 8's algorithm and the zoom floor.
+- Commit `feat: Lineage keeps its zoom and pan across redraws; exposures start hidden`.
 
 ---
 
