@@ -489,6 +489,19 @@ describe("LineageScreen", () => {
       expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
     });
 
+    it("a panel the user folded stays folded when the column focus changes", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}`);
+      await screen.findByText("3 nodes");
+      await userEvent.click(await screen.findByRole("button", { name: "Collapse the node panel" }));
+      await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
+
+      fireEvent.click(await within(await screen.findByLabelText("Lineage graph")).findByRole("button", { name: /^net_revenue\b/ }));
+
+      await waitFor(() => expect(screen.getByLabelText("location")).toHaveTextContent(`node=${B}&column=net_revenue`));
+      expect(screen.getByRole("button", { name: "Open the node panel" })).toHaveAttribute("aria-expanded", "false");
+    });
+
     it("a folded panel stays folded after a reload", async () => {
       localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 260 }, collapsed: { panel: true } }));
       await open();

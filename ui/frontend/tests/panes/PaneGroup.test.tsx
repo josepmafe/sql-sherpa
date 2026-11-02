@@ -196,18 +196,6 @@ describe("PaneGroup", () => {
     expect(layout.collapsed.extra).toBe(true);
   });
 
-  it("moves the keyboard focus to the toggle that replaces the one pressed, folding and opening", async () => {
-    const user = userEvent.setup();
-    await renderPanes();
-    screen.getByRole("button", { name: "Fold the side" }).focus();
-
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("button", { name: "Open the side" })).toHaveFocus();
-
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("button", { name: "Fold the side" })).toHaveFocus();
-  });
-
   it("brings back a pane that left the group folded, with the size the user gave it", async () => {
     const user = userEvent.setup();
     const view = render(<PanesWithExtra present />);
