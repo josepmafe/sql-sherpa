@@ -363,28 +363,37 @@ describe("the project's default view, without the exposure", () => {
 });
 
 describe("the project's whole graph", () => {
-  // Measured with the plain stack and React Flow's default curve on this fixture, in the API's order, the order the app
-  // feeds ELK (UI spec §6.5). ELK's ranks depend on the input order, so these numbers are for that order only.
-  const BASELINE = { crossings: 440, edgesBehindNodes: 52, edgeTravel: 40716, height: 2244 };
+  // The plan table's numbers for the plain stack with React Flow's default curve (UI spec §6.5). ELK's ordering differs
+  // a little across platforms (440 crossings on Windows, 429 on Linux), so the acceptance test measures the baseline in
+  // the same run and these literals only check that the helper agrees with the table.
+  const PLAN_TABLE = { crossings: 440, edgeTravel: 40716 };
+  const PLAN_TABLE_TOLERANCE = 0.05;
+  // The same on every platform: the ranks and the bands do not depend on ELK's ordering within a column.
+  const PLATFORM_FREE = { edgesBehindNodes: 52, height: 2244 };
 
-  it("measures the plain stack as the baseline", () => {
+  const measureBaseline = () => {
     const positions = plainStack(placeBands(fixtureNodes(), fixtureEdges(), fixtureOrder));
+    return layoutMetrics(rectsOf(positions, NO_HEIGHTS), curvesOf(positions, defaultBezier));
+  };
 
-    const metrics = layoutMetrics(rectsOf(positions, NO_HEIGHTS), curvesOf(positions, defaultBezier));
+  it("measures the plain stack as the baseline, within the plan table's numbers", () => {
+    const metrics = measureBaseline();
 
-    expect(metrics).toMatchObject({ crossings: BASELINE.crossings, edgesBehindNodes: BASELINE.edgesBehindNodes, height: BASELINE.height });
-    expect(metrics.edgeTravel).toBeCloseTo(BASELINE.edgeTravel, 0);
+    expect(metrics).toMatchObject(PLATFORM_FREE);
+    expect(Math.abs(metrics.crossings - PLAN_TABLE.crossings)).toBeLessThanOrEqual(PLAN_TABLE_TOLERANCE * PLAN_TABLE.crossings);
+    expect(Math.abs(metrics.edgeTravel - PLAN_TABLE.edgeTravel)).toBeLessThanOrEqual(PLAN_TABLE_TOLERANCE * PLAN_TABLE.edgeTravel);
   });
 
   it("draws no edge behind a node, with fewer crossings, less travel and about the same height", () => {
-    const { positions, routes } = layout(fixtureNodes(), fixtureEdges(), fixtureOrder);
+    const baseline = measureBaseline();
 
+    const { positions, routes } = layout(fixtureNodes(), fixtureEdges(), fixtureOrder);
     const metrics = layoutMetrics(rectsOf(positions, NO_HEIGHTS), curvesOf(positions, routed(routes)));
 
     expect(metrics.edgesBehindNodes).toBe(0);
-    expect(metrics.crossings).toBeLessThanOrEqual(0.4 * BASELINE.crossings);
-    expect(metrics.edgeTravel).toBeLessThanOrEqual(0.7 * BASELINE.edgeTravel);
-    expect(metrics.height).toBeLessThanOrEqual(1.1 * BASELINE.height);
+    expect(metrics.crossings).toBeLessThanOrEqual(0.4 * baseline.crossings);
+    expect(metrics.edgeTravel).toBeLessThanOrEqual(0.7 * baseline.edgeTravel);
+    expect(metrics.height).toBeLessThanOrEqual(1.1 * baseline.height);
   });
 
   it("closes the hole under a table nothing reads, instead of leaving it where it began", () => {
