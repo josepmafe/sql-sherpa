@@ -190,7 +190,7 @@ function Canvas({
   const columnsShown = [...rows.values()].some((shown) => shown.rows.length > 0);
 
   return (
-    <div style={{ height: "60vh", minHeight: 400 }}>
+    <div style={{ height: "100%" }}>
       {state === "error" && (
         <Alert color="red" role="alert" mb="xs">
           Could not lay out the graph.

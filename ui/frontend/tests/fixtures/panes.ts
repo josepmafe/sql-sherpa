@@ -45,7 +45,7 @@ export function stubPaneLayout({ pointerOnHandles = false }: { pointerOnHandles?
         const borderBoxSize = [{ inlineSize: 0, blockSize: 0 }] as unknown as ReadonlyArray<ResizeObserverSize>;
         // After the library has registered its group, as a browser does.
         queueMicrotask(() =>
-          this.callback([{ target, borderBoxSize } as ResizeObserverEntry], this as unknown as ResizeObserver),
+          this.callback([{ target, borderBoxSize, contentRect: new DOMRect() } as ResizeObserverEntry], this as unknown as ResizeObserver),
         );
       }
       unobserve(): void {}

@@ -39,6 +39,17 @@ describe("SelectorBar", () => {
     state.project = WHOLE_PROJECT;
   });
 
+  it("the modes are listed as the whole project, a domain and a table path, in that order", () => {
+    renderBar("");
+
+    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual([
+      "project",
+      "domain",
+      "path",
+    ]);
+    expect(screen.getByRole("radio", { name: "Whole project" })).toBeChecked();
+  });
+
   it("switching the mode writes the selector to the URL", async () => {
     const onSelect = renderBar("+fct_orders+");
 

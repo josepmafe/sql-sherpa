@@ -104,6 +104,52 @@ test.describe("Lineage at 1280 x 800", () => {
   test("opening the node panel keeps the selected node inside the canvas", async ({ page }) => {
     await expectSelectedNodeInCanvas(page);
   });
+
+  test("the screen fills the viewport without a page scrollbar and the canvas keeps its 240 px", async ({ page }) => {
+    await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.lineage"));
+    await page.goto("/lineage?node=model.sherpa.fct_orders");
+    await expect(page.getByRole("complementary", { name: "Node details" }).getByRole("heading", { level: 4 })).toBeVisible();
+
+    const canvas = await page.getByLabel("Lineage graph").boundingBox();
+    const root = await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      clientHeight: document.documentElement.clientHeight,
+    }));
+
+    expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight);
+    // A rounding of the layout's own 240 px.
+    expect(canvas!.height).toBeGreaterThan(239);
+  });
+
+  test("dragging the handle 100 px up and down leaves the graph's pan and zoom and the selected node in view", async ({
+    page,
+  }) => {
+    await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.lineage"));
+    await page.goto("/lineage");
+    await page.getByRole("button", { name: /^fct_orders(?!\w)/ }).click();
+    await expect(page.getByRole("complementary", { name: "Node details" }).getByRole("heading", { level: 4 })).toBeVisible();
+    const viewport = page.locator(".react-flow__viewport");
+    const transform = await viewport.evaluate((element) => (element as HTMLElement).style.transform);
+    const canvasBefore = (await page.getByLabel("Lineage graph").boundingBox())!;
+
+    // At this height the canvas starts at its minimum, so the handle goes down first, then back up.
+    let offset = 0;
+    for (const dy of [100, -100]) {
+      const box = (await page.getByRole("separator", { name: "Resize the graph and the node panel" }).boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x, y + dy, { steps: 8 });
+      await page.mouse.up();
+      offset += dy;
+      const canvas = (await page.getByLabel("Lineage graph").boundingBox())!;
+
+      expect(Math.abs(canvas.height - (canvasBefore.height + offset))).toBeLessThan(6);
+      expect(await viewport.evaluate((element) => (element as HTMLElement).style.transform)).toBe(transform);
+      expect(await selectedNodeInCanvas(page)).toBe(true);
+    }
+  });
 });
 
 // The panel narrows the canvas under a viewport that was fitted to the full width: the node picked must not end up
@@ -113,19 +159,19 @@ async function expectSelectedNodeInCanvas(page: Page): Promise<void> {
   await page.getByRole("button", { name: /^fct_orders(?!\w)/ }).click();
   await expect(page.getByRole("complementary", { name: "Node details" })).toBeVisible();
 
-  await expect
-    .poll(async () => {
-      const canvas = await page.getByLabel("Lineage graph").boundingBox();
-      const node = await page.locator('[data-id="model.sherpa.fct_orders"]').boundingBox();
-      if (canvas === null || node === null) return false;
-      return (
-        node.x >= canvas.x &&
-        node.y >= canvas.y &&
-        node.x + node.width <= canvas.x + canvas.width &&
-        node.y + node.height <= canvas.y + canvas.height
-      );
-    })
-    .toBe(true);
+  await expect.poll(() => selectedNodeInCanvas(page)).toBe(true);
+}
+
+async function selectedNodeInCanvas(page: Page): Promise<boolean> {
+  const canvas = await page.getByLabel("Lineage graph").boundingBox();
+  const node = await page.locator('[data-id="model.sherpa.fct_orders"]').boundingBox();
+  if (canvas === null || node === null) return false;
+  return (
+    node.x >= canvas.x &&
+    node.y >= canvas.y &&
+    node.x + node.width <= canvas.x + canvas.width &&
+    node.y + node.height <= canvas.y + canvas.height
+  );
 }
 
 async function lineageWidths(page: Page): Promise<Record<"canvasRight" | "panelRight" | "scrollWidth" | "clientWidth", number>> {

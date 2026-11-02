@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodePanel } from "../../src/screens/lineage/NodePanel";
 import { columnDetail, nodeDetails } from "../fixtures/api";
+import { Pane, PaneGroup } from "../../src/components/panes";
+import { stubPaneLayout } from "../fixtures/panes";
 import { renderWithProviders } from "../fixtures/render";
 
 const useLineageNode = vi.fn();
@@ -42,13 +44,17 @@ type FocusProps = { column?: string | undefined; outside?: number; onFocusColumn
 function panel(uniqueId: string | undefined, onClose: () => void, focus: FocusProps = {}) {
   return (
     <>
-      <NodePanel
-        uniqueId={uniqueId}
-        onClose={onClose}
-        column={focus.column}
-        outside={focus.outside ?? 0}
-        onFocusColumn={focus.onFocusColumn ?? (() => {})}
-      />
+      <PaneGroup id="lineage" direction="vertical">
+        <Pane id="panel" defaultSize={260} minSize={120} maxSize={2000} collapsedSize={40}>
+          <NodePanel
+            uniqueId={uniqueId}
+            onClose={onClose}
+            column={focus.column}
+            outside={focus.outside ?? 0}
+            onFocusColumn={focus.onFocusColumn ?? (() => {})}
+          />
+        </Pane>
+      </PaneGroup>
       <input aria-label="elsewhere" />
     </>
   );
@@ -64,6 +70,8 @@ const openTab = (name: string) => userEvent.click(screen.getByRole("tab", { name
 describe("NodePanel", () => {
   beforeEach(() => {
     useLineageNode.mockReset().mockReturnValue({ data: DETAILS });
+    localStorage.clear();
+    stubPaneLayout();
   });
 
   it("the panel shows its empty state with no node selected", () => {

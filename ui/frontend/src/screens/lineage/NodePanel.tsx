@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Code,
+  Flex,
   Group,
   Loader,
   ScrollArea,
@@ -21,6 +22,8 @@ import {
   IconCircleCheck,
   IconCircleDashed,
   IconCircleX,
+  IconChevronDown,
+  IconChevronUp,
   IconPlayerSkipForward,
   IconX,
 } from "@tabler/icons-react";
@@ -30,6 +33,7 @@ import { Link } from "react-router-dom";
 
 import { useLineageNode } from "../../api/queries";
 import type { components } from "../../api/schema";
+import { usePaneCollapse } from "../../components/panes";
 import { ReadOnlySql } from "../../components/SqlEditor";
 import { LoadError } from "../explorer/LoadError";
 import { KindLabel, ResolutionLabel } from "./ColumnLabels";
@@ -42,7 +46,13 @@ type TestInfo = components["schemas"]["TestInfo"];
 type TestOutcome = components["schemas"]["TestOutcome"];
 
 const NODE_NOT_FOUND = "node_not_found";
-const PANEL_MAX_HEIGHT = "50vh";
+export const NODE_PANEL = "panel";
+const PANEL_TITLE = "Node details";
+const ICON_SIZE = 16;
+// The folded pane is its title bar (UI spec §6.5).
+export const PANEL_TITLE_BAR = 40;
+const FOLD_LABEL = "Collapse the node panel";
+const OPEN_LABEL = "Open the node panel";
 const EMPTY_STATE = "Select a node to see its SQL, columns and tests";
 const OVERVIEW = "overview";
 const COLUMNS = "columns";
@@ -74,9 +84,16 @@ interface NodePanelProps {
   onFocusColumn: (column: string | undefined) => void;
 }
 
-// Always rendered under the graph, so selecting a node never resizes the canvas.
+// Always rendered under the graph, as the lower pane of the Lineage screen: selecting a node never resizes the canvas.
+// Folded, it is its title bar; selecting a node opens it.
 export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }: NodePanelProps) {
   const node = useLineageNode(uniqueId);
+  const { collapsed, toggle } = usePaneCollapse(NODE_PANEL);
+  // Only the selection is a dependency: toggling must not rerun it.
+  useEffect(() => {
+    if (uniqueId !== undefined && collapsed) toggle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uniqueId]);
   // The tab stays while another node is selected, so the same tab can be read across nodes. A focused column opens
   // the Columns tab, where it is marked.
   const [tab, setTab] = useState<string | null>(column === undefined ? OVERVIEW : COLUMNS);
@@ -99,25 +116,45 @@ export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }:
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [uniqueId, column, onClose, onFocusColumn]);
 
+  const FoldIcon = collapsed ? IconChevronUp : IconChevronDown;
   return (
-    <ScrollArea.Autosize mah={PANEL_MAX_HEIGHT} offsetScrollbars="y">
-      <Stack gap="sm" component="aside" aria-label="Node details" p="xs">
-        {uniqueId === undefined ? (
-          <Text size="sm" c="dimmed">
-            {EMPTY_STATE}
+    <Flex component="aside" aria-label={PANEL_TITLE} direction="column" h="100%">
+      <Group justify="space-between" wrap="nowrap" gap="xs" px="xs" h={PANEL_TITLE_BAR} style={{ flex: "none" }}>
+        <Group gap="xs" wrap="nowrap">
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? OPEN_LABEL : FOLD_LABEL}
+            onClick={toggle}
+          >
+            <FoldIcon size={ICON_SIZE} />
+          </ActionIcon>
+          <Text size="sm" fw={600}>
+            {PANEL_TITLE}
           </Text>
-        ) : (
-          <>
-            <Group justify="flex-end">
-              <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
-                <IconX size={14} />
-              </ActionIcon>
-            </Group>
-            <Body node={node} tab={tab} onTab={setTab} column={column} outside={outside} onFocusColumn={onFocusColumn} />
-          </>
+        </Group>
+        {!collapsed && uniqueId !== undefined && (
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
+            <IconX size={14} />
+          </ActionIcon>
         )}
-      </Stack>
-    </ScrollArea.Autosize>
+      </Group>
+      {!collapsed && (
+        <ScrollArea style={{ flex: 1, minHeight: 0 }} offsetScrollbars="y">
+          <Stack gap="sm" p="xs">
+            {uniqueId === undefined ? (
+              <Text size="sm" c="dimmed">
+                {EMPTY_STATE}
+              </Text>
+            ) : (
+              <Body node={node} tab={tab} onTab={setTab} column={column} outside={outside} onFocusColumn={onFocusColumn} />
+            )}
+          </Stack>
+        </ScrollArea>
+      )}
+    </Flex>
   );
 }
 

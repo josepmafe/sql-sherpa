@@ -9,8 +9,8 @@ type Mode = Exclude<SelectorMode["mode"], "custom">;
 
 const MODE_LABELS: { value: Mode; label: string }[] = [
   { value: "project", label: "Whole project" },
-  { value: "path", label: "Table path" },
   { value: "domain", label: "Domain" },
+  { value: "path", label: "Table path" },
 ];
 const COPY_BLOCKED_ID = "copy-selector-blocked";
 const DEPTH_OPTIONS = ["all", "1", "2", "3", "4", "5"];

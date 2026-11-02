@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -19,6 +19,7 @@ import {
   nodeDetails,
   ok,
 } from "../fixtures/api";
+import { stubPaneLayout } from "../fixtures/panes";
 import { createTestQueryClient, deferred, renderWithProviders } from "../fixtures/render";
 
 // No test here reads a position, and the real ELK layout is slow under load.
@@ -148,12 +149,23 @@ function mount(path: string, extra?: React.ReactNode, queryClient?: QueryClient)
 
 const nodeButton = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}\\b`) });
 const panel = () => screen.getByRole("complementary", { name: "Node details" });
+const HANDLE = "Resize the graph and the node panel";
+const LAYOUT_KEY = "sherpa.v1.layout.lineage";
+// jsdom has no layout: the pane groups measure the stubbed sizes once the render has settled.
+const settleLayout = () => act(async () => {});
+const handle = () => screen.getByRole("separator", { name: HANDLE });
+const valueNow = () => Number(handle().getAttribute("aria-valuenow"));
+// The stub gives every group 1200 px, so a handle's aria-value* (a percentage of it) times 12 is pixels.
+const px = (attribute = "aria-valuenow") => Number(handle().getAttribute(attribute)) * 12;
+const storedLayout = () => JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as unknown;
 
 describe("LineageScreen", () => {
   // restoreMocks restores spies only: a module-level vi.fn keeps its calls and implementation.
   beforeEach(() => {
     vi.mocked(orderNodes).mockReset().mockImplementation((nodes) => Promise.resolve(new Map(nodes.map((n, index) => [n.id, index]))));
     get.mockReset();
+    localStorage.clear();
+    stubPaneLayout();
   });
 
   it("an unsupported selector keeps the previous graph and shows the supported forms", async () => {
@@ -201,17 +213,17 @@ describe("LineageScreen", () => {
     expect(within(panel()).queryByText(EMPTY_STATE)).not.toBeInTheDocument();
   });
 
-  it("selecting a node does not change the canvas size", async () => {
+  it("selecting a node does not resize the graph pane", async () => {
     get.mockImplementation(answerNodes());
     mount("/lineage");
-    const canvas = (await screen.findByLabelText("Lineage graph")).parentElement!;
-    const before = { height: canvas.style.height, width: canvas.style.width, minHeight: canvas.style.minHeight };
+    await screen.findByLabelText("Lineage graph");
+    await settleLayout();
+    const before = valueNow();
 
     fireEvent.click(await nodeButton("a"));
 
     expect(await screen.findByText("Model a.")).toBeVisible();
-    expect({ height: canvas.style.height, width: canvas.style.width, minHeight: canvas.style.minHeight }).toEqual(before);
-    expect(before).toEqual({ height: "60vh", width: "", minHeight: "400px" });
+    expect(valueNow()).toBe(before);
   });
 
   it("Esc clears the selection and keeps the panel", async () => {
@@ -322,6 +334,95 @@ describe("LineageScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("boom");
     expect(screen.queryByText(/\d+ nodes/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Lineage graph")).not.toBeInTheDocument();
+  });
+
+  describe("panes", () => {
+    const open = async (path = "/lineage") => {
+      get.mockImplementation(answerNodes());
+      mount(path);
+      await screen.findByText("2 nodes");
+      await settleLayout();
+    };
+
+    it("the graph and the node panel are two panes with a named handle, the panel 260 px high", async () => {
+      await open();
+
+      expect(px()).toBeCloseTo(1200 - 260, 0);
+    });
+
+    it("the graph keeps 240 px and the panel folds to a 40 px title bar", async () => {
+      await open();
+
+      expect(px("aria-valuemin")).toBeCloseTo(240, 0);
+      expect(px("aria-valuemax")).toBeCloseTo(1200 - 40, 0);
+    });
+
+    it("the panel's button folds it to its title bar and opens it again", async () => {
+      await open();
+      expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
+
+      await userEvent.click(screen.getByRole("button", { name: "Collapse the node panel" }));
+
+      expect(screen.getByRole("button", { name: "Open the node panel" })).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByText(EMPTY_STATE)).not.toBeInTheDocument();
+      expect(px()).toBeCloseTo(1200 - 40, 0);
+      await userEvent.click(screen.getByRole("button", { name: "Open the node panel" }));
+      expect(within(panel()).getByText(EMPTY_STATE)).toBeVisible();
+      expect(px()).toBeCloseTo(1200 - 260, 0);
+    });
+
+    it("selecting a node opens a folded panel", async () => {
+      await open();
+      await userEvent.click(screen.getByRole("button", { name: "Collapse the node panel" }));
+
+      fireEvent.click(await nodeButton("a"));
+
+      expect(await screen.findByText("Model a.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("the arrow keys resize the panes and the size is remembered", async () => {
+      await open();
+      const before = valueNow();
+
+      handle().focus();
+      await userEvent.keyboard("{ArrowUp}");
+
+      expect(valueNow()).toBeLessThan(before);
+      expect((storedLayout() as { sizes: Record<string, number> }).sizes.panel).toBeGreaterThan(260);
+    });
+
+    it("restores a remembered panel size", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 400 }, collapsed: {} }));
+      await open();
+      expect(px()).toBeCloseTo(1200 - 400, 0);
+    });
+
+    it("a stored panel size under its minimum is raised to 120 px", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 5 }, collapsed: {} }));
+      await open();
+      expect(px()).toBeCloseTo(1200 - 120, 0);
+    });
+
+    it("a stored panel size over the 2000 px maximum is lowered to what leaves the graph 240 px", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 5000 }, collapsed: {} }));
+      await open();
+      expect(px()).toBeCloseTo(240, 0);
+    });
+
+    it("corrupt storage means the default size", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      localStorage.setItem(LAYOUT_KEY, '{"sizes":');
+      await open();
+      expect(px()).toBeCloseTo(1200 - 260, 0);
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it("a folded panel stays folded after a reload", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 260 }, collapsed: { panel: true } }));
+      await open();
+      expect(screen.getByRole("button", { name: "Open the node panel" })).toHaveAttribute("aria-expanded", "false");
+    });
   });
 
   describe("column lineage", () => {

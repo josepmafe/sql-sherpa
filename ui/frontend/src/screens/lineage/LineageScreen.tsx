@@ -1,18 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader, Stack, Text } from "@mantine/core";
+import { Box, Flex, Loader, Text } from "@mantine/core";
 
 import { ApiRequestError, useColumnFocus, useLineage } from "../../api/queries";
+import { Pane, PaneGroup, PaneHandle } from "../../components/panes";
 import { LoadError } from "../explorer/LoadError";
 import { focusView } from "./columnFocus";
 import { LayerFilter } from "./LayerFilter";
 import { LineageCanvas } from "./LineageCanvas";
-import { NodePanel } from "./NodePanel";
+import { NODE_PANEL, NodePanel, PANEL_TITLE_BAR } from "./NodePanel";
 import { SelectorBar } from "./SelectorBar";
 import { useLineageParams } from "./url";
 
 const UNSUPPORTED_SELECTOR = "unsupported_selector";
 const COLUMN_NOT_FOUND = "column_not_found";
 const COLUMNS_UNAVAILABLE = "Column lineage is unavailable";
+// The graph above and the node panel below, in pixels (UI spec §6.1, §6.5). The graph takes what the panel leaves.
+const LAYOUT_ID = "lineage";
+const GRAPH_PANE = "graph";
+const GRAPH_MIN = 240;
+const GRAPH_MAX = 4000;
+const PANEL_DEFAULT = 260;
+const PANEL_MIN = 120;
+const PANEL_MAX = 2000;
+// The screen fills the viewport below the header and the main area's padding, as the Explorer does.
+const SCREEN_HEIGHT = "calc(100vh - 100px)";
 
 export function LineageScreen() {
   const [params, update] = useLineageParams();
@@ -85,7 +96,7 @@ export function LineageScreen() {
   };
 
   return (
-    <Stack gap="md">
+    <Flex direction="column" gap="md" h={SCREEN_HEIGHT}>
       <SelectorBar select={params.select} onSelect={(select) => update({ select })} error={error} columns={columns} />
       <LayerFilter
         available={graph?.layers_available ?? []}
@@ -110,34 +121,49 @@ export function LineageScreen() {
       {graph !== undefined && !loadError && (
         <>
           <Text size="sm">{graph.nodes.length} nodes</Text>
-          <LineageCanvas
-            nodes={graph.nodes}
-            edges={graph.edges}
-            selected={params.node}
-            column={params.column}
-            onSelect={(node) => (node === undefined ? clearSelection() : update({ node, column: undefined }))}
-            focus={focus}
-            expanded={expanded}
-            rest={rest}
-            onToggle={toggle}
-            onFocusColumn={(node, column) => {
-              setWantColumns(true);
-              update({ node, column });
-            }}
-            columnsUnavailable={columnsUnavailable}
-            failingOnly={params.failingOnly}
-            layersFiltered={params.layers !== undefined}
-            buildState={graph.build.state}
-          />
-          <NodePanel
-            uniqueId={params.node}
-            onClose={clearSelection}
-            column={params.column}
-            outside={focus?.outside ?? 0}
-            onFocusColumn={focusColumn}
-          />
+          <Box style={{ flex: 1, minHeight: 0 }}>
+            <PaneGroup id={LAYOUT_ID} direction="vertical">
+              <Pane id={GRAPH_PANE} minSize={GRAPH_MIN} maxSize={GRAPH_MAX}>
+                <LineageCanvas
+                  nodes={graph.nodes}
+                  edges={graph.edges}
+                  selected={params.node}
+                  column={params.column}
+                  onSelect={(node) => (node === undefined ? clearSelection() : update({ node, column: undefined }))}
+                  focus={focus}
+                  expanded={expanded}
+                  rest={rest}
+                  onToggle={toggle}
+                  onFocusColumn={(node, column) => {
+                    setWantColumns(true);
+                    update({ node, column });
+                  }}
+                  columnsUnavailable={columnsUnavailable}
+                  failingOnly={params.failingOnly}
+                  layersFiltered={params.layers !== undefined}
+                  buildState={graph.build.state}
+                />
+              </Pane>
+              <PaneHandle label="Resize the graph and the node panel" />
+              <Pane
+                id={NODE_PANEL}
+                defaultSize={PANEL_DEFAULT}
+                minSize={PANEL_MIN}
+                maxSize={PANEL_MAX}
+                collapsedSize={PANEL_TITLE_BAR}
+              >
+                <NodePanel
+                  uniqueId={params.node}
+                  onClose={clearSelection}
+                  column={params.column}
+                  outside={focus?.outside ?? 0}
+                  onFocusColumn={focusColumn}
+                />
+              </Pane>
+            </PaneGroup>
+          </Box>
         </>
       )}
-    </Stack>
+    </Flex>
   );
 }
