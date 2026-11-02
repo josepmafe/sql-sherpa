@@ -74,6 +74,12 @@ export function AppShell() {
               component={RouterLink}
               to={path}
               aria-label={label}
+              onClick={(event) => {
+                // A mouse click (detail > 0) ends the peek; a key press (detail 0) keeps the focus-held peek.
+                if (event.detail === 0) return;
+                event.currentTarget.blur();
+                setDismissed(true);
+              }}
               label={showLabels ? label : undefined}
               leftSection={<Icon size={ICON_SIZE} />}
             />

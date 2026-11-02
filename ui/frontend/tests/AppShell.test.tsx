@@ -172,3 +172,56 @@ describe("AppShell navigation rail", () => {
     expect(screen.queryByRole("button", { name: "Pin the navigation open" })).not.toBeInTheDocument();
   });
 });
+
+describe("AppShell navigation rail peek and clicks", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useCatalog.mockReset().mockReturnValue({ data: catalog() });
+  });
+  afterEach(() => localStorage.clear());
+
+  it("closes again after a link is clicked during a hover peek and the pointer leaves", () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem(LAYOUT_KEY, COLLAPSED_LAYOUT);
+      renderAt("/lineage");
+      const rail = screen.getByRole("navigation");
+      fireEvent.pointerEnter(rail);
+      act(() => void vi.advanceTimersByTime(200));
+      const link = screen.getByRole("link", { name: "Explorer" });
+      expect(link).toHaveTextContent("Explorer");
+
+      act(() => link.focus()); // a mouse press focuses the link
+      fireEvent.click(link, { detail: 1 });
+      fireEvent.pointerLeave(rail);
+      act(() => void vi.advanceTimersByTime(400));
+
+      expect(screen.getByRole("link", { name: "Explorer" })).not.toHaveTextContent("Explorer");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the rail open after Enter on a focused link and closes it on Escape", () => {
+    localStorage.setItem(LAYOUT_KEY, COLLAPSED_LAYOUT);
+    renderAt("/lineage");
+    const link = screen.getByRole("link", { name: "Explorer" });
+    act(() => link.focus());
+
+    fireEvent.click(link, { detail: 0 }); // Enter on a link is a click without a pointer
+    expect(screen.getByRole("link", { name: "Explorer" })).toHaveTextContent("Explorer");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(screen.getByRole("link", { name: "Explorer" })).not.toHaveTextContent("Explorer");
+  });
+
+  it("remembers the rail as expanded after it is opened again", () => {
+    localStorage.setItem(LAYOUT_KEY, COLLAPSED_LAYOUT);
+    renderAt("/lineage");
+
+    fireEvent.click(openButton());
+
+    expect(storedFlag()).toBe(false);
+    expect(screen.getByRole("link", { name: "Lineage" })).toHaveTextContent("Lineage");
+  });
+});

@@ -125,6 +125,8 @@ test.describe("the navigation rail at 1440 x 900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("stays collapsed after a reload, and hovering it opens the labels without moving the editor", async ({ page }) => {
+    await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.shell"));
+    await page.reload();
     await page.getByRole("button", { name: "Collapse the navigation" }).click();
     await page.reload();
     const rail = page.getByRole("navigation", { name: "Main" });
