@@ -32,6 +32,8 @@ type ApiEdge = components["schemas"]["LineageEdge"];
 const MINIMAP_ABOVE_NODES = 60;
 // A whole-project fit would zoom a one-node graph to 2x.
 const FIT_MAX_ZOOM = 1;
+// The whole project is about 2,500 px tall and its canvas can be 240 px: the fit needs room below 0.1.
+const MIN_ZOOM = 0.05;
 const GRAPH_NODE = "graph";
 const NODE_TYPES = { [GRAPH_NODE]: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
 const EDGE_TYPES = { [ROUTED_EDGE]: RoutedEdge };
@@ -220,7 +222,7 @@ function Canvas({
         elementsSelectable={false}
         deleteKeyCode={null}
         selectionKeyCode={null}
-        minZoom={0.1}
+        minZoom={MIN_ZOOM}
         // A click or Enter on a node button bubbles up to here (and gives the node wrapper its pointer events).
         onNodeClick={(_, node) => node.type === GRAPH_NODE && onSelect(node.id)}
         onPaneClick={() => onSelect(undefined)}
