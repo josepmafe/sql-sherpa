@@ -1,7 +1,7 @@
 import { MantineProvider } from "@mantine/core";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CollapseToggle, Pane, PaneGroup, PaneHandle, usePaneCollapse } from "../../src/components/panes";
 import { stubPaneLayout } from "../fixtures/panes";
 
@@ -125,5 +125,32 @@ describe("PaneGroup", () => {
     await user.dblClick(handle);
 
     expect((stored() as { sizes: { side: number } }).sizes.side).toBeCloseTo(300, 0);
+  });
+
+  it("stores sizes only for the panes that declared a default size", async () => {
+    const user = userEvent.setup();
+    await renderPanes();
+
+    screen.getByRole("separator", { name: "Resize the side" }).focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(Object.keys((stored() as { sizes: object }).sizes)).toEqual(["side"]);
+  });
+
+  it("ignores a stored size for a pane that declared no default size", async () => {
+    localStorage.setItem(KEY, JSON.stringify({ sizes: { side: 300, main: 1900 }, collapsed: {} }));
+
+    await renderPanes();
+
+    expect(valueNow()).toBeCloseTo((300 / 1200) * 100, 0);
+  });
+
+  it("warns once for a stored value that is not a layout, however many panes the group has", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    localStorage.setItem(KEY, '{"x":');
+
+    await renderPanes();
+
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

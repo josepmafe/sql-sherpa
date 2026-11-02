@@ -5,7 +5,7 @@ import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { CollapseToggle } from "../../src/components/panes";
 
-function Harness({ startCollapsed }: { startCollapsed: boolean }) {
+function Harness({ startCollapsed, side }: { startCollapsed: boolean; side?: "left" | "right" }) {
   const [collapsed, setCollapsed] = useState(startCollapsed);
   return (
     <MantineProvider env="test">
@@ -14,6 +14,7 @@ function Harness({ startCollapsed }: { startCollapsed: boolean }) {
         onToggle={() => setCollapsed((current) => !current)}
         foldLabel="Collapse the table tree"
         openLabel="Open the table tree"
+        side={side}
       />
     </MantineProvider>
   );
@@ -40,5 +41,16 @@ describe("CollapseToggle", () => {
     await user.keyboard(key);
 
     expect(screen.getByRole("button", { name: "Open the table tree" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it.each([
+    ["left", false, "layout-sidebar-left-collapse"],
+    ["left", true, "layout-sidebar-left-expand"],
+    ["right", false, "layout-sidebar-right-collapse"],
+    ["right", true, "layout-sidebar-right-expand"],
+  ] as const)("on the %s side, collapsed %s, points the way the pane folds (%s)", (side, collapsed, icon) => {
+    render(<Harness startCollapsed={collapsed} side={side} />);
+
+    expect(screen.getByRole("button").querySelector("svg")).toHaveClass(`tabler-icon-${icon}`);
   });
 });

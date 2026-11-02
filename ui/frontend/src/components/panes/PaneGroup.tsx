@@ -1,6 +1,6 @@
 import { createContext, type ReactNode, useContext, useMemo, useRef, useState } from "react";
 import { Group, type PanelImperativeHandle } from "react-resizable-panels";
-import { writeLayout } from "./layoutStorage";
+import { loadLayout, type StoredLayout, writeLayout } from "./layoutStorage";
 
 // Half a pixel absorbs the rounding of a size the library derives from a percentage.
 export const COLLAPSED_TOLERANCE_PX = 0.5;
@@ -10,10 +10,14 @@ export type PaneEntry = {
   handle: () => PanelImperativeHandle | null;
   collapsedSize: number | undefined;
   lastOpenSize: number;
+  /** Whether the pane declared a default size: only such a pane's size is stored (the others take what is left). */
+  sized: boolean;
 };
 
 export type PaneGroupContext = {
   groupId: string;
+  /** The layout stored for this group, as written (a pane clamps its own entry). */
+  stored: StoredLayout | undefined;
   collapsed: Readonly<Record<string, boolean>>;
   register: (paneId: string, entry: PaneEntry) => void;
   unregister: (paneId: string) => void;
@@ -57,6 +61,7 @@ type Props = {
 export function PaneGroup({ id, direction, children }: Props) {
   const panes = useRef(new Map<string, PaneEntry>());
   const [collapsed, setCollapsedState] = useState<Record<string, boolean>>({});
+  const [stored] = useState(() => loadLayout(id));
 
   // The functions do not depend on `collapsed`, so a pane's effects that call them do not rerun when a flag changes.
   const actions = useMemo(() => {
@@ -76,7 +81,7 @@ export function PaneGroup({ id, direction, children }: Props) {
         const stripSize =
           pane.collapsedSize !== undefined && size !== undefined && size <= pane.collapsedSize + COLLAPSED_TOLERANCE_PX;
         if (!folded && !stripSize && size !== undefined) pane.lastOpenSize = size;
-        sizes[paneId] = pane.lastOpenSize;
+        if (pane.sized) sizes[paneId] = pane.lastOpenSize;
         if (pane.collapsedSize !== undefined) flags[paneId] = folded;
       }
       writeLayout(id, { sizes, collapsed: flags });
@@ -113,6 +118,7 @@ export function PaneGroup({ id, direction, children }: Props) {
   const context = useMemo<PaneGroupContext>(
     () => ({
       groupId: id,
+      stored,
       collapsed,
       register: actions.register,
       unregister: actions.unregister,
@@ -121,7 +127,7 @@ export function PaneGroup({ id, direction, children }: Props) {
       setCollapsed: actions.setCollapsed,
       persistSoon: () => queueMicrotask(() => actions.persist()),
     }),
-    [id, collapsed, actions],
+    [id, stored, collapsed, actions],
   );
 
   return (

@@ -11,12 +11,18 @@ export type StoredLayout = {
 // `localStorage` is read inside the try: with site data blocked, reading it throws (SecurityError). A stored size is
 // clamped to the pane's current limits (a smaller screen or a changed limit); a pane without limits is dropped.
 export function readLayout(id: string, limits: PaneLimits): StoredLayout | undefined {
+  const loaded = loadLayout(id);
+  return loaded && clampLayout(loaded, limits);
+}
+
+/** The stored layout as written, not yet clamped: a group loads it once (one warning) and hands it to its panes. */
+export function loadLayout(id: string): StoredLayout | undefined {
   const key = LAYOUT_KEY_PREFIX + id;
   try {
     const raw = localStorage.getItem(key);
     if (raw === null) return undefined;
     const parsed = parseLayout(raw);
-    if (parsed) return clampLayout(parsed, limits);
+    if (parsed) return parsed;
     console.warn(`${key} is not a valid pane layout; using the default sizes`);
   } catch (error) {
     console.warn(`${key} could not be read; using the default sizes`, error);
@@ -56,7 +62,7 @@ function isRecordOf(value: unknown, test: (item: unknown) => boolean): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value) && Object.values(value).every(test);
 }
 
-function clampLayout(stored: StoredLayout, limits: PaneLimits): StoredLayout {
+export function clampLayout(stored: StoredLayout, limits: PaneLimits): StoredLayout {
   const sizes: Record<string, number> = {};
   for (const [paneId, size] of Object.entries(stored.sizes)) {
     const limit = limits[paneId];

@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Panel, usePanelRef } from "react-resizable-panels";
-import { readLayout } from "./layoutStorage";
+import { clampLayout } from "./layoutStorage";
 import { COLLAPSED_TOLERANCE_PX, type PaneEntry, usePaneGroup } from "./PaneGroup";
 
 type Props = {
@@ -15,22 +15,26 @@ type Props = {
 };
 
 export function Pane({ id, defaultSize, minSize, maxSize, collapsedSize, children }: Props) {
-  const { groupId, register, unregister, report, startCollapsed } = usePaneGroup();
+  const { stored: storedLayout, register, unregister, report, startCollapsed } = usePaneGroup();
   const panelRef = usePanelRef();
-  const [stored] = useState(() => readLayout(groupId, { [id]: { min: minSize, max: maxSize } }));
+  const [stored] = useState(() => storedLayout && clampLayout(storedLayout, { [id]: { min: minSize, max: maxSize } }));
   const startsCollapsed = collapsedSize !== undefined && stored?.collapsed[id] === true;
-  const openSize = stored?.sizes[id] ?? defaultSize;
+  // A pane without a default size takes what the others leave: a pixel size stored under another window width would not add up.
+  const sized = defaultSize !== undefined;
+  const openSize = sized ? (stored?.sizes[id] ?? defaultSize) : undefined;
   const entry = useRef<PaneEntry>({
     handle: () => panelRef.current,
     collapsedSize,
     lastOpenSize: openSize ?? minSize,
+    sized,
   });
 
   useEffect(() => {
     entry.current.collapsedSize = collapsedSize;
+    entry.current.sized = sized;
     register(id, entry.current);
     return () => unregister(id);
-  }, [id, collapsedSize, register, unregister]);
+  }, [id, collapsedSize, sized, register, unregister]);
 
   useLayoutEffect(() => {
     if (startsCollapsed) startCollapsed(id);

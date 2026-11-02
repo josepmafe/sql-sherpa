@@ -1,5 +1,15 @@
 import { ActionIcon } from "@mantine/core";
-import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand } from "@tabler/icons-react";
+import {
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
+  IconLayoutSidebarRightCollapse,
+  IconLayoutSidebarRightExpand,
+} from "@tabler/icons-react";
+
+const ICONS = {
+  left: { collapse: IconLayoutSidebarLeftCollapse, expand: IconLayoutSidebarLeftExpand },
+  right: { collapse: IconLayoutSidebarRightCollapse, expand: IconLayoutSidebarRightExpand },
+} as const;
 
 type Props = {
   collapsed: boolean;
@@ -8,9 +18,12 @@ type Props = {
   foldLabel: string;
   /** The name while the pane is folded, e.g. "Open the table tree". */
   openLabel: string;
+  /** The edge the pane folds to; its icon points that way. */
+  side?: "left" | "right";
 };
 
-export function CollapseToggle({ collapsed, onToggle, foldLabel, openLabel }: Props) {
+export function CollapseToggle({ collapsed, onToggle, foldLabel, openLabel, side = "left" }: Props) {
+  const Icon = ICONS[side][collapsed ? "expand" : "collapse"];
   return (
     <ActionIcon
       variant="subtle"
@@ -20,7 +33,7 @@ export function CollapseToggle({ collapsed, onToggle, foldLabel, openLabel }: Pr
       aria-label={collapsed ? openLabel : foldLabel}
       onClick={onToggle}
     >
-      {collapsed ? <IconLayoutSidebarLeftExpand size={16} /> : <IconLayoutSidebarLeftCollapse size={16} />}
+      <Icon size={16} />
     </ActionIcon>
   );
 }
