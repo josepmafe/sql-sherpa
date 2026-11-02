@@ -105,7 +105,7 @@ The panel is the lower pane of the screen, always there; the line between it and
 
 - **Overview:** description, layer, materialization, domain, contract, file path, the last full build (status, duration, failing tests) and the actions.
 - **Columns (n):** each column with its type, kind and resolution; click one to focus it.
-- **Tests (n):** the node's tests, grouped by outcome. Click a test to expand what defines it: its file and "Copy dbt selector" (the test's name), then by kind the raw and compiled SQL (singular), the configuration and compiled SQL (generic; `severity` appears only when it is not the default `error`), or the given and expected rows as written in the YAML (unit).
+- **Tests (n):** the node's tests, grouped by outcome. Click a test to expand what defines it: its file and "Copy dbt selector" (the test's name), then by kind the raw and compiled SQL (singular), the configuration and compiled SQL (generic; `severity` appears only when it is not the default `error`), or the given and expected rows as dbt parsed them, in YAML (unit; comments are not kept).
 - **SQL:** raw and compiled SQL; when the compiled file is missing, the raw SQL shows with a note.
 
 A tab with nothing to show stays but is disabled, and hovering or focusing it says why ("This node has no columns.", "No test is defined on this node.", "Sources, seeds and exposures have no SQL."). If you selected a tab and the next node has nothing there, Overview opens.
