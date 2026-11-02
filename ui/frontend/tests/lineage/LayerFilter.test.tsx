@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { LayerFilter } from "../../src/screens/lineage/LayerFilter";
+import type { Layer } from "../../src/screens/lineage/url";
 
 function renderFilter(props: Partial<Parameters<typeof LayerFilter>[0]> = {}) {
   const onLayers = vi.fn();
@@ -38,6 +39,42 @@ describe("LayerFilter", () => {
     expect(screen.getByRole("checkbox", { name: "staging" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "marts" })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: "seed" })).not.toBeInTheDocument();
+  });
+
+  describe("exposures", () => {
+    const AVAILABLE: Layer[] = ["staging", "marts", "exposure"];
+
+    it("start hidden while the other layers are shown", () => {
+      renderFilter({ available: AVAILABLE });
+
+      expect(screen.getByRole("checkbox", { name: "exposure" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "staging" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "marts" })).toBeChecked();
+    });
+
+    it("switching them on writes every layer", async () => {
+      const { onLayers } = renderFilter({ available: AVAILABLE });
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "exposure" }));
+
+      expect(onLayers).toHaveBeenCalledWith(["staging", "marts", "exposure"]);
+    });
+
+    it("switching them off again returns to the default", async () => {
+      const { onLayers } = renderFilter({ available: AVAILABLE, layers: ["staging", "marts", "exposure"] });
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "exposure" }));
+
+      expect(onLayers).toHaveBeenCalledWith(undefined);
+    });
+
+    it("hiding another layer keeps the exposures hidden", async () => {
+      const { onLayers } = renderFilter({ available: AVAILABLE });
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "staging" }));
+
+      expect(onLayers).toHaveBeenCalledWith(["marts"]);
+    });
   });
 
   it("hiding a layer writes the layers still shown", async () => {

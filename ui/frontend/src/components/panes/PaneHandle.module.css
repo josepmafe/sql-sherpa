@@ -1,0 +1,55 @@
+/* A 6 px hit area around a 1 px line. Hover, drag and focus use the theme's primary colour (3:1 against the page in both themes).
+   The library's inline `flex: 0 0 auto` leaves the size to the width or the height. */
+.handle {
+  position: relative;
+  background: transparent;
+  outline: none;
+}
+
+.handle[aria-orientation="vertical"] {
+  width: 6px;
+}
+
+.handle[aria-orientation="horizontal"] {
+  height: 6px;
+}
+
+.handle::after {
+  content: "";
+  position: absolute;
+  background: var(--mantine-color-default-border);
+}
+
+.handle[aria-orientation="vertical"]::after {
+  top: 0;
+  bottom: 0;
+  left: 2.5px;
+  width: 1px;
+}
+
+.handle[aria-orientation="horizontal"]::after {
+  left: 0;
+  right: 0;
+  top: 2.5px;
+  height: 1px;
+}
+
+.handle[data-separator="hover"]::after,
+.handle[data-separator="active"]::after,
+.handle[data-separator="focus"]::after {
+  background: var(--mantine-primary-color-filled);
+}
+
+.handle[data-separator="hover"][aria-orientation="vertical"]::after,
+.handle[data-separator="active"][aria-orientation="vertical"]::after,
+.handle[data-separator="focus"][aria-orientation="vertical"]::after {
+  left: 1.5px;
+  width: 3px;
+}
+
+.handle[data-separator="hover"][aria-orientation="horizontal"]::after,
+.handle[data-separator="active"][aria-orientation="horizontal"]::after,
+.handle[data-separator="focus"][aria-orientation="horizontal"]::after {
+  top: 1.5px;
+  height: 3px;
+}

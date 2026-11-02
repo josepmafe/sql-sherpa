@@ -21,7 +21,7 @@ import {
   type Updater,
   useReactTable,
 } from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { observeElementRect, useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useMemo, useRef, useState } from "react";
 
 import {
@@ -47,8 +47,8 @@ type GridProps = {
 };
 
 const ROW_HEIGHT = 32;
-// Under the editor and a truncated result's note, the grid still ends inside a 900 px high screen.
-const VIEWPORT_HEIGHT = 380;
+// The grid fills its pane; where nothing can be measured (jsdom) it shows this many pixels of rows.
+const FALLBACK_VIEWPORT_HEIGHT = 380;
 const OVERSCAN = 10;
 const COLUMN_WIDTH = 160;
 const DISPLAY_MAX_CHARS = 200; // Long text is cut in the display only; the full value is the hover title.
@@ -114,11 +114,8 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
-    // The viewport has a fixed height, so it is not measured (jsdom cannot measure it either).
-    observeElementRect: (_instance, report) => {
-      report({ width: 0, height: VIEWPORT_HEIGHT });
-      return () => undefined;
-    },
+    observeElementRect: (instance, report) =>
+      observeElementRect(instance, (rect) => report({ ...rect, height: rect.height || FALLBACK_VIEWPORT_HEIGHT })),
   });
   const items = virtualizer.getVirtualItems();
   const before = items.length > 0 ? (items[0]?.start ?? 0) : 0;
@@ -126,7 +123,7 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
   const filtered = !serverSide && view.filters.length > 0;
 
   return (
-    <Stack gap="xs">
+    <Stack gap="xs" h="100%" style={{ minHeight: 0 }}>
       <StatusLine response={response} shown={tableRows.length} filtered={filtered} />
       {/* One-line notes, so the grid stays in view on a 900 px high screen. */}
       {hasDuplicateColumns(columns) && (response.truncated || needsServer(view, types, response.rows as Row[])) && (
@@ -148,7 +145,7 @@ export const ResultGrid = memo(function ResultGrid({ response, view, onViewChang
       ) : (
         <>
           <FilterBar columns={columns} types={types} view={view} onViewChange={onViewChange} />
-          <Box ref={scrollRef} style={{ height: VIEWPORT_HEIGHT, overflow: "auto" }}>
+          <Box ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             <Table stickyHeader withTableBorder withColumnBorders style={{ width: columns.length * COLUMN_WIDTH }}>
               <Table.Thead>
                 {table.getHeaderGroups().map((group) => (

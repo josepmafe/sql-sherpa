@@ -1,4 +1,4 @@
-import type { LayoutEdge } from "./layout";
+import { edgeKey, type LayoutEdge } from "./layout";
 
 export interface Related {
   nodes: Set<string>;
@@ -6,7 +6,7 @@ export interface Related {
 }
 
 export function edgeId(edge: LayoutEdge): string {
-  return `${edge.source}->${edge.target}`;
+  return edgeKey(edge.source, edge.target);
 }
 
 // Works on the edges shown only, so a chain through a hidden layer ends there, like the edges themselves. The

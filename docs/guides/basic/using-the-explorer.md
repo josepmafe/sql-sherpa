@@ -1,6 +1,6 @@
 # Using the Explorer
 
-The Explorer is the web app's first screen: a tree of the marts on the left, a SQL editor with worksheets in the middle, and an Inspector for the selected table on the right (a drawer over the editor below 1280 px). Everything it runs goes to the prod warehouse through a read-only path ([UI spec §5](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md), [§6.4](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). It assumes the prod warehouse is built ([Building the warehouse](building-the-warehouse.md)).
+The Explorer is the web app's first screen: a tree of the marts on the left, a SQL editor with worksheets in the middle, and an Inspector for the selected table on the right (an overlay on the editor below 1280 px). Everything it runs goes to the prod warehouse through a read-only path ([UI spec §5](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md), [§6.4](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). It assumes the prod warehouse is built ([Building the warehouse](building-the-warehouse.md)).
 
 ## Starting it
 
@@ -20,14 +20,24 @@ Open <http://127.0.0.1:8090>; the root redirects to `/explorer`. A link `/explor
 The tree is `sherpa > marts > <domain> > table > column`: descriptions from dbt's `manifest.json`, column types from `catalog.json`. It lists every mart.
 
 - **Search** filters tables and columns by name.
-- **Columns** show their type, a PK badge and a PII badge (the column holds salted hashes).
+- **Columns** of an expanded table line up as name, type and markers: a PK badge and a PII badge (the column holds salted hashes).
 - **Hover** a table for the first sentence of its description, its grain and primary key.
-- **Click** a table to show it in the Inspector: description, domain, grain, primary key, synonyms, columns (with accepted values and the metrics they feed) and dbt tests.
+- **Click** a table to show it in the Inspector: description, domain, grain, primary key, synonyms and columns (with accepted values and the metrics they feed). A table's tests are in [Lineage](using-lineage.md#the-node-panel).
 - **Table menu** (right-click, or the "..." button):
   - **Preview 100 rows** opens a worksheet with `select * from marts.<table> limit 100` and runs it.
   - **Insert SELECT** appends a `select *` skeleton to the active worksheet.
   - **Copy name** copies `marts.<table>`.
   - **Open in Lineage** opens the table's graph with its ancestors and descendants (`/lineage?select=+<table>+`; [Using Lineage](using-lineage.md)). The Inspector has the same button.
+
+## Panes
+
+The tree, the editor with its results, and the Inspector are panes, and so is the navigation rail on the left ([UI spec §6.1](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md), §6.4).
+
+- **Resize** by dragging the line between two panes, or focus it (Tab) and press the arrow keys; Home and End jump to the limits. A **double-click** on the line restores the default sizes. The tree is 380 px by default (280 px below 1280 px), between 200 and 480; the editor is 260 px, at least 120, and the results at least 160.
+- **Collapse** a pane with the button in its corner: it folds to a strip with its icon, and the same button opens it. Selecting a table unfolds a folded Inspector.
+- **Peek:** a folded tree (or rail) opens over the editor when the pointer rests on its strip for about 200 ms or the keyboard focus enters it, and closes shortly after both leave. Clicking a table in it selects the table and closes it; Esc closes it too.
+- **Below 1280 px** the Inspector takes no room: it starts folded, and clicking a table opens it over the editor and moves the focus to its heading. Esc or its button closes it and returns the focus to the table's row.
+- Sizes and folded panes are remembered in the browser (`sherpa.v1.layout.*`); the editor height is shared by all worksheets.
 
 ## Worksheets, history and running
 
@@ -81,6 +91,7 @@ Click a column header to sort (again to reverse). The filter bar supports `=`, `
 | "Query timed out ... 30 s" | Add a `WHERE` or `LIMIT`, or aggregate; or raise `SHERPA_UI_STATEMENT_TIMEOUT_S` |
 | "Too many queries running" | Wait for one to finish or cancel one (any tab or browser counts) |
 | "the warehouse refused a connection: too many are open" | Another client of the `sherpa_ui` login (a second UI, a test run) holds connections; stop it |
+| The layout is odd after a resize (a pane too small, or one you cannot find) | Double-click the line between the panes, or clear `sherpa.v1.layout.*` in the browser's site data and reload |
 | Permission error on `marts` | The read grants were lost: `make build-prod` re-applies them |
 | A filter on email returns 0 rows or random rows | It is a salted hash, so filter by `customer_id` |
 

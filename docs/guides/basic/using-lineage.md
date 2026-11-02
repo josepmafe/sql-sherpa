@@ -9,8 +9,8 @@ The segmented control at the top writes a **dbt selector** into the box beside i
 | Mode | You pick | Writes | Shows |
 |---|---|---|---|
 | **Whole project** | nothing | an empty box | every node |
-| **Table path** | a table, and upstream / downstream depth (`all` or 1 to 5) | `+fct_orders+`, `2+fct_orders+1` | that table and what it depends on or feeds |
 | **Domain** | a `meta.domain` | `+config.meta.domain:sales` | every mart of the domain and all their ancestors |
+| **Table path** | a table, and upstream / downstream depth (`all` or 1 to 5) | `+fct_orders+`, `2+fct_orders+1` | that table and what it depends on or feeds |
 
 Any other selector is a custom one, and a note says that no mode writes it. The URL holds the view (`/lineage?select=...&layers=...&failing=1&node=...`), so reload, back/forward and a shared link restore it.
 
@@ -36,7 +36,7 @@ dbt build --select "+fct_orders" --target prod --target-path target-prod
 
 ## Reading the graph
 
-Nodes sit in vertical **bands**, left to right: the raw source schemas, seeds, staging, snapshots, intermediate, marts. A node that reads a node of its own band sits in a sub-column to its right, so every edge runs left to right (the marts band is usually the widest). Each node shows its name, a layer colour, its materialization and a status as an icon and a label (never colour alone).
+Nodes sit in vertical **bands**, left to right: the raw source schemas, seeds, staging, snapshots, intermediate, marts. A node that reads a node of its own band sits in a sub-column to its right, so every edge runs left to right (the marts band is usually the widest). Each node sits as near as it can to the nodes it is linked to, and a table nothing reads slides up next to the others instead of leaving a hole. **No edge hides behind a node:** an edge that skips a band gets a reserved gap in every band it crosses, so it rises once, runs level through the gaps and comes down once at its target. Each node shows its name, a layer colour, its materialization and a status as an icon and a label (never colour alone).
 
 | Status | Meaning |
 |---|---|
@@ -50,17 +50,17 @@ Nodes sit in vertical **bands**, left to right: the raw source schemas, seeds, s
 
 The "last full build" is the newest `dbt build` on prod recorded in `ops.dbt_run_results`; a build of a single model does not count. Under the selector box:
 
-- **Layer chips** hide layers. A hidden layer's nodes and edges disappear; edges are not bridged across the gap.
+- **Layer chips** hide layers. A hidden layer's nodes and edges disappear; edges are not bridged across the gap. The exposures layer starts off in every mode: switch its chip on to see the `sherpa_agent` exposure.
 - **Failing only** keeps the nodes whose status is failed. Warnings stay out.
 - **No build recorded:** no node has a status and a note says "run make build-prod". "Failing only" then shows nothing.
 - **Build status unavailable** (the build record could not be read: database down, missing grant, timeout): the graph still draws from the manifest, with a note.
 - With a build recorded, the note says which one the statuses come from ("Status from the full build of 2026-10-26 14:05 UTC").
 
-Click a node (or focus it and press Enter) to emphasise it, draw its ancestors and descendants among the nodes shown (nodes and edges) in the accent colour, and fade the rest. Esc, the panel's close button or a click on the background clears it, and the focus goes back to the node. Tab walks the nodes band by band, top to bottom; the zoom buttons at the bottom left do what the wheel does. The graph is framed whole when it loads and after every selector change, never zoomed past 100%.
+Click a node (or focus it and press Enter) to emphasise it, draw its ancestors and descendants among the nodes shown (nodes and edges) in the accent colour, and fade the rest. Esc, the panel's close button or a click on the background clears it, and the focus goes back to the node. Tab walks the nodes band by band, top to bottom; the zoom buttons at the bottom left do what the wheel does. The graph is framed whole when it loads and when you pick a new subject (another mode, domain, table or depth), never zoomed past 100% and down to 5% for the whole project. Your zoom and pan survive the redraws that keep the subject (a layer chip, Failing only, a refresh) and leaving Lineage for another screen, until you reload the page.
 
 ## Columns
 
-Every node has a chevron that expands it into its columns; **Expand all** and **Collapse all** (beside the layer chips) act on the nodes shown. Each row shows the column name, its **kind** and its **resolution**, each as an icon and a word. Columns come from `catalog.json` (the YAML columns when the catalog lacks a node, or when there is no catalog, with a note), so `make build-prod` is what fills them.
+Every node has a chevron that expands it into its columns; **Expand all** and **Collapse all** (beside the layer chips) act on the nodes shown. Each row shows the column name, its **kind** and its **resolution**, each as an icon and a word; the node panel's Columns tab adds the column's **type**: the database's own name from `catalog.json`, else the type written in the YAML, else empty (an ephemeral model has no table, so no type). Columns come from `catalog.json` (the YAML columns when the catalog lacks a node, or when there is no catalog, with a note), so `make build-prod` is what fills them.
 
 | Kind | Means |
 |---|---|
@@ -101,11 +101,14 @@ Click a column row (or a column in the panel's Columns tab). The canvas then:
 
 ## The node panel
 
-The panel sits below the graph, always, and scrolls on its own, so selecting a node never resizes the graph. Until you select a node it says "Select a node to see its SQL, columns and tests". Tabs:
+The panel is the lower pane of the screen, always there; the line between it and the graph resizes it (drag, or the arrow keys on the focused line; a double-click restores the default of 260 px), and the button at the left of its title bar folds it to that bar. Selecting a node opens a folded panel and keeps the node in view, and dragging the line leaves the graph's zoom and pan alone. Until you select a node it says "Select a node to see its SQL, columns and tests". Tabs:
 
 - **Overview:** description, layer, materialization, domain, contract, file path, the last full build (status, duration, failing tests) and the actions.
-- **Columns:** each column with its kind and resolution; click one to focus it.
-- **Tests** and **SQL:** raw and compiled SQL; when the compiled file is missing, the raw SQL shows with a note.
+- **Columns (n):** each column with its type, kind and resolution; click one to focus it.
+- **Tests (n):** the node's tests, grouped by outcome. Click the eye button left of a test to open it in a dialog (Esc or a click outside closes it): its kind, file and "Copy dbt selector" (the test's name), then by kind the raw and compiled SQL (singular), the configuration and compiled SQL (generic; `severity` appears only when it is not the default `error`), or the given and expected rows as dbt parsed them, in YAML (unit; comments are not kept).
+- **SQL:** raw and compiled SQL; when the compiled file is missing, the raw SQL shows with a note.
+
+A tab with nothing to show stays but is disabled, and hovering or focusing it says why ("This node has no columns.", "No test is defined on this node.", "Sources, seeds and exposures have no SQL."). If you selected a tab and the next node has nothing there, Overview opens.
 
 Actions: **Copy dbt selector** copies the selector that selects the node (its name, or `source:<source>.<table>`); **Open in Explorer** (visible marts only, not an `_unmasked` table) opens `/explorer?table=<name>`. In the Explorer, **Open in Lineage** (table menu and Inspector) opens `+<table>+`.
 
@@ -120,6 +123,10 @@ Actions: **Copy dbt selector** copies the selector that selects the node (its na
 | A node reads "not in the last build" | The last full build did not include it: `make build-prod` |
 | "Build status unavailable (could not read the build record; see the ui log)" | `make build-prod` (it re-applies the grants); else see the `ui` log (`docker compose logs ui`) |
 | The chevron is disabled (its tooltip says "Column lineage is unavailable" and why) | `manifest.json` or `catalog.json` cannot be read or parsed, or the first build of the lineage failed: `make build-prod`, then Retry (a missing `catalog.json` only adds a node note) |
+| The Type column of a node is empty | The node is an ephemeral model (it has no table, so the catalog has no type), or the YAML gives none and the catalog lacks the node |
+| The map jumps to a new framing | Expected when you pick a new mode, domain, table or depth: a new subject is fitted again. A layer chip or Failing only keeps your view |
+| The exposure is not on the graph | Its layer is off by default: switch the exposures chip on |
+| A tab in the node panel is greyed | It has nothing for this node; hover it for the reason |
 | A node's columns are all `unresolved` | Its note (panel, above the Columns table) says why: usually its compiled SQL is not in `target-prod/compiled/` (`make build-prod`) or did not parse |
 | A node's chevron is disabled during a column focus (tooltip "Every column is related, so there is nothing to hide") | Nothing to do: the focus already shows all of that node's columns |
 | A column you expect to be linked is not | Column lineage is select-list only; a join, filter, group by, named-window or `count(*)` use is not an edge. Check the compiled SQL |

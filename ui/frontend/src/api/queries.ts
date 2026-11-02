@@ -87,6 +87,22 @@ export function useLineage(params: Pick<LineageParams, "select" | "layers" | "fa
   });
 }
 
+// A test of a node, fetched when its row is expanded.
+export function useTestDetails(uniqueId: string | undefined) {
+  return useQuery({
+    queryKey: ["lineage", "tests", uniqueId],
+    queryFn: async () => {
+      const { data, error, response } = await api.GET("/api/lineage/tests/{unique_id}", {
+        params: { path: { unique_id: uniqueId ?? "" } },
+      });
+      if (error !== undefined) throw new ApiRequestError(apiError(error, response.status), response.status);
+      return data;
+    },
+    enabled: uniqueId !== undefined,
+    ...QUERY_DEFAULTS,
+  });
+}
+
 export function useLineageNode(uniqueId: string | undefined) {
   return useQuery({
     queryKey: ["lineage", "nodes", uniqueId],

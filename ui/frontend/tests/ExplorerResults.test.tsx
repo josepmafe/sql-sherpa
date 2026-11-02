@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExplorerScreen } from "../src/screens/explorer/ExplorerScreen";
 import { freshState, saveExplorerState, STORAGE_KEY, updateWorksheet } from "../src/screens/explorer/worksheetStore";
 import { apiFailure, catalog, columnSummary, noContent, ok, queryResponse, table } from "./fixtures/api";
+import { stubPaneLayout } from "./fixtures/panes";
 import { firstColumn, renderWithProviders, shownEditor } from "./fixtures/render";
 
 const post = vi.fn();
@@ -52,6 +53,7 @@ describe("Explorer results", () => {
   beforeEach(() => {
     localStorage.clear();
     post.mockReset();
+    stubPaneLayout();
   });
 
   it("guard rejection shows the reason without the rule's code, and what is allowed", async () => {

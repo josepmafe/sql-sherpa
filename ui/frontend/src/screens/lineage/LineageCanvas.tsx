@@ -13,6 +13,7 @@ import {
   ReactFlowProvider,
   useReactFlow,
   useStore,
+  useStoreApi,
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
 
@@ -21,8 +22,11 @@ import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
 import { type FocusViewResult, nodeRows } from "./columnFocus";
 import { GraphNode, type GraphNodeData, NODE_HANDLE } from "./GraphNode";
 import { edgeAppearance, edgeId, FOCUS_EDGE, type Related, relatedNodes } from "./highlight";
-import { type BandNode, type LayoutEdge, NODE_WIDTH, nodeHeight } from "./layout";
+import { type BandNode, edgeKey, type LayoutEdge, NODE_WIDTH, nodeHeight, type Point } from "./layout";
+import { useKeepSelectedInView } from "./reveal";
+import { ROUTED_EDGE, RoutedEdge } from "./RoutedEdge";
 import { useGraphLayout } from "./useGraphLayout";
+import { keepView, keptViewport, showsAnyNode } from "./viewport";
 
 type ApiNode = components["schemas"]["LineageNode"];
 type ApiEdge = components["schemas"]["LineageEdge"];
@@ -30,8 +34,12 @@ type ApiEdge = components["schemas"]["LineageEdge"];
 const MINIMAP_ABOVE_NODES = 60;
 // A whole-project fit would zoom a one-node graph to 2x.
 const FIT_MAX_ZOOM = 1;
+// The whole project is about 2,500 px tall and its canvas can be 240 px: the fit needs room below 0.1.
+export const MIN_ZOOM = 0.05;
 const GRAPH_NODE = "graph";
 const NODE_TYPES = { [GRAPH_NODE]: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
+const EDGE_TYPES = { [ROUTED_EDGE]: RoutedEdge };
+const NO_WAYPOINTS: Point[] = [];
 // The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
 const FIXED_WIDTH = { vectorEffect: "non-scaling-stroke" } as const;
 const LEGEND = "Column lineage follows the select list: columns used only in joins, filters or group by are not linked";
@@ -39,6 +47,8 @@ const LEGEND = "Column lineage follows the select list: columns used only in joi
 interface LineageCanvasProps {
   nodes: ApiNode[];
   edges: ApiEdge[];
+  // What the graph is about (its selector): a different one is fitted afresh, the same keeps the user's zoom and pan.
+  subject: string;
   selected: string | undefined;
   // The focused column of the selected node.
   column: string | undefined;
@@ -75,6 +85,7 @@ export function LineageCanvas(props: LineageCanvasProps) {
 }
 
 function Canvas({
+  subject,
   nodes,
   edges,
   selected,
@@ -109,22 +120,32 @@ function Canvas({
     () => new Map([...rows].map(([id, { rows: shown, more }]) => [id, nodeHeight(shown.length + (more > 0 ? 1 : 0))])),
     [rows],
   );
-  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
-  const { fitView } = useReactFlow();
+  const { positions, routes, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
+  const { fitView, getViewport, setViewport } = useReactFlow();
+  const store = useStoreApi();
   const measured = useStore(useMemo(() => measuredIn(layoutNodes), [layoutNodes]));
   const related = useMemo(() => relatedOf(edges, selected, focus), [edges, selected, focus]);
 
-  // Fit once per new order of the nodes, not after a selection or a restack, and only once React Flow has measured
-  // every node: a node reports its handles on its own (useUpdateNodeInternals), and a fit asked for earlier is
+  // Place the view once per new order of the nodes, not after a selection or a restack, and only once React Flow has
+  // measured every node: a node reports its handles on its own (useUpdateNodeInternals), and a fit asked for earlier is
   // answered by the first node that reports, framing that node alone. The nodes of this layout, not of the previous one,
-  // must be in the store. (useNodesInitialized never turns true here: the
-  // band labels have no handles.)
+  // must be in the store. (useNodesInitialized never turns true here: the band labels have no handles.)
+  // The subject's kept zoom and pan return after a redraw (a layer, "Failing only"); a new subject, or a kept view that
+  // shows no node, is fitted.
   const fittedFor = useRef<unknown>(undefined);
   useEffect(() => {
-    if (state !== "ready" || !measured || fittedFor.current === layoutNodes) return;
+    if (state !== "ready" || !measured || positions === undefined || fittedFor.current === layoutNodes) return;
     fittedFor.current = layoutNodes;
-    void fitView({ maxZoom: FIT_MAX_ZOOM });
-  }, [state, layoutNodes, measured, fitView]);
+    const { width, height } = store.getState();
+    const view = keptViewport(subject);
+    if (view !== undefined && showsAnyNode(positions, heights, view, { width, height })) {
+      void setViewport(view);
+      return;
+    }
+    void fitView({ maxZoom: FIT_MAX_ZOOM }).then(() => keepView(subject, getViewport()));
+  }, [state, layoutNodes, measured, positions, heights, subject, store, fitView, getViewport, setViewport]);
+
+  useKeepSelectedInView(selected, state === "ready" && measured);
 
   // The DOM order is the Tab order: left to right, top to bottom, as the eye reads it (a band splits into sub-columns,
   // so the band alone does not give the order). A band label sorts before its band's first node.
@@ -167,6 +188,8 @@ function Canvas({
         const look = edgeAppearance(related, edgeId(edge));
         return {
           id: edgeId(edge),
+          type: ROUTED_EDGE,
+          data: { waypoints: routes?.get(edgeKey(edge.source, edge.target)) ?? NO_WAYPOINTS },
           source: edge.source,
           sourceHandle: NODE_HANDLE,
           target: edge.target,
@@ -177,6 +200,8 @@ function Canvas({
       }),
       ...(focus?.edges ?? []).map(({ parent, child }) => ({
         id: `col:${parent.node}.${parent.column}->${child.node}.${child.column}`,
+        type: ROUTED_EDGE,
+        data: { waypoints: routes?.get(edgeKey(parent.node, child.node)) ?? NO_WAYPOINTS },
         source: parent.node,
         sourceHandle: `col:${parent.column}`,
         target: child.node,
@@ -185,12 +210,12 @@ function Canvas({
         style: { ...FOCUS_EDGE, ...FIXED_WIDTH },
       })),
     ],
-    [edges, related, focus],
+    [edges, related, focus, routes],
   );
   const columnsShown = [...rows.values()].some((shown) => shown.rows.length > 0);
 
   return (
-    <div style={{ height: "60vh", minHeight: 400 }}>
+    <div style={{ height: "100%" }}>
       {state === "error" && (
         <Alert color="red" role="alert" mb="xs">
           Could not lay out the graph.
@@ -200,6 +225,7 @@ function Canvas({
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
         aria-label="Lineage graph"
         colorMode="system"
         nodesDraggable={false}
@@ -209,7 +235,12 @@ function Canvas({
         elementsSelectable={false}
         deleteKeyCode={null}
         selectionKeyCode={null}
-        minZoom={0.1}
+        minZoom={MIN_ZOOM}
+        // Only a view placed for this layout is the subject's: a pan during the layout is still the old graph's.
+        onMoveEnd={(_, viewport) => {
+          if (fittedFor.current === layoutNodes) keepView(subject, viewport);
+        }}
+        defaultViewport={keptViewport(subject)}
         // A click or Enter on a node button bubbles up to here (and gives the node wrapper its pointer events).
         onNodeClick={(_, node) => node.type === GRAPH_NODE && onSelect(node.id)}
         onPaneClick={() => onSelect(undefined)}

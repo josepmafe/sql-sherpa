@@ -1,14 +1,22 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodePanel } from "../../src/screens/lineage/NodePanel";
-import { columnDetail, nodeDetails } from "../fixtures/api";
+import { apiFailure, columnDetail, nodeDetails, ok, testDetails } from "../fixtures/api";
+import { Pane, PaneGroup } from "../../src/components/panes";
+import { stubPaneLayout } from "../fixtures/panes";
 import { renderWithProviders } from "../fixtures/render";
 
 const useLineageNode = vi.fn();
-vi.mock("../../src/api/queries", () => ({
+vi.mock("../../src/api/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/api/queries")>()),
   useLineageNode: (id: string | undefined) => useLineageNode(id),
+}));
+const get = vi.fn();
+vi.mock("../../src/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/api/client")>()),
+  api: { GET: (...args: unknown[]) => get(...args) },
 }));
 
 const DETAILS = nodeDetails({
@@ -29,9 +37,9 @@ const DETAILS = nodeDetails({
     columnDetail({ name: "orders", data_type: null, kind: "row_count", counts: "model.sherpa.stg_orders" }),
   ],
   tests: [
-    { name: "unique_order_id", kind: "generic", severity: "error", column: "order_id", outcome: "passed" },
-    { name: "assert_totals", kind: "singular", severity: "error", column: null, outcome: "failed" },
-    { name: "recent_orders", kind: "generic", severity: "warn", column: null, outcome: "warned" },
+    { unique_id: "test.sherpa.unique_order_id", name: "unique_order_id", kind: "generic", severity: "error", column: "order_id", outcome: "passed" },
+    { unique_id: "test.sherpa.assert_totals", name: "assert_totals", kind: "singular", severity: "error", column: null, outcome: "failed" },
+    { unique_id: "test.sherpa.recent_orders", name: "recent_orders", kind: "generic", severity: "warn", column: null, outcome: "warned" },
   ],
   raw_sql: "select * from {{ ref('stg_orders') }}",
   compiled_sql: "select * from stg_orders",
@@ -42,13 +50,17 @@ type FocusProps = { column?: string | undefined; outside?: number; onFocusColumn
 function panel(uniqueId: string | undefined, onClose: () => void, focus: FocusProps = {}) {
   return (
     <>
-      <NodePanel
-        uniqueId={uniqueId}
-        onClose={onClose}
-        column={focus.column}
-        outside={focus.outside ?? 0}
-        onFocusColumn={focus.onFocusColumn ?? (() => {})}
-      />
+      <PaneGroup id="lineage" direction="vertical">
+        <Pane id="panel" defaultSize={260} minSize={120} maxSize={2000} collapsedSize={40}>
+          <NodePanel
+            uniqueId={uniqueId}
+            onClose={onClose}
+            column={focus.column}
+            outside={focus.outside ?? 0}
+            onFocusColumn={focus.onFocusColumn ?? (() => {})}
+          />
+        </Pane>
+      </PaneGroup>
       <input aria-label="elsewhere" />
     </>
   );
@@ -64,6 +76,9 @@ const openTab = (name: string) => userEvent.click(screen.getByRole("tab", { name
 describe("NodePanel", () => {
   beforeEach(() => {
     useLineageNode.mockReset().mockReturnValue({ data: DETAILS });
+    get.mockReset();
+    localStorage.clear();
+    stubPaneLayout();
   });
 
   it("the panel shows its empty state with no node selected", () => {
@@ -96,7 +111,7 @@ describe("NodePanel", () => {
   it("the Columns tab lists kind and resolution", async () => {
     mount();
 
-    await openTab("Columns");
+    await openTab("Columns (3)");
 
     const rows = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row");
     expect(rows[0]).toHaveTextContent("NameTypeKindResolutionNotes");
@@ -112,45 +127,114 @@ describe("NodePanel", () => {
     useLineageNode.mockReturnValue({ data: nodeDetails({ columns: DETAILS.columns, column_lineage_note: "Column lineage is unavailable: the compiled SQL is missing" }) });
     mount();
 
-    await openTab("Columns");
+    await openTab("Columns (3)");
 
     const note = screen.getByRole("note");
     expect(note).toHaveTextContent("Column lineage is unavailable: the compiled SQL is missing");
     expect(note.compareDocumentPosition(screen.getByRole("table", { name: "Columns" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("the column lineage note shows too when the node has no columns", async () => {
-    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: [], column_lineage_note: "no catalog" }) });
-    mount();
-
-    await openTab("Columns");
-
-    expect(screen.getByRole("note")).toHaveTextContent("no catalog");
-    expect(screen.getByText("No documented columns.")).toBeVisible();
-  });
-
   it("the Columns tab has no note when the column lineage has nothing to say", async () => {
     useLineageNode.mockReturnValue({ data: nodeDetails({ columns: DETAILS.columns, column_lineage_note: null }) });
     mount();
 
-    await openTab("Columns");
+    await openTab("Columns (3)");
 
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
-  it("the Columns tab says so when the node has no columns", async () => {
-    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: [] }) });
-    mount();
+  describe("tabs with nothing to show", () => {
+    it.each([
+      ["Columns", { columns: [] }, "This node has no columns."],
+      ["Tests", { tests: [] }, "No test is defined on this node."],
+      ["SQL", { raw_sql: null, compiled_sql: null, sql_note: null }, "Sources, seeds and exposures have no SQL."],
+    ])("the %s tab is disabled with its reason, and stays focusable", async (name, overrides, reason) => {
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, ...overrides }) });
+      mount();
 
-    await openTab("Columns");
+      const tab = screen.getByRole("tab", { name });
+      expect(tab).toHaveAttribute("aria-disabled", "true");
+      expect(tab).not.toBeDisabled();
+      expect(tab).toHaveAccessibleDescription(reason);
+      await userEvent.click(tab);
+      expect(tab).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      tab.focus();
+      await userEvent.keyboard("{Enter}");
+      expect(tab).toHaveAttribute("aria-selected", "false");
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    });
 
-    expect(screen.getByText("No documented columns.")).toBeVisible();
+    it("focusing a disabled tab with the keyboard alone shows its reason", async () => {
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, tests: [] }) });
+      mount();
+      const tab = screen.getByRole("tab", { name: "Tests" });
+
+      act(() => tab.focus());
+
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("No test is defined on this node.");
+      expect(tab).toHaveAccessibleDescription("No test is defined on this node.");
+    });
+
+    it("arrow keys reach a disabled tab, which shows its reason and does not select on Enter or Space", async () => {
+      const user = userEvent.setup();
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, columns: [] }) });
+      mount();
+      act(() => screen.getByRole("tab", { name: "Overview" }).focus());
+
+      await user.keyboard("{ArrowRight}");
+
+      const tab = screen.getByRole("tab", { name: "Columns" });
+      expect(document.activeElement).toBe(tab);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("This node has no columns.");
+      await user.keyboard("{Enter}");
+      await user.keyboard(" ");
+      expect(tab).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("hovering a disabled tab shows its reason", async () => {
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, tests: [] }) });
+      mount();
+
+      await userEvent.hover(screen.getByRole("tab", { name: "Tests" }));
+
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("No test is defined on this node.");
+    });
+
+    it("tabs with content are named with their count and are not disabled", () => {
+      mount();
+
+      expect(screen.getByRole("tab", { name: "Columns (3)" })).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("tab", { name: "Tests (3)" })).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("tab", { name: "SQL" })).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("a node with only a SQL note keeps the SQL tab enabled", () => {
+      useLineageNode.mockReturnValue({
+        data: nodeDetails({ ...DETAILS, raw_sql: null, compiled_sql: null, sql_note: "The compiled file is missing." }),
+      });
+      mount();
+
+      expect(screen.getByRole("tab", { name: "SQL" })).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("selecting a node without tests while Tests is open shows Overview", async () => {
+      const { select } = mount();
+      await openTab("Tests (3)");
+      useLineageNode.mockReturnValue({ data: nodeDetails({ unique_id: "model.sherpa.stg_x", name: "stg_x", tests: [] }) });
+
+      select("model.sherpa.stg_x");
+
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Tests" })).toHaveAttribute("aria-disabled", "true");
+    });
   });
 
   it("failures are listed first in the Tests tab", async () => {
     mount();
 
-    await openTab("Tests");
+    await openTab("Tests (3)");
 
     const groups = screen.getAllByRole("heading", { level: 6 }).map((heading) => heading.textContent);
     const tests = screen.getAllByTestId("test-name").map((name) => name.textContent);
@@ -158,13 +242,203 @@ describe("NodePanel", () => {
     expect(tests).toEqual(["assert_totals", "recent_orders", "unique_order_id"]);
   });
 
-  it("the Tests tab says so when the node has no tests", async () => {
-    useLineageNode.mockReturnValue({ data: nodeDetails({ tests: [] }) });
-    mount();
+  describe("a test row", () => {
+    const eye = (name: string) => screen.getByRole("button", { name: `Show ${name}` });
+    const dialog = (name: string) => screen.getByRole("dialog", { name });
+    const viewer = (name: string) => dialog(name).querySelector(".cm-content");
+    const testCalls = () => get.mock.calls.filter(([path]) => path === "/api/lineage/tests/{unique_id}");
 
-    await openTab("Tests");
+    async function openTests() {
+      mount();
+      await openTab("Tests (3)");
+    }
 
-    expect(screen.getByText("No tests.")).toBeVisible();
+    it("is its name as plain text after an eye button that opens a dialog, and asks for nothing yet", async () => {
+      await openTests();
+
+      expect(eye("assert_totals")).toHaveAttribute("aria-haspopup", "dialog");
+      const tests = within(screen.getByRole("tabpanel", { name: "Tests (3)" }));
+      expect(tests.getByText("assert_totals")).toBeVisible();
+      expect(tests.queryByRole("button", { name: "assert_totals" })).toBeNull();
+      expect(eye("assert_totals").compareDocumentPosition(tests.getAllByTestId("test-name")[0]!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(testCalls()).toHaveLength(0);
+    });
+
+    it("a singular test shows its raw and compiled SQL, its file and the dbt selector to copy", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(
+        ok(
+          testDetails({
+            raw_sql: "select * from {{ ref('fct_orders') }}",
+            compiled_sql: "select * from marts.fct_orders",
+            file_path: "tests/singular/assert_totals.sql",
+            selector: "assert_totals",
+          }),
+        ),
+      );
+      await openTests();
+
+      await user.click(eye("assert_totals"));
+
+      const view = within(dialog("assert_totals"));
+      expect(await view.findByRole("tab", { name: "Raw SQL" })).toHaveAttribute("aria-selected", "true");
+      expect(viewer("assert_totals")).toHaveTextContent("select * from {{ ref('fct_orders') }}");
+      expect(view.getByRole("tab", { name: "Compiled SQL" })).toBeVisible();
+      expect(view.getByText("tests/singular/assert_totals.sql")).toBeVisible();
+      expect(view.getByText("singular")).toBeVisible();
+      expect(testCalls()).toEqual([
+        ["/api/lineage/tests/{unique_id}", { params: { path: { unique_id: "test.sherpa.assert_totals" } } }],
+      ]);
+      await user.click(view.getByRole("button", { name: "Copy dbt selector" }));
+      expect(await navigator.clipboard.readText()).toBe("assert_totals");
+    });
+
+    it("a generic test shows its compiled SQL and its definition, not a raw SQL tab", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(
+        ok(
+          testDetails({
+            unique_id: "test.sherpa.unique_order_id",
+            name: "unique_order_id",
+            kind: "generic",
+            compiled_sql: "select order_id from marts.fct_orders group by 1 having count(*) > 1",
+            definition: '{ "name": "unique", "arguments": {} }',
+          }),
+        ),
+      );
+      await openTests();
+
+      await user.click(eye("unique_order_id"));
+
+      const view = within(dialog("unique_order_id"));
+      expect(await view.findByLabelText("Definition")).toHaveTextContent('"name": "unique"');
+      expect(viewer("unique_order_id")).toHaveTextContent("having count(*) > 1");
+      expect(view.queryByRole("tab", { name: "Raw SQL" })).toBeNull();
+    });
+
+    it("a unit test shows what it gives and expects, and no SQL", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(
+        ok(
+          testDetails({
+            name: "recent_orders",
+            kind: "generic",
+            definition: '{ "given": [{ "rows": [{ "amount": 5 }] }], "expect": { "rows": [{ "revenue": 5 }] } }',
+          }),
+        ),
+      );
+      await openTests();
+
+      await user.click(eye("recent_orders"));
+
+      const definition = await within(dialog("recent_orders")).findByLabelText("Definition");
+      expect(definition).toHaveTextContent('"given"');
+      expect(definition).toHaveTextContent('"revenue": 5');
+      expect(viewer("recent_orders")).toBeNull();
+      expect(within(dialog("recent_orders")).queryByRole("note")).toBeNull();
+    });
+
+    it("says why a compiled test has no SQL to show", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(ok(testDetails({ sql_note: "the compiled SQL is not in the dbt target" })));
+      await openTests();
+
+      await user.click(eye("assert_totals"));
+
+      expect(await within(dialog("assert_totals")).findByRole("note")).toHaveTextContent(
+        "the compiled SQL is not in the dbt target",
+      );
+    });
+
+    it("closing and opening again asks once", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(ok(testDetails({ raw_sql: "select 1" })));
+      await openTests();
+
+      await user.click(eye("assert_totals"));
+      await screen.findByRole("tab", { name: "Raw SQL" });
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await user.click(eye("assert_totals"));
+
+      expect(await screen.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
+      expect(testCalls()).toHaveLength(1);
+    });
+
+    it("a failed request shows the error with a retry that asks again, inside the dialog", async () => {
+      const user = userEvent.setup();
+      get
+        .mockResolvedValueOnce(apiFailure("test_not_found", "no test with id 'test.sherpa.assert_totals'", 404))
+        .mockResolvedValueOnce(ok(testDetails({ raw_sql: "select 1" })));
+      await openTests();
+
+      await user.click(eye("assert_totals"));
+      const view = within(dialog("assert_totals"));
+      expect(await view.findByText("Could not load the test")).toBeVisible();
+      expect(view.getByText("test_not_found")).toBeVisible();
+      await user.click(view.getByRole("button", { name: "Retry" }));
+
+      expect(await view.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
+      expect(testCalls()).toHaveLength(2);
+    });
+
+    describe("the dialog", () => {
+      beforeEach(() => {
+        get.mockResolvedValue(ok(testDetails({ raw_sql: "select 1" })));
+      });
+
+      it("closes on Escape without closing the node panel, and the focus returns to the eye button", async () => {
+        const user = userEvent.setup();
+        const { onClose } = mount();
+        await openTab("Tests (3)");
+        await user.click(eye("assert_totals"));
+        await screen.findByRole("tab", { name: "Raw SQL" });
+
+        await user.keyboard("{Escape}");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(onClose).not.toHaveBeenCalled();
+        await waitFor(() => expect(eye("assert_totals")).toHaveFocus());
+      });
+
+      it("closes with its close button and the focus returns to the eye button", async () => {
+        const user = userEvent.setup();
+        await openTests();
+        await user.click(eye("assert_totals"));
+
+        await user.click(within(dialog("assert_totals")).getByRole("button", { name: "Close" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        await waitFor(() => expect(eye("assert_totals")).toHaveFocus());
+      });
+
+      it("closes on a click outside it", async () => {
+        const user = userEvent.setup();
+        await openTests();
+        await user.click(eye("assert_totals"));
+        await screen.findByRole("dialog");
+
+        await user.click(document.querySelector(".mantine-Modal-overlay") as HTMLElement);
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      });
+
+      it("selecting another node closes it", async () => {
+        const user = userEvent.setup();
+        const { select } = mount();
+        await openTab("Tests (3)");
+        await user.click(eye("assert_totals"));
+        await screen.findByRole("dialog");
+        useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, unique_id: "model.sherpa.other", name: "other" }) });
+
+        select("model.sherpa.other");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      });
+    });
   });
 
   it("the SQL tab shows the raw SQL, with the compiled SQL beside it", async () => {
@@ -193,7 +467,7 @@ describe("NodePanel", () => {
 
   it("the tab persists across node selections", async () => {
     const { select } = mount("model.sherpa.fct_orders");
-    await openTab("Columns");
+    await openTab("Columns (3)");
     useLineageNode.mockReturnValue({
       data: nodeDetails({
         unique_id: "model.sherpa.dim_customers",
@@ -204,7 +478,7 @@ describe("NodePanel", () => {
 
     select("model.sherpa.dim_customers");
 
-    expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Columns (1)" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("table", { name: "Columns" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "dim_customers" })).toBeInTheDocument();
   });
@@ -220,6 +494,21 @@ describe("NodePanel", () => {
     await user.click(document.body);
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("Esc that a layer above it already took does not close it", async () => {
+    const user = userEvent.setup();
+    const { onClose } = mount();
+    const take = (event: KeyboardEvent) => event.preventDefault();
+    document.addEventListener("keydown", take, true);
+
+    try {
+      await user.keyboard("{Escape}");
+    } finally {
+      document.removeEventListener("keydown", take, true);
+    }
+
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("Esc does nothing with no node selected", async () => {
@@ -285,7 +574,7 @@ describe("NodePanel", () => {
     it("clicking a column in the Columns tab focuses it", async () => {
       const onFocusColumn = vi.fn();
       mount("model.sherpa.fct_orders", vi.fn(), { onFocusColumn });
-      await openTab("Columns");
+      await openTab("Columns (3)");
 
       await userEvent.click(screen.getByRole("button", { name: "total" }));
 
@@ -295,7 +584,7 @@ describe("NodePanel", () => {
     it("the focused column is marked in the Columns tab, which opens by itself", () => {
       mount("model.sherpa.fct_orders", vi.fn(), { column: "total" });
 
-      expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Columns (3)" })).toHaveAttribute("aria-selected", "true");
       const rows = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row");
       expect(rows[2]).toHaveAttribute("aria-current", "true");
       expect(rows[1]).not.toHaveAttribute("aria-current");
@@ -307,7 +596,7 @@ describe("NodePanel", () => {
 
       view.rerender(panel("model.sherpa.fct_orders", vi.fn(), { column: "total" }));
 
-      expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Columns (3)" })).toHaveAttribute("aria-selected", "true");
     });
 
     it("Esc clears the column focus first and closes only when there is none", async () => {
@@ -343,7 +632,7 @@ describe("NodePanel", () => {
 
     it("a column's kind and resolution are an icon plus text", async () => {
       mount();
-      await openTab("Columns");
+      await openTab("Columns (3)");
 
       const total = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row")[2]!;
 

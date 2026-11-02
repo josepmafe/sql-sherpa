@@ -68,6 +68,27 @@ describe("useGraphLayout", () => {
     expect([...result.current.positions!.keys()]).toEqual(["a"]);
   });
 
+  it("returns the routes of the edges that skip a column, placed once and kept when a height changes", async () => {
+    const edges = [{ source: "s", target: "m" }];
+    const withStaging = [
+      { id: "s", layer: "source" as const, sourceName: "erp" },
+      { id: "g", layer: "staging" as const, sourceName: undefined },
+      { id: "m", layer: "marts" as const, sourceName: undefined },
+    ];
+    order.mockResolvedValue(new Map([["s", 0], ["g", 0], ["m", 0]]));
+    const { result, rerender } = renderHook(({ heights }) => useGraphLayout(withStaging, edges, heights), {
+      initialProps: { heights: NO_HEIGHTS },
+    });
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+    const waypoints = result.current.routes!.get("s->m")!;
+    expect(waypoints).toHaveLength(2);
+
+    rerender({ heights: new Map([["g", 400]]) });
+
+    expect(order).toHaveBeenCalledTimes(1);
+    expect(result.current.routes!.get("s->m")![0]!.x).toBe(waypoints[0]!.x);
+  });
+
   it("restacks on expansion without re-running ELK and ignores a superseded order", async () => {
     const two = marts("a", "b");
     const three = marts("a", "b", "c");

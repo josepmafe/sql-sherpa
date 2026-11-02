@@ -1,6 +1,6 @@
 import { ActionIcon, Box, CloseButton, Group, Menu, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconChevronDown, IconChevronRight, IconDots } from "@tabler/icons-react";
-import { useId, useRef, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useCatalog } from "../../api/queries";
@@ -24,9 +24,11 @@ const SUMMARY_MAX_CHARS = 200;
 type TreeProps = EditorActions & {
   selected?: string;
   onSelect: (table: string) => void;
+  // Sits at the heading's right edge: the pane's collapse button.
+  headerAction?: ReactNode;
 };
 
-export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, previewBlocked }: TreeProps) {
+export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, previewBlocked, headerAction }: TreeProps) {
   const catalog = useCatalog();
   const [search, setSearch] = useState("");
   const searchBox = useRef<HTMLInputElement>(null);
@@ -72,9 +74,12 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
           )
         }
       />
-      <Text size="xs" c="dimmed">
-        {database} › {schema}
-      </Text>
+      <Group justify="space-between" wrap="nowrap" gap="xs">
+        <Text size="sm" fw={600}>
+          {database} › {schema}
+        </Text>
+        {headerAction}
+      </Group>
       {needle !== "" && domains.length === 0 && (
         <Text size="sm" c="dimmed">
           No table or column matches “{search.trim()}”.
@@ -82,7 +87,7 @@ export function CatalogTree({ selected, onSelect, onPreview, onInsertSelect, pre
       )}
       {domains.map((domain) => (
         <Box key={domain.name}>
-          <Text fw={600} size="sm" tt="capitalize">
+          <Text size="xs" c="dimmed" tt="capitalize">
             {domain.name}
           </Text>
           {domain.tables.map((table) => (
@@ -138,6 +143,20 @@ const NAME_STYLE = {
   minWidth: 0,
 } as const;
 
+// The name column takes what its widest name needs and gives way first; the rows never wrap.
+const COLUMNS_STYLE = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, max-content) max-content 1fr",
+  columnGap: 8,
+} as const;
+const COLUMN_ROW_STYLE = {
+  display: "grid",
+  gridTemplateColumns: "subgrid",
+  gridColumn: "1 / -1",
+  alignItems: "center",
+} as const;
+const NO_WRAP_STYLE = { whiteSpace: "nowrap" } as const;
+
 function TableRow(props: TableRowProps) {
   const { table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect, previewBlocked } = props;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -190,6 +209,7 @@ function TableRow(props: TableRowProps) {
             size="sm"
             fw={selected ? 700 : 500}
             aria-expanded={open}
+            data-table={table.name}
             style={NAME_STYLE}
             onClick={onClick}
           >
@@ -223,7 +243,14 @@ function TableRow(props: TableRowProps) {
           </Menu.Dropdown>
         </Menu>
       </Group>
-      {open && table.columns.map((column) => <ColumnRow key={column.name} column={column} />)}
+      {open && (
+        // One grid per table, so the type and marker columns line up across its rows.
+        <Box role="table" aria-label={`Columns of ${table.name}`} ml="xl" style={COLUMNS_STYLE}>
+          {table.columns.map((column) => (
+            <ColumnRow key={column.name} column={column} />
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -231,13 +258,17 @@ function TableRow(props: TableRowProps) {
 function ColumnRow({ column }: { column: ColumnSummary }) {
   return (
     <Tooltip label={summary(column.description)} multiline w={320} openDelay={200}>
-      <Group gap={6} ml="xl" wrap="nowrap">
-        <Text size="xs">{column.name}</Text>
-        <Text size="xs" c="dimmed">
+      <Box role="row" style={COLUMN_ROW_STYLE}>
+        <Text role="cell" size="xs" title={column.name} truncate>
+          {column.name}
+        </Text>
+        <Text role="cell" size="xs" c="dimmed" style={NO_WRAP_STYLE}>
           {column.data_type}
         </Text>
-        <ColumnBadges isPrimaryKey={column.is_primary_key} isPii={column.is_pii} />
-      </Group>
+        <Box role="cell">
+          <ColumnBadges isPrimaryKey={column.is_primary_key} isPii={column.is_pii} />
+        </Box>
+      </Box>
     </Tooltip>
   );
 }

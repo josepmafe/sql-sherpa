@@ -13,6 +13,7 @@ export type ColumnDetails = Schemas["ColumnDetails"];
 export type LineageNode = Schemas["LineageNode"];
 export type LineageGraph = Schemas["LineageGraph"];
 export type NodeDetails = Schemas["NodeDetails"];
+export type TestDetails = Schemas["TestDetails"];
 export type LineageEdge = Schemas["LineageEdge"];
 export type ColumnView = Schemas["ColumnView"];
 export type ColumnDetail = Schemas["ColumnDetail"];
@@ -74,7 +75,6 @@ export function tableDetails(overrides: Partial<TableDetails> = {}): TableDetail
     grain: "",
     primary_key: [],
     synonyms: [],
-    tests: [],
     columns: [],
     ...overrides,
   };
@@ -179,6 +179,23 @@ export function nodeDetails(overrides: Partial<NodeDetails> = {}): NodeDetails {
     raw_sql: null,
     compiled_sql: null,
     sql_note: null,
+    ...overrides,
+  };
+}
+
+export function testDetails(overrides: Partial<TestDetails> = {}): TestDetails {
+  return {
+    unique_id: "test.sherpa.assert_totals",
+    name: "assert_totals",
+    kind: "singular",
+    severity: "error",
+    column: null,
+    file_path: "tests/singular/assert_totals.sql",
+    selector: "assert_totals",
+    raw_sql: null,
+    compiled_sql: null,
+    sql_note: null,
+    definition: null,
     ...overrides,
   };
 }

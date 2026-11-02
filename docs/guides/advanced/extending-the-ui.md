@@ -18,7 +18,7 @@ The backend is the Python package `sherpa_ui` (`ui/backend/src/sherpa_ui/`). The
 | `ui/frontend/src/api/` | `client.ts` (typed `openapi-fetch`), `queries.ts` (TanStack Query hooks), `schema.d.ts` (generated, committed) |
 | `ui/frontend/src/app/` | `AppShell.tsx`, `routes.tsx`, `navItems.ts`, `HealthBanner.tsx` |
 | `ui/frontend/src/screens/<screen>/` | One folder per screen (`explorer/`, `lineage/`) |
-| `ui/frontend/src/components/` | Components shared between screens (`ResultGrid`, `SqlEditor`) |
+| `ui/frontend/src/components/` | Components shared between screens (`ResultGrid`, `SqlEditor`); `panes/` is the resizable-pane toolkit |
 
 Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds Vitest, `ui/frontend/e2e/` holds Playwright, `ui/parity/` holds the sort/filter case file that pytest and Vitest both run.
 
@@ -59,8 +59,18 @@ Conventions the Explorer follows, which a new screen should too:
 - **Mounted panels.** Worksheet panels stay mounted (`keepMountedMode="display-none"` on Mantine `Tabs`), so a tab switch never cancels a query. `WorksheetPanel` and `ResultGrid` are memoized: pass stable props (callbacks take the worksheet id and are wrapped in `useCallback` in `ExplorerScreen.tsx`). A fresh function or object per render fails the test `typing in one worksheet re-renders neither the other worksheets nor any result grid`.
 - **Health.** Disable only what needs a down dependency, and say why (UI spec §3). The Explorer reads `useHealth()` once and passes a `blockedReason` string down.
 - **Load errors.** A failed `useQuery` shows `LoadError` (`screens/explorer/LoadError.tsx`) with a Retry.
-- **Width.** Three columns from 1280 px (`WIDE_QUERY`), a `Drawer` below. Run `e2e/layout.spec.ts` after changing the columns.
+- **Width.** Three panes from 1280 px (`WIDE_QUERY`), the Inspector as an overlay below. Run `e2e/layout.spec.ts` after changing the panes.
 - **Browser storage.** User state lives in `localStorage` under `sherpa.v1.<screen>`, never result rows. Bump the version or migrate when a stored shape changes (`worksheetStore.ts`).
+
+### Add a pane
+
+A screen's side panels are panes from `src/components/panes/` (`PaneGroup`, `Pane`, `PaneHandle`, `CollapseToggle`, `usePaneCollapse`, `usePeek`). Example: `ExplorerScreen.tsx`.
+
+1. **Group and storage id.** Wrap the panes in `<PaneGroup id="<screen>" direction="horizontal" | "vertical">`. The id is the storage key `sherpa.v1.layout.<id>`; ids in use: `shell`, `explorer`, `explorer-editor`, `lineage` ([UI spec §7](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). Groups that must share one entry but not a DOM id (one per worksheet) pass `domId`.
+2. **Panes and handles.** `<Pane id defaultSize minSize maxSize collapsedSize?>` takes pixels. Give a `defaultSize` only to a pane whose size should be remembered; the others take what the neighbours leave. A `collapsedSize` makes it foldable: put a `CollapseToggle` in it, driven by `usePaneCollapse(id)`, and `usePeek(collapsed)` if its strip should open on hover or focus. Put a `<PaneHandle label="Resize the ...">` between two panes; the label is its accessible name.
+3. **Name the limits as constants** at the top of the screen file, with the spec section.
+4. **Tests, in this order.** Keyboard first, with `stubPaneLayout()` from `tests/fixtures/panes.ts` (jsdom has no layout): the handle's arrow keys change `aria-valuenow`, the toggle sets `aria-expanded`. Then storage: a remembered size is restored, **a stored size above the maximum is clamped** (the clamp test every pane has: `ExplorerScreen.test.tsx`, `LineageScreen.test.tsx`), and corrupt JSON gives the defaults. A real drag is only in Playwright (`e2e/layout.spec.ts`).
+5. Add the screen's panes and limits to the UI spec §6.4 or §6.5 and to the screen's guide.
 
 ## 3. Extend Lineage
 
@@ -98,6 +108,19 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 
    `test_every_model_column_has_a_kind` also runs there, on the real project.
 5. List the kind in the UI spec §6.5 and in [Using Lineage](../basic/using-lineage.md).
+
+**Change the layout.** `layout.ts` places the nodes and the gaps reserved for long edges (`placeBands`, then `stackBands` when heights change); `edgeRoute.ts` draws each edge through its gaps. The acceptance test is `tests/lineage/layout.test.ts`, "the project's whole graph", on a committed copy of this project's graph (`tests/fixtures/lineage_project.json`: ids, layers and edges only). Its helper `layoutMetrics` (`tests/lineage/layoutMetrics.ts`) measures the edges as drawn, in four numbers:
+
+| Metric | Means | Must hold |
+|---|---|---|
+| `edgesBehindNodes` | edges with a sampled point strictly inside a node they do not touch | 0, also with every node expanded to 10 rows |
+| `crossings` | intersections between edges that share no node | at most 0.4 of the plain stack's (`BASELINE`) |
+| `edgeTravel` | total vertical distance of all edges | at most 0.7 of `BASELINE` |
+| `height` | the canvas height | at most 1.1 of `BASELINE`; and the whole project must fit the canvas above `MIN_ZOOM` |
+
+`BASELINE` is the plain stack with React Flow's default curve on the same fixture, measured in the same run as the bound (ELK's ordering differs a little across platforms, so no number is pinned). A change that raises a number past its bound fails there; read the number in the failure and decide if the layout or the bound is wrong, never edit the fixture to pass. When the project's graph grows, save a fresh copy of `GET /api/lineage` (names only) as the fixture and update `PLAN_TABLE` and `PLATFORM_FREE` in `layout.test.ts` from the plain stack's metrics.
+
+**Change what a test row shows.** `GET /api/lineage/tests/{unique_id}` (`api/lineage.py`) returns `TestDetails` from `LineageService.test_details`: the manifest's `NodeTest` (`lineage/manifest_graph.py`) holds the definition (a generic test's arguments and set config, a unit test's YAML as JSON text) and `NodeSql.compiled_test` reads the compiled file under `compiled/`, resolved by the manifest's `path` (a long generic test name is shortened with a hash) and never outside it. Start with a case in `tests/lineage/test_manifest_graph.py` or `test_lineage_service.py`, `test_node_sql.py` for the path rule, and `tests/api/test_lineage_api.py` for the route; `make ui-client`; then `TestBody` (the dialog's content; `TestRow` opens it from the eye button) in `NodePanel.tsx` with its Vitest case. A unit test's rows are shown as written, so a fixture there must be synthetic.
 
 **A sqlglot bump** changes column lineage as well as the guard. Rerun the guard's hostile-input tests ([Extending the MCP server](extending-the-mcp-server.md)) and the whole lineage folder, including the warehouse traces above (the hand-checked sets must still hold). The column-focus end-to-end checks are in `e2e/lineage.spec.ts` (`make e2e`).
 
@@ -196,6 +219,8 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | A new status draws nothing in the graph | Add it to `STATUS` in `GraphNode.tsx` |
 | A new column kind renders blank, or `tsc` fails after `make ui-client` | Add it to `KIND` in `ColumnLabels.tsx` |
 | A warehouse trace gains or loses a source column | A sqlglot bump, or a change to `_leaves` or `_classify`, changed what the column reads (kinds never add or remove edges): re-derive the set by hand from the compiled SQL |
+| A pane keeps an old size, or a screen starts oddly after a limit change | Clear `sherpa.v1.layout.*` in site data; a stored size is clamped to the new limits, a pane without `defaultSize` is never stored |
+| The layout test fails on `edgesBehindNodes` or a bound | `layout.ts` or `edgeRoute.ts` moved an edge behind a node or lost ground on `BASELINE`; read the metric in the failure (table above) |
 | `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next

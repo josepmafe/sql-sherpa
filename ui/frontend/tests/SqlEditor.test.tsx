@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHighlight, sqlExtension } from "../src/components/SqlEditor";
 import { WorksheetPanel } from "../src/screens/explorer/WorksheetPanel";
 import { apiFailure, catalog, columnSummary, formatResponse, noContent, ok, table } from "./fixtures/api";
+import { stubPaneLayout } from "./fixtures/panes";
 import { renderWithProviders, shownEditor } from "./fixtures/render";
 
 const CATALOG = catalog({
@@ -111,6 +112,7 @@ function Harness({ initial, onSettled = () => {}, blockedReason }: HarnessProps)
 describe("WorksheetPanel", () => {
   beforeEach(() => {
     post.mockReset();
+    stubPaneLayout();
   });
 
   it("Run becomes Cancel while running", async () => {

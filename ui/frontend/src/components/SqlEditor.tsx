@@ -29,7 +29,8 @@ type EditorProps = {
   onCancel: () => void;
 };
 
-const EDITOR_HEIGHT = "220px";
+// Fills its pane: the Explorer lets the user resize it.
+const EDITOR_HEIGHT = "100%";
 const READ_ONLY_HEIGHT = "320px";
 const FORMAT_FAILED = "Could not format the query.";
 const RUN_HINT = "Ctrl/Cmd+Enter runs";
@@ -99,7 +100,7 @@ export function SqlEditor({
   };
 
   return (
-    <Stack gap="xs">
+    <Stack gap="xs" h="100%" pb="xs">
       <Group gap="xs">
         {running ? (
           <Button color="red" size="xs" onClick={onCancel}>
@@ -131,10 +132,12 @@ export function SqlEditor({
           {formatError}
         </Text>
       )}
-      <Box onKeyDownCapture={onKeyDownCapture}>
+      <Box onKeyDownCapture={onKeyDownCapture} style={{ flex: 1, minHeight: 0 }}>
         <CodeMirror
           value={value}
           height={EDITOR_HEIGHT}
+          // CodeMirror's wrapper must be as tall as the pane for the editor's 100% to resolve.
+          style={{ height: "100%" }}
           extensions={extensions}
           theme={colorScheme}
           onChange={onChange}

@@ -38,8 +38,15 @@ async function shownNames(page: Page): Promise<string[]> {
   return names.sort();
 }
 
+// The graph the screen draws by default: the exposures stay hidden until their layer is switched on.
 async function wholeGraph(page: Page): Promise<Graph> {
-  return (await (await page.request.get("/api/lineage")).json()) as Graph;
+  const graph = (await (await page.request.get("/api/lineage")).json()) as Graph;
+  const isExposure = (uniqueId: string) => uniqueId.startsWith("exposure.");
+  return {
+    ...graph,
+    nodes: graph.nodes.filter((node) => !isExposure(node.unique_id)),
+    edges: graph.edges.filter((edge) => !isExposure(edge.source) && !isExposure(edge.target)),
+  };
 }
 
 // Every node reachable from `starts` along the edges (direction "down") or against them ("up"), the starts included.
@@ -761,4 +768,72 @@ test("a failing test turns its node red and a warning stays out of Failing only"
       ),
     ).toBe("0");
   }
+});
+
+test("the tests of dim_date open in a dialog with their SQL and their definition", async ({ page }) => {
+  await page.goto("/lineage");
+  await graphNode(page, "dim_date").click();
+  const panel = page.getByRole("complementary", { name: "Node details" });
+  await panel.getByRole("tab", { name: /^Tests/ }).click();
+
+  await panel.getByRole("button", { name: "Show assert_dim_date_black_friday_weeks" }).click();
+
+  const singular = page.getByRole("dialog", { name: "assert_dim_date_black_friday_weeks" });
+  await expect(singular.getByRole("tab", { name: "Raw SQL" })).toBeVisible();
+  await expect(singular.locator(".cm-content").first()).toContainText("select");
+  await expect(singular.getByText("tests/singular/assert_dim_date_black_friday_weeks.sql")).toBeVisible();
+  await page.screenshot({ path: "shots/test-dialog-dim-date.png" });
+  await page.keyboard.press("Escape");
+  await expect(singular).toBeHidden();
+  await expect(panel.getByRole("heading", { name: "dim_date", level: 4 })).toBeVisible();
+
+  await panel.getByRole("button", { name: /^Show unique_dim_date_/ }).first().click();
+
+  await expect(page.getByRole("dialog").getByLabel("Definition")).toContainText('"name": "unique"');
+});
+
+const viewportTransform = (page: Page) =>
+  page.locator(".react-flow__viewport").evaluate((element) => (element as HTMLElement).style.transform);
+
+test("a layer filter keeps the user's zoom and pan, a new selector refits", async ({ page }) => {
+  await page.goto("/lineage");
+  await expectGraphFitted(page);
+  const canvas = (await page.getByLabel("Lineage graph").boundingBox())!;
+  const fitted = await viewportTransform(page);
+  await page.mouse.move(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
+  await page.mouse.wheel(0, -300);
+  await expect.poll(() => viewportTransform(page)).not.toBe(fitted);
+  const zoomed = await viewportTransform(page);
+  const staging = page.locator("label", { hasText: /^staging$/ });
+  const before = await page.locator(".react-flow__node-graph").count();
+
+  await staging.click();
+  await expect.poll(() => page.locator(".react-flow__node-graph").count()).toBeLessThan(before);
+
+  expect(await viewportTransform(page)).toBe(zoomed);
+
+  await staging.click();
+  await expect.poll(() => page.locator(".react-flow__node-graph").count()).toBe(before);
+  expect(await viewportTransform(page)).toBe(zoomed);
+
+  const box = page.getByRole("textbox", { name: "dbt selector" });
+  await box.fill("+fct_orders+");
+  await box.press("Enter");
+  await expect(page).toHaveURL(/select=%2Bfct_orders%2B$/);
+  await expectGraphFitted(page);
+  expect(await viewportTransform(page)).not.toBe(zoomed);
+});
+
+test("the exposures start hidden and the layer filter brings them in", async ({ page }) => {
+  await page.goto("/lineage");
+  await expect(page.getByText(/^\d+ nodes$/)).toBeVisible();
+  const exposures = page.getByRole("checkbox", { name: "exposure" });
+  await expect(exposures).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "marts" })).toBeChecked();
+  await expect(graphNode(page, "sherpa_agent")).toHaveCount(0);
+
+  await page.locator("label", { hasText: /^exposure$/ }).click();
+
+  await expect(graphNode(page, "sherpa_agent")).toBeVisible();
+  await expect(exposures).toBeChecked();
 });

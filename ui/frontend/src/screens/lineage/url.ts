@@ -6,7 +6,7 @@ import type { components } from "../../api/schema";
 export type Layer = components["schemas"]["Layer"];
 
 // `node` is the selected node's unique_id and `column` the focused column of that node (UI spec §6.5). `layers`
-// undefined shows every layer.
+// undefined shows the default layers: every layer but the exposures.
 export interface LineageParams {
   select: string;
   layers: Layer[] | undefined;
@@ -16,6 +16,8 @@ export interface LineageParams {
 }
 
 const LAYERS: readonly Layer[] = ["source", "seed", "staging", "snapshot", "intermediate", "marts", "exposure", "other"];
+// The layers a view starts with: the exposures are switched on by the user.
+export const DEFAULT_LAYERS: readonly Layer[] = LAYERS.filter((layer) => layer !== "exposure");
 const FAILING_ON = "1";
 
 // Anything the URL holds that is not a known value falls back to the default.

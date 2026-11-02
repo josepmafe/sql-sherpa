@@ -121,8 +121,8 @@ docs/
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, `make slim`, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions, campaigns and ad spend, leads), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, PII, limitations and tracing
-- [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, worksheets, running, sorting and filtering, and what it won't let you do
-- [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, expandable columns with their kinds, the column focus, the node panel and copying a selector for `dbt`
+- [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, the resizable panes, worksheets, running, sorting and filtering, and what it won't let you do
+- [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, expandable columns with their kinds, the column focus, the node panel (tabs, test dialogs) and copying a selector for `dbt`
 
 ### Advanced: extending it
 
@@ -130,4 +130,4 @@ docs/
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests, intermediate models and incremental models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and new marts
 - [CI: the pull-request gate](docs/guides/advanced/ci.md): what the gate runs and why, reproducing a failing step locally, and adding a check
-- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers
+- [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a pane, the layout metrics, a test definition, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers

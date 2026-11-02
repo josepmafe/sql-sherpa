@@ -11,6 +11,7 @@ from ui_helpers import REPO_ROOT
 
 if TYPE_CHECKING:
     from dbt.contracts.graph.manifest import Manifest
+    from sherpa_ui.lineage.manifest_graph import NodeTest
 
 DBT_PROJECT = REPO_ROOT / "data-platform" / "dbt"
 GRAPH_RESOURCE_TYPES = ("model", "seed", "snapshot", "source", "exposure")
@@ -75,3 +76,30 @@ def test_matches_dbt_ls(evaluator: SelectorEvaluator, parsed: Manifest, dbt_args
     expected = {json.loads(line)["unique_id"] for line in cast("list[str]", result.result)}
 
     assert evaluator.select(selector) == expected
+
+
+@pytest.mark.warehouse
+@pytest.mark.parametrize("kind", ["singular", "generic", "unit", "shortened generic"])
+def test_the_selector_of_a_test_selects_it_in_dbt_ls(parsed: Manifest, dbt_args: list[str], kind: str) -> None:
+    manifest = parsed.writable_manifest().to_dict()
+    graph = ManifestGraph.from_manifest(manifest)
+    test_ids = [uid for uid, raw in manifest["nodes"].items() if raw["resource_type"] == "test"]
+    tests = [test for uid in [*test_ids, *manifest["unit_tests"]] if (test := graph.test(uid)) is not None]
+    sample = next(test for test in tests if _is_sample(test, kind))
+
+    result = dbtRunner(manifest=parsed).invoke(
+        [
+            *["ls", *dbt_args, "--select", sample.name],
+            *["--output", "json", "--output-keys", "unique_id"],
+        ]
+    )
+    assert result.success, f"dbt ls failed: {result.exception}"
+
+    assert {json.loads(line)["unique_id"] for line in cast("list[str]", result.result)} == {sample.unique_id}
+
+
+def _is_sample(test: NodeTest, kind: str) -> bool:
+    if kind == "shortened generic":  # dbt hashed the long name, so the file is not `<name>.sql`
+        return test.kind == "generic" and test.path != f"{test.name}.sql"
+
+    return test.kind == kind

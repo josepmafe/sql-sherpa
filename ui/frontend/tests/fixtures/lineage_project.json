@@ -1,0 +1,747 @@
+{
+ "nodes": [
+  {
+   "id": "model.sherpa.int_events__sessionized",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_identity__anonymous_to_customer",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_identity__lead_to_customer",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_orders__payments_summarized",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_orders__refunds_summarized",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_orders__status_pivoted",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_order_items__costed",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_order_items__discount_allocated",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.int_order_items__returns_summarized",
+   "layer": "intermediate"
+  },
+  {
+   "id": "model.sherpa.dim_customers",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.dim_customers_unmasked",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_leads",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_leads_unmasked",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.dim_campaigns",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_ad_spend_daily",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_sessions",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.dim_products",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.dim_promotions",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_orders",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_order_discounts",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_order_items",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_refunds",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.fct_returns",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.dim_date",
+   "layer": "marts"
+  },
+  {
+   "id": "model.sherpa.stg_crm__email_sends",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_crm__leads",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_events__events",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_marketing__ad_spend_daily",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_marketing__campaigns",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__addresses",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__categories",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__coupon_codes",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__customers",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__orders",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__order_discounts",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__order_items",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__order_status_history",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__payments",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__products",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__product_variants",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__promotions",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__refunds",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__returns",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__return_items",
+   "layer": "staging"
+  },
+  {
+   "id": "model.sherpa.stg_shop__shipments",
+   "layer": "staging"
+  },
+  {
+   "id": "seed.sherpa.channel_mapping",
+   "layer": "seed"
+  },
+  {
+   "id": "seed.sherpa.countries",
+   "layer": "seed"
+  },
+  {
+   "id": "seed.sherpa.country_code_variants",
+   "layer": "seed"
+  },
+  {
+   "id": "snapshot.sherpa.snap_product_variants",
+   "layer": "snapshot"
+  },
+  {
+   "id": "source.sherpa.crm.leads",
+   "layer": "source",
+   "sourceName": "crm"
+  },
+  {
+   "id": "source.sherpa.crm.email_sends",
+   "layer": "source",
+   "sourceName": "crm"
+  },
+  {
+   "id": "source.sherpa.events.events",
+   "layer": "source",
+   "sourceName": "events"
+  },
+  {
+   "id": "source.sherpa.marketing.campaigns",
+   "layer": "source",
+   "sourceName": "marketing"
+  },
+  {
+   "id": "source.sherpa.marketing.ad_spend_daily",
+   "layer": "source",
+   "sourceName": "marketing"
+  },
+  {
+   "id": "source.sherpa.shop.customers",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.addresses",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.categories",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.products",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.product_variants",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.orders",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.order_items",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.order_status_history",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.payments",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.shipments",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.promotions",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.coupon_codes",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.order_discounts",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.returns",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.return_items",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "source.sherpa.shop.refunds",
+   "layer": "source",
+   "sourceName": "shop"
+  },
+  {
+   "id": "exposure.sherpa.sherpa_agent",
+   "layer": "exposure"
+  }
+ ],
+ "edges": [
+  {
+   "source": "model.sherpa.stg_events__events",
+   "target": "model.sherpa.int_events__sessionized"
+  },
+  {
+   "source": "model.sherpa.stg_shop__customers",
+   "target": "model.sherpa.int_events__sessionized"
+  },
+  {
+   "source": "seed.sherpa.channel_mapping",
+   "target": "model.sherpa.int_events__sessionized"
+  },
+  {
+   "source": "model.sherpa.stg_events__events",
+   "target": "model.sherpa.int_identity__anonymous_to_customer"
+  },
+  {
+   "source": "model.sherpa.stg_shop__customers",
+   "target": "model.sherpa.int_identity__lead_to_customer"
+  },
+  {
+   "source": "model.sherpa.stg_crm__leads",
+   "target": "model.sherpa.int_identity__lead_to_customer"
+  },
+  {
+   "source": "model.sherpa.stg_shop__payments",
+   "target": "model.sherpa.int_orders__payments_summarized"
+  },
+  {
+   "source": "model.sherpa.stg_shop__refunds",
+   "target": "model.sherpa.int_orders__refunds_summarized"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_status_history",
+   "target": "model.sherpa.int_orders__status_pivoted"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_items",
+   "target": "model.sherpa.int_order_items__costed"
+  },
+  {
+   "source": "model.sherpa.stg_shop__orders",
+   "target": "model.sherpa.int_order_items__costed"
+  },
+  {
+   "source": "snapshot.sherpa.snap_product_variants",
+   "target": "model.sherpa.int_order_items__costed"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_items",
+   "target": "model.sherpa.int_order_items__discount_allocated"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_discounts",
+   "target": "model.sherpa.int_order_items__discount_allocated"
+  },
+  {
+   "source": "model.sherpa.stg_shop__returns",
+   "target": "model.sherpa.int_order_items__returns_summarized"
+  },
+  {
+   "source": "model.sherpa.stg_shop__return_items",
+   "target": "model.sherpa.int_order_items__returns_summarized"
+  },
+  {
+   "source": "model.sherpa.int_order_items__discount_allocated",
+   "target": "model.sherpa.int_order_items__returns_summarized"
+  },
+  {
+   "source": "model.sherpa.dim_customers_unmasked",
+   "target": "model.sherpa.dim_customers"
+  },
+  {
+   "source": "model.sherpa.stg_shop__customers",
+   "target": "model.sherpa.dim_customers_unmasked"
+  },
+  {
+   "source": "seed.sherpa.countries",
+   "target": "model.sherpa.dim_customers_unmasked"
+  },
+  {
+   "source": "model.sherpa.int_identity__lead_to_customer",
+   "target": "model.sherpa.dim_customers_unmasked"
+  },
+  {
+   "source": "model.sherpa.stg_marketing__campaigns",
+   "target": "model.sherpa.dim_customers_unmasked"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "model.sherpa.dim_customers_unmasked"
+  },
+  {
+   "source": "model.sherpa.int_events__sessionized",
+   "target": "model.sherpa.dim_customers_unmasked"
+  },
+  {
+   "source": "model.sherpa.fct_leads_unmasked",
+   "target": "model.sherpa.fct_leads"
+  },
+  {
+   "source": "model.sherpa.stg_crm__leads",
+   "target": "model.sherpa.fct_leads_unmasked"
+  },
+  {
+   "source": "model.sherpa.dim_customers",
+   "target": "model.sherpa.fct_leads_unmasked"
+  },
+  {
+   "source": "model.sherpa.stg_crm__email_sends",
+   "target": "model.sherpa.fct_leads_unmasked"
+  },
+  {
+   "source": "model.sherpa.stg_marketing__campaigns",
+   "target": "model.sherpa.dim_campaigns"
+  },
+  {
+   "source": "model.sherpa.stg_marketing__ad_spend_daily",
+   "target": "model.sherpa.fct_ad_spend_daily"
+  },
+  {
+   "source": "model.sherpa.dim_campaigns",
+   "target": "model.sherpa.fct_ad_spend_daily"
+  },
+  {
+   "source": "model.sherpa.fct_sessions",
+   "target": "model.sherpa.fct_ad_spend_daily"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "model.sherpa.fct_ad_spend_daily"
+  },
+  {
+   "source": "model.sherpa.int_events__sessionized",
+   "target": "model.sherpa.fct_sessions"
+  },
+  {
+   "source": "model.sherpa.int_identity__anonymous_to_customer",
+   "target": "model.sherpa.fct_sessions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__customers",
+   "target": "model.sherpa.fct_sessions"
+  },
+  {
+   "source": "model.sherpa.stg_marketing__campaigns",
+   "target": "model.sherpa.fct_sessions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__product_variants",
+   "target": "model.sherpa.dim_products"
+  },
+  {
+   "source": "model.sherpa.stg_shop__products",
+   "target": "model.sherpa.dim_products"
+  },
+  {
+   "source": "model.sherpa.stg_shop__categories",
+   "target": "model.sherpa.dim_products"
+  },
+  {
+   "source": "model.sherpa.stg_shop__promotions",
+   "target": "model.sherpa.dim_promotions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__coupon_codes",
+   "target": "model.sherpa.dim_promotions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__customers",
+   "target": "model.sherpa.dim_promotions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__orders",
+   "target": "model.sherpa.dim_promotions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_discounts",
+   "target": "model.sherpa.dim_promotions"
+  },
+  {
+   "source": "model.sherpa.stg_shop__customers",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.stg_shop__orders",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.stg_shop__addresses",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_orders__status_pivoted",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_orders__payments_summarized",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_orders__refunds_summarized",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_events__sessionized",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_order_items__discount_allocated",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_order_items__costed",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.int_order_items__returns_summarized",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_discounts",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.stg_shop__returns",
+   "target": "model.sherpa.fct_orders"
+  },
+  {
+   "source": "model.sherpa.stg_shop__order_discounts",
+   "target": "model.sherpa.fct_order_discounts"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "model.sherpa.fct_order_discounts"
+  },
+  {
+   "source": "model.sherpa.stg_shop__promotions",
+   "target": "model.sherpa.fct_order_discounts"
+  },
+  {
+   "source": "model.sherpa.stg_shop__coupon_codes",
+   "target": "model.sherpa.fct_order_discounts"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "model.sherpa.fct_order_items"
+  },
+  {
+   "source": "model.sherpa.int_order_items__discount_allocated",
+   "target": "model.sherpa.fct_order_items"
+  },
+  {
+   "source": "model.sherpa.int_order_items__costed",
+   "target": "model.sherpa.fct_order_items"
+  },
+  {
+   "source": "model.sherpa.int_order_items__returns_summarized",
+   "target": "model.sherpa.fct_order_items"
+  },
+  {
+   "source": "model.sherpa.dim_products",
+   "target": "model.sherpa.fct_order_items"
+  },
+  {
+   "source": "model.sherpa.stg_shop__refunds",
+   "target": "model.sherpa.fct_refunds"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "model.sherpa.fct_refunds"
+  },
+  {
+   "source": "model.sherpa.stg_shop__returns",
+   "target": "model.sherpa.fct_returns"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "model.sherpa.fct_returns"
+  },
+  {
+   "source": "model.sherpa.stg_shop__return_items",
+   "target": "model.sherpa.fct_returns"
+  },
+  {
+   "source": "model.sherpa.stg_shop__refunds",
+   "target": "model.sherpa.fct_returns"
+  },
+  {
+   "source": "source.sherpa.crm.email_sends",
+   "target": "model.sherpa.stg_crm__email_sends"
+  },
+  {
+   "source": "source.sherpa.crm.leads",
+   "target": "model.sherpa.stg_crm__leads"
+  },
+  {
+   "source": "source.sherpa.events.events",
+   "target": "model.sherpa.stg_events__events"
+  },
+  {
+   "source": "source.sherpa.marketing.ad_spend_daily",
+   "target": "model.sherpa.stg_marketing__ad_spend_daily"
+  },
+  {
+   "source": "source.sherpa.marketing.campaigns",
+   "target": "model.sherpa.stg_marketing__campaigns"
+  },
+  {
+   "source": "source.sherpa.shop.addresses",
+   "target": "model.sherpa.stg_shop__addresses"
+  },
+  {
+   "source": "seed.sherpa.country_code_variants",
+   "target": "model.sherpa.stg_shop__addresses"
+  },
+  {
+   "source": "source.sherpa.shop.categories",
+   "target": "model.sherpa.stg_shop__categories"
+  },
+  {
+   "source": "source.sherpa.shop.coupon_codes",
+   "target": "model.sherpa.stg_shop__coupon_codes"
+  },
+  {
+   "source": "source.sherpa.shop.customers",
+   "target": "model.sherpa.stg_shop__customers"
+  },
+  {
+   "source": "seed.sherpa.country_code_variants",
+   "target": "model.sherpa.stg_shop__customers"
+  },
+  {
+   "source": "source.sherpa.shop.orders",
+   "target": "model.sherpa.stg_shop__orders"
+  },
+  {
+   "source": "source.sherpa.shop.order_discounts",
+   "target": "model.sherpa.stg_shop__order_discounts"
+  },
+  {
+   "source": "source.sherpa.shop.order_items",
+   "target": "model.sherpa.stg_shop__order_items"
+  },
+  {
+   "source": "source.sherpa.shop.order_status_history",
+   "target": "model.sherpa.stg_shop__order_status_history"
+  },
+  {
+   "source": "source.sherpa.shop.payments",
+   "target": "model.sherpa.stg_shop__payments"
+  },
+  {
+   "source": "source.sherpa.shop.products",
+   "target": "model.sherpa.stg_shop__products"
+  },
+  {
+   "source": "source.sherpa.shop.product_variants",
+   "target": "model.sherpa.stg_shop__product_variants"
+  },
+  {
+   "source": "source.sherpa.shop.promotions",
+   "target": "model.sherpa.stg_shop__promotions"
+  },
+  {
+   "source": "source.sherpa.shop.refunds",
+   "target": "model.sherpa.stg_shop__refunds"
+  },
+  {
+   "source": "source.sherpa.shop.returns",
+   "target": "model.sherpa.stg_shop__returns"
+  },
+  {
+   "source": "source.sherpa.shop.return_items",
+   "target": "model.sherpa.stg_shop__return_items"
+  },
+  {
+   "source": "source.sherpa.shop.shipments",
+   "target": "model.sherpa.stg_shop__shipments"
+  },
+  {
+   "source": "source.sherpa.shop.product_variants",
+   "target": "snapshot.sherpa.snap_product_variants"
+  },
+  {
+   "source": "model.sherpa.dim_campaigns",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.dim_customers",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.dim_date",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.dim_products",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.dim_promotions",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_ad_spend_daily",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_leads",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_order_discounts",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_order_items",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_refunds",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_returns",
+   "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.fct_sessions",
+   "target": "exposure.sherpa.sherpa_agent"
+  }
+ ]
+}

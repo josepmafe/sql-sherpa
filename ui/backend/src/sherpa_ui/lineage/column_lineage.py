@@ -97,8 +97,10 @@ class ColumnLineage:
         columns: Mapping[str, tuple[ColumnInfo, ...]],
         edges: Sequence[ColumnEdge],
         node_notes: Mapping[str, str],
+        data_types: Mapping[ColumnRef, str] | None = None,
     ) -> None:
         self._columns = columns
+        self._data_types = data_types or {}
         self._infos = {info.ref: info for infos in columns.values() for info in infos}
         self._edges = tuple(edges)
         self._node_notes = node_notes
@@ -113,6 +115,10 @@ class ColumnLineage:
 
     def info(self, ref: ColumnRef) -> ColumnInfo | None:
         return self._infos.get(ref)
+
+    def data_type(self, ref: ColumnRef) -> str | None:
+        """The type the catalog records for the column, in the database's own name."""
+        return self._data_types.get(ref)
 
     def node_note(self, unique_id: str) -> str | None:
         return self._node_notes.get(unique_id)
@@ -129,10 +135,16 @@ class ColumnLineageBuilder:
     """Reads the compiled SQL of every model and snapshot with sqlglot and links each output column to its inputs."""
 
     def __init__(
-        self, graph: ManifestGraph, columns_by_node: Mapping[str, Sequence[str]], *, columns_note: str | None = None
+        self,
+        graph: ManifestGraph,
+        columns_by_node: Mapping[str, Sequence[str]],
+        data_types: Mapping[ColumnRef, str] | None = None,
+        *,
+        columns_note: str | None = None,
     ) -> None:
         self._graph = graph
         self._columns_by_node = columns_by_node
+        self._data_types = data_types
         self._columns_note = columns_note  # about where the columns came from; goes on every node that has none yet
 
     def build(self, compiled_sql: Mapping[str, str | None]) -> ColumnLineage:
@@ -147,7 +159,7 @@ class ColumnLineageBuilder:
                 if infos:
                     run.node_notes.setdefault(unique_id, self._columns_note)
 
-        return ColumnLineage(run.columns, list(run.edges), run.node_notes)
+        return ColumnLineage(run.columns, list(run.edges), run.node_notes, self._data_types)
 
 
 @dataclass(frozen=True)

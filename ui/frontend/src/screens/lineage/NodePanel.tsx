@@ -6,30 +6,36 @@ import {
   Box,
   Button,
   Code,
+  Flex,
   Group,
   Loader,
+  Modal,
   ScrollArea,
   Stack,
   Table,
   Tabs,
   Text,
   Title,
+  Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
   IconCircleCheck,
   IconCircleDashed,
   IconCircleX,
+  IconEye,
   IconPlayerSkipForward,
   IconX,
 } from "@tabler/icons-react";
-import { useClipboard } from "@mantine/hooks";
+import { useClipboard, useDisclosure } from "@mantine/hooks";
 import { type ComponentType, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { useLineageNode } from "../../api/queries";
+import { useLineageNode, useTestDetails } from "../../api/queries";
 import type { components } from "../../api/schema";
+import { CollapseToggle, usePaneCollapse } from "../../components/panes";
 import { ReadOnlySql } from "../../components/SqlEditor";
 import { LoadError } from "../explorer/LoadError";
 import { KindLabel, ResolutionLabel } from "./ColumnLabels";
@@ -39,15 +45,29 @@ import { pathSelector } from "./selectors";
 type ColumnDetail = components["schemas"]["ColumnDetail"];
 type NodeDetails = components["schemas"]["NodeDetails"];
 type TestInfo = components["schemas"]["TestInfo"];
+type TestDetails = components["schemas"]["TestDetails"];
 type TestOutcome = components["schemas"]["TestOutcome"];
 
 const NODE_NOT_FOUND = "node_not_found";
-const PANEL_MAX_HEIGHT = "50vh";
+export const NODE_PANEL = "panel";
+const PANEL_TITLE = "Node details";
+// The folded pane is its title bar (UI spec §6.5).
+export const PANEL_TITLE_BAR = 40;
+const FOLD_LABEL = "Collapse the node panel";
+const OPEN_LABEL = "Open the node panel";
 const EMPTY_STATE = "Select a node to see its SQL, columns and tests";
 const OVERVIEW = "overview";
 const COLUMNS = "columns";
 const TESTS = "tests";
 const SQL = "sql";
+const NO_COLUMNS = "This node has no columns.";
+const NO_TESTS = "No test is defined on this node.";
+const NO_SQL = "Sources, seeds and exposures have no SQL.";
+// gray-7 on white and dark-1 on the dark surface both clear 4.5:1 (WCAG AA); a faded opacity would not.
+const DISABLED_TAB_COLOR = "light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1))";
+// A test's dialog: about 80vw up to 900 px, its body scrolling on its own (UI spec §6.5).
+const TEST_DIALOG_WIDTH = "min(80vw, 900px)";
+const TEST_DIALOG_BODY_HEIGHT = "70vh";
 const RAW = "raw";
 const COMPILED = "compiled";
 
@@ -74,9 +94,17 @@ interface NodePanelProps {
   onFocusColumn: (column: string | undefined) => void;
 }
 
-// Always rendered under the graph, so selecting a node never resizes the canvas.
+// Always rendered under the graph, as the lower pane of the Lineage screen: selecting a node never resizes the canvas.
+// Folded, it is its title bar; selecting a node opens it.
 export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }: NodePanelProps) {
   const node = useLineageNode(uniqueId);
+  const { collapsed, toggle, setOpen, ready } = usePaneCollapse(NODE_PANEL);
+  // Selecting a node opens a folded panel, also one folded by the stored layout (once the pane is there to open). Only
+  // the selection and the pane's arrival are dependencies: folding it by hand must not reopen it.
+  useEffect(() => {
+    if (uniqueId !== undefined && ready && collapsed) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uniqueId, ready]);
   // The tab stays while another node is selected, so the same tab can be read across nodes. A focused column opens
   // the Columns tab, where it is marked.
   const [tab, setTab] = useState<string | null>(column === undefined ? OVERVIEW : COLUMNS);
@@ -86,12 +114,12 @@ export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }:
     if (column !== undefined) setTab(COLUMNS);
   }
 
-  // Esc clears the column focus, then the selection, unless it was meant for a text field or a menu.
+  // Esc clears the column focus, then the selection, unless it was meant for a text field, a menu or a dialog.
   useEffect(() => {
     if (uniqueId === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (event.key !== "Escape" || target.closest("input, textarea, [role=listbox]")) return;
+      if (event.key !== "Escape" || event.defaultPrevented || target.closest("input, textarea, [role=listbox], [role=dialog]")) return;
       if (column === undefined) onClose();
       else onFocusColumn(undefined);
     };
@@ -100,24 +128,34 @@ export function NodePanel({ uniqueId, onClose, column, outside, onFocusColumn }:
   }, [uniqueId, column, onClose, onFocusColumn]);
 
   return (
-    <ScrollArea.Autosize mah={PANEL_MAX_HEIGHT} offsetScrollbars="y">
-      <Stack gap="sm" component="aside" aria-label="Node details" p="xs">
-        {uniqueId === undefined ? (
-          <Text size="sm" c="dimmed">
-            {EMPTY_STATE}
+    <Flex component="aside" aria-label={PANEL_TITLE} direction="column" h="100%">
+      <Group justify="space-between" wrap="nowrap" gap="xs" px="xs" h={PANEL_TITLE_BAR} style={{ flex: "none" }}>
+        <Group gap="xs" wrap="nowrap">
+          <CollapseToggle collapsed={collapsed} onToggle={toggle} foldLabel={FOLD_LABEL} openLabel={OPEN_LABEL} side="bottom" />
+          <Text size="sm" fw={600}>
+            {PANEL_TITLE}
           </Text>
-        ) : (
-          <>
-            <Group justify="flex-end">
-              <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
-                <IconX size={14} />
-              </ActionIcon>
-            </Group>
-            <Body node={node} tab={tab} onTab={setTab} column={column} outside={outside} onFocusColumn={onFocusColumn} />
-          </>
+        </Group>
+        {!collapsed && uniqueId !== undefined && (
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Close the node panel" onClick={onClose}>
+            <IconX size={14} />
+          </ActionIcon>
         )}
-      </Stack>
-    </ScrollArea.Autosize>
+      </Group>
+      {!collapsed && (
+        <ScrollArea style={{ flex: 1, minHeight: 0 }} offsetScrollbars="y">
+          <Stack gap="sm" p="xs">
+            {uniqueId === undefined ? (
+              <Text size="sm" c="dimmed">
+                {EMPTY_STATE}
+              </Text>
+            ) : (
+              <Body node={node} tab={tab} onTab={setTab} column={column} outside={outside} onFocusColumn={onFocusColumn} />
+            )}
+          </Stack>
+        </ScrollArea>
+      )}
+    </Flex>
   );
 }
 
@@ -145,16 +183,35 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
   if (!node.data) return <Loader size="sm" />;
 
   const d = node.data;
+  // A tab with nothing to show says why instead of opening empty (UI spec §6.5). The chosen tab may be one this node
+  // does not have: it then reads as Overview.
+  const reasons: Record<string, string | undefined> = {
+    [COLUMNS]: d.columns.length === 0 ? NO_COLUMNS : undefined,
+    [TESTS]: d.tests.length === 0 ? NO_TESTS : undefined,
+    [SQL]: d.raw_sql === null && d.sql_note === null ? NO_SQL : undefined,
+  };
+  const effective = tab !== null && reasons[tab] === undefined ? tab : OVERVIEW;
+  const select = (next: string | null) => {
+    if (next === null || reasons[next] === undefined) onTab(next);
+  };
   return (
     <>
       <Title order={4}>{d.name}</Title>
       {column !== undefined && outside > 0 && <OutsideNote d={d} column={column} outside={outside} />}
-      <Tabs value={tab} onChange={onTab}>
+      <Tabs value={effective} onChange={select}>
         <Tabs.List>
           <Tabs.Tab value={OVERVIEW}>Overview</Tabs.Tab>
-          <Tabs.Tab value={COLUMNS}>Columns</Tabs.Tab>
-          <Tabs.Tab value={TESTS}>Tests</Tabs.Tab>
-          <Tabs.Tab value={SQL}>SQL</Tabs.Tab>
+          <PanelTab
+            value={COLUMNS}
+            label={d.columns.length === 0 ? "Columns" : `Columns (${d.columns.length})`}
+            reason={reasons[COLUMNS]}
+          />
+          <PanelTab
+            value={TESTS}
+            label={d.tests.length === 0 ? "Tests" : `Tests (${d.tests.length})`}
+            reason={reasons[TESTS]}
+          />
+          <PanelTab value={SQL} label="SQL" reason={reasons[SQL]} />
         </Tabs.List>
         <Tabs.Panel value={OVERVIEW} pt="xs">
           <Overview d={d} />
@@ -168,12 +225,39 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
           <ColumnsTable columns={d.columns} focused={column} onFocusColumn={onFocusColumn} />
         </Tabs.Panel>
         <Tabs.Panel value={TESTS} pt="xs">
-          <TestList tests={d.tests} />
+          <TestList key={d.unique_id} tests={d.tests} />
         </Tabs.Panel>
         <Tabs.Panel value={SQL} pt="xs">
           <SqlTabs d={d} />
         </Tabs.Panel>
       </Tabs>
+    </>
+  );
+}
+
+interface PanelTabProps {
+  value: string;
+  label: string;
+  reason: string | undefined;
+}
+
+// Disabled with aria-disabled, not the attribute, so the tab stays in the focus order and its reason can be reached.
+function PanelTab({ value, label, reason }: PanelTabProps) {
+  const why = `tab-why-${value}`;
+  if (reason === undefined) return <Tabs.Tab value={value}>{label}</Tabs.Tab>;
+  return (
+    <>
+      <Tooltip label={reason} events={{ hover: true, focus: true, touch: false }} openDelay={200}>
+        <Tabs.Tab
+          value={value}
+          aria-disabled="true"
+          aria-describedby={why}
+          style={{ color: DISABLED_TAB_COLOR, cursor: "not-allowed" }}
+        >
+          {label}
+        </Tabs.Tab>
+      </Tooltip>
+      <VisuallyHidden id={why}>{reason}</VisuallyHidden>
     </>
   );
 }
@@ -255,13 +339,6 @@ interface ColumnsTableProps {
 }
 
 function ColumnsTable({ columns, focused, onFocusColumn }: ColumnsTableProps) {
-  if (columns.length === 0) {
-    return (
-      <Text size="xs" c="dimmed">
-        No documented columns.
-      </Text>
-    );
-  }
   return (
     <Table aria-label="Columns" withRowBorders verticalSpacing={4}>
       <Table.Thead>
@@ -301,7 +378,7 @@ function columnNotes({ counts, notes }: ColumnDetail): string {
   return [counts === null ? null : `counts ${counts.split(".").at(-1)}`, ...notes].filter((note) => note !== null).join("; ");
 }
 
-function SqlTabs({ d }: { d: NodeDetails }) {
+function SqlTabs({ d }: { d: Pick<NodeDetails, "raw_sql" | "compiled_sql" | "sql_note"> }) {
   return (
     <Stack gap="xs">
       {d.sql_note !== null && (
@@ -330,13 +407,6 @@ function SqlTabs({ d }: { d: NodeDetails }) {
 }
 
 function TestList({ tests }: { tests: TestInfo[] }) {
-  if (tests.length === 0) {
-    return (
-      <Text size="xs" c="dimmed">
-        No tests.
-      </Text>
-    );
-  }
   return (
     <>
       {(Object.keys(OUTCOMES) as TestOutcome[]).map((outcome) => {
@@ -352,17 +422,87 @@ function TestList({ tests }: { tests: TestInfo[] }) {
               {outcome} ({group.length})
             </Title>
             {group.map((test) => (
-              <Text key={test.name} size="xs">
-                <span data-testid="test-name">{test.name}</span>
-                <Text component="span" size="xs" c="dimmed">
-                  {" "}
-                  {[test.kind, test.column, test.severity === "warn" ? "warn" : null].filter(Boolean).join(" · ")}
-                </Text>
-              </Text>
+              <TestRow key={test.unique_id} test={test} />
             ))}
           </Box>
         );
       })}
     </>
+  );
+}
+
+// An eye button opens the test in a dialog, which has the room to read where it is written and what it checks; the
+// request waits for the first opening.
+function TestRow({ test }: { test: TestInfo }) {
+  const [opened, { open, close }] = useDisclosure(false);
+  return (
+    <Group gap={4} wrap="nowrap" align="baseline">
+      <ActionIcon
+        variant="subtle"
+        color="gray"
+        size="xs"
+        aria-label={`Show ${test.name}`}
+        aria-haspopup="dialog"
+        onClick={open}
+      >
+        <IconEye size={14} />
+      </ActionIcon>
+      <Text size="xs">
+        <span data-testid="test-name">{test.name}</span>
+        <Text component="span" size="xs" c="dimmed">
+          {" "}
+          {[test.kind, test.column, test.severity === "warn" ? "warn" : null].filter(Boolean).join(" · ")}
+        </Text>
+      </Text>
+      <Modal
+        opened={opened}
+        onClose={close}
+        title={test.name}
+        size={TEST_DIALOG_WIDTH}
+        closeButtonProps={{ "aria-label": "Close" }}
+        styles={{ body: { maxHeight: TEST_DIALOG_BODY_HEIGHT, overflowY: "auto" } }}
+      >
+        <TestDefinition uniqueId={test.unique_id} />
+      </Modal>
+    </Group>
+  );
+}
+
+function TestDefinition({ uniqueId }: { uniqueId: string }) {
+  const test = useTestDetails(uniqueId);
+  if (test.isError) {
+    return <LoadError title="Could not load the test" error={test.error} onRetry={() => void test.refetch()} />;
+  }
+  if (!test.data) return <Loader size="sm" />;
+
+  return <TestBody t={test.data} />;
+}
+
+function TestBody({ t }: { t: TestDetails }) {
+  const clipboard = useClipboard();
+  return (
+    <Stack gap="xs" my="xs">
+      <Group gap="xs">
+        <Badge variant="light">{t.kind}</Badge>
+        <Text size="xs">
+          <b>File:</b> <Code>{t.file_path}</Code>
+        </Text>
+      </Group>
+      <Group gap="xs">
+        <Button size="xs" variant="default" onClick={() => clipboard.copy(t.selector)}>
+          {clipboard.copied ? "Copied" : "Copy dbt selector"}
+        </Button>
+      </Group>
+      {t.raw_sql === null && t.compiled_sql !== null ? (
+        <ReadOnlySql value={t.compiled_sql} label="Compiled SQL" />
+      ) : (
+        <SqlTabs d={t} />
+      )}
+      {t.definition !== null && (
+        <Code block aria-label="Definition">
+          {t.definition}
+        </Code>
+      )}
+    </Stack>
   );
 }

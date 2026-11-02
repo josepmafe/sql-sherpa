@@ -1,18 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader, Stack, Text } from "@mantine/core";
+import { Box, Flex, Loader, Text } from "@mantine/core";
 
 import { ApiRequestError, useColumnFocus, useLineage } from "../../api/queries";
+import { Pane, PaneGroup, PaneHandle } from "../../components/panes";
 import { LoadError } from "../explorer/LoadError";
 import { focusView } from "./columnFocus";
 import { LayerFilter } from "./LayerFilter";
 import { LineageCanvas } from "./LineageCanvas";
-import { NodePanel } from "./NodePanel";
+import { NODE_PANEL, NodePanel, PANEL_TITLE_BAR } from "./NodePanel";
 import { SelectorBar } from "./SelectorBar";
-import { useLineageParams } from "./url";
+import { DEFAULT_LAYERS, useLineageParams } from "./url";
 
 const UNSUPPORTED_SELECTOR = "unsupported_selector";
 const COLUMN_NOT_FOUND = "column_not_found";
 const COLUMNS_UNAVAILABLE = "Column lineage is unavailable";
+// The graph above and the node panel below, in pixels (UI spec §6.1, §6.5). The graph takes what the panel leaves.
+const LAYOUT_ID = "lineage";
+const GRAPH_PANE = "graph";
+const GRAPH_MIN = 240;
+const GRAPH_MAX = 4000;
+const PANEL_DEFAULT = 260;
+const PANEL_MIN = 120;
+const PANEL_MAX = 2000;
 
 export function LineageScreen() {
   const [params, update] = useLineageParams();
@@ -21,11 +30,17 @@ export function LineageScreen() {
   const [wantColumns, setWantColumns] = useState(false);
   if (!wantColumns && params.column !== undefined) setWantColumns(true);
   const columns = wantColumns || params.column !== undefined;
-  const lineage = useLineage(params, { columns });
+  const layers = params.layers ?? DEFAULT_LAYERS;
+  const lineage = useLineage({ ...params, layers: [...layers] }, { columns });
   const error = lineage.error;
   // The last good graph stays while a selector fails (or loads), so the controls and the count do not vanish.
+  // The selector it answered is the graph's subject: while a new one loads, the old graph keeps its own.
   const [lastGood, setLastGood] = useState(lineage.data);
-  if (lineage.data !== undefined && lineage.data !== lastGood) setLastGood(lineage.data);
+  const [subject, setSubject] = useState(params.select);
+  if (lineage.data !== undefined && lineage.data !== lastGood) {
+    setLastGood(lineage.data);
+    setSubject(params.select);
+  }
   const graph = lineage.data ?? lastGood;
   // An unsupported selector shows under the selector box; the graph of the last good selector stays.
   const loadError = error !== null && !(error instanceof ApiRequestError && error.code === UNSUPPORTED_SELECTOR);
@@ -85,7 +100,7 @@ export function LineageScreen() {
   };
 
   return (
-    <Stack gap="md">
+    <Flex direction="column" gap="md" style={{ flex: 1, minHeight: 0 }}>
       <SelectorBar select={params.select} onSelect={(select) => update({ select })} error={error} columns={columns} />
       <LayerFilter
         available={graph?.layers_available ?? []}
@@ -110,34 +125,50 @@ export function LineageScreen() {
       {graph !== undefined && !loadError && (
         <>
           <Text size="sm">{graph.nodes.length} nodes</Text>
-          <LineageCanvas
-            nodes={graph.nodes}
-            edges={graph.edges}
-            selected={params.node}
-            column={params.column}
-            onSelect={(node) => (node === undefined ? clearSelection() : update({ node, column: undefined }))}
-            focus={focus}
-            expanded={expanded}
-            rest={rest}
-            onToggle={toggle}
-            onFocusColumn={(node, column) => {
-              setWantColumns(true);
-              update({ node, column });
-            }}
-            columnsUnavailable={columnsUnavailable}
-            failingOnly={params.failingOnly}
-            layersFiltered={params.layers !== undefined}
-            buildState={graph.build.state}
-          />
-          <NodePanel
-            uniqueId={params.node}
-            onClose={clearSelection}
-            column={params.column}
-            outside={focus?.outside ?? 0}
-            onFocusColumn={focusColumn}
-          />
+          <Box style={{ flex: 1, minHeight: 0 }}>
+            <PaneGroup id={LAYOUT_ID} direction="vertical">
+              <Pane id={GRAPH_PANE} minSize={GRAPH_MIN} maxSize={GRAPH_MAX}>
+                <LineageCanvas
+                  nodes={graph.nodes}
+                  edges={graph.edges}
+                  subject={subject}
+                  selected={params.node}
+                  column={params.column}
+                  onSelect={(node) => (node === undefined ? clearSelection() : update({ node, column: undefined }))}
+                  focus={focus}
+                  expanded={expanded}
+                  rest={rest}
+                  onToggle={toggle}
+                  onFocusColumn={(node, column) => {
+                    setWantColumns(true);
+                    update({ node, column });
+                  }}
+                  columnsUnavailable={columnsUnavailable}
+                  failingOnly={params.failingOnly}
+                  layersFiltered={graph.layers_available.some((layer) => DEFAULT_LAYERS.includes(layer) && !layers.includes(layer))}
+                  buildState={graph.build.state}
+                />
+              </Pane>
+              <PaneHandle label="Resize the graph and the node panel" />
+              <Pane
+                id={NODE_PANEL}
+                defaultSize={PANEL_DEFAULT}
+                minSize={PANEL_MIN}
+                maxSize={PANEL_MAX}
+                collapsedSize={PANEL_TITLE_BAR}
+              >
+                <NodePanel
+                  uniqueId={params.node}
+                  onClose={clearSelection}
+                  column={params.column}
+                  outside={focus?.outside ?? 0}
+                  onFocusColumn={focusColumn}
+                />
+              </Pane>
+            </PaneGroup>
+          </Box>
         </>
       )}
-    </Stack>
+    </Flex>
   );
 }

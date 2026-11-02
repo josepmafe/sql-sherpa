@@ -52,6 +52,7 @@ def builds() -> BuildStatusReader:
 def node_sql() -> NodeSql:
     fake = create_autospec(NodeSql, instance=True)
     fake.compiled.return_value = "select compiled"
+    fake.compiled_test.return_value = "select compiled"
     return fake
 
 
@@ -354,6 +355,71 @@ class TestLineageServiceNode:
         assert (details.status, details.build) == (NodeStatus.NO_BUILD, None)
 
 
+class TestLineageServiceTestDetails:
+    def test_a_singular_test_carries_raw_and_compiled_sql(self, service: LineageService) -> None:
+        details = service.test_details("test.p.assert_orders_match_customers")
+
+        assert details is not None
+        assert details.model_dump() == {
+            "unique_id": "test.p.assert_orders_match_customers",
+            "name": "assert_orders_match_customers",
+            "kind": "singular",
+            "severity": "warn",
+            "column": None,
+            "file_path": "tests/singular/assert_orders_match_customers.sql",
+            "selector": "assert_orders_match_customers",
+            "raw_sql": "select * from {{ ref('fct_orders') }} where false",
+            "compiled_sql": "select compiled",
+            "sql_note": None,
+            "definition": None,
+        }
+
+    def test_a_generic_test_has_a_definition_and_compiled_sql_but_no_raw_sql(self, service: LineageService) -> None:
+        details = service.test_details("test.p.unique_dim_customers_id")
+
+        assert details is not None
+        assert (details.kind, details.severity, details.column) == ("generic", "warn", "id")
+        assert details.raw_sql is None
+        assert details.compiled_sql == "select compiled"
+        assert details.definition is not None
+        assert '"name": "unique"' in details.definition
+
+    def test_a_unit_test_has_a_definition_and_no_sql_and_no_note(
+        self, service: LineageService, node_sql: NodeSql
+    ) -> None:
+        details = service.test_details("unit_test.p.fct_orders.revenue_is_summed")
+
+        assert details is not None
+        assert (details.kind, details.raw_sql, details.compiled_sql, details.sql_note) == ("unit", None, None, None)
+        assert details.definition is not None
+        assert "revenue: 5" in details.definition
+        node_sql.compiled_test.assert_not_called()  # type: ignore[attr-defined]
+
+    def test_a_missing_compiled_file_gives_the_note(self, service: LineageService, node_sql: NodeSql) -> None:
+        node_sql.compiled_test.return_value = None  # type: ignore[attr-defined]
+
+        details = service.test_details("test.p.not_null_fct_orders_order_id")
+
+        assert details is not None
+        assert details.compiled_sql is None
+        assert details.sql_note is not None
+        assert "make build-prod" in details.sql_note
+
+    def test_unknown_ids_and_node_ids_are_none(self, service: LineageService) -> None:
+        assert service.test_details("test.p.nope") is None
+        assert service.test_details("model.p.fct_orders") is None
+
+    def test_every_test_of_a_node_carries_its_unique_id(self, service: LineageService) -> None:
+        details = service.node("model.p.fct_orders")
+
+        assert details is not None
+        assert {(test.name, test.unique_id) for test in details.tests} == {
+            ("not_null_fct_orders_order_id", "test.p.not_null_fct_orders_order_id"),
+            ("assert_orders_match_customers", "test.p.assert_orders_match_customers"),
+            ("revenue_is_summed", "unit_test.p.fct_orders.revenue_is_summed"),
+        }
+
+
 class TestLineageServiceColumns:
     def test_graph_with_columns_carries_kinds(self, service: LineageService) -> None:
         result = service.graph("fct_orders", None, failing_only=False, columns=True)
@@ -399,6 +465,33 @@ class TestLineageServiceColumns:
             )
         ]
         assert details.column_lineage_note is None
+
+    def test_column_type_comes_from_the_catalog_then_the_yaml(
+        self,
+        manifest: dict[str, Any],
+        builds: BuildStatusReader,
+        node_sql: NodeSql,
+        columns_loader: ColumnLineageLoader,
+    ) -> None:
+        fct, dim, enriched = "model.p.fct_orders", "model.p.dim_customers", "model.p.int_orders__enriched"
+        manifest["nodes"][fct]["columns"]["id"]["data_type"] = "timestamptz"
+        manifest["nodes"][dim]["columns"]["id"]["data_type"] = "text"
+        manifest["nodes"][enriched]["config"]["materialized"] = "ephemeral"
+        del manifest["nodes"][enriched]["columns"]["id"]["data_type"]
+        lineage = ColumnLineage(
+            {uid: (_info(uid, "id", ColumnKind.PASSTHROUGH),) for uid in (fct, dim, enriched)},
+            [],
+            {},
+            data_types={_ref(fct, "id"): "timestamp with time zone"},
+        )
+        columns_loader.load.return_value = lineage  # type: ignore[attr-defined]
+        loader = create_autospec(ManifestLoader, instance=True)
+        loader.load.return_value = ManifestGraph.from_manifest(manifest)
+        service = LineageService(loader, builds, node_sql, columns_loader)
+
+        types = {uid: service.node(uid).columns[0].data_type for uid in (fct, dim, enriched)}  # type: ignore[union-attr]
+
+        assert types == {fct: "timestamp with time zone", dim: "text", enriched: None}
 
     def test_node_note_and_unavailability_reach_the_panel(
         self, service: LineageService, columns_loader: ColumnLineageLoader

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -19,6 +19,7 @@ import {
   nodeDetails,
   ok,
 } from "../fixtures/api";
+import { stubPaneLayout } from "../fixtures/panes";
 import { createTestQueryClient, deferred, renderWithProviders } from "../fixtures/render";
 
 // No test here reads a position, and the real ELK layout is slow under load.
@@ -148,12 +149,23 @@ function mount(path: string, extra?: React.ReactNode, queryClient?: QueryClient)
 
 const nodeButton = (name: string) => screen.findByRole("button", { name: new RegExp(`^${name}\\b`) });
 const panel = () => screen.getByRole("complementary", { name: "Node details" });
+const HANDLE = "Resize the graph and the node panel";
+const LAYOUT_KEY = "sherpa.v1.layout.lineage";
+// jsdom has no layout: the pane groups measure the stubbed sizes once the render has settled.
+const settleLayout = () => act(async () => {});
+const handle = () => screen.getByRole("separator", { name: HANDLE });
+const valueNow = () => Number(handle().getAttribute("aria-valuenow"));
+// The stub gives every group 1200 px, so a handle's aria-value* (a percentage of it) times 12 is pixels.
+const px = (attribute = "aria-valuenow") => Number(handle().getAttribute(attribute)) * 12;
+const storedLayout = () => JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null") as unknown;
 
 describe("LineageScreen", () => {
   // restoreMocks restores spies only: a module-level vi.fn keeps its calls and implementation.
   beforeEach(() => {
     vi.mocked(orderNodes).mockReset().mockImplementation((nodes) => Promise.resolve(new Map(nodes.map((n, index) => [n.id, index]))));
     get.mockReset();
+    localStorage.clear();
+    stubPaneLayout();
   });
 
   it("an unsupported selector keeps the previous graph and shows the supported forms", async () => {
@@ -172,6 +184,16 @@ describe("LineageScreen", () => {
     expect(screen.getByRole("checkbox", { name: "marts" })).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(document.querySelector(".mantine-Loader-root")).toBeNull();
+  });
+
+  it("Failing only with nothing failed says so in the default view, where exposures are off but available", async () => {
+    get.mockImplementation(
+      answerNodes(lineageGraph({ nodes: [], layers_available: ["staging", "marts", "exposure"] })),
+    );
+
+    mount("/lineage?failing=1");
+
+    expect(await screen.findByText("Nothing failed in the last full build")).toBeInTheDocument();
   });
 
   it("a node= that the graph does not hold clears itself", async () => {
@@ -201,17 +223,17 @@ describe("LineageScreen", () => {
     expect(within(panel()).queryByText(EMPTY_STATE)).not.toBeInTheDocument();
   });
 
-  it("selecting a node does not change the canvas size", async () => {
+  it("selecting a node does not resize the graph pane", async () => {
     get.mockImplementation(answerNodes());
     mount("/lineage");
-    const canvas = (await screen.findByLabelText("Lineage graph")).parentElement!;
-    const before = { height: canvas.style.height, width: canvas.style.width, minHeight: canvas.style.minHeight };
+    await screen.findByLabelText("Lineage graph");
+    await settleLayout();
+    const before = valueNow();
 
     fireEvent.click(await nodeButton("a"));
 
     expect(await screen.findByText("Model a.")).toBeVisible();
-    expect({ height: canvas.style.height, width: canvas.style.width, minHeight: canvas.style.minHeight }).toEqual(before);
-    expect(before).toEqual({ height: "60vh", width: "", minHeight: "400px" });
+    expect(valueNow()).toBe(before);
   });
 
   it("Esc clears the selection and keeps the panel", async () => {
@@ -298,6 +320,57 @@ describe("LineageScreen", () => {
     expect(screen.getByLabelText("Lineage graph")).toBeInTheDocument();
   });
 
+  describe("exposures", () => {
+    const AGENT = lineageNode({ unique_id: "exposure.s.sherpa_agent", name: "sherpa_agent", layer: "exposure", domain: null, materialization: null });
+    const WITH_EXPOSURE = lineageGraph({
+      build: { state: "ok", node_count: 3, started_at: null },
+      layers_available: ["staging", "marts", "exposure"],
+      nodes: [...GRAPH.nodes, AGENT],
+      edges: [{ source: B, target: AGENT.unique_id }],
+    });
+    // The server keeps the nodes of the layers asked for (all of them without a filter) and the edges between them.
+    const filtered = (path: string, options: Options) => {
+      const asked = options.params.query?.layers?.split(",");
+      const nodes = WITH_EXPOSURE.nodes.filter((n) => asked === undefined || asked.includes(n.layer));
+      const kept = new Set(nodes.map((n) => n.unique_id));
+      const edges = WITH_EXPOSURE.edges.filter((e) => kept.has(e.source) && kept.has(e.target));
+      return path === LINEAGE ? Promise.resolve(ok({ ...WITH_EXPOSURE, nodes, edges })) : Promise.resolve(ok(DETAILS("")));
+    };
+    const graphNode = (name: string) => within(screen.getByLabelText("Lineage graph")).queryByRole("button", { name: new RegExp(`^${name}\b`) });
+
+    it("the default view has no exposure and the layer filter shows the layer unchecked", async () => {
+      get.mockImplementation(filtered);
+
+      mount("/lineage");
+
+      expect(await screen.findByText("2 nodes")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "exposure" })).not.toBeChecked();
+      expect(graphNode("sherpa_agent")).toBeNull();
+    });
+
+    it("switching the layer on asks for the exposures and shows them", async () => {
+      get.mockImplementation(filtered);
+      mount("/lineage");
+      await screen.findByText("2 nodes");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "exposure" }));
+
+      expect(await screen.findByText("3 nodes")).toBeInTheDocument();
+      expect(await nodeButton("sherpa_agent")).toBeVisible();
+      expect(lineageCalls().at(-1)?.layers?.split(",")).toContain("exposure");
+      expect(screen.getByRole("checkbox", { name: "exposure" })).toBeChecked();
+    });
+
+    it("a table-path view follows the same default", async () => {
+      get.mockImplementation(filtered);
+
+      mount("/lineage?select=%2Bb%2B");
+
+      expect(await screen.findByText("2 nodes")).toBeInTheDocument();
+      expect(graphNode("sherpa_agent")).toBeNull();
+    });
+  });
+
   it("a node= that the graph holds stays", async () => {
     get.mockImplementation(answerNodes());
 
@@ -310,7 +383,7 @@ describe("LineageScreen", () => {
   it("a load error hides the graph instead of showing a stale one", async () => {
     get.mockImplementation((_, options) =>
       Promise.resolve(
-        options.params.query?.layers === undefined ? ok(GRAPH) : apiFailure("internal", "boom", 500),
+        options.params.query?.layers === "staging" ? apiFailure("internal", "boom", 500) : ok(GRAPH),
       ),
     );
     mount("/lineage");
@@ -322,6 +395,118 @@ describe("LineageScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("boom");
     expect(screen.queryByText(/\d+ nodes/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Lineage graph")).not.toBeInTheDocument();
+  });
+
+  describe("panes", () => {
+    const open = async (path = "/lineage") => {
+      get.mockImplementation(answerNodes());
+      mount(path);
+      await screen.findByText("2 nodes");
+      await settleLayout();
+    };
+
+    it("the graph and the node panel are two panes with a named handle, the panel 260 px high", async () => {
+      await open();
+
+      expect(px()).toBeCloseTo(1200 - 260, 0);
+    });
+
+    it("the graph keeps 240 px and the panel folds to a 40 px title bar", async () => {
+      await open();
+
+      expect(px("aria-valuemin")).toBeCloseTo(240, 0);
+      expect(px("aria-valuemax")).toBeCloseTo(1200 - 40, 0);
+    });
+
+    it("the panel's button folds it to its title bar and opens it again", async () => {
+      await open();
+      expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
+
+      await userEvent.click(screen.getByRole("button", { name: "Collapse the node panel" }));
+
+      expect(screen.getByRole("button", { name: "Open the node panel" })).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByText(EMPTY_STATE)).not.toBeInTheDocument();
+      expect(px()).toBeCloseTo(1200 - 40, 0);
+      await userEvent.click(screen.getByRole("button", { name: "Open the node panel" }));
+      expect(within(panel()).getByText(EMPTY_STATE)).toBeVisible();
+      expect(px()).toBeCloseTo(1200 - 260, 0);
+    });
+
+    it("selecting a node opens a folded panel", async () => {
+      await open();
+      await userEvent.click(screen.getByRole("button", { name: "Collapse the node panel" }));
+
+      fireEvent.click(await nodeButton("a"));
+
+      expect(await screen.findByText("Model a.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("the arrow keys resize the panes and the size is remembered", async () => {
+      await open();
+      const before = valueNow();
+      const panelBefore = 1200 - px();
+
+      handle().focus();
+      await userEvent.keyboard("{ArrowUp}");
+
+      expect(valueNow()).toBeLessThan(before);
+      expect((storedLayout() as { sizes: Record<string, number> }).sizes.panel).toBeGreaterThan(panelBefore);
+    });
+
+    it("restores a remembered panel size", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 400 }, collapsed: {} }));
+      await open();
+      expect(px()).toBeCloseTo(1200 - 400, 0);
+    });
+
+    it("a stored panel size under its minimum is raised to 120 px", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 5 }, collapsed: {} }));
+      await open();
+      expect(px()).toBeCloseTo(1200 - 120, 0);
+    });
+
+    it("a stored panel size over the 2000 px maximum is lowered to what leaves the graph 240 px", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 5000 }, collapsed: {} }));
+      await open();
+      expect(px()).toBeCloseTo(240, 0);
+    });
+
+    it("corrupt storage means the default size", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      localStorage.setItem(LAYOUT_KEY, '{"sizes":');
+      await open();
+      expect(px()).toBeCloseTo(1200 - 260, 0);
+      expect(warn).toHaveBeenCalled();
+    });
+
+    it("a node= in the address opens a panel that was left folded", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 260 }, collapsed: { panel: true } }));
+
+      await open("/lineage?node=model.s.a");
+
+      expect(await screen.findByText("Model a.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Collapse the node panel" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("a panel the user folded stays folded when the column focus changes", async () => {
+      get.mockImplementation(answerScene());
+      mount(`/lineage?node=${B}`);
+      await screen.findByText("3 nodes");
+      await userEvent.click(await screen.findByRole("button", { name: "Collapse the node panel" }));
+      await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
+
+      fireEvent.click(await within(await screen.findByLabelText("Lineage graph")).findByRole("button", { name: /^net_revenue\b/ }));
+
+      await waitFor(() => expect(screen.getByLabelText("location")).toHaveTextContent(`node=${B}&column=net_revenue`));
+      expect(screen.getByRole("button", { name: "Open the node panel" })).toHaveAttribute("aria-expanded", "false");
+    });
+
+    it("a folded panel stays folded after a reload", async () => {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ sizes: { panel: 260 }, collapsed: { panel: true } }));
+      await open();
+      expect(screen.getByRole("button", { name: "Open the node panel" })).toHaveAttribute("aria-expanded", "false");
+    });
   });
 
   describe("column lineage", () => {
@@ -399,7 +584,7 @@ describe("LineageScreen", () => {
       get.mockImplementation(answerScene());
       mount(`/lineage?node=${B}`);
       await screen.findByText("3 nodes");
-      await userEvent.click(await screen.findByRole("tab", { name: "Columns" }));
+      await userEvent.click(await screen.findByRole("tab", { name: /^Columns \(/ }));
 
       await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
 
@@ -540,7 +725,7 @@ describe("LineageScreen", () => {
       const client = createTestQueryClient();
       mount(`/lineage?node=${B}`, undefined, client);
       await screen.findByText("3 nodes");
-      await userEvent.click(await screen.findByRole("tab", { name: "Columns" }));
+      await userEvent.click(await screen.findByRole("tab", { name: /^Columns \(/ }));
       await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
       await row("net_revenue");
 

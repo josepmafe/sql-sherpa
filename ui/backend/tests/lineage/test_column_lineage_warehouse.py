@@ -149,3 +149,20 @@ def test_a_trace_passes_through_an_ephemeral_model(graph_and_lineage: tuple[Mani
     assert {(ref.unique_id, ref.column) for ref in focus.upstream if ref.unique_id.startswith("source.")} == {
         (f"{SHOP}.payments", "method")
     }
+
+
+def test_a_column_type_is_the_catalogs_and_an_ephemeral_model_has_none(
+    graph_and_lineage: tuple[ManifestGraph, ColumnLineage],
+) -> None:
+    _, lineage = graph_and_lineage
+    ephemeral = "model.sherpa.int_orders__status_pivoted"
+
+    types = {
+        "fct_orders.order_id": lineage.data_type(ColumnRef(unique_id="model.sherpa.fct_orders", column="order_id")),
+        "orders.id": lineage.data_type(ColumnRef(unique_id=f"{SHOP}.orders", column="id")),
+    }
+    ephemeral_types = {lineage.data_type(info.ref) for info in lineage.columns_of(ephemeral)}
+
+    assert types == {"fct_orders.order_id": "bigint", "orders.id": "bigint"}
+    assert lineage.columns_of(ephemeral)
+    assert ephemeral_types == {None}
