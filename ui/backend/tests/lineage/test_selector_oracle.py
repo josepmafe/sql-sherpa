@@ -86,17 +86,16 @@ def test_the_selector_of_a_test_selects_it_in_dbt_ls(parsed: Manifest, dbt_args:
     test_ids = [uid for uid, raw in manifest["nodes"].items() if raw["resource_type"] == "test"]
     tests = [test for uid in [*test_ids, *manifest["unit_tests"]] if (test := graph.test(uid)) is not None]
     sample = next(test for test in tests if _is_sample(test, kind))
-    resource_type = "unit_test" if sample.kind == "unit" else "test"
 
     result = dbtRunner(manifest=parsed).invoke(
         [
-            *["ls", *dbt_args, "--select", sample.name, "--resource-type", resource_type],
+            *["ls", *dbt_args, "--select", sample.name],
             *["--output", "json", "--output-keys", "unique_id"],
         ]
     )
     assert result.success, f"dbt ls failed: {result.exception}"
 
-    assert sample.unique_id in {json.loads(line)["unique_id"] for line in cast("list[str]", result.result)}
+    assert {json.loads(line)["unique_id"] for line in cast("list[str]", result.result)} == {sample.unique_id}
 
 
 def _is_sample(test: NodeTest, kind: str) -> bool:
