@@ -140,7 +140,7 @@ def _catalog_types(catalog: dict[str, Any], graph: ManifestGraph) -> dict[Column
             for unique_id, raw in catalog.get(section, {}).items()
             if unique_id in graph.nodes
             for column in raw.get("columns", {}).values()
-            if column.get("type")
+            if column["type"]
         }
     except (KeyError, TypeError, AttributeError) as exc:
         raise CatalogUnavailable(f"unexpected layout in {CATALOG_FILE}: {_MISSING_HINT}") from exc

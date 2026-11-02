@@ -57,7 +57,7 @@ class _FakeBuilder:
 
 
 def _node(*columns: str) -> dict[str, Any]:
-    return {"columns": {name: {"name": name, "index": i} for i, name in enumerate(columns, start=1)}}
+    return {"columns": {name: {"name": name, "index": i, "type": "text"} for i, name in enumerate(columns, start=1)}}
 
 
 def _catalog(**nodes: dict[str, Any]) -> dict[str, Any]:
@@ -133,7 +133,14 @@ class TestColumnLineageLoader:
     def test_reads_catalog_columns_in_index_order_and_the_sql_of_models_and_snapshots_only(
         self, tmp_path: Path, loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]
     ) -> None:
-        raw = _catalog(fct_orders={"columns": {"a": {"name": "a", "index": 2}, "b": {"name": "b", "index": 1}}})
+        raw = _catalog(
+            fct_orders={
+                "columns": {
+                    "a": {"name": "a", "index": 2, "type": "text"},
+                    "b": {"name": "b", "index": 1, "type": "text"},
+                }
+            }
+        )
         raw["sources"] = {"source.p.shop.orders": _node("id")}
         (tmp_path / "catalog.json").write_text(json.dumps(raw), encoding="utf-8")
 
@@ -299,6 +306,15 @@ class TestColumnLineageLoader:
         self, tmp_path: Path, loader: ColumnLineageLoader
     ) -> None:
         (tmp_path / "catalog.json").write_text("[1, 2]", encoding="utf-8")
+
+        with pytest.raises(CatalogUnavailable, match=r"catalog.json"):
+            loader.load()
+
+    def test_a_catalog_column_without_a_type_raises_when_it_never_built_one(
+        self, tmp_path: Path, loader: ColumnLineageLoader
+    ) -> None:
+        raw = _catalog(fct_orders={"columns": {"a": {"name": "a", "index": 1}}})
+        (tmp_path / "catalog.json").write_text(json.dumps(raw), encoding="utf-8")
 
         with pytest.raises(CatalogUnavailable, match=r"catalog.json"):
             loader.load()
