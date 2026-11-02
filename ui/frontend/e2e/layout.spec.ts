@@ -120,3 +120,24 @@ async function lineageWidths(page: Page): Promise<Record<"canvasRight" | "panelR
     ...root,
   };
 }
+
+test.describe("the navigation rail at 1440 x 900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("stays collapsed after a reload, and hovering it opens the labels without moving the editor", async ({ page }) => {
+    await page.getByRole("button", { name: "Collapse the navigation" }).click();
+    await page.reload();
+    const rail = page.getByRole("navigation", { name: "Main" });
+    const link = page.getByRole("link", { name: "Lineage" });
+    await expect(page.getByRole("button", { name: "Open the navigation" })).toBeVisible();
+    await expect(link).not.toHaveText("Lineage");
+    const editorBefore = await page.locator(".cm-editor").boundingBox();
+    const railBefore = await rail.boundingBox();
+
+    await rail.hover();
+
+    await expect(link).toHaveText("Lineage");
+    expect((await rail.boundingBox())!.width).toBeGreaterThan(railBefore!.width);
+    expect((await page.locator(".cm-editor").boundingBox())!.x).toBe(editorBefore!.x);
+  });
+});
