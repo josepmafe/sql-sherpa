@@ -21,8 +21,9 @@ import { BAND_LABEL_TYPE, BandLabel, bandLabelNodes } from "./BandLabels";
 import { type FocusViewResult, nodeRows } from "./columnFocus";
 import { GraphNode, type GraphNodeData, NODE_HANDLE } from "./GraphNode";
 import { edgeAppearance, edgeId, FOCUS_EDGE, type Related, relatedNodes } from "./highlight";
-import { type BandNode, type LayoutEdge, NODE_WIDTH, nodeHeight } from "./layout";
+import { type BandNode, edgeKey, type LayoutEdge, NODE_WIDTH, nodeHeight, type Point } from "./layout";
 import { useKeepSelectedInView } from "./reveal";
+import { ROUTED_EDGE, RoutedEdge } from "./RoutedEdge";
 import { useGraphLayout } from "./useGraphLayout";
 
 type ApiNode = components["schemas"]["LineageNode"];
@@ -33,6 +34,8 @@ const MINIMAP_ABOVE_NODES = 60;
 const FIT_MAX_ZOOM = 1;
 const GRAPH_NODE = "graph";
 const NODE_TYPES = { [GRAPH_NODE]: GraphNode, [BAND_LABEL_TYPE]: BandLabel };
+const EDGE_TYPES = { [ROUTED_EDGE]: RoutedEdge };
+const NO_WAYPOINTS: Point[] = [];
 // The width stays in screen pixels at a whole-project zoom, where 1.5 px would shrink to a hairline.
 const FIXED_WIDTH = { vectorEffect: "non-scaling-stroke" } as const;
 const LEGEND = "Column lineage follows the select list: columns used only in joins, filters or group by are not linked";
@@ -110,7 +113,7 @@ function Canvas({
     () => new Map([...rows].map(([id, { rows: shown, more }]) => [id, nodeHeight(shown.length + (more > 0 ? 1 : 0))])),
     [rows],
   );
-  const { positions, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
+  const { positions, routes, state } = useGraphLayout(layoutNodes, layoutEdges, heights);
   const { fitView } = useReactFlow();
   const measured = useStore(useMemo(() => measuredIn(layoutNodes), [layoutNodes]));
   const related = useMemo(() => relatedOf(edges, selected, focus), [edges, selected, focus]);
@@ -170,6 +173,8 @@ function Canvas({
         const look = edgeAppearance(related, edgeId(edge));
         return {
           id: edgeId(edge),
+          type: ROUTED_EDGE,
+          data: { waypoints: routes?.get(edgeKey(edge.source, edge.target)) ?? NO_WAYPOINTS },
           source: edge.source,
           sourceHandle: NODE_HANDLE,
           target: edge.target,
@@ -180,6 +185,8 @@ function Canvas({
       }),
       ...(focus?.edges ?? []).map(({ parent, child }) => ({
         id: `col:${parent.node}.${parent.column}->${child.node}.${child.column}`,
+        type: ROUTED_EDGE,
+        data: { waypoints: routes?.get(edgeKey(parent.node, child.node)) ?? NO_WAYPOINTS },
         source: parent.node,
         sourceHandle: `col:${parent.column}`,
         target: child.node,
@@ -188,7 +195,7 @@ function Canvas({
         style: { ...FOCUS_EDGE, ...FIXED_WIDTH },
       })),
     ],
-    [edges, related, focus],
+    [edges, related, focus, routes],
   );
   const columnsShown = [...rows.values()].some((shown) => shown.rows.length > 0);
 
@@ -203,6 +210,7 @@ function Canvas({
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
         aria-label="Lineage graph"
         colorMode="system"
         nodesDraggable={false}

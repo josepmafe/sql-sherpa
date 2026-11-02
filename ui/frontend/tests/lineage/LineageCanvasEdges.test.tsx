@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { COLUMN_EDGES, COLUMN_FOCUS, COLUMN_NODES, CanvasHarness, FCT, rankInInputOrder, STG } from "./canvasHarness";
+import { COLUMN_EDGES, COLUMN_FOCUS, COLUMN_NODES, CanvasHarness, FCT, node, rankInInputOrder, STG } from "./canvasHarness";
 
 // React Flow draws no edge in jsdom without sizes; the handles an edge names are what the canvas decides, so the
 // edges it hands to React Flow are read here.
@@ -46,5 +46,21 @@ describe("LineageCanvas edge handles", () => {
     expect(edgesGiven.filter((edge) => edge.sourceHandle !== "node")).toMatchObject([
       { source: STG, sourceHandle: "col:amount", target: FCT, targetHandle: "col:net_revenue" },
     ]);
+  });
+
+  it("table and column edges are routed, and a column edge takes its table edge's waypoints", async () => {
+    const between = node("int_orders", { layer: "intermediate" });
+    const edges = [...COLUMN_EDGES, { source: STG, target: between.unique_id }, { source: between.unique_id, target: FCT }];
+    render(<CanvasHarness nodes={[...COLUMN_NODES, between]} edges={edges} initial={FCT} initialColumn="net_revenue" focusData={COLUMN_FOCUS} />);
+    await screen.findByRole("button", { name: /^net_revenue\b/ });
+
+    const skipping = edgesGiven.find((edge) => edge.id === `${STG}->${FCT}`)!;
+    const column = edgesGiven.find((edge) => edge.id.startsWith("col:"))!;
+    const adjacent = edgesGiven.find((edge) => edge.id === `${STG}->${between.unique_id}`)!;
+    expect([skipping.type, column.type, adjacent.type]).toEqual(["routed", "routed", "routed"]);
+    // The edge from staging to marts skips the intermediate column: one gap, left and right.
+    expect(skipping.data!.waypoints).toHaveLength(2);
+    expect(column.data!.waypoints).toEqual(skipping.data!.waypoints);
+    expect(adjacent.data!.waypoints).toEqual([]);
   });
 });
