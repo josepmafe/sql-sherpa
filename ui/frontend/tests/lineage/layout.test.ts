@@ -15,6 +15,7 @@ import {
   type Point,
   stackBands,
 } from "../../src/screens/lineage/layout";
+import { MIN_ZOOM } from "../../src/screens/lineage/LineageCanvas";
 import { type Curve, defaultBezier, layoutMetrics, type Rect } from "./layoutMetrics";
 
 const node = (id: string, layer: BandNode["layer"], sourceName?: string): BandNode => ({ id, layer, sourceName });
@@ -26,6 +27,7 @@ const SLOT_NODE_GAP = 12;
 const SLOT_SLOT_GAP = 8;
 const SLOT_HEIGHT = 2;
 const HANDLE_Y = NODE_HEIGHT / 2;
+const MAX_LEFTOVER_HOLE = 100;
 
 // What the canvas does: place once, then stack for the heights.
 function layout(nodes: BandNode[], edges: LayoutEdge[], order: Map<string, number>, heights = NO_HEIGHTS) {
@@ -332,7 +334,8 @@ describe("expansion", () => {
 });
 
 describe("the project's whole graph", () => {
-  // Measured with the plain stack and React Flow's default curve on this fixture (UI spec §6.5).
+  // Measured with the plain stack and React Flow's default curve on this fixture, in the API's order, the order the app
+  // feeds ELK (UI spec §6.5). ELK's ranks depend on the input order, so these numbers are for that order only.
   const BASELINE = { crossings: 440, edgesBehindNodes: 52, edgeTravel: 40716, height: 2244 };
 
   it("measures the plain stack as the baseline", () => {
@@ -352,14 +355,29 @@ describe("the project's whole graph", () => {
     expect(metrics.edgesBehindNodes).toBe(0);
     expect(metrics.crossings).toBeLessThanOrEqual(0.4 * BASELINE.crossings);
     expect(metrics.edgeTravel).toBeLessThanOrEqual(0.7 * BASELINE.edgeTravel);
+    expect(metrics.height).toBeLessThanOrEqual(1.1 * BASELINE.height);
   });
 
-  // KNOWN MISS, reported on task 8: 2,488 px is 1.109 x the baseline on this fixture (the plan's 1.03 was measured on
-  // another ELK input order). `it.fails` turns red the day the height fits, so the miss cannot go unnoticed.
-  it.fails("keeps the height within 1.10 x the baseline", () => {
+  it("closes the hole under a table nothing reads, instead of leaving it where it began", () => {
     const { positions } = layout(fixtureNodes(), fixtureEdges(), fixtureOrder);
 
-    expect(layoutMetrics(rectsOf(positions, NO_HEIGHTS), []).height).toBeLessThanOrEqual(1.1 * BASELINE.height);
+    // shipments and its staging model feed nothing, so nothing pulls them: without the closing they sit 311 px below
+    // categories. The run slides up until a neighbouring gap or node stops it.
+    for (const [lone, other] of [
+      ["source.sherpa.shop.shipments", "source.sherpa.shop.categories"],
+      ["model.sherpa.stg_shop__shipments", "model.sherpa.stg_shop__categories"],
+    ] as const) {
+      expect(positions.get(lone)!.y - positions.get(other)!.y).toBeLessThanOrEqual(NODE_HEIGHT + ROW_GAP + MAX_LEFTOVER_HOLE);
+    }
+  });
+
+  it("fits the whole project in the smallest canvas above the minimum zoom", () => {
+    const { positions } = layout(fixtureNodes(), fixtureEdges(), fixtureOrder);
+
+    const height = layoutMetrics(rectsOf(positions, NO_HEIGHTS), []).height;
+
+    // UI spec §6.5: the canvas is at least 240 px tall; the fit keeps a 10% margin on each side and a 40 px header row.
+    expect((0.8 * 240) / (height + 40)).toBeGreaterThan(MIN_ZOOM);
   });
 
   it("still draws no edge behind a node with every node expanded to 10 rows", () => {

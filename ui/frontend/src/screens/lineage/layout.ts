@@ -12,6 +12,9 @@ const SLOT_SLOT_GAP = 8;
 // Placement: sweeps that reorder and fit the columns, then sweeps that only straighten the long edges.
 const SWEEPS = 12;
 const STRAIGHTEN_SWEEPS = 8;
+// Closing holes: at most this many passes, and centres within this distance are one straight run.
+const COMPACT_PASSES = 20;
+const SAME_CENTRE = 1e-6;
 // One column row of an expanded node (UI spec §6.5).
 export const COLUMN_ROW_HEIGHT = 28;
 
@@ -178,6 +181,7 @@ class BandPlacer {
         this.sweepColumn(this.columns[index]!, sweep < SWEEPS);
       }
     }
+    this.closeHoles();
     return this.placement();
   }
 
@@ -275,6 +279,38 @@ class BandPlacer {
     });
   }
 
+  // The fit leaves a hole where a straight run of items (a node, its gaps and the node they lead to, all at one y) has
+  // nothing to pull it: a table nothing reads stays where it began, below the others that moved up. The run slides up
+  // as far as every column it crosses allows, so the order and the spacing rules hold.
+  private closeHoles(): void {
+    for (let pass = 0; pass < COMPACT_PASSES; pass++) {
+      let moved = false;
+      for (const column of this.columns) {
+        for (const [index, item] of column.entries()) {
+          const above = column[index - 1];
+          if (above === undefined || item.centre - item.height / 2 - (above.centre + above.height / 2) - spacing(above, item) <= SAME_CENTRE) continue;
+          moved = this.slideUp(straightRun(item)) || moved;
+        }
+      }
+      if (!moved) return;
+    }
+  }
+
+  private slideUp(run: Set<Item>): boolean {
+    // A run that other items link to would stretch their edges.
+    if ([...run].some((item) => item.links.some((other) => !run.has(other)))) return false;
+    let slack = Infinity;
+    for (const item of run) {
+      const column = this.columns[item.column]!;
+      const above = column[column.indexOf(item) - 1];
+      if (above === undefined || run.has(above)) continue;
+      slack = Math.min(slack, item.centre - item.height / 2 - (above.centre + above.height / 2) - spacing(above, item));
+    }
+    if (!Number.isFinite(slack) || slack <= SAME_CENTRE) return false;
+    for (const item of run) item.centre -= slack;
+    return true;
+  }
+
   private placement(): BandPlacement {
     const items = this.columns.flat();
     const smallest = Math.min(...items.map((item) => item.centre - item.height / 2));
@@ -303,6 +339,20 @@ function columnLayout(nodes: BandNode[], edges: LayoutEdge[]): { xs: number[]; c
     bandStart += (last + 1) * NODE_WIDTH + last * SUB_COLUMN_GAP + BAND_GAP;
   }
   return { xs, columnOf };
+}
+
+// The item and, along its links, every item at the same y.
+function straightRun(start: Item): Set<Item> {
+  const run = new Set([start]);
+  const queue = [start];
+  for (const item of queue) {
+    for (const other of item.links) {
+      if (run.has(other) || Math.abs(other.centre - item.centre) > SAME_CENTRE) continue;
+      run.add(other);
+      queue.push(other);
+    }
+  }
+  return run;
 }
 
 // The space between two neighbours in a column.
