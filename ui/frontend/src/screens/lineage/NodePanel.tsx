@@ -31,7 +31,7 @@ import { useClipboard } from "@mantine/hooks";
 import { type ComponentType, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { useLineageNode } from "../../api/queries";
+import { useLineageNode, useTestDetails } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { CollapseToggle, usePaneCollapse } from "../../components/panes";
 import { ReadOnlySql } from "../../components/SqlEditor";
@@ -43,6 +43,7 @@ import { pathSelector } from "./selectors";
 type ColumnDetail = components["schemas"]["ColumnDetail"];
 type NodeDetails = components["schemas"]["NodeDetails"];
 type TestInfo = components["schemas"]["TestInfo"];
+type TestDetails = components["schemas"]["TestDetails"];
 type TestOutcome = components["schemas"]["TestOutcome"];
 
 const NODE_NOT_FOUND = "node_not_found";
@@ -371,7 +372,7 @@ function columnNotes({ counts, notes }: ColumnDetail): string {
   return [counts === null ? null : `counts ${counts.split(".").at(-1)}`, ...notes].filter((note) => note !== null).join("; ");
 }
 
-function SqlTabs({ d }: { d: NodeDetails }) {
+function SqlTabs({ d }: { d: Pick<NodeDetails, "raw_sql" | "compiled_sql" | "sql_note"> }) {
   return (
     <Stack gap="xs">
       {d.sql_note !== null && (
@@ -415,17 +416,72 @@ function TestList({ tests }: { tests: TestInfo[] }) {
               {outcome} ({group.length})
             </Title>
             {group.map((test) => (
-              <Text key={test.name} size="xs">
-                <span data-testid="test-name">{test.name}</span>
-                <Text component="span" size="xs" c="dimmed">
-                  {" "}
-                  {[test.kind, test.column, test.severity === "warn" ? "warn" : null].filter(Boolean).join(" · ")}
-                </Text>
-              </Text>
+              <TestRow key={test.unique_id} test={test} />
             ))}
           </Box>
         );
       })}
     </>
+  );
+}
+
+// A test row expands to where the test is written and what it checks; the request waits for the first expansion.
+function TestRow({ test }: { test: TestInfo }) {
+  const [expanded, setExpanded] = useState(false);
+  const panelId = `test-${test.unique_id}`;
+  return (
+    <Box>
+      <Text size="xs">
+        <UnstyledButton
+          aria-expanded={expanded}
+          aria-controls={panelId}
+          onClick={() => setExpanded((open) => !open)}
+          style={{ font: "inherit" }}
+        >
+          <span data-testid="test-name">{test.name}</span>
+        </UnstyledButton>
+        <Text component="span" size="xs" c="dimmed">
+          {" "}
+          {[test.kind, test.column, test.severity === "warn" ? "warn" : null].filter(Boolean).join(" · ")}
+        </Text>
+      </Text>
+      <div id={panelId}>{expanded && <TestDefinition uniqueId={test.unique_id} />}</div>
+    </Box>
+  );
+}
+
+function TestDefinition({ uniqueId }: { uniqueId: string }) {
+  const test = useTestDetails(uniqueId);
+  if (test.isError) {
+    return <LoadError title="Could not load the test" error={test.error} onRetry={() => void test.refetch()} />;
+  }
+  if (!test.data) return <Loader size="sm" />;
+
+  return <TestBody t={test.data} />;
+}
+
+function TestBody({ t }: { t: TestDetails }) {
+  const clipboard = useClipboard();
+  return (
+    <Stack gap="xs" my="xs">
+      <Text size="xs">
+        <b>File:</b> <Code>{t.file_path}</Code>
+      </Text>
+      <Group gap="xs">
+        <Button size="xs" variant="default" onClick={() => clipboard.copy(t.selector)}>
+          {clipboard.copied ? "Copied" : "Copy dbt selector"}
+        </Button>
+      </Group>
+      {t.raw_sql === null && t.compiled_sql !== null ? (
+        <ReadOnlySql value={t.compiled_sql} label="Compiled SQL" />
+      ) : (
+        <SqlTabs d={t} />
+      )}
+      {t.definition !== null && (
+        <Code block aria-label="Definition">
+          {t.definition}
+        </Code>
+      )}
+    </Stack>
   );
 }

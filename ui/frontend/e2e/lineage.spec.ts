@@ -762,3 +762,21 @@ test("a failing test turns its node red and a warning stays out of Failing only"
     ).toBe("0");
   }
 });
+
+test("the tests of dim_date expand to their SQL and their definition", async ({ page }) => {
+  await page.goto("/lineage");
+  await graphNode(page, "dim_date").click();
+  const panel = page.getByRole("complementary", { name: "Node details" });
+  await panel.getByRole("tab", { name: /^Tests/ }).click();
+
+  await panel.getByRole("button", { name: "assert_dim_date_black_friday_weeks" }).click();
+
+  const singular = panel.getByRole("tabpanel", { name: /^Tests/ });
+  await expect(singular.getByRole("tab", { name: "Raw SQL" })).toBeVisible();
+  await expect(singular.locator(".cm-content").first()).toContainText("select");
+  await expect(singular.getByText("tests/singular/assert_dim_date_black_friday_weeks.sql")).toBeVisible();
+
+  await panel.getByRole("button", { name: /^unique_dim_date_/ }).first().click();
+
+  await expect(panel.getByLabel("Definition").first()).toContainText('"name": "unique"');
+});

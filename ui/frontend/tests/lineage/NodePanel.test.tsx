@@ -3,14 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodePanel } from "../../src/screens/lineage/NodePanel";
-import { columnDetail, nodeDetails } from "../fixtures/api";
+import { apiFailure, columnDetail, nodeDetails, ok, testDetails } from "../fixtures/api";
 import { Pane, PaneGroup } from "../../src/components/panes";
 import { stubPaneLayout } from "../fixtures/panes";
 import { renderWithProviders } from "../fixtures/render";
 
 const useLineageNode = vi.fn();
-vi.mock("../../src/api/queries", () => ({
+vi.mock("../../src/api/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/api/queries")>()),
   useLineageNode: (id: string | undefined) => useLineageNode(id),
+}));
+const get = vi.fn();
+vi.mock("../../src/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/api/client")>()),
+  api: { GET: (...args: unknown[]) => get(...args) },
 }));
 
 const DETAILS = nodeDetails({
@@ -70,6 +76,7 @@ const openTab = (name: string) => userEvent.click(screen.getByRole("tab", { name
 describe("NodePanel", () => {
   beforeEach(() => {
     useLineageNode.mockReset().mockReturnValue({ data: DETAILS });
+    get.mockReset();
     localStorage.clear();
     stubPaneLayout();
   });
@@ -233,6 +240,137 @@ describe("NodePanel", () => {
     const tests = screen.getAllByTestId("test-name").map((name) => name.textContent);
     expect(groups).toEqual(["failed (1)", "warned (1)", "passed (1)"]);
     expect(tests).toEqual(["assert_totals", "recent_orders", "unique_order_id"]);
+  });
+
+  describe("a test row", () => {
+    const row = (name: string) => screen.getByRole("button", { name });
+    const viewer = () => screen.getByRole("tabpanel", { name: "Tests (3)" }).querySelector(".cm-content");
+    const testCalls = () => get.mock.calls.filter(([path]) => path === "/api/lineage/tests/{unique_id}");
+
+    async function openTests() {
+      mount();
+      await openTab("Tests (3)");
+    }
+
+    it("is a collapsed button that asks for nothing until it is expanded", async () => {
+      await openTests();
+
+      expect(row("assert_totals")).toHaveAttribute("aria-expanded", "false");
+      expect(testCalls()).toHaveLength(0);
+    });
+
+    it("a singular test shows its raw and compiled SQL, its file and the dbt selector to copy", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(
+        ok(
+          testDetails({
+            raw_sql: "select * from {{ ref('fct_orders') }}",
+            compiled_sql: "select * from marts.fct_orders",
+            file_path: "tests/singular/assert_totals.sql",
+            selector: "assert_totals",
+          }),
+        ),
+      );
+      await openTests();
+
+      await user.click(row("assert_totals"));
+
+      expect(row("assert_totals")).toHaveAttribute("aria-expanded", "true");
+      expect(await screen.findByRole("tab", { name: "Raw SQL" })).toHaveAttribute("aria-selected", "true");
+      expect(viewer()).toHaveTextContent("select * from {{ ref('fct_orders') }}");
+      expect(screen.getByRole("tab", { name: "Compiled SQL" })).toBeVisible();
+      expect(screen.getByText("tests/singular/assert_totals.sql")).toBeVisible();
+      expect(testCalls()).toEqual([
+        ["/api/lineage/tests/{unique_id}", { params: { path: { unique_id: "test.sherpa.assert_totals" } } }],
+      ]);
+      await user.click(screen.getByRole("button", { name: "Copy dbt selector" }));
+      expect(await navigator.clipboard.readText()).toBe("assert_totals");
+    });
+
+    it("a generic test shows its compiled SQL and its definition, not a raw SQL tab", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(
+        ok(
+          testDetails({
+            unique_id: "test.sherpa.unique_order_id",
+            name: "unique_order_id",
+            kind: "generic",
+            compiled_sql: "select order_id from marts.fct_orders group by 1 having count(*) > 1",
+            definition: '{ "name": "unique", "arguments": {} }',
+          }),
+        ),
+      );
+      await openTests();
+
+      await user.click(row("unique_order_id"));
+
+      expect(await screen.findByLabelText("Definition")).toHaveTextContent('"name": "unique"');
+      expect(viewer()).toHaveTextContent("having count(*) > 1");
+      expect(screen.queryByRole("tab", { name: "Raw SQL" })).toBeNull();
+    });
+
+    it("a unit test shows what it gives and expects, and no SQL", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(
+        ok(
+          testDetails({
+            name: "recent_orders",
+            kind: "generic",
+            definition: '{ "given": [{ "rows": [{ "amount": 5 }] }], "expect": { "rows": [{ "revenue": 5 }] } }',
+          }),
+        ),
+      );
+      await openTests();
+
+      await user.click(row("recent_orders"));
+
+      const definition = await screen.findByLabelText("Definition");
+      expect(definition).toHaveTextContent('"given"');
+      expect(definition).toHaveTextContent('"revenue": 5');
+      expect(viewer()).toBeNull();
+      expect(screen.queryByRole("note")).toBeNull();
+    });
+
+    it("says why a compiled test has no SQL to show", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(ok(testDetails({ sql_note: "the compiled SQL is not in the dbt target" })));
+      await openTests();
+
+      await user.click(row("assert_totals"));
+
+      expect(await screen.findByRole("note")).toHaveTextContent("the compiled SQL is not in the dbt target");
+    });
+
+    it("collapsing and expanding again asks once", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValue(ok(testDetails({ raw_sql: "select 1" })));
+      await openTests();
+
+      await user.click(row("assert_totals"));
+      await screen.findByRole("tab", { name: "Raw SQL" });
+      await user.click(row("assert_totals"));
+      expect(screen.queryByRole("tab", { name: "Raw SQL" })).toBeNull();
+      await user.click(row("assert_totals"));
+
+      expect(await screen.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
+      expect(testCalls()).toHaveLength(1);
+    });
+
+    it("a failed request shows the error with a retry that asks again", async () => {
+      const user = userEvent.setup();
+      get
+        .mockResolvedValueOnce(apiFailure("test_not_found", "no test with id 'test.sherpa.assert_totals'", 404))
+        .mockResolvedValueOnce(ok(testDetails({ raw_sql: "select 1" })));
+      await openTests();
+
+      await user.click(row("assert_totals"));
+      expect(await screen.findByText("Could not load the test")).toBeVisible();
+      expect(screen.getByText("test_not_found")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+
+      expect(await screen.findByRole("tab", { name: "Raw SQL" })).toBeVisible();
+      expect(testCalls()).toHaveLength(2);
+    });
   });
 
   it("the SQL tab shows the raw SQL, with the compiled SQL beside it", async () => {
