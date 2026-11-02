@@ -501,7 +501,7 @@ describe("LineageScreen", () => {
       get.mockImplementation(answerScene());
       mount(`/lineage?node=${B}`);
       await screen.findByText("3 nodes");
-      await userEvent.click(await screen.findByRole("tab", { name: "Columns" }));
+      await userEvent.click(await screen.findByRole("tab", { name: /^Columns \(/ }));
 
       await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
 
@@ -642,7 +642,7 @@ describe("LineageScreen", () => {
       const client = createTestQueryClient();
       mount(`/lineage?node=${B}`, undefined, client);
       await screen.findByText("3 nodes");
-      await userEvent.click(await screen.findByRole("tab", { name: "Columns" }));
+      await userEvent.click(await screen.findByRole("tab", { name: /^Columns \(/ }));
       await userEvent.click(await screen.findByRole("button", { name: "net_revenue" }));
       await row("net_revenue");
 

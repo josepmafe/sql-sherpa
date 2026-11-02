@@ -15,7 +15,9 @@ import {
   Tabs,
   Text,
   Title,
+  Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
@@ -55,6 +57,9 @@ const OVERVIEW = "overview";
 const COLUMNS = "columns";
 const TESTS = "tests";
 const SQL = "sql";
+const NO_COLUMNS = "This node has no columns.";
+const NO_TESTS = "No test is defined on this node.";
+const NO_SQL = "Sources, seeds and exposures have no SQL.";
 const RAW = "raw";
 const COMPILED = "compiled";
 
@@ -169,16 +174,27 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
   if (!node.data) return <Loader size="sm" />;
 
   const d = node.data;
+  // A tab with nothing to show says why instead of opening empty (UI spec §6.5). The chosen tab may be one this node
+  // does not have: it then reads as Overview.
+  const reasons: Record<string, string | undefined> = {
+    [COLUMNS]: d.columns.length === 0 ? NO_COLUMNS : undefined,
+    [TESTS]: d.tests.length === 0 ? NO_TESTS : undefined,
+    [SQL]: d.raw_sql === null && d.sql_note === null ? NO_SQL : undefined,
+  };
+  const effective = tab !== null && reasons[tab] === undefined ? tab : OVERVIEW;
+  const select = (next: string | null) => {
+    if (next === null || reasons[next] === undefined) onTab(next);
+  };
   return (
     <>
       <Title order={4}>{d.name}</Title>
       {column !== undefined && outside > 0 && <OutsideNote d={d} column={column} outside={outside} />}
-      <Tabs value={tab} onChange={onTab}>
+      <Tabs value={effective} onChange={select}>
         <Tabs.List>
           <Tabs.Tab value={OVERVIEW}>Overview</Tabs.Tab>
-          <Tabs.Tab value={COLUMNS}>Columns</Tabs.Tab>
-          <Tabs.Tab value={TESTS}>Tests</Tabs.Tab>
-          <Tabs.Tab value={SQL}>SQL</Tabs.Tab>
+          <PanelTab value={COLUMNS} label={d.columns.length === 0 ? "Columns" : `Columns (${d.columns.length})`} reason={reasons[COLUMNS]} />
+          <PanelTab value={TESTS} label={d.tests.length === 0 ? "Tests" : `Tests (${d.tests.length})`} reason={reasons[TESTS]} />
+          <PanelTab value={SQL} label="SQL" reason={reasons[SQL]} />
         </Tabs.List>
         <Tabs.Panel value={OVERVIEW} pt="xs">
           <Overview d={d} />
@@ -198,6 +214,28 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
           <SqlTabs d={d} />
         </Tabs.Panel>
       </Tabs>
+    </>
+  );
+}
+
+interface PanelTabProps {
+  value: string;
+  label: string;
+  reason: string | undefined;
+}
+
+// Disabled with aria-disabled, not the attribute, so the tab stays in the focus order and its reason can be reached.
+function PanelTab({ value, label, reason }: PanelTabProps) {
+  const why = `tab-why-${value}`;
+  if (reason === undefined) return <Tabs.Tab value={value}>{label}</Tabs.Tab>;
+  return (
+    <>
+      <Tooltip label={reason} events={{ hover: true, focus: true, touch: false }} openDelay={200}>
+        <Tabs.Tab value={value} aria-disabled="true" aria-describedby={why} style={{ opacity: 0.6, cursor: "not-allowed" }}>
+          {label}
+        </Tabs.Tab>
+      </Tooltip>
+      <VisuallyHidden id={why}>{reason}</VisuallyHidden>
     </>
   );
 }
@@ -279,13 +317,6 @@ interface ColumnsTableProps {
 }
 
 function ColumnsTable({ columns, focused, onFocusColumn }: ColumnsTableProps) {
-  if (columns.length === 0) {
-    return (
-      <Text size="xs" c="dimmed">
-        No documented columns.
-      </Text>
-    );
-  }
   return (
     <Table aria-label="Columns" withRowBorders verticalSpacing={4}>
       <Table.Thead>
@@ -354,13 +385,6 @@ function SqlTabs({ d }: { d: NodeDetails }) {
 }
 
 function TestList({ tests }: { tests: TestInfo[] }) {
-  if (tests.length === 0) {
-    return (
-      <Text size="xs" c="dimmed">
-        No tests.
-      </Text>
-    );
-  }
   return (
     <>
       {(Object.keys(OUTCOMES) as TestOutcome[]).map((outcome) => {

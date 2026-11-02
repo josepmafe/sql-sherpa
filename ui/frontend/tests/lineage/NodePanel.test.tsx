@@ -104,7 +104,7 @@ describe("NodePanel", () => {
   it("the Columns tab lists kind and resolution", async () => {
     mount();
 
-    await openTab("Columns");
+    await openTab("Columns (3)");
 
     const rows = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row");
     expect(rows[0]).toHaveTextContent("NameTypeKindResolutionNotes");
@@ -120,59 +120,91 @@ describe("NodePanel", () => {
     useLineageNode.mockReturnValue({ data: nodeDetails({ columns: DETAILS.columns, column_lineage_note: "Column lineage is unavailable: the compiled SQL is missing" }) });
     mount();
 
-    await openTab("Columns");
+    await openTab("Columns (3)");
 
     const note = screen.getByRole("note");
     expect(note).toHaveTextContent("Column lineage is unavailable: the compiled SQL is missing");
     expect(note.compareDocumentPosition(screen.getByRole("table", { name: "Columns" }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("the column lineage note shows too when the node has no columns", async () => {
-    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: [], column_lineage_note: "no catalog" }) });
-    mount();
-
-    await openTab("Columns");
-
-    expect(screen.getByRole("note")).toHaveTextContent("no catalog");
-    expect(screen.getByText("No documented columns.")).toBeVisible();
-  });
-
   it("the Columns tab has no note when the column lineage has nothing to say", async () => {
     useLineageNode.mockReturnValue({ data: nodeDetails({ columns: DETAILS.columns, column_lineage_note: null }) });
     mount();
 
-    await openTab("Columns");
+    await openTab("Columns (3)");
 
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
-  it("the Columns tab says so when the node has no columns", async () => {
-    useLineageNode.mockReturnValue({ data: nodeDetails({ columns: [] }) });
-    mount();
+  describe("tabs with nothing to show", () => {
+    it.each([
+      ["Columns", { columns: [] }, "This node has no columns."],
+      ["Tests", { tests: [] }, "No test is defined on this node."],
+      ["SQL", { raw_sql: null, compiled_sql: null, sql_note: null }, "Sources, seeds and exposures have no SQL."],
+    ])("the %s tab is disabled with its reason, and stays focusable", async (name, overrides, reason) => {
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, ...overrides }) });
+      mount();
 
-    await openTab("Columns");
+      const tab = screen.getByRole("tab", { name });
+      expect(tab).toHaveAttribute("aria-disabled", "true");
+      expect(tab).not.toBeDisabled();
+      expect(tab).toHaveAccessibleDescription(reason);
+      await userEvent.click(tab);
+      expect(tab).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      tab.focus();
+      await userEvent.keyboard("{Enter}");
+      expect(tab).toHaveAttribute("aria-selected", "false");
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    });
 
-    expect(screen.getByText("No documented columns.")).toBeVisible();
+    it("hovering a disabled tab shows its reason", async () => {
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, tests: [] }) });
+      mount();
+
+      await userEvent.hover(screen.getByRole("tab", { name: "Tests" }));
+
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("No test is defined on this node.");
+    });
+
+    it("tabs with content are named with their count and are not disabled", () => {
+      mount();
+
+      expect(screen.getByRole("tab", { name: "Columns (3)" })).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("tab", { name: "Tests (3)" })).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("tab", { name: "SQL" })).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("a node with only a SQL note keeps the SQL tab enabled", () => {
+      useLineageNode.mockReturnValue({
+        data: nodeDetails({ ...DETAILS, raw_sql: null, compiled_sql: null, sql_note: "The compiled file is missing." }),
+      });
+      mount();
+
+      expect(screen.getByRole("tab", { name: "SQL" })).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("selecting a node without tests while Tests is open shows Overview", async () => {
+      const { select } = mount();
+      await openTab("Tests (3)");
+      useLineageNode.mockReturnValue({ data: nodeDetails({ unique_id: "model.sherpa.stg_x", name: "stg_x", tests: [] }) });
+
+      select("model.sherpa.stg_x");
+
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Tests" })).toHaveAttribute("aria-disabled", "true");
+    });
   });
 
   it("failures are listed first in the Tests tab", async () => {
     mount();
 
-    await openTab("Tests");
+    await openTab("Tests (3)");
 
     const groups = screen.getAllByRole("heading", { level: 6 }).map((heading) => heading.textContent);
     const tests = screen.getAllByTestId("test-name").map((name) => name.textContent);
     expect(groups).toEqual(["failed (1)", "warned (1)", "passed (1)"]);
     expect(tests).toEqual(["assert_totals", "recent_orders", "unique_order_id"]);
-  });
-
-  it("the Tests tab says so when the node has no tests", async () => {
-    useLineageNode.mockReturnValue({ data: nodeDetails({ tests: [] }) });
-    mount();
-
-    await openTab("Tests");
-
-    expect(screen.getByText("No tests.")).toBeVisible();
   });
 
   it("the SQL tab shows the raw SQL, with the compiled SQL beside it", async () => {
@@ -201,7 +233,7 @@ describe("NodePanel", () => {
 
   it("the tab persists across node selections", async () => {
     const { select } = mount("model.sherpa.fct_orders");
-    await openTab("Columns");
+    await openTab("Columns (3)");
     useLineageNode.mockReturnValue({
       data: nodeDetails({
         unique_id: "model.sherpa.dim_customers",
@@ -212,7 +244,7 @@ describe("NodePanel", () => {
 
     select("model.sherpa.dim_customers");
 
-    expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Columns (1)" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("table", { name: "Columns" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "dim_customers" })).toBeInTheDocument();
   });
@@ -293,7 +325,7 @@ describe("NodePanel", () => {
     it("clicking a column in the Columns tab focuses it", async () => {
       const onFocusColumn = vi.fn();
       mount("model.sherpa.fct_orders", vi.fn(), { onFocusColumn });
-      await openTab("Columns");
+      await openTab("Columns (3)");
 
       await userEvent.click(screen.getByRole("button", { name: "total" }));
 
@@ -303,7 +335,7 @@ describe("NodePanel", () => {
     it("the focused column is marked in the Columns tab, which opens by itself", () => {
       mount("model.sherpa.fct_orders", vi.fn(), { column: "total" });
 
-      expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Columns (3)" })).toHaveAttribute("aria-selected", "true");
       const rows = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row");
       expect(rows[2]).toHaveAttribute("aria-current", "true");
       expect(rows[1]).not.toHaveAttribute("aria-current");
@@ -315,7 +347,7 @@ describe("NodePanel", () => {
 
       view.rerender(panel("model.sherpa.fct_orders", vi.fn(), { column: "total" }));
 
-      expect(screen.getByRole("tab", { name: "Columns" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Columns (3)" })).toHaveAttribute("aria-selected", "true");
     });
 
     it("Esc clears the column focus first and closes only when there is none", async () => {
@@ -351,7 +383,7 @@ describe("NodePanel", () => {
 
     it("a column's kind and resolution are an icon plus text", async () => {
       mount();
-      await openTab("Columns");
+      await openTab("Columns (3)");
 
       const total = within(screen.getByRole("table", { name: "Columns" })).getAllByRole("row")[2]!;
 
