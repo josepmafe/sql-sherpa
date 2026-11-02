@@ -400,6 +400,33 @@ class TestLineageServiceColumns:
         ]
         assert details.column_lineage_note is None
 
+    def test_column_type_comes_from_the_catalog_then_the_yaml(
+        self,
+        manifest: dict[str, Any],
+        builds: BuildStatusReader,
+        node_sql: NodeSql,
+        columns_loader: ColumnLineageLoader,
+    ) -> None:
+        fct, dim, enriched = "model.p.fct_orders", "model.p.dim_customers", "model.p.int_orders__enriched"
+        manifest["nodes"][fct]["columns"]["id"]["data_type"] = "timestamptz"
+        manifest["nodes"][dim]["columns"]["id"]["data_type"] = "text"
+        manifest["nodes"][enriched]["config"]["materialized"] = "ephemeral"
+        del manifest["nodes"][enriched]["columns"]["id"]["data_type"]
+        lineage = ColumnLineage(
+            {uid: (_info(uid, "id", ColumnKind.PASSTHROUGH),) for uid in (fct, dim, enriched)},
+            [],
+            {},
+            data_types={_ref(fct, "id"): "timestamp with time zone"},
+        )
+        columns_loader.load.return_value = lineage  # type: ignore[attr-defined]
+        loader = create_autospec(ManifestLoader, instance=True)
+        loader.load.return_value = ManifestGraph.from_manifest(manifest)
+        service = LineageService(loader, builds, node_sql, columns_loader)
+
+        types = {uid: service.node(uid).columns[0].data_type for uid in (fct, dim, enriched)}  # type: ignore[union-attr]
+
+        assert types == {fct: "timestamp with time zone", dim: "text", enriched: None}
+
     def test_node_note_and_unavailability_reach_the_panel(
         self, service: LineageService, columns_loader: ColumnLineageLoader
     ) -> None:

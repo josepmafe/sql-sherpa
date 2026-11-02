@@ -33,9 +33,17 @@ class _FakeBuilder:
     started = threading.Event()
     release = threading.Event()
     seen: tuple[Mapping[str, Sequence[str]], Mapping[str, str | None]] | None = None
+    data_types: Mapping[ColumnRef, str] | None = None
 
-    def __init__(self, graph: ManifestGraph, columns_by_node: Mapping[str, Sequence[str]], **_: object) -> None:
+    def __init__(
+        self,
+        graph: ManifestGraph,
+        columns_by_node: Mapping[str, Sequence[str]],
+        data_types: Mapping[ColumnRef, str] | None = None,
+        **_: object,
+    ) -> None:
         self._columns_by_node = columns_by_node
+        type(self).data_types = data_types
 
     def build(self, compiled_sql: Mapping[str, str | None]) -> ColumnLineage:
         type(self).started.set()
@@ -66,6 +74,7 @@ def fake_builder(monkeypatch: pytest.MonkeyPatch) -> type[_FakeBuilder]:
     _FakeBuilder.builds = 0
     _FakeBuilder.fail = False
     _FakeBuilder.seen = None
+    _FakeBuilder.data_types = None
     _FakeBuilder.started = threading.Event()
     _FakeBuilder.release = threading.Event()
     _FakeBuilder.release.set()
@@ -138,6 +147,29 @@ class TestColumnLineageLoader:
         assert "snapshot.p.snap_customers" in compiled
         assert "seed.p.countries" not in compiled
         assert "source.p.shop.orders" not in compiled
+
+    def test_reads_the_catalog_types_of_nodes_and_sources_by_column(
+        self, tmp_path: Path, loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]
+    ) -> None:
+        raw = _catalog(
+            fct_orders={
+                "columns": {
+                    "a": {"name": "a", "index": 1, "type": "bigint"},
+                    "B": {"name": "B", "index": 2, "type": "timestamp with time zone"},
+                }
+            },
+            other={"columns": {"a": {"name": "a", "index": 1, "type": "text"}}},
+        )
+        raw["sources"] = {"source.p.shop.orders": {"columns": {"id": {"name": "id", "index": 1, "type": "integer"}}}}
+        (tmp_path / "catalog.json").write_text(json.dumps(raw), encoding="utf-8")
+
+        loader.load()
+
+        assert fake_builder.data_types == {
+            ColumnRef(unique_id=FCT, column="a"): "bigint",
+            ColumnRef(unique_id=FCT, column="B"): "timestamp with time zone",
+            ColumnRef(unique_id="source.p.shop.orders", column="id"): "integer",
+        }
 
     def test_a_node_the_catalog_lacks_falls_back_to_its_yaml_columns(
         self, tmp_path: Path, loader: ColumnLineageLoader, fake_builder: type[_FakeBuilder]

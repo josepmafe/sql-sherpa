@@ -338,7 +338,7 @@ def _column_detail(lineage: ColumnLineage | None, node: GraphNode, column: NodeC
     info = _find_column(lineage, node.unique_id, column.name) if lineage is not None else None
     return ColumnDetail(
         name=column.name,
-        data_type=column.data_type,
+        data_type=(lineage.data_type(info.ref) if lineage is not None and info else None) or column.data_type,
         description=column.description,
         kind=info.kind if info else None,
         resolution=info.resolution if info else None,

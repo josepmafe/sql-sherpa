@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Final
 from sherpa_mcp.catalog import CATALOG_FILE, MANIFEST_FILE, CatalogUnavailable
 from sqlglot.errors import SqlglotError
 
-from sherpa_ui.lineage.column_lineage import ColumnLineage, ColumnLineageBuilder
+from sherpa_ui.lineage.column_lineage import ColumnLineage, ColumnLineageBuilder, ColumnRef
 from sherpa_ui.lineage.manifest_graph import EPHEMERAL
 
 if TYPE_CHECKING:
@@ -69,6 +69,7 @@ class ColumnLineageLoader:
     def _build(self, graph: ManifestGraph) -> ColumnLineage:
         catalog = self._read_catalog()
         columns = {unique_id: [column.name for column in node.columns] for unique_id, node in graph.nodes.items()}
+        data_types: dict[ColumnRef, str] = {}
         if catalog is None:
             note = NOTE_NO_CATALOG
         else:
@@ -78,6 +79,7 @@ class ColumnLineageLoader:
                     del columns[unique_id]
 
             columns.update(_catalog_columns(catalog, graph))
+            data_types = _catalog_types(catalog, graph)
             note = None
 
         compiled = {
@@ -85,7 +87,7 @@ class ColumnLineageLoader:
             for unique_id, node in graph.nodes.items()
             if node.resource_type in SQL_RESOURCE_TYPES
         }
-        return ColumnLineageBuilder(graph, columns, columns_note=note).build(compiled)
+        return ColumnLineageBuilder(graph, columns, data_types, columns_note=note).build(compiled)
 
     def _read_catalog(self) -> dict[str, Any] | None:
         """None when the file does not exist; a file that exists but cannot be read is an error."""
@@ -125,5 +127,20 @@ def _catalog_columns(catalog: dict[str, Any], graph: ManifestGraph) -> dict[str,
                     ordered = sorted(raw.get("columns", {}).values(), key=lambda column: column["index"])
                     columns[unique_id] = [column["name"] for column in ordered]
         return columns
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise CatalogUnavailable(f"unexpected layout in {CATALOG_FILE}: {_MISSING_HINT}") from exc
+
+
+def _catalog_types(catalog: dict[str, Any], graph: ManifestGraph) -> dict[ColumnRef, str]:
+    """The type the catalog records for each column of a graph node."""
+    try:
+        return {
+            ColumnRef(unique_id=unique_id, column=column["name"]): column["type"]
+            for section in CATALOG_SECTIONS
+            for unique_id, raw in catalog.get(section, {}).items()
+            if unique_id in graph.nodes
+            for column in raw.get("columns", {}).values()
+            if column.get("type")
+        }
     except (KeyError, TypeError, AttributeError) as exc:
         raise CatalogUnavailable(f"unexpected layout in {CATALOG_FILE}: {_MISSING_HINT}") from exc
