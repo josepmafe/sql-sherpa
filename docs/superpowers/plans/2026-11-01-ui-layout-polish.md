@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Resizable, collapsible panes on the Explorer and Lineage screens, a collapsible navigation rail with hover-peek, a Lineage layout where no edge passes behind a node, and a richer node panel (disabled empty tabs, column types for every node, test definitions on expand), an Explorer whose tree columns line up, and a Lineage that keeps its zoom and pan across redraws and starts with the exposures hidden.
+**Goal:** Resizable, collapsible panes on the Explorer and Lineage screens, a collapsible navigation rail with hover-peek, a Lineage layout where no edge passes behind a node, and a richer node panel (disabled empty tabs, column types for every node, test definitions in a dialog), an Explorer whose tree columns line up, and a Lineage that keeps its zoom and pan across redraws and starts with the exposures hidden.
 
 **Architecture:** one small pane toolkit (`src/components/panes/`, on `react-resizable-panels`) used by the shell, the Explorer and Lineage. Sizes persist in `localStorage` under `sherpa.v1.layout.*` and are clamped when read. The Lineage layout reserves a gap for each long edge in every column it crosses, places nodes and gaps with a pure least-squares fit that then closes the holes under tables nothing reads, and draws each edge as one monotone curve through its gaps. The canvas keeps the user's view for a subject (the selector) in memory. Column types and test definitions are read by the existing lineage service from `catalog.json` and the dbt artifacts; one new endpoint serves a test's content.
 
@@ -16,7 +16,7 @@
 - **Splitters (3):** also a horizontal handle between the editor and the results, and one between the graph and the node panel.
 - **Sizes (4):** remembered in `localStorage`, double-click resets, stored values are clamped on read.
 - **Layout (5):** measured and rendered before the plan. The owner chose B straightened (gaps for long edges, no edge behind a node), plus a time-boxed attempt at curves that bend inside the columns (Task 8).
-- **Also:** `sherpa › marts` is the tree heading with the domains smaller and dimmed (2), modes in the order Whole project · Domain · Table path (5), column types for every node (7), empty tabs disabled with a reason (8), tests that expand to their definition (9).
+- **Also:** `sherpa › marts` is the tree heading with the domains smaller and dimmed (2), modes in the order Whole project · Domain · Table path (5), column types for every node (7), empty tabs disabled with a reason (8), tests that open in a dialog with their definition (9).
 
 **Not a numbered milestone:** like the audits it is named by date, so Home stays ui-4. Build it before Home, so Home is made in the final shell.
 
@@ -213,13 +213,13 @@ ui/backend/tests/lineage/
 
 ---
 
-### Task 7: Tests that expand to their definition
+### Task 7: Tests that open in a dialog with their definition
 
 **Model:** implementer `sonnet` · reviewer `sonnet`
 
 **Files:**
 - backend: `manifest_graph.py` (`NodeTest`), `node_sql.py`, `lineage_service.py` (`TestInfo`, new `TestDetails`, `LineageService.test_details`), the lineage router under `ui/backend/src/sherpa_ui/api/`
-- frontend: `src/api/queries.ts` (`useTestDetails`), `NodePanel.tsx` (`TestList`), regenerated `schema.d.ts`
+- frontend: `src/api/queries.ts` (`useTestDetails`), `NodePanel.tsx` (`TestList`, `TestRow`, `TestBody`), regenerated `schema.d.ts`
 - tests: `ui/backend/tests/lineage/test_manifest_graph.py`, `test_node_sql.py`, `test_lineage_service.py`, `ui/backend/tests/api/`, `tests/lineage/NodePanel.test.tsx`, `tests/fixtures/api.ts`, `e2e/lineage.spec.ts`
 
 **Interfaces — Produces:**
@@ -241,10 +241,10 @@ By kind:
 
   Run them. Expected: FAIL.
 - [ ] **Step 2: Implement** the backend, then `make ui-client` and commit `schema.d.ts`.
-- [ ] **Step 3: Frontend tests first** (`NodePanel.test.tsx`): each test row is a button with `aria-expanded`; expanding it calls the endpoint once (not before) and shows, by kind, the SQL viewer (raw and compiled tabs), the definition block, or the given and expected text; it shows the file path and a "Copy dbt selector" button (the name); collapse and expand again does not call twice; a failed request shows an error with retry, in the panel's usual style.
-- [ ] **Step 4: Implement** `TestList` with `ReadOnlySql` for SQL and a read-only block for the definition.
-- [ ] **Step 5: e2e:** select `dim_date`, open Tests, expand `assert_dim_date_black_friday_weeks` and see its SQL; expand a `unique` test and see its definition.
-- [ ] **Step 6:** `make test`, `npm test`, `make lint`, the `lineage` Playwright spec. Commit `feat: tests of a node expand to their definition`.
+- [ ] **Step 3: Frontend tests first** (`NodePanel.test.tsx`): each test row is an eye button ("Show <name>", `aria-haspopup="dialog"`) before the name as plain text; opening it calls the endpoint once (not before) and shows, in a dialog titled with the name, by kind, the SQL viewer (raw and compiled tabs), the definition block, or the given and expected text; it shows the file path and a "Copy dbt selector" button (the name); closing and opening again does not call twice; Esc, the close button and a click outside close it, the focus returns to the eye button, and selecting another node closes it; a failed request shows an error with retry inside the dialog.
+- [ ] **Step 4: Implement** `TestList` (a Mantine `Modal` per row) with `ReadOnlySql` for SQL and a read-only block for the definition.
+- [ ] **Step 5: e2e:** select `dim_date`, open Tests, open `assert_dim_date_black_friday_weeks` and see its SQL in the dialog; close it with Esc; open a `unique` test and see its definition.
+- [ ] **Step 6:** `make test`, `npm test`, `make lint`, the `lineage` Playwright spec. Commit `feat: tests open in a pop-up from an eye button`.
 
 ---
 
@@ -374,7 +374,7 @@ No edge passes behind a node, by construction: a route is level through a column
     - stored layout is read defensively and clamped, so every pane has a clamp test.
 - [ ] **Step 2: Guides** (short; one symptom → fix row each).
   - **`basic/using-the-explorer.md`:** the panes, resizing (drag, keys, double-click to reset), collapsing, the tree's peek, the Inspector overlay below 1280 px. Symptom: "the layout is odd after a resize" → double-click the handle, or clear `sherpa.v1.layout.*` in the browser's site data.
-  - **`basic/using-lineage.md`:** how to read the layout (a long edge runs level through the gaps reserved for it, so no edge hides behind a node), the mode order, the panel's handle and fold, disabled tabs and their reasons, column types, expanding a test. Symptom: a type column is empty → the node is an ephemeral model.
+  - **`basic/using-lineage.md`:** how to read the layout (a long edge runs level through the gaps reserved for it, so no edge hides behind a node), the mode order, the panel's handle and fold, disabled tabs and their reasons, column types, opening a test. Symptom: a type column is empty → the node is an ephemeral model.
   - **`advanced/extending-the-ui.md`:** adding a pane (the toolkit, the storage id, its clamp test), the layout metrics test and how to read it, and the tests endpoint.
 - [ ] **Step 3:** `make lint`. Commit `docs: panes, layout, node panel and test definitions`.
 
