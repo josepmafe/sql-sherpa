@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -156,6 +156,34 @@ describe("NodePanel", () => {
       await userEvent.keyboard("{Enter}");
       expect(tab).toHaveAttribute("aria-selected", "false");
       expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    });
+
+    it("focusing a disabled tab with the keyboard alone shows its reason", async () => {
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, tests: [] }) });
+      mount();
+      const tab = screen.getByRole("tab", { name: "Tests" });
+
+      act(() => tab.focus());
+
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("No test is defined on this node.");
+      expect(tab).toHaveAccessibleDescription("No test is defined on this node.");
+    });
+
+    it("arrow keys reach a disabled tab, which shows its reason and does not select on Enter or Space", async () => {
+      const user = userEvent.setup();
+      useLineageNode.mockReturnValue({ data: nodeDetails({ ...DETAILS, columns: [] }) });
+      mount();
+      act(() => screen.getByRole("tab", { name: "Overview" }).focus());
+
+      await user.keyboard("{ArrowRight}");
+
+      const tab = screen.getByRole("tab", { name: "Columns" });
+      expect(document.activeElement).toBe(tab);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("This node has no columns.");
+      await user.keyboard("{Enter}");
+      await user.keyboard(" ");
+      expect(tab).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
     });
 
     it("hovering a disabled tab shows its reason", async () => {

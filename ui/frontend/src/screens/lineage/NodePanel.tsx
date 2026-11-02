@@ -60,6 +60,8 @@ const SQL = "sql";
 const NO_COLUMNS = "This node has no columns.";
 const NO_TESTS = "No test is defined on this node.";
 const NO_SQL = "Sources, seeds and exposures have no SQL.";
+// gray-7 on white and dark-1 on the dark surface both clear 4.5:1 (WCAG AA); a faded opacity would not.
+const DISABLED_TAB_COLOR = "light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1))";
 const RAW = "raw";
 const COMPILED = "compiled";
 
@@ -192,8 +194,16 @@ function Body({ node, tab, onTab, column, outside, onFocusColumn }: BodyProps) {
       <Tabs value={effective} onChange={select}>
         <Tabs.List>
           <Tabs.Tab value={OVERVIEW}>Overview</Tabs.Tab>
-          <PanelTab value={COLUMNS} label={d.columns.length === 0 ? "Columns" : `Columns (${d.columns.length})`} reason={reasons[COLUMNS]} />
-          <PanelTab value={TESTS} label={d.tests.length === 0 ? "Tests" : `Tests (${d.tests.length})`} reason={reasons[TESTS]} />
+          <PanelTab
+            value={COLUMNS}
+            label={d.columns.length === 0 ? "Columns" : `Columns (${d.columns.length})`}
+            reason={reasons[COLUMNS]}
+          />
+          <PanelTab
+            value={TESTS}
+            label={d.tests.length === 0 ? "Tests" : `Tests (${d.tests.length})`}
+            reason={reasons[TESTS]}
+          />
           <PanelTab value={SQL} label="SQL" reason={reasons[SQL]} />
         </Tabs.List>
         <Tabs.Panel value={OVERVIEW} pt="xs">
@@ -231,7 +241,12 @@ function PanelTab({ value, label, reason }: PanelTabProps) {
   return (
     <>
       <Tooltip label={reason} events={{ hover: true, focus: true, touch: false }} openDelay={200}>
-        <Tabs.Tab value={value} aria-disabled="true" aria-describedby={why} style={{ opacity: 0.6, cursor: "not-allowed" }}>
+        <Tabs.Tab
+          value={value}
+          aria-disabled="true"
+          aria-describedby={why}
+          style={{ color: DISABLED_TAB_COLOR, cursor: "not-allowed" }}
+        >
           {label}
         </Tabs.Tab>
       </Tooltip>
