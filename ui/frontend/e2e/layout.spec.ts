@@ -1,5 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
+import { runQuery } from "./warehouse";
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/explorer");
 });
@@ -92,6 +94,46 @@ test.describe("at 1024 x 700", () => {
 
   test("opening the Lineage node panel keeps the selected node inside the canvas", async ({ page }) => {
     await expectSelectedNodeInCanvas(page);
+  });
+});
+
+test.describe("the result grid at 1024 x 700", () => {
+  test.use({ viewport: { width: 1024, height: 700 } });
+
+  const measure = (page: Page) =>
+    page.evaluate(() => {
+      const table = document.querySelector<HTMLElement>("[data-worksheet] table");
+      const grid = table!.parentElement!.getBoundingClientRect();
+      const pane = table!.closest<HTMLElement>("[data-panel]")!;
+      return {
+        gridBottom: grid.bottom,
+        gridHeight: grid.height,
+        paneBottom: pane.getBoundingClientRect().bottom,
+        paneOverflow: pane.scrollHeight - pane.clientHeight,
+        rows: table!.querySelectorAll("tbody tr").length,
+      };
+    });
+
+  test("fills the results pane without a second scrollbar, and a taller pane shows more rows", async ({ page }) => {
+    await page.goto("/explorer");
+    await runQuery(page, "select * from marts.fct_orders limit 300");
+    await expect(page.getByText(/^300 rows in/)).toBeVisible();
+    const before = await measure(page);
+
+    expect(before.gridBottom).toBeLessThanOrEqual(before.paneBottom + 1);
+    expect(before.paneOverflow).toBeLessThanOrEqual(1);
+    const handle = (await page.getByRole("separator", { name: "Resize the editor and the results" }).boundingBox())!;
+    const x = handle.x + handle.width / 2;
+    const y = handle.y + handle.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y - 100, { steps: 8 });
+    await page.mouse.up();
+
+    await expect.poll(async () => (await measure(page)).gridHeight).toBeGreaterThan(before.gridHeight + 80);
+    const after = await measure(page);
+    expect(after.gridBottom).toBeLessThanOrEqual(after.paneBottom + 1);
+    expect(after.rows).toBeGreaterThan(before.rows);
   });
 });
 
@@ -259,6 +301,27 @@ test.describe("the navigation rail at 1440 x 900", () => {
     expect((await rail.boundingBox())!.width).toBeGreaterThan(railBefore!.width);
     expect((await page.locator(".cm-editor").boundingBox())!.x).toBe(editorBefore!.x);
   });
+});
+
+test.describe("with the health banner shown at 1280 x 800", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  for (const path of ["/explorer", "/lineage"]) {
+    test(`${path} still fills the viewport and the page does not scroll`, async ({ page }) => {
+      await page.route("**/api/health", (route) =>
+        route.fulfill({ json: { database: "down", artifacts: { status: "ok", generated_at: null } } }),
+      );
+      await page.goto(path);
+      await expect(page.getByRole("alert").first()).toBeVisible();
+
+      const root = await page.evaluate(() => ({
+        scrollHeight: document.documentElement.scrollHeight,
+        clientHeight: document.documentElement.clientHeight,
+      }));
+
+      expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight);
+    });
+  }
 });
 
 test.describe("a window resize", () => {

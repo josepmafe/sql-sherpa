@@ -137,7 +137,7 @@ export const WorksheetPanel = memo(function WorksheetPanel({
       </Pane>
       <PaneHandle label="Resize the editor and the results" />
       <Pane id="results" domId={`results-${id}`} minSize={RESULTS_MIN} maxSize={RESULTS_MAX}>
-        <Stack gap="sm" pt="xs">
+        <Stack gap="sm" pt="xs" h="100%">
           {running && (
             <Group gap="xs" role="status">
               <Loader size="xs" />
@@ -162,7 +162,11 @@ export const WorksheetPanel = memo(function WorksheetPanel({
           {/* While anything runs the last rows stay, dimmed. A Run's are inert (they belong to the SQL before); a server
           re-run's grid stays usable, so its scroll and filter bar survive. */}
           {response && (
-            <Box aria-busy={running} inert={running && !rerunning} style={{ opacity: running ? BUSY_OPACITY : 1 }}>
+            <Box
+              aria-busy={running}
+              inert={running && !rerunning}
+              style={{ opacity: running ? BUSY_OPACITY : 1, flex: 1, minHeight: 0 }}
+            >
               <ResultGrid key={generation} response={response} view={shownView} onViewChange={changeView} />
             </Box>
           )}

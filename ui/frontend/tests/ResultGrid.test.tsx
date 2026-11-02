@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ResultGrid } from "../src/components/ResultGrid";
 import { CUT_MARKER, EMPTY_VIEW, type ResultView } from "../src/components/resultView";
@@ -236,6 +236,21 @@ describe("ResultGrid", () => {
 
     expect(rendered).toBeGreaterThan(1);
     expect(rendered).toBeLessThan(100);
+  });
+
+  it("renders the rows that fit the height its pane gives it, and 380 px of them where nothing can be measured", () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => [`row${i}`, String(i)]);
+    const data = response({ rows, returned_rows: 1000, truncated: true });
+    const unmeasured = renderWithProviders(<Harness data={data} />);
+    const fallbackRows = screen.getAllByRole("row").length;
+    unmeasured.unmount();
+    // Two rows high: the header, the rows in view and ten more (the overscan) below.
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(64);
+
+    renderWithProviders(<Harness data={data} />);
+
+    expect(screen.getAllByRole("row").length).toBeLessThan(fallbackRows - 8);
+    expect(fallbackRows).toBeGreaterThanOrEqual(22); // 380 / 32 = 12 rows in view, and the overscan
   });
 
   it("filters rows in the browser and reports the shown count", async () => {

@@ -156,7 +156,7 @@ export function ExplorerScreen() {
     centre.current?.querySelector<HTMLElement>(`[data-worksheet="${active.id}"] .cm-content`)?.focus();
 
   return (
-    <Box pos="relative" h="calc(100vh - 100px)">
+    <Box pos="relative" style={{ flex: 1, minHeight: 0 }}>
       <SkipToEditor onSkip={skipToEditor} />
       <PaneGroup id={LAYOUT_ID} direction="horizontal">
         <Pane

@@ -108,7 +108,8 @@ export function AppShell() {
           )}
         </Group>
       </MantineAppShell.Navbar>
-      <MantineAppShell.Main>
+      {/* The viewport's height, split between the banner and the screen (which takes the rest). */}
+      <MantineAppShell.Main style={{ display: "flex", flexDirection: "column", height: "100dvh" }}>
         <HealthBanner />
         <Outlet />
       </MantineAppShell.Main>
