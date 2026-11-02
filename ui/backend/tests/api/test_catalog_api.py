@@ -48,7 +48,7 @@ class TestCatalogApi:
         body = client.get("/api/catalog/tables/fct_orders").json()
 
         status = body["columns"][1]
-        assert body["tests"] == ["not_null", "unique"]
+        assert "tests" not in body
         assert body["synonyms"] == ["thing"]
         assert status["accepted_values"] == ["a", "b"]
         assert status["metric_refs"] == [{"name": "revenue", "definition": "sum of net item amounts"}]

@@ -75,7 +75,6 @@ export function tableDetails(overrides: Partial<TableDetails> = {}): TableDetail
     grain: "",
     primary_key: [],
     synonyms: [],
-    tests: [],
     columns: [],
     ...overrides,
   };

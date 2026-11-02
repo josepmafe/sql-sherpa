@@ -559,8 +559,6 @@ export interface components {
             primary_key: string[];
             /** Synonyms */
             synonyms: string[];
-            /** Tests */
-            tests: string[];
         };
         /** TableSummary */
         TableSummary: {

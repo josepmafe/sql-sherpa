@@ -61,7 +61,6 @@ const DETAILS = tableDetails({
   grain: "one row per order",
   primary_key: ["order_id"],
   synonyms: ["purchases"],
-  tests: ["unique_fct_orders_order_id"],
   columns: [
     columnDetails({
       description: "Order status.",
@@ -325,12 +324,11 @@ describe("Inspector", () => {
     expect(screen.getByText(/Revenue after refunds\./)).toBeInTheDocument();
   });
 
-  it("has no Tests section, even for a table that has tests", () => {
+  it("has no Tests section", () => {
     useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
     renderWithProviders(<Inspector table="fct_orders" />);
 
     expect(screen.queryByRole("heading", { name: "Tests" })).not.toBeInTheDocument();
-    expect(screen.queryByText("unique_fct_orders_order_id")).not.toBeInTheDocument();
   });
 
   it("shows the domain as quiet text, not a badge", () => {

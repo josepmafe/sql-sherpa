@@ -71,7 +71,6 @@ class TableDetails(BaseModel):
     grain: str
     primary_key: tuple[str, ...]
     synonyms: tuple[str, ...]
-    tests: tuple[str, ...]
     columns: tuple[ColumnDetails, ...]
 
 
@@ -145,6 +144,5 @@ def _details(mart: Mart, catalog: MartCatalog) -> TableDetails:
         grain=mart.grain,
         primary_key=mart.primary_key,
         synonyms=mart.synonyms,
-        tests=mart.tests,
         columns=columns,
     )
