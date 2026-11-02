@@ -124,6 +124,27 @@ describe("CatalogTree", () => {
     expect(screen.getByText("bigint")).toBeInTheDocument();
   });
 
+  it("a table's columns are one table of name, type and markers, so they line up across its rows", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CatalogTree onSelect={() => {}} onPreview={() => {}} onInsertSelect={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "fct_orders" }));
+
+    const columns = screen.getByRole("table", { name: "Columns of fct_orders" });
+    const rows = within(columns).getAllByRole("row");
+
+    expect(rows).toHaveLength(2);
+    expect(
+      within(rows[0]!)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["order_id", "bigint", "PK"]);
+    expect(
+      within(rows[1]!)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["customer_email", "text", "PII"]);
+  });
+
   it("the chevron opens and closes a table's columns without selecting it; the name does both", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
@@ -295,14 +316,30 @@ describe("Inspector", () => {
     expect(refetch).toHaveBeenCalledOnce();
   });
 
-  it("shows accepted values, synonyms, metric definitions and tests", () => {
+  it("shows accepted values, synonyms and metric definitions", () => {
     useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
     renderWithProviders(<Inspector table="fct_orders" />);
 
     expect(screen.getByText(/Accepted values: placed, shipped/)).toBeInTheDocument();
     expect(screen.getByText(/Synonyms: state/)).toBeInTheDocument();
     expect(screen.getByText(/Revenue after refunds\./)).toBeInTheDocument();
-    expect(screen.getByText("unique_fct_orders_order_id")).toBeInTheDocument();
+  });
+
+  it("has no Tests section, even for a table that has tests", () => {
+    useTableDetails.mockReset().mockReturnValue({ data: DETAILS });
+    renderWithProviders(<Inspector table="fct_orders" />);
+
+    expect(screen.queryByRole("heading", { name: "Tests" })).not.toBeInTheDocument();
+    expect(screen.queryByText("unique_fct_orders_order_id")).not.toBeInTheDocument();
+  });
+
+  it("shows the domain as quiet text, not a badge", () => {
+    useTableDetails.mockReset().mockReturnValue({ data: { ...DETAILS, domain: "marketing_web" } });
+    renderWithProviders(<Inspector table="fct_orders" />);
+
+    const domain = screen.getByText("marketing_web");
+    expect(domain.className).not.toMatch(/Badge/);
+    expect(domain).toHaveStyle({ textTransform: "none" });
   });
 
   it("Open in Lineage links to the table path", () => {

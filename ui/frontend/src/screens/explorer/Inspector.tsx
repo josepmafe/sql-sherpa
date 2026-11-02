@@ -1,4 +1,4 @@
-import { Badge, Button, Code, Group, Stack, Text, Title } from "@mantine/core";
+import { Button, Code, Group, Stack, Text, Title } from "@mantine/core";
 import { Link } from "react-router-dom";
 
 import { useTableDetails } from "../../api/queries";
@@ -19,9 +19,9 @@ export function Inspector({ table }: { table: string | undefined }) {
   return (
     <Stack gap="sm">
       <Title order={4}>{t.name}</Title>
-      <Badge variant="light" w="fit-content">
+      <Text size="xs" c="dimmed">
         {t.domain}
-      </Badge>
+      </Text>
       <Text size="sm">{t.description}</Text>
       <Text size="sm">
         <b>Grain:</b> {t.grain}
@@ -58,19 +58,6 @@ export function Inspector({ table }: { table: string | undefined }) {
           ))}
         </Stack>
       ))}
-
-      <Title order={5}>Tests</Title>
-      {t.tests.length === 0 ? (
-        <Text size="xs" c="dimmed">
-          No tests.
-        </Text>
-      ) : (
-        t.tests.map((test) => (
-          <Text key={test} size="xs">
-            {test}
-          </Text>
-        ))
-      )}
     </Stack>
   );
 }

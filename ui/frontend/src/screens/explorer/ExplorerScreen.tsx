@@ -30,7 +30,10 @@ import {
 // Pane sizes in pixels (UI spec §6.1, §6.4). The centre takes what the others leave.
 const LAYOUT_ID = "explorer";
 const CENTRE_PANE = "worksheets";
-const TREE_DEFAULT = 280;
+// Fits the widest column row of the marts (name, type and markers) without truncating it; measured in the browser.
+const TREE_DEFAULT = 380;
+// Below 1280 px the editor needs the room (UI spec §6.4: usable on a 1024 px screen).
+const TREE_DEFAULT_NARROW = 280;
 const TREE_MIN = 200;
 const TREE_MAX = 480;
 const CENTRE_MIN = 360;
@@ -146,7 +149,7 @@ export function ExplorerScreen() {
       <PaneGroup id={LAYOUT_ID} direction="horizontal">
         <Pane
           id={TREE_PANE}
-          defaultSize={TREE_DEFAULT}
+          defaultSize={wide ? TREE_DEFAULT : TREE_DEFAULT_NARROW}
           minSize={TREE_MIN}
           maxSize={TREE_MAX}
           collapsedSize={TREE_STRIP_WIDTH}

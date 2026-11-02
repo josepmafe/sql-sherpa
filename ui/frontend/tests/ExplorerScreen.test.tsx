@@ -17,6 +17,9 @@ import { catalog, health, noContent, ok, queryResponse, table } from "./fixtures
 import { stubPaneLayout } from "./fixtures/panes";
 import { editors, isShown, renderWithProviders, wideScreen } from "./fixtures/render";
 
+// UI spec §6.4: the width that fits the widest column row of the marts, below the 480 px maximum.
+const TREE_DEFAULT_PX = 380;
+
 const post = vi.fn();
 vi.mock("../src/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/api/client")>()),
@@ -339,8 +342,16 @@ describe("ExplorerScreen panes", () => {
     renderScreen();
     await settleLayout();
 
+    expect(valueNow("Resize the tree")).toBeCloseTo((TREE_DEFAULT_PX / 1200) * 100, 0);
+    expect(valueNow("Resize the Inspector")).toBeCloseTo(((1200 - TREE_DEFAULT_PX - 300) / 1200) * 100, 0);
+  });
+
+  it("below 1280 px the tree starts at 280 px, so the editor keeps its width on a 1024 px screen", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation((query) => ({ ...wideScreen(query), matches: false }));
+    renderScreen();
+    await settleLayout();
+
     expect(valueNow("Resize the tree")).toBeCloseTo((280 / 1200) * 100, 0);
-    expect(valueNow("Resize the Inspector")).toBeCloseTo((620 / 1200) * 100, 0);
   });
 
   it("the arrow keys resize the tree and the Inspector, and the sizes are remembered", async () => {
@@ -358,7 +369,7 @@ describe("ExplorerScreen panes", () => {
     expect(valueNow("Resize the tree")).toBeGreaterThan(treeBefore);
     expect(valueNow("Resize the Inspector")).toBeLessThan(inspectorBefore);
     const layout = storedLayout() as { sizes: Record<string, number> };
-    expect(layout.sizes.tree).toBeGreaterThan(280);
+    expect(layout.sizes.tree).toBeGreaterThan(TREE_DEFAULT_PX);
     expect(layout.sizes.inspector).toBeGreaterThan(300);
   });
 
@@ -379,7 +390,7 @@ describe("ExplorerScreen panes", () => {
     localStorage.setItem(LAYOUT_KEY, '{"sizes":');
     renderScreen();
     await settleLayout();
-    expect(valueNow("Resize the tree")).toBeCloseTo((280 / 1200) * 100, 0);
+    expect(valueNow("Resize the tree")).toBeCloseTo((TREE_DEFAULT_PX / 1200) * 100, 0);
     warn.mockRestore();
   });
 
@@ -452,7 +463,7 @@ describe("ExplorerScreen panes", () => {
   it.each([
     ["under their minimums", { tree: 10, inspector: 10 }, 200, 1200 - 200 - 240],
     ["over the tree's maximum", { tree: 5000 }, 480, 1200 - 480 - 300],
-    ["over the Inspector's maximum", { inspector: 5000 }, 280, 1200 - 280 - 520],
+    ["over the Inspector's maximum", { inspector: 5000 }, 1200 - 520 - 360, 360],
   ])(
     "the tree is 200 to 480 px wide and the Inspector 240 to 520 px: sizes stored %s",
     async (_case, sizes, tree, centre) => {

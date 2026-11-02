@@ -18,6 +18,30 @@ test.describe("at 1440 x 900", () => {
   });
 });
 
+test.describe("the tree's column rows at 1440 x 900", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("open at its default width, every table's column names fit and the type column lines up", async ({ page }) => {
+    await page.evaluate(() => localStorage.removeItem("sherpa.v1.layout.explorer"));
+    await page.reload();
+    const chevrons = page.getByRole("button", { name: /^Show the columns of / });
+    await chevrons.first().waitFor();
+    for (let open = await chevrons.count(); open > 0; open--) await chevrons.first().click();
+
+    const measured = await page.evaluate(() => ({
+      truncated: [...document.querySelectorAll('[role="table"] [role="row"] > :first-child')]
+        .filter((name) => name.scrollWidth > name.clientWidth)
+        .map((name) => name.textContent),
+      typeLefts: [...document.querySelectorAll('[role="table"]')].map(
+        (table) => new Set([...table.querySelectorAll('[role="row"] > :nth-child(2)')].map((type) => Math.round(type.getBoundingClientRect().left))).size,
+      ),
+    }));
+
+    expect(measured.truncated).toEqual([]);
+    expect(measured.typeLefts.every((distinct) => distinct === 1)).toBe(true);
+  });
+});
+
 test.describe("at 1024 x 700", () => {
   test.use({ viewport: { width: 1024, height: 700 } });
 

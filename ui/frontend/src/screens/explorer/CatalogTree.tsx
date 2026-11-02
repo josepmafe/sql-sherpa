@@ -143,6 +143,20 @@ const NAME_STYLE = {
   minWidth: 0,
 } as const;
 
+// The name column takes what its widest name needs and gives way first; the rows never wrap.
+const COLUMNS_STYLE = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, max-content) max-content 1fr",
+  columnGap: 8,
+} as const;
+const COLUMN_ROW_STYLE = {
+  display: "grid",
+  gridTemplateColumns: "subgrid",
+  gridColumn: "1 / -1",
+  alignItems: "center",
+} as const;
+const NO_WRAP_STYLE = { whiteSpace: "nowrap" } as const;
+
 function TableRow(props: TableRowProps) {
   const { table, schema, selected, open, onClick, onToggle, onPreview, onInsertSelect, previewBlocked } = props;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -229,7 +243,14 @@ function TableRow(props: TableRowProps) {
           </Menu.Dropdown>
         </Menu>
       </Group>
-      {open && table.columns.map((column) => <ColumnRow key={column.name} column={column} />)}
+      {open && (
+        // One grid per table, so the type and marker columns line up across its rows.
+        <Box role="table" aria-label={`Columns of ${table.name}`} ml="xl" style={COLUMNS_STYLE}>
+          {table.columns.map((column) => (
+            <ColumnRow key={column.name} column={column} />
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -237,13 +258,17 @@ function TableRow(props: TableRowProps) {
 function ColumnRow({ column }: { column: ColumnSummary }) {
   return (
     <Tooltip label={summary(column.description)} multiline w={320} openDelay={200}>
-      <Group gap={6} ml="xl" wrap="nowrap">
-        <Text size="xs">{column.name}</Text>
-        <Text size="xs" c="dimmed">
+      <Box role="row" style={COLUMN_ROW_STYLE}>
+        <Text role="cell" size="xs" title={column.name} truncate>
+          {column.name}
+        </Text>
+        <Text role="cell" size="xs" c="dimmed" style={NO_WRAP_STYLE}>
           {column.data_type}
         </Text>
-        <ColumnBadges isPrimaryKey={column.is_primary_key} isPii={column.is_pii} />
-      </Group>
+        <Box role="cell">
+          <ColumnBadges isPrimaryKey={column.is_primary_key} isPii={column.is_pii} />
+        </Box>
+      </Box>
     </Tooltip>
   );
 }
