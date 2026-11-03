@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import importlib.util
 from typing import TYPE_CHECKING
 
 import pytest
 from sherpa_mcp.catalog import CatalogUnavailable
-from ui_helpers import REPO_ROOT
+from ui_helpers import data_platform_marts
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from sherpa_mcp.catalog import MartCatalogLoader
-
-MARTS_SPEC = REPO_ROOT / "data-platform" / "tests" / "dbt" / "test_reader_access.py"
 
 
 class TestCatalogApi:
@@ -70,7 +67,7 @@ class TestCatalogApi:
         body = warehouse_client.get("/api/catalog").json()
 
         tables = [table for domain in body["domains"] for table in domain["tables"]]
-        assert sorted(table["name"] for table in tables) == sorted(_expected_marts())
+        assert sorted(table["name"] for table in tables) == sorted(data_platform_marts())
         assert body["domains"][-1]["name"] == "shared"
 
     @pytest.mark.warehouse
@@ -85,14 +82,3 @@ class TestCatalogApi:
         assert body["primary_key"] == ["order_id"]
         assert missing.status_code == 404
         assert missing.json()["code"] == "table_not_found"
-
-
-def _expected_marts() -> tuple[str, ...]:
-    """The data platform's own list of the marts, loaded from its test module."""
-    spec = importlib.util.spec_from_file_location("data_platform_reader_access", MARTS_SPEC)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    marts: tuple[str, ...] = module.MARTS
-    return marts
