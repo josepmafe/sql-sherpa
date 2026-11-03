@@ -37,7 +37,7 @@ class TestOutcome(StrEnum):
     NOT_RUN = auto()
 
 
-_TEST_OUTCOMES: Final = {
+TEST_OUTCOMES: Final = {
     "pass": TestOutcome.PASSED,
     "warn": TestOutcome.WARNED,
     "fail": TestOutcome.FAILED,
@@ -89,7 +89,7 @@ class StatusDeriver:
         if status is None:
             return TestOutcome.NOT_RUN
 
-        outcome = _TEST_OUTCOMES.get(status)
+        outcome = TEST_OUTCOMES.get(status)
         if outcome is None:
             _log_unknown(test.unique_id, status)
             return TestOutcome.NOT_RUN
