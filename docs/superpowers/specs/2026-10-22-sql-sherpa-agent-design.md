@@ -325,6 +325,8 @@ Case schema:
     where not is_cancelled and order_date >= '2026-03-01' and order_date < '2026-04-01'
     group by 1
   ordered: false                        # true if row order matters
+  allow_empty: false                    # true if an empty result is the right answer (the rationale says why)
+  reconcile_sql: null                   # optional raw-schema query, run as sherpa_admin, that must give the same result
   rationale: "Net revenue per §6.6, refunds attributed to order date; cancelled excluded."
   tables: [fct_orders]                  # for schema-recall measurement
   status: draft                         # draft → reviewed → accepted
@@ -333,7 +335,7 @@ Case schema:
 
 **Authoring workflow (agent-design-2):**
 1. Opus 5.5 drafts the tranche's cases (question, gold SQL, rationale, tables) from the data platform spec §6 and the `sherpa_eval` marts.
-2. **Automatic checks** (`sherpa_evals.run --check-gold`): every `answered` case executes, returns ≥ 1 row (unless the rationale says an empty result is expected), returns identical results on two runs, and passes `sql_guard` (so gold SQL follows the same rules as the agent). Cases whose rationale cites a raw-data reconciliation also run a small hand-written raw-schema query (as `sherpa_admin`, stored in the case as `reconcile_sql`) that must give the same totals.
+2. **Automatic checks** (`sherpa_evals.run --check-gold`, over every case whatever its status): every `answered` case executes, returns ≥ 1 row (unless it sets `allow_empty: true`), returns identical results on two runs, and passes `sql_guard` (so gold SQL follows the same rules as the agent). Its gold SQL reads no clock (`now()`, `current_date`, `current_timestamp`), holds no 32-hex literal, has an `ORDER BY` when it is `ordered` or uses `LIMIT`, and reads exactly the marts its `tables` list. A case with a `reconcile_sql` (a small hand-written raw-schema query, run as `sherpa_admin` in a read-only transaction) must give the same result as its gold SQL under the comparison rules (§7.2). The check also lists, per case, the closest few-shot example and its score (§4.3).
 3. **Cross-model review:** Codex and Gemini each review every case against the data platform spec §6.6 (semantics, not just syntax). The owner runs them through their own CLIs or chat with a fixed review prompt stored in `agent/evals/REVIEW_PROMPT.md`, and records each verdict in `reviews`. If either reviewer is unavailable, a fresh Opus session with no access to the drafting conversation takes its place, and this is noted in `reviews`. The owner resolves disagreements. Only `accepted` cases count in reports.
 4. The few-shot disjointness check (§4.3).
 
@@ -348,6 +350,7 @@ uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--
 ```
 
 - Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` questions are in flight at once.
+- **The runner's interface to a variant** is its own, so the evals depend on no agent type: an `Answerer` turns a question into an `Attempt` (the outcome type, the final executed SQL, and the run's stats with tokens per model). The `oracle` answerer (agent-design-2) answers each question with its case's gold SQL and expected outcome, and needs no MCP server or model; agent-design-3 adds one answerer that chains `AgentService.plan` and `answer`.
 - **Execution for comparison** uses the runner's own connection to `sherpa_eval` as `sherpa_agent`, with `SET statement_timeout = '30s'` and **no row cap**. It re-executes the agent's final SQL (the recorded `executed_sql`) and the gold SQL directly.
 - **Comparison rules (`compare.py`):**
   - **Value normalization:** numbers rounded to 2 decimals; `NULL = NULL`; text compared exactly; dates and timestamps compared as ISO strings.
@@ -358,7 +361,7 @@ uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--
 - **Comparisons and promotion:** every candidate report is compared with a run of the current default **made in the same session**, so both see the same models and the same day's provider behaviour. Promotion decisions require `--repeat 2` on both.
 - **Per-case record** (`runs/<timestamp>-<variant>/cases.jsonl`): case id, outcome type, pass/fail, the diff summary on failure, agent SQL, `RunStats`, schema recall (gold `tables` ⊆ tables the agent queried), trace id.
 - **Report** (`runs/<…>/report.md`): execution accuracy (EX) overall and per category; outcome-type accuracy; p50/p95 latency; mean and total cost; mean tool calls and SQL attempts; schema recall; failing case ids with trace links; and the diff against the previous run of the current default variant.
-- **Cost** = tokens × `prices.yaml` (EUR per million input/output tokens per model ID, maintained by hand).
+- **Cost** = tokens × `prices.yaml` (EUR per million input/output tokens per model ID, maintained by hand). A model missing from it makes the run's cost unknown, which the report says, rather than 0.
 - Budget for code: `run.py` + `compare.py` + `report.py` together stay **under ~400 lines**. No eval framework dependency.
 
 ### 7.3 Budgets (reported, not enforced)
