@@ -1,4 +1,4 @@
-import { Alert, Button, Code, Loader, Stack, Text, Title } from "@mantine/core";
+import { Alert, Button, Loader, Stack, Text, Title } from "@mantine/core";
 
 import { useHome } from "../../api/queries";
 import type { components } from "../../api/schema";
@@ -14,7 +14,9 @@ const EMPTY_CODES: readonly FiguresUnavailable["code"][] = [
   "no_data",
   "catalog_unavailable",
 ];
-const BUILD_COMMAND = "make backfill && make build-prod";
+// What a first-time visitor needs (UI spec §6.2, "When something is missing").
+const NO_DATA_ADVICE =
+  "no orders in the marts yet: run make build-prod (first make backfill if uv run sherpa-generate status shows no simulation)";
 
 export function HomeScreen() {
   const home = useHome();
@@ -31,7 +33,7 @@ export function HomeScreen() {
         />
       )}
       {data === undefined && !home.isError && (
-        <Loader size="sm" aria-label="Loading" />
+        <Loader size="sm" role="status" aria-label="Loading" />
       )}
       {data !== undefined && (
         <>
@@ -46,6 +48,7 @@ export function HomeScreen() {
             <FiguresProblem
               error={data.figures_error}
               onRetry={() => void home.refetch()}
+              retrying={home.isFetching}
             />
           )}
         </>
@@ -57,24 +60,30 @@ export function HomeScreen() {
 function FiguresProblem({
   error,
   onRetry,
+  retrying,
 }: {
   error: FiguresUnavailable;
   onRetry: () => void;
+  retrying: boolean;
 }) {
   if (EMPTY_CODES.includes(error.code)) {
     return (
       <Alert color="blue" title="No data yet">
-        <Text size="sm">
-          The warehouse has nothing to show. Build it with{" "}
-          <Code>{BUILD_COMMAND}</Code>.
-        </Text>
+        <Text size="sm">{NO_DATA_ADVICE}</Text>
       </Alert>
     );
   }
   return (
     <Alert color="red" title="The figures are unavailable">
       <Text size="sm">{error.message}</Text>
-      <Button mt="xs" size="xs" variant="light" color="red" onClick={onRetry}>
+      <Button
+        mt="xs"
+        size="xs"
+        variant="light"
+        color="red"
+        loading={retrying}
+        onClick={onRetry}
+      >
         Retry
       </Button>
     </Alert>

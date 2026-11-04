@@ -7,6 +7,16 @@ import { renderWithProviders } from "../fixtures/render";
 
 const useHome = vi.fn();
 vi.mock("../../src/api/queries", () => ({ useHome: () => useHome() }));
+// jsdom has no layout, so recharts draws nothing; the stand-in shows the series and the keyboard layer it was given.
+vi.mock("@mantine/charts", () => ({
+  BarChart: ({ series, accessibilityLayer }: { series: { name: string }[]; accessibilityLayer?: boolean }) => (
+    <ul data-testid="chart-series" data-accessibility-layer={String(accessibilityLayer)}>
+      {series.map(({ name }) => (
+        <li key={name}>{name}</li>
+      ))}
+    </ul>
+  ),
+}));
 
 const TILES = [
   tile({ id: "net_revenue", title: "Net revenue", note: "Orders not cancelled, minus refunds." }),
@@ -98,10 +108,39 @@ describe("HomeScreen", () => {
     expect(rows[2]).toHaveTextContent("partial");
   });
 
-  it("draws the chart hidden from assistive technology", () => {
-    const { container } = renderWithProviders(<HomeScreen />);
+  it("titles the chart and says recent weeks read high until their refunds arrive", () => {
+    renderWithProviders(<HomeScreen />);
 
-    expect(container.querySelector("[data-testid='trend-chart']")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("heading", { name: "Weekly net revenue" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Recent weeks read high until their refunds arrive (about 7 weeks)."),
+    ).toBeInTheDocument();
+  });
+
+  it("lists in the legend only the kinds of week the trend has", () => {
+    renderWithProviders(<HomeScreen />);
+
+    const series = within(screen.getByTestId("chart-series")).getAllByRole("listitem", { hidden: true });
+    expect(series.map((item) => item.textContent)).toEqual(["Net revenue", "Black Friday week", "Partial week"]);
+  });
+
+  it.each([
+    [[trendWeek({ week_start: "2026-10-05" })], ["Net revenue"]],
+    [[trendWeek({ is_black_friday_week: true })], ["Black Friday week"]],
+    [[trendWeek({ is_partial: true })], ["Partial week"]],
+  ])("leaves out the series no week uses: %j", (weeks, expected) => {
+    useHome.mockReturnValue({ data: home({ figures: { tiles: TILES, trend: weeks } }) });
+
+    renderWithProviders(<HomeScreen />);
+
+    const series = within(screen.getByTestId("chart-series")).getAllByRole("listitem", { hidden: true });
+    expect(series.map((item) => item.textContent)).toEqual(expected);
+  });
+
+  it("keeps the chart out of the keyboard order", () => {
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByTestId("chart-series")).toHaveAttribute("data-accessibility-layer", "false");
   });
 
   it("puts the data-status strip at the top, above the tiles", () => {
@@ -129,7 +168,11 @@ describe("HomeScreen", () => {
       renderWithProviders(<HomeScreen />);
 
       expect(screen.getByText("No data yet")).toBeInTheDocument();
-      expect(screen.getByText("make backfill && make build-prod")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "no orders in the marts yet: run make build-prod (first make backfill if uv run sherpa-generate status shows no simulation)",
+        ),
+      ).toBeInTheDocument();
       expect(screen.queryAllByRole("region")).toHaveLength(0);
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "2 failing tests" })).toBeInTheDocument();
@@ -160,6 +203,46 @@ describe("HomeScreen", () => {
       expect(refetch).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("shows a loader that assistive technology announces while the first load runs", () => {
+    useHome.mockReturnValue({ data: undefined, isError: false });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+  });
+
+  it("disables Retry while the refetch runs", () => {
+    useHome.mockReturnValue({
+      data: home({ figures: null, figures_error: { code: "timeout", message: "slow" } }),
+      isFetching: true,
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+  });
+
+  it("enables Retry when no refetch runs", () => {
+    useHome.mockReturnValue({
+      data: home({ figures: null, figures_error: { code: "timeout", message: "slow" } }),
+      isFetching: false,
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+
+  it("says '1 failing test' in the singular", () => {
+    useHome.mockReturnValue({
+      data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, build: buildSummary({ failing_tests: 1 }) } }),
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByRole("link", { name: "1 failing test" })).toBeInTheDocument();
+  });
 
   it("shows the shared load error with a retry when the request itself fails", async () => {
     const refetch = vi.fn();

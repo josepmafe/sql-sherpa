@@ -38,6 +38,33 @@ describe("DataStatusStrip", () => {
     ).toHaveAttribute("href", "/lineage?failing=1");
   });
 
+  it.each([
+    [1, "1 failed node"],
+    [2, "2 failed nodes"],
+  ])("links %i failed nodes to the failing-only lineage next to the failing tests", (count, name) => {
+    const status = dataStatus({ build: buildSummary({ failed_nodes: count, failing_tests: 1 }) });
+
+    renderWithProviders(<DataStatusStrip status={status} />);
+
+    expect(screen.getByRole("link", { name })).toHaveAttribute("href", "/lineage?failing=1");
+    expect(screen.getByRole("link", { name: "1 failing test" })).toHaveAttribute("href", "/lineage?failing=1");
+  });
+
+  it("shows failed nodes and no failing tests as two items", () => {
+    const status = dataStatus({ build: buildSummary({ failed_nodes: 2 }) });
+
+    renderWithProviders(<DataStatusStrip status={status} />);
+
+    expect(screen.getByRole("link", { name: "2 failed nodes" })).toBeInTheDocument();
+    expect(screen.getByText("No failing tests")).toBeInTheDocument();
+  });
+
+  it("shows no failed-nodes item when none failed", () => {
+    renderWithProviders(<DataStatusStrip status={dataStatus({ build: buildSummary({ failing_tests: 3 }) })} />);
+
+    expect(screen.queryByText(/failed node/)).not.toBeInTheDocument();
+  });
+
   it("lists each source with a problem, worst wording first as given", () => {
     const status = dataStatus({
       freshness: {
@@ -63,14 +90,14 @@ describe("DataStatusStrip", () => {
 
     expect(
       screen.getByText(
-        "marketing.ad_spend_daily: warning, last loaded 49 h ago",
+        "marketing.ad_spend_daily: warning, last loaded 49 h ago (checked 2026-11-01 14:40 UTC)",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("shop.orders: error, last loaded 120 h ago"),
+      screen.getByText("shop.orders: error, last loaded 120 h ago (checked 2026-11-01 14:40 UTC)"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("shop.carts: error, never loaded"),
+      screen.getByText("shop.carts: error, never loaded (checked 2026-11-01 14:40 UTC)"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Sources fresh/)).not.toBeInTheDocument();
   });

@@ -1,13 +1,16 @@
 import { Anchor, Group, Text } from "@mantine/core";
+import { IconAlertTriangle, IconCircleX } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 
 import type { components } from "../../api/schema";
 import { formatBuildStart } from "../../components/time";
+import { ORANGE, RED } from "../lineage/GraphNode";
 import { toSearchParams } from "../lineage/url";
 
 type DataStatus = components["schemas"]["DataStatus"];
 type SourceFreshness = components["schemas"]["SourceFreshness"];
 
+const ICON_SIZE = 16;
 const FAILING_LINK = `/lineage?${toSearchParams({
   select: "",
   layers: undefined,
@@ -34,12 +37,18 @@ function BuildItems({ status }: { status: DataStatus }) {
   if (build === null)
     return note === null ? null : <Text size="sm">{note}</Text>;
   const failing = build.failing_tests;
+  const failed = build.failed_nodes;
   return (
     <>
       <Text size="sm">
         Last full build {formatBuildStart(build.started_at)} ·{" "}
         {build.node_count} nodes
       </Text>
+      {failed > 0 && (
+        <Anchor component={Link} to={FAILING_LINK} size="sm">
+          {failed} failed {failed === 1 ? "node" : "nodes"}
+        </Anchor>
+      )}
       {failing === 0 ? (
         <Text size="sm">No failing tests</Text>
       ) : (
@@ -65,13 +74,17 @@ function FreshnessItems({ status }: { status: DataStatus }) {
   return (
     <>
       {freshness.problems.map((source) => (
-        <Text
-          key={source.name}
-          size="sm"
-          c={source.status === "error" ? "red.8" : "orange.9"}
-        >
-          {describe(source)}
-        </Text>
+        <Group key={source.name} gap={4} wrap="nowrap">
+          {/* Only the icon is coloured: orange or red text does not reach AA on both themes. */}
+          {source.status === "error" ? (
+            <IconCircleX size={ICON_SIZE} color={RED} aria-hidden />
+          ) : (
+            <IconAlertTriangle size={ICON_SIZE} color={ORANGE} aria-hidden />
+          )}
+          <Text size="sm">
+            {describe(source)} (checked {formatBuildStart(freshness.checked_at)})
+          </Text>
+        </Group>
       ))}
     </>
   );
