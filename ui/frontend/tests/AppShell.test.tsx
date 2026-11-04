@@ -42,7 +42,7 @@ describe("AppShell", () => {
     const links = within(screen.getByRole("navigation", { name: "Main" })).getAllByRole("link");
     expect(links[0]).toHaveAccessibleName("Home");
     expect(links[0]).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("heading", { name: "Home" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Last 30 days" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Search tables and columns")).not.toBeInTheDocument();
   });
 
