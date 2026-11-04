@@ -23,6 +23,10 @@ export type FocusEdge = Schemas["FocusEdge"];
 export type Health = Schemas["Health"];
 export type ApiError = Schemas["ApiError"];
 export type FormatResponse = Schemas["FormatResponse"];
+export type Home = Schemas["Home"];
+export type Tile = Schemas["Tile"];
+export type TrendWeek = Schemas["TrendWeek"];
+export type DataStatus = Schemas["DataStatus"];
 
 /** What openapi-fetch resolves with for a 2xx answer. */
 export type OkResult<T> = { data: T; response: { status: number } };
@@ -222,4 +226,38 @@ export function proxyFailure(body: string, status: number): { error: string; res
 /** The answer to a call that has no body (the cancel). */
 export function noContent(): { response: { status: number } } {
   return { response: { status: 204 } };
+}
+
+export function tile(overrides: Partial<Tile> = {}): Tile {
+  return {
+    id: "net_revenue",
+    title: "Net revenue",
+    format: "currency",
+    decimals: 0,
+    up_is_good: true,
+    note: null,
+    value: "34812.4",
+    change: "0.12",
+    change_kind: "relative",
+    direction: "up",
+    good: true,
+    ...overrides,
+  };
+}
+
+export function trendWeek(overrides: Partial<TrendWeek> = {}): TrendWeek {
+  return { week_start: "2026-10-05", net_revenue: "8000.50", is_black_friday_week: false, is_partial: false, ...overrides };
+}
+
+export function dataStatus(overrides: Partial<DataStatus> = {}): DataStatus {
+  return { as_of_date: "2026-10-21", build: null, build_note: null, freshness: null, freshness_note: null, ...overrides };
+}
+
+export function home(overrides: Partial<Home> = {}): Home {
+  return {
+    figures: { tiles: [tile()], trend: [trendWeek()] },
+    figures_error: null,
+    status: dataStatus(),
+    ...overrides,
+  };
 }
