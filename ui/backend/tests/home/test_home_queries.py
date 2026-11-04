@@ -30,6 +30,17 @@ def test_tiles_are_the_specs() -> None:
     assert [tile.id for tile in tiles if tile.note is not None] == ["net_revenue", "aov", "refund_rate"]
 
 
+def test_the_as_stood_notes_say_the_latest_period_reads_high() -> None:
+    notes = {tile.id: tile.note for tile in HomeQueries.from_yaml(HOME_QUERIES_PATH).tiles}
+
+    expected = (
+        "The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an "
+        "order, so the latest 30 days have few refunds yet and read high."
+    )
+    assert notes["net_revenue"] == expected
+    assert notes["aov"] == expected
+
+
 @pytest.mark.parametrize("name", list(HOME_SQL))
 def test_every_home_query_passes_the_guard(name: str) -> None:
     result = SqlGuard(data_platform_marts()).check(HOME_SQL[name])

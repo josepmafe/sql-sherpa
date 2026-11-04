@@ -13,8 +13,8 @@ Each tile shows the last 30 days ending on **as of**, the latest day with orders
 
 What each counts (non-cancelled orders by `order_date`, new customers by first order) is in [data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md). Home's own definitions, the refund rate by `refund_date` and the previous period of Net revenue and AOV, are in [UI spec §6.2](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md).
 
-The windows are (as of − 30, as of] and (as of − 60, as of − 30]. The arrow and colour say whether the move is good (green) or bad (red): for the refund rate, up is bad. The words next to them say the same ("up 12.0% on the previous 30 days, an improvement"), so nothing relies on colour. 
-Net revenue and AOV compare with the previous period **as it stood 30 days ago**. Refunds arrive up to about 7 weeks after an order, so the latest 30 days have few refunds yet and read slightly high; the earlier window's final figure has all of its refunds, and a change against it would be inflated by about one refund rate. Their tooltips say so. The refund rate counts refunds paid in the 30 days over sales placed in them, so it differs from a by-order rate of recent orders, which reads low until their refunds arrive (its tooltip says so too). With a history of 60 to 106 days, the refund rate's earlier value reads low, because the refunds of orders placed before the history are missing.
+The windows are (as of − 30, as of] and (as of − 60, as of − 30]. The arrow and colour say whether the move is good (green) or bad (red): for the refund rate, up is bad. The words next to them say the same ("up 12.0% on the previous 30 days, an improvement"), so nothing relies on colour.
+Net revenue and AOV compare with the previous period **as it stood 30 days ago**. Refunds arrive up to about 7 weeks after an order, so the latest 30 days have few refunds yet and read high; the earlier window's final figure has all of its refunds, and a change against it would be inflated by about one refund rate. Their tooltips say so. The refund rate counts refunds paid in the 30 days over sales placed in them, so it differs from a by-order rate of recent orders, which reads low until their refunds arrive (its tooltip says so too). With a history of 60 to 106 days, the refund rate's earlier value reads low, because the refunds of orders placed before the history are missing.
 
 A change that rounds to zero (under 0.05%, or under 0.05 points) is flat: no arrow and no colour.
 
@@ -34,7 +34,7 @@ Net revenue per week (Monday to Sunday) for the last 26 weeks, oldest first. The
 |---|---|
 | Data as of | the as-of date above |
 | Last full build, with its node count | the newest full `dbt build` on prod in `ops.dbt_run_results` |
-| N failed nodes (only when above 0), N failing tests | the same build: models, seeds and snapshots that failed, and failed tests; both link to [Lineage](using-lineage.md) with "Failing only" on. A warning is not failing |
+| N failed nodes (only when above 0), N failing tests | the same build: models, seeds and snapshots whose own run failed, and failed tests. Each links to [Lineage](using-lineage.md) with "Failing only" on, except "No failing tests" at 0. A warning is not failing |
 | Sources fresh, or one line per source in warning or error | `target-prod/sources.json`, written by `make build-prod` |
 
 Each item that cannot be shown says why in its place, and the others stay: one broken dependency never blanks the screen.

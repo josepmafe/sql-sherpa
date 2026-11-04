@@ -91,7 +91,7 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 
 **Add a node status:**
 
-1. Add a case to `NodeStatus` in `lineage/node_status.py` and to `StatusDeriver.node_status`, with tests in `tests/lineage/test_node_status.py` that include its precedence against `failed` and `warned`. A new dbt result status goes in `_NODE_STATUSES` or `_TEST_OUTCOMES`; an unknown one is logged and treated as no row.
+1. Add a case to `NodeStatus` in `lineage/node_status.py` and to `StatusDeriver.node_status`, with tests in `tests/lineage/test_node_status.py` that include its precedence against `failed` and `warned`. A new dbt result status goes in `NODE_STATUSES` or `TEST_OUTCOMES`; an unknown one is logged and treated as no row.
 2. The status travels in `LineageNode` (`lineage/lineage_service.py`): run `make ui-client` and commit the schema.
 3. Give it a label, an icon and a colour in `STATUS` (`screens/lineage/GraphNode.tsx`); status is never colour alone, and the colours must pass AA contrast. Add a Vitest case.
 4. Add the row to the status list in the UI spec §6.5 and to the Lineage guide.

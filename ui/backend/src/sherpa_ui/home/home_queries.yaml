@@ -16,7 +16,7 @@ tiles:
     up_is_good: true
     note: >-
       The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an order,
-      so the latest 30 days have few refunds yet and read slightly high.
+      so the latest 30 days have few refunds yet and read high.
     # last_period: the earlier window's orders less only the refunds paid by as_of - 30 (fct_orders.net_revenue is
     # gross - discount - all refunds, so the later refunds are the difference).
     sql: |
@@ -56,7 +56,7 @@ tiles:
     up_is_good: true
     note: >-
       The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an order,
-      so the latest 30 days have few refunds yet and read slightly high.
+      so the latest 30 days have few refunds yet and read high.
     sql: |
       with bounds as (select max(order_date) as as_of from marts.fct_orders),
       known_refunds as (
