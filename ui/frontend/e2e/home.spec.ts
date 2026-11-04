@@ -132,7 +132,13 @@ test.describe("the data-status footer and the data-problems box", () => {
       await expect(page.getByRole("group", { name: "Data status" })).not.toContainText("Sources fresh");
     }
     const box = page.getByRole("region", { name: "Data problems" });
-    // The box folds everything after its first three items (errors sort first), so open it whenever there is a fold.
+    // A box with only warnings is collapsed: open it. It then folds everything after its first three items (errors
+    // sort first), so open the fold whenever there is one.
+    const summary = box.getByRole("button", { name: /^Data warnings \(\d+\)$/ });
+    if ((await summary.count()) > 0) {
+      await expect(summary).toHaveAttribute("aria-expanded", "false");
+      await summary.click();
+    }
     const fold = box.getByRole("button", { name: /^Show \d+ more$/ });
     if ((await fold.count()) > 0) await fold.click();
     for (const row of problems) {
@@ -145,6 +151,39 @@ test.describe("the data-status footer and the data-problems box", () => {
 
       await expect(box).toContainText(`${name}: ${word}, ${loaded} (checked ${checked})`);
     }
+  });
+
+  test("a box with only warnings is collapsed until the summary is clicked; an error keeps it open", async ({ page }) => {
+    const respondWith = async (failingTests: number): Promise<void> => {
+      await page.route("**/api/home", async (route) => {
+        const response = await route.fetch();
+        const body = (await response.json()) as {
+          status: { build: { failing_tests: number; failed_nodes: number }; freshness: { problems: unknown[] } };
+        };
+        Object.assign(body.status.build, { failing_tests: failingTests, failed_nodes: 0 });
+        body.status.freshness.problems = [
+          { name: "shop.source_0", status: "warn", hours_ago: 49, max_loaded_at: "2026-10-30T12:00:00Z" },
+        ];
+        await route.fulfill({ response, json: body });
+      });
+      await page.reload();
+    };
+    const box = page.getByRole("region", { name: "Data problems" });
+
+    await respondWith(0);
+
+    const summary = box.getByRole("button", { name: "Data warnings (1)" });
+    await expect(summary).toHaveAttribute("aria-expanded", "false");
+    await expect(box.getByText(/^shop.source_0/)).toHaveCount(0);
+    await summary.click();
+    await expect(box.getByText(/^shop.source_0: warning, last loaded 49 h ago/)).toBeVisible();
+
+    await page.unroute("**/api/home");
+    await respondWith(2);
+
+    await expect(box.getByRole("link", { name: "2 failing tests" })).toBeVisible();
+    await expect(box.getByText(/^shop.source_0: warning/)).toBeVisible();
+    await expect(box.getByRole("button", { name: /^Data warnings/ })).toHaveCount(0);
   });
 
   test("shows no box when nothing is a problem", async ({ page }) => {

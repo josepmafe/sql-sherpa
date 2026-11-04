@@ -10,7 +10,7 @@ interface Measure {
   minimum: number;
 }
 
-// The box in two states: warnings only, and errors; each with enough items to fold, so the button exists.
+// The box in two states: warnings only (collapsed, then expanded), and errors; each with enough items to fold.
 const VARIANTS = {
   warnings: { failingTests: 0, failedNodes: 0, warnings: SOURCE_COUNT },
   errors: { failingTests: 3, failedNodes: 1, warnings: SOURCE_COUNT - 2 },
@@ -37,6 +37,17 @@ for (const scheme of ["light", "dark"] as const) {
       await page.goto("/");
       await page.getByRole("region", { name: "Data problems" }).waitFor();
 
+      // The warnings-only box starts collapsed: measure its summary row, then open it and measure the list.
+      const summary = page.getByRole("button", { name: /^Data warnings \(\d+\)$/ });
+      if (variant === "warnings") {
+        const collapsed = await measureBox(page);
+        expect(collapsed.map(({ what }) => what)).toEqual(expect.arrayContaining(["title", "icon", "button", "chevron"]));
+        expect(collapsed.map(({ what }) => what)).not.toContain("item");
+        for (const { what, ratio, minimum } of collapsed) {
+          expect(ratio, `${what} (collapsed) in the ${scheme} theme`).toBeGreaterThanOrEqual(minimum);
+        }
+        await summary.click();
+      }
       const measures = await measureBox(page);
 
       expect(measures.map(({ what }) => what)).toEqual(
@@ -92,10 +103,12 @@ async function measureBox(page: Page): Promise<Measure[]> {
       const found: [string, Element, number][] = [];
       const title = box.querySelector(".mantine-Alert-title");
       const icon = box.querySelector(".mantine-Alert-icon svg");
-      const button = box.querySelector("button");
+
+      const chevron = box.querySelector(".mantine-Alert-title svg");
       if (title) found.push(["title", title, text]);
       if (icon) found.push(["icon", icon, graphic]);
-      if (button) found.push(["button", button, text]);
+      for (const button of box.querySelectorAll("button")) found.push(["button", button, text]);
+      if (chevron) found.push(["chevron", chevron, graphic]);
       for (const link of box.querySelectorAll("a")) found.push(["link", link, text]);
       for (const item of box.querySelectorAll("li")) found.push(["item", item, text]);
       return found.map(([what, element, minimum]) => ({ what, ratio: ratio(element), minimum }));

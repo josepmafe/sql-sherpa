@@ -76,13 +76,14 @@ describe("DataProblems", () => {
     expect(within(box).getByRole("link", { name: "1 failing test" })).toHaveAttribute("href", "/lineage?failing=1");
   });
 
-  it("titles a box with only a freshness warning 'Data warnings'", () => {
+  it("titles a box with only a freshness warning 'Data warnings (1)'", async () => {
     const status = dataStatus({ freshness: { checked_at: CHECKED, problems: [sourceFreshness()] } });
 
     renderWithProviders(<DataProblems status={status} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Data warnings (1)" }));
 
     const box = problemsBox();
-    expect(within(box).getByText("Data warnings")).toBeInTheDocument();
+    expect(within(box).getByText("Data warnings (1)")).toBeInTheDocument();
     expect(within(box).queryByText("Data errors")).not.toBeInTheDocument();
     expect(
       within(box).getByText(`marketing.ad_spend_daily: warning, last loaded 49 h ago (checked ${CHECKED_TEXT})`),
@@ -112,6 +113,74 @@ describe("DataProblems", () => {
     ]);
   });
 
+  describe("when there are only warnings", () => {
+    const warnings = (count: number) =>
+      dataStatus({
+        freshness: {
+          checked_at: CHECKED,
+          problems: Array.from({ length: count }, (_, index) => sourceFreshness({ name: `src.n${index}` })),
+        },
+      });
+
+    it("is collapsed by default: the summary button counts the items and the list is not rendered", () => {
+      renderWithProviders(<DataProblems status={warnings(1)} />);
+
+      const button = within(problemsBox()).getByRole("button", { name: "Data warnings (1)" });
+      expect(button).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("list")).not.toBeInTheDocument();
+      expect(screen.queryByText(/src\.n0/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it.each(["{Enter}", " "])("opens and closes from the keyboard (%j), with aria-controls on the list", async (key) => {
+      const user = userEvent.setup();
+      renderWithProviders(<DataProblems status={warnings(2)} />);
+      const button = screen.getByRole("button", { name: "Data warnings (2)" });
+      button.focus();
+
+      await user.keyboard(key);
+
+      expect(button).toHaveAttribute("aria-expanded", "true");
+      expect(within(problemsBox()).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        `src.n0: warning, last loaded 49 h ago (checked ${CHECKED_TEXT})`,
+        `src.n1: warning, last loaded 49 h ago (checked ${CHECKED_TEXT})`,
+      ]);
+      expect(document.getElementById(button.getAttribute("aria-controls")!)).toContainElement(screen.getByRole("list"));
+
+      await user.keyboard(key);
+
+      expect(button).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    });
+
+    it("folds a long list after three items inside the open disclosure", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<DataProblems status={warnings(4)} />);
+      expect(screen.queryByRole("button", { name: /^Show/ })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Data warnings (4)" }));
+
+      expect(within(problemsBox()).getAllByRole("listitem")).toHaveLength(3);
+      await user.click(screen.getByRole("button", { name: "Show 1 more" }));
+      expect(within(problemsBox()).getAllByRole("listitem")).toHaveLength(4);
+    });
+  });
+
+  it("keeps the box open and red when any item is an error, with no summary button", () => {
+    const status = dataStatus({
+      freshness: {
+        checked_at: CHECKED,
+        problems: [sourceFreshness(), sourceFreshness({ name: "shop.orders", status: "error" })],
+      },
+    });
+
+    renderWithProviders(<DataProblems status={status} />);
+
+    expect(within(problemsBox()).getByText("Data errors")).toBeInTheDocument();
+    expect(within(problemsBox()).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("is not announced as an alert", () => {
     renderWithProviders(<DataProblems status={dataStatus({ build: buildSummary({ failing_tests: 1 }) })} />);
 
@@ -123,7 +192,7 @@ describe("DataProblems", () => {
     ["build_note", "build status unavailable"],
     ["freshness_note", "no freshness check recorded (run make build-prod)"],
     ["freshness_note", "freshness unavailable"],
-  ] as const)("shows the missing item's note in the box as a warning: %s %s", (field, note) => {
+  ] as const)("shows the missing item's note in the box as a warning: %s %s", async (field, note) => {
     const status = dataStatus({ [field]: note });
 
     renderWithProviders(
@@ -133,8 +202,8 @@ describe("DataProblems", () => {
       </>,
     );
 
+    await userEvent.setup().click(screen.getByRole("button", { name: "Data warnings (1)" }));
     const box = problemsBox();
-    expect(within(box).getByText("Data warnings")).toBeInTheDocument();
     expect(within(box).getByText(note)).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Data status" })).not.toBeInTheDocument();
   });

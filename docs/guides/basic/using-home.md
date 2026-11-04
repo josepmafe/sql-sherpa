@@ -30,7 +30,7 @@ Net revenue per week (Monday to Sunday) for the last 26 weeks, oldest first. The
 
 ## Data problems and the footer
 
-Each item is in one place. A problem shows in a box under the heading (red "Data errors", or yellow "Data warnings" when none is an error; the first 3 items, then "Show N more"); with no problem there is no box. What is healthy is one dimmed line below the chart.
+Each item is in one place. A problem shows in a box under the heading. With any error (a failed node, a failing test, a freshness error) the box is red, titled "Data errors" and open, with the first 3 items and then "Show N more". With only warnings it is yellow and collapsed: one row, "Data warnings (N)", that opens on a click, Enter or Space and then shows the same list. With no problem there is no box. What is healthy is one dimmed line below the chart.
 
 | Item | Source | Where |
 |---|---|---|
@@ -52,7 +52,7 @@ Each item that cannot be shown says why in the box as a warning, and the others 
 | "freshness unavailable" | `sources.json` is half-written (a build is running) or unreadable: wait for `make build-prod` and reload |
 | "no freshness check recorded (run make build-prod)" | `sources.json` does not exist yet: `make build-prod` |
 | "Sources ... (checked <time>)" is older than the build line | The freshness comes from this checkout's `target-prod/sources.json`, the build line from the shared warehouse, so after a blocked or old `make build-prod` the freshness can be older; the time shows when the check ran. Run `make build-prod` |
-| `marketing.ad_spend_daily: warning, last loaded N h ago (checked <time>)` | Expected once the campaigns end: they stop at the catalog horizon ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md#52-daily-simulation-scale--10); the warn threshold is 48 h (§7)), so the table stops growing |
+| `marketing.ad_spend_daily: warning, last loaded N h ago (checked <time>)` | Expected in this synthetic warehouse. Ad spend ends at the catalog horizon, the earlier of yesterday and 365 days after the simulation start ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md#52-daily-simulation-scale--10)), so once `make advance` goes past it the newest spend row ages beyond the 48 h warn threshold (§7, Freshness) and stays a warning |
 | A tile's change is "—" | One of the three cases above; a short history is the usual one |
 | The numbers did not move after `make advance` | Run `make build-prod`, then reload: Home reads the marts, not the raw tables |
 
