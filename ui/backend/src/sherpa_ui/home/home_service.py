@@ -21,6 +21,7 @@ from sherpa_ui.home.data_status import (
     DataStatus,
     Freshness,
     FreshnessUnavailable,
+    failed_node_count,
     failing_test_count,
 )
 from sherpa_ui.home.figures import Tile, TrendRow, TrendWeek, comparable, tile, trend_weeks
@@ -156,7 +157,12 @@ def _unavailable(error: UiQueryError) -> FiguresUnavailable:
 
 
 def _summary(last: LastFullBuild) -> BuildSummary:
-    return BuildSummary(started_at=last.started_at, node_count=last.node_count, failing_tests=failing_test_count(last))
+    return BuildSummary(
+        started_at=last.started_at,
+        node_count=last.node_count,
+        failing_tests=failing_test_count(last),
+        failed_nodes=failed_node_count(last),
+    )
 
 
 def _decimal(value: object) -> Decimal:

@@ -45,7 +45,7 @@ TEST_OUTCOMES: Final = {
     "runtime error": TestOutcome.FAILED,
     "skipped": TestOutcome.SKIPPED,
 }
-_NODE_STATUSES: Final = {
+NODE_STATUSES: Final = {
     "success": NodeStatus.OK,
     "no-op": NodeStatus.OK,
     "error": NodeStatus.FAILED,
@@ -101,7 +101,7 @@ class StatusDeriver:
         if status is None:
             return None
 
-        derived = _NODE_STATUSES.get(status)
+        derived = NODE_STATUSES.get(status)
         if derived is None:
             _log_unknown(unique_id, status)
 

@@ -230,6 +230,8 @@ export interface components {
         };
         /** BuildSummary */
         BuildSummary: {
+            /** Failed Nodes */
+            failed_nodes: number;
             /** Failing Tests */
             failing_tests: number;
             /** Node Count */

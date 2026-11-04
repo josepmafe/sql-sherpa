@@ -76,6 +76,7 @@ def builds() -> BuildStatusReader:
     fake = create_autospec(BuildStatusReader, instance=True)
     fake.last_full_build.return_value = make_last_full_build(
         make_node_result("model.p.a", "success"),
+        make_node_result("model.p.b", "error"),
         make_node_result("test.p.t1", "fail"),
         make_node_result("test.p.t2", "pass"),
     )
@@ -114,7 +115,11 @@ class TestHome:
         assert home.figures.trend[1].net_revenue == Decimal("8000.50")
         assert home.status.as_of_date == date(2026, 10, 31)
         assert home.status.build is not None
-        assert (home.status.build.node_count, home.status.build.failing_tests) == (3, 1)
+        assert (home.status.build.node_count, home.status.build.failing_tests, home.status.build.failed_nodes) == (
+            4,
+            1,
+            1,
+        )
         assert home.status.build.started_at == STARTED_AT
         assert home.status.build_note is None
         assert home.status.freshness == FRESHNESS

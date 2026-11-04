@@ -256,7 +256,7 @@ export function dataStatus(overrides: Partial<DataStatus> = {}): DataStatus {
 }
 
 export function buildSummary(overrides: Partial<BuildSummary> = {}): BuildSummary {
-  return { failing_tests: 0, node_count: 398, started_at: "2026-11-01T14:39:12Z", ...overrides };
+  return { failed_nodes: 0, failing_tests: 0, node_count: 398, started_at: "2026-11-01T14:39:12Z", ...overrides };
 }
 
 export function sourceFreshness(overrides: Partial<SourceFreshness> = {}): SourceFreshness {

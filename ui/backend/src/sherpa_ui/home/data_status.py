@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from sherpa_ui.lineage.node_status import TEST_OUTCOMES, TestOutcome
+from sherpa_ui.lineage.node_status import NODE_STATUSES, TEST_OUTCOMES, NodeStatus, TestOutcome
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,6 +24,7 @@ BUILD_UNAVAILABLE_NOTE: Final = "build status unavailable"
 NO_FRESHNESS_NOTE: Final = "no freshness check recorded (run make build-prod)"
 FRESHNESS_UNAVAILABLE_NOTE: Final = "freshness unavailable"
 _TEST_TYPES: Final = frozenset({"test", "unit_test"})
+_BUILT_TYPES: Final = frozenset({"model", "seed", "snapshot"})
 _SECONDS_PER_HOUR: Final = 3600
 _SOURCE_PREFIX_PARTS: Final = 2  # "source.<project>." comes before the short name
 _PROBLEM_STATUSES: Final[dict[str, Literal["warn", "error"]]] = {
@@ -60,6 +61,7 @@ class BuildSummary(BaseModel):
     started_at: datetime
     node_count: int
     failing_tests: int
+    failed_nodes: int  # models, seeds and snapshots that failed to build
 
 
 class DataStatus(BaseModel):
@@ -98,6 +100,15 @@ def failing_test_count(build: LastFullBuild) -> int:
         1
         for result in build.results.values()
         if result.resource_type in _TEST_TYPES and TEST_OUTCOMES.get(result.status) == TestOutcome.FAILED
+    )
+
+
+def failed_node_count(build: LastFullBuild) -> int:
+    """Uses Lineage's node mapping (a partial success is a failure), so the strip and the graph agree."""
+    return sum(
+        1
+        for result in build.results.values()
+        if result.resource_type in _BUILT_TYPES and NODE_STATUSES.get(result.status) == NodeStatus.FAILED
     )
 
 

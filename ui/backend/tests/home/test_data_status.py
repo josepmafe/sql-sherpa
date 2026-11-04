@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from sherpa_ui.home.data_status import FreshnessReader, FreshnessUnavailable, failing_test_count
+from sherpa_ui.home.data_status import FreshnessReader, FreshnessUnavailable, failed_node_count, failing_test_count
 from ui_helpers import make_last_full_build, make_node_result
 
 if TYPE_CHECKING:
@@ -106,3 +106,30 @@ class TestFailingTestCount:
 
     def test_empty_build_has_none(self) -> None:
         assert failing_test_count(make_last_full_build()) == 0
+
+
+class TestFailedNodeCount:
+    def test_counts_failed_models_seeds_and_snapshots_only(self) -> None:
+        build = make_last_full_build(
+            make_node_result("model.a", "error"),
+            make_node_result("seed.b", "error"),
+            make_node_result("snapshot.c", "partial success"),
+            make_node_result("model.d", "runtime error"),
+            make_node_result("model.e", "success"),
+            make_node_result("model.f", "skipped"),
+            make_node_result("model.g", "no-op"),
+            make_node_result("test.h", "fail"),
+            make_node_result("test.i", "error"),
+            make_node_result("test.j", "skipped"),
+        )
+
+        assert failed_node_count(build) == 4
+        assert failing_test_count(build) == 2
+
+    def test_a_model_build_with_an_error_and_a_skipped_test(self) -> None:
+        build = make_last_full_build(make_node_result("model.x", "error"), make_node_result("test.y", "skipped"))
+
+        assert (failed_node_count(build), failing_test_count(build)) == (1, 0)
+
+    def test_empty_build_has_none(self) -> None:
+        assert failed_node_count(make_last_full_build()) == 0
