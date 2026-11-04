@@ -1,5 +1,5 @@
 import { BarChart } from "@mantine/charts";
-import { Table, VisuallyHidden } from "@mantine/core";
+import { Table, Text, Title, VisuallyHidden } from "@mantine/core";
 
 import type { components } from "../../api/schema";
 import { formatCurrency } from "./format";
@@ -17,22 +17,31 @@ const SERIES = [
 ];
 
 export function TrendChart({ weeks }: { weeks: readonly TrendWeek[] }) {
+  const rows = weeks.map(chartRow);
   return (
     <>
-      {/* The bars say nothing the table next to them does not; a screen reader gets the table. */}
+      <Title order={3} size="h4">
+        Weekly net revenue
+      </Title>
+      <Text size="sm" c="dimmed">
+        Recent weeks read high until their refunds arrive (about 7 weeks).
+      </Text>
+      {/* The bars say nothing the table next to them does not; a screen reader gets the table, and the chart is no
+          keyboard stop (recharts' accessibility layer would make it one). */}
       <div data-testid="trend-chart" aria-hidden="true">
         <BarChart
           h={CHART_HEIGHT}
-          data={weeks.map(chartRow)}
+          data={rows}
           dataKey="week"
-          series={SERIES}
+          series={SERIES.filter(({ name }) => rows.some((row) => name in row))}
+          accessibilityLayer={false}
           type="stacked"
           withLegend
           valueFormatter={(value) => formatCurrency(String(value))}
           yAxisProps={{ tickFormatter: (value: number) => formatCurrency(String(value)), width: 80 }}
         />
       </div>
-      <VisuallyHidden>
+      <VisuallyHidden component="div">
         <Table aria-label="Net revenue per week">
           <Table.Thead>
             <Table.Tr>
