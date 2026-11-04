@@ -11,9 +11,12 @@ Each tile shows the last 30 days ending on **as of**, the latest day with orders
 | Net revenue, Orders, AOV, New customers | relative, in % |
 | Refund rate | difference, in percentage points (`pp`) |
 
-What each counts (non-cancelled orders by `order_date`, refunds by `refund_date`, new customers by first order) is in [data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md).
+What each counts (non-cancelled orders by `order_date`, new customers by first order) is in [data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md). Home's own definitions, the refund rate by `refund_date` and the previous period of Net revenue and AOV, are in [UI spec §6.2](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md).
 
-The windows are (as of − 30, as of] and (as of − 60, as of − 30]. The arrow and colour say whether the move is good (green) or bad (red): for the refund rate, up is bad. The words next to them say the same ("up 12.0% on the previous 30 days, an improvement"), so nothing relies on colour. Net revenue has a tooltip: refunds of recent orders keep arriving for about 40 days, so the latest period reads slightly high.
+The windows are (as of − 30, as of] and (as of − 60, as of − 30]. The arrow and colour say whether the move is good (green) or bad (red): for the refund rate, up is bad. The words next to them say the same ("up 12.0% on the previous 30 days, an improvement"), so nothing relies on colour. 
+Net revenue and AOV compare with the previous period **as it stood 30 days ago**. Refunds arrive up to about 7 weeks after an order, so the latest 30 days have few refunds yet and read slightly high; the earlier window's final figure has all of its refunds, and a change against it would be inflated by about one refund rate. Their tooltips say so. The refund rate counts refunds paid in the 30 days over sales placed in them, so it differs from a by-order rate of recent orders, which reads low until their refunds arrive (its tooltip says so too). With a history of 60 to 106 days, the refund rate's earlier value reads low, because the refunds of orders placed before the history are missing.
+
+A change that rounds to zero (under 0.05%, or under 0.05 points) is flat: no arrow and no colour.
 
 A tile shows "—" for its change, and keeps its value, when:
 
@@ -31,7 +34,7 @@ Net revenue per week (Monday to Sunday) for the last 26 weeks, oldest first. The
 |---|---|
 | Data as of | the as-of date above |
 | Last full build, with its node count | the newest full `dbt build` on prod in `ops.dbt_run_results` |
-| N failing tests | the same build; a link to [Lineage](using-lineage.md) with "Failing only" on. A warning is not failing |
+| N failed nodes (only when above 0), N failing tests | the same build: models, seeds and snapshots that failed, and failed tests; both link to [Lineage](using-lineage.md) with "Failing only" on. A warning is not failing |
 | Sources fresh, or one line per source in warning or error | `target-prod/sources.json`, written by `make build-prod` |
 
 Each item that cannot be shown says why in its place, and the others stay: one broken dependency never blanks the screen.
@@ -40,12 +43,13 @@ Each item that cannot be shown says why in its place, and the others stay: one b
 
 | Symptom | Fix |
 |---|---|
-| "No data yet" in place of the tiles | No marts, or marts with no orders: `make backfill && make build-prod` |
+| "No data yet" in place of the tiles | No marts, or marts with no orders: `make build-prod`; if `uv run sherpa-generate status` shows no simulation, run `make backfill` first (it refuses to run on an existing simulation) |
 | "The figures are unavailable" with a Retry | The database is down, a query timed out or the server is `busy`: start Postgres (`docker compose up -d --wait postgres`) and press Retry |
 | "build status unavailable" | The build record in `ops.dbt_run_results` could not be read (database down, missing grant): `dbt run-operation grant_read_access --target prod --target-path target-prod`, or start the database |
 | "no full prod build recorded (run make build-prod)" | No full `dbt build` on prod is recorded yet; a build of one model does not count |
 | "freshness unavailable" | `sources.json` is half-written (a build is running) or unreadable: wait for `make build-prod` and reload |
 | "no freshness check recorded (run make build-prod)" | `sources.json` does not exist yet: `make build-prod` |
+| "Sources ... (checked <time>)" is older than the build line | The freshness comes from this checkout's `target-prod/sources.json`, the build line from the shared warehouse, so after a blocked or old `make build-prod` the freshness can be older; the time shows when the check ran. Run `make build-prod` |
 | `marketing.ad_spend_daily: warning, last loaded N h ago` | Expected once the campaigns end: they stop at the catalog horizon ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md#52-daily-simulation-scale--10); the warn threshold is 48 h (§7)), so the table stops growing |
 | A tile's change is "—" | One of the three cases above; a short history is the usual one |
 | The numbers did not move after `make advance` | Run `make build-prod`, then reload: Home reads the marts, not the raw tables |

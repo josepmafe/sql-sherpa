@@ -68,6 +68,7 @@ export function homeExpectations(): HomeExpectations {
   const asOf = adminScalar("select max(order_date) from marts.fct_orders");
   const last = windowSums(asOf, 0);
   const earlier = windowSums(asOf, WINDOW_DAYS);
+  const earlierNet = earlierNetAsStood(asOf);
   const build = adminScalar(`
     with latest as (
       select invocation_id from ops.dbt_run_results
@@ -83,9 +84,9 @@ export function homeExpectations(): HomeExpectations {
     asOf,
     tiles: TILES.map((tile) => {
       const values = {
-        net_revenue: [last.net, earlier.net],
+        net_revenue: [last.net, earlierNet],
         orders: [last.orders, earlier.orders],
-        aov: [last.net / last.orders, earlier.net / earlier.orders],
+        aov: [last.net / last.orders, earlierNet / earlier.orders],
         refund_rate: [last.refunds / last.gross, earlier.refunds / earlier.gross],
         new_customers: [last.newCustomers, earlier.newCustomers],
       }[tile.id];
@@ -105,6 +106,20 @@ export function homeExpectations(): HomeExpectations {
     ),
     build: { startedAt: build[0]!, nodeCount: Number(build[1]), failingTests: Number(build[2]) },
   };
+}
+
+// The earlier window's net revenue as it stood WINDOW_DAYS ago: the refunds paid after that day are not deducted yet
+// (UI spec §6.2), because the latest window has few refunds so far.
+function earlierNetAsStood(asOf: string): number {
+  const from = `date '${asOf}' - ${2 * WINDOW_DAYS - 1}`;
+  const to = `date '${asOf}' - ${WINDOW_DAYS}`;
+  return Number(
+    adminScalar(`
+      select coalesce(sum(o.gross_revenue - o.discount_amount), 0)
+        - coalesce(sum((select coalesce(sum(r.revenue_amount), 0) from marts.fct_refunds r
+                        where r.order_id = o.order_id and r.refund_date <= ${to})), 0)
+      from marts.fct_orders o where not o.is_cancelled and o.order_date between ${from} and ${to}`),
+  );
 }
 
 interface Sums {
