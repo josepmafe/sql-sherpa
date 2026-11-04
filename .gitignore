@@ -24,3 +24,6 @@ ui/frontend/node_modules/
 ui/frontend/dist/
 ui/frontend/test-results/
 ui/frontend/playwright-report/
+
+# Eval runs: the per-case records stay local; reports and run metadata are committed
+agent/evals/runs/*/cases.jsonl
