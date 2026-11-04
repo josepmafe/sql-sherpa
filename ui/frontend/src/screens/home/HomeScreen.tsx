@@ -3,7 +3,7 @@ import { Alert, Button, Loader, Stack, Text, Title } from "@mantine/core";
 import { useHome } from "../../api/queries";
 import type { components } from "../../api/schema";
 import { LoadError } from "../explorer/LoadError";
-import { DataStatusStrip } from "./DataStatusStrip";
+import { DataFooter, DataProblems } from "./DataStatusStrip";
 import { Tiles } from "./Tiles";
 import { TrendChart } from "./TrendChart";
 
@@ -37,7 +37,7 @@ export function HomeScreen() {
       {data !== undefined && (
         <>
           {data.figures && <Heading asOf={data.status.as_of_date} />}
-          <DataStatusStrip status={data.status} />
+          <DataProblems status={data.status} />
           {data.figures && (
             <>
               <Tiles tiles={data.figures.tiles} />
@@ -51,6 +51,7 @@ export function HomeScreen() {
               retrying={home.isFetching}
             />
           )}
+          <DataFooter status={data.status} />
         </>
       )}
     </Stack>

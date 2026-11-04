@@ -1,103 +1,120 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { DataStatusStrip } from "../../src/screens/home/DataStatusStrip";
+import { DataFooter, DataProblems } from "../../src/screens/home/DataStatusStrip";
 import { buildSummary, dataStatus, sourceFreshness } from "../fixtures/api";
 import { renderWithProviders } from "../fixtures/render";
 
 const CHECKED = "2026-11-01T14:40:30Z";
+const CHECKED_TEXT = "2026-11-01 14:40 UTC";
+const HEALTHY = dataStatus({ build: buildSummary(), freshness: { checked_at: CHECKED, problems: [] } });
 
-describe("DataStatusStrip", () => {
-  it("shows the last full build and fresh sources", () => {
-    const status = dataStatus({
-      build: buildSummary(),
-      freshness: { checked_at: CHECKED, problems: [] },
-    });
+function problemsBox(): HTMLElement {
+  return screen.getByRole("region", { name: "Data problems" });
+}
 
-    renderWithProviders(<DataStatusStrip status={status} />);
+describe("DataFooter", () => {
+  it("joins the healthy facts in one quiet line", () => {
+    renderWithProviders(<DataFooter status={HEALTHY} />);
 
-    expect(
-      screen.getByText("Last full build 2026-11-01 14:39 UTC · 398 nodes"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Sources fresh (checked 2026-11-01 14:40 UTC)"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("No failing tests")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    const footer = screen.getByRole("group", { name: "Data status" });
+    expect(footer).toHaveTextContent(
+      `Last full build 2026-11-01 14:39 UTC · 398 nodes · No failing tests · Sources fresh (checked ${CHECKED_TEXT})`,
+    );
+    expect(within(footer).queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("links the failing tests to the lineage filtered to failing nodes", () => {
-    const status = dataStatus({ build: buildSummary({ failing_tests: 3 }) });
+  it("leaves out what is a problem", () => {
+    const status = dataStatus({
+      build: buildSummary({ failing_tests: 3 }),
+      freshness: { checked_at: CHECKED, problems: [sourceFreshness()] },
+    });
 
-    renderWithProviders(<DataStatusStrip status={status} />);
+    renderWithProviders(<DataFooter status={status} />);
 
-    expect(
-      screen.getByRole("link", { name: "3 failing tests" }),
-    ).toHaveAttribute("href", "/lineage?failing=1");
+    const footer = screen.getByRole("group", { name: "Data status" });
+    expect(footer).toHaveTextContent("Last full build 2026-11-01 14:39 UTC · 398 nodes");
+    expect(footer).not.toHaveTextContent(/failing|Sources fresh|warning/);
+  });
+
+  it("renders nothing when no item is healthy", () => {
+    const status = dataStatus({ build_note: "build status unavailable", freshness_note: "freshness unavailable" });
+
+    renderWithProviders(<DataFooter status={status} />);
+
+    expect(screen.queryByRole("group", { name: "Data status" })).not.toBeInTheDocument();
+  });
+});
+
+describe("DataProblems", () => {
+  it("renders no box and no container when nothing is a problem", () => {
+    const { container } = renderWithProviders(<DataProblems status={HEALTHY} />);
+
+    expect(screen.queryByRole("region", { name: "Data problems" })).not.toBeInTheDocument();
+    expect(container.querySelector("div")).toBeNull();
+  });
+
+  it("titles a box with a failing test 'Data errors' and links to the failing lineage", () => {
+    renderWithProviders(<DataProblems status={dataStatus({ build: buildSummary({ failing_tests: 3 }) })} />);
+
+    const box = problemsBox();
+    expect(within(box).getByText("Data errors")).toBeInTheDocument();
+    expect(within(box).getByRole("link", { name: "3 failing tests" })).toHaveAttribute("href", "/lineage?failing=1");
   });
 
   it.each([
     [1, "1 failed node"],
     [2, "2 failed nodes"],
-  ])("links %i failed nodes to the failing-only lineage next to the failing tests", (count, name) => {
+  ])("links %i failed nodes next to the failing tests", (count, name) => {
     const status = dataStatus({ build: buildSummary({ failed_nodes: count, failing_tests: 1 }) });
 
-    renderWithProviders(<DataStatusStrip status={status} />);
+    renderWithProviders(<DataProblems status={status} />);
 
-    expect(screen.getByRole("link", { name })).toHaveAttribute("href", "/lineage?failing=1");
-    expect(screen.getByRole("link", { name: "1 failing test" })).toHaveAttribute("href", "/lineage?failing=1");
+    const box = problemsBox();
+    expect(within(box).getByRole("link", { name })).toHaveAttribute("href", "/lineage?failing=1");
+    expect(within(box).getByRole("link", { name: "1 failing test" })).toHaveAttribute("href", "/lineage?failing=1");
   });
 
-  it("shows failed nodes and no failing tests as two items", () => {
-    const status = dataStatus({ build: buildSummary({ failed_nodes: 2 }) });
+  it("titles a box with only a freshness warning 'Data warnings'", () => {
+    const status = dataStatus({ freshness: { checked_at: CHECKED, problems: [sourceFreshness()] } });
 
-    renderWithProviders(<DataStatusStrip status={status} />);
+    renderWithProviders(<DataProblems status={status} />);
 
-    expect(screen.getByRole("link", { name: "2 failed nodes" })).toBeInTheDocument();
-    expect(screen.getByText("No failing tests")).toBeInTheDocument();
+    const box = problemsBox();
+    expect(within(box).getByText("Data warnings")).toBeInTheDocument();
+    expect(within(box).queryByText("Data errors")).not.toBeInTheDocument();
+    expect(
+      within(box).getByText(`marketing.ad_spend_daily: warning, last loaded 49 h ago (checked ${CHECKED_TEXT})`),
+    ).toBeInTheDocument();
   });
 
-  it("shows no failed-nodes item when none failed", () => {
-    renderWithProviders(<DataStatusStrip status={dataStatus({ build: buildSummary({ failing_tests: 3 }) })} />);
-
-    expect(screen.queryByText(/failed node/)).not.toBeInTheDocument();
-  });
-
-  it("lists each source with a problem, worst wording first as given", () => {
+  it("titles a box with a freshness error 'Data errors' and lists errors before warnings", () => {
     const status = dataStatus({
       freshness: {
         checked_at: CHECKED,
         problems: [
           sourceFreshness(),
-          sourceFreshness({
-            name: "shop.orders",
-            status: "error",
-            hours_ago: 120,
-          }),
-          sourceFreshness({
-            name: "shop.carts",
-            status: "error",
-            hours_ago: null,
-            max_loaded_at: null,
-          }),
+          sourceFreshness({ name: "shop.orders", status: "error", hours_ago: 120 }),
+          sourceFreshness({ name: "shop.carts", status: "error", hours_ago: null, max_loaded_at: null }),
         ],
       },
     });
 
-    renderWithProviders(<DataStatusStrip status={status} />);
+    renderWithProviders(<DataProblems status={status} />);
 
-    expect(
-      screen.getByText(
-        "marketing.ad_spend_daily: warning, last loaded 49 h ago (checked 2026-11-01 14:40 UTC)",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("shop.orders: error, last loaded 120 h ago (checked 2026-11-01 14:40 UTC)"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("shop.carts: error, never loaded (checked 2026-11-01 14:40 UTC)"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Sources fresh/)).not.toBeInTheDocument();
+    const box = problemsBox();
+    expect(within(box).getByText("Data errors")).toBeInTheDocument();
+    expect(within(box).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      `shop.orders: error, last loaded 120 h ago (checked ${CHECKED_TEXT})`,
+      `shop.carts: error, never loaded (checked ${CHECKED_TEXT})`,
+      `marketing.ad_spend_daily: warning, last loaded 49 h ago (checked ${CHECKED_TEXT})`,
+    ]);
+  });
+
+  it("is not announced as an alert", () => {
+    renderWithProviders(<DataProblems status={dataStatus({ build: buildSummary({ failing_tests: 1 }) })} />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -105,13 +122,50 @@ describe("DataStatusStrip", () => {
     ["build_note", "build status unavailable"],
     ["freshness_note", "no freshness check recorded (run make build-prod)"],
     ["freshness_note", "freshness unavailable"],
-  ] as const)("replaces a missing item with its note: %s %s", (field, note) => {
+  ] as const)("shows the missing item's note in the box as a warning: %s %s", (field, note) => {
+    const status = dataStatus({ [field]: note });
+
     renderWithProviders(
-      <DataStatusStrip status={dataStatus({ [field]: note })} />,
+      <>
+        <DataProblems status={status} />
+        <DataFooter status={status} />
+      </>,
     );
 
-    expect(screen.getByText(note)).toBeInTheDocument();
-    expect(screen.queryByText(/failing test/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Sources fresh/)).not.toBeInTheDocument();
+    const box = problemsBox();
+    expect(within(box).getByText("Data warnings")).toBeInTheDocument();
+    expect(within(box).getByText(note)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Data status" })).not.toBeInTheDocument();
+  });
+
+  it("shows the first three items and folds the rest behind 'Show N more'", () => {
+    const status = dataStatus({
+      build: buildSummary({ failed_nodes: 2, failing_tests: 4 }),
+      freshness: {
+        checked_at: CHECKED,
+        problems: [sourceFreshness({ name: "a.one" }), sourceFreshness({ name: "b.two", status: "error" })],
+      },
+    });
+
+    renderWithProviders(<DataProblems status={status} />);
+
+    const box = problemsBox();
+    expect(within(box).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(box).queryByText(/^a\.one/)).not.toBeInTheDocument();
+    fireEvent.click(within(box).getByRole("button", { name: "Show 1 more" }));
+    expect(within(box).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(box).getByText(/^a\.one: warning/)).toBeInTheDocument();
+  });
+
+  it("does not fold exactly three items", () => {
+    const status = dataStatus({
+      build: buildSummary({ failed_nodes: 2, failing_tests: 4 }),
+      freshness: { checked_at: CHECKED, problems: [sourceFreshness()] },
+    });
+
+    renderWithProviders(<DataProblems status={status} />);
+
+    expect(within(problemsBox()).getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /Show/ })).not.toBeInTheDocument();
   });
 });

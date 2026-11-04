@@ -84,44 +84,56 @@ test.describe("the trend chart", () => {
     expect(stops).toBe(0);
   });
 
-  test("lists in its legend only the kinds of week it draws", async ({ page }) => {
-    const chart = page.getByTestId("trend-chart");
+  test("names in its legend only the unusual kinds of week it draws", async ({ page }) => {
+    const legend = page.getByRole("list", { name: "Legend" });
 
-    await expect(chart.getByText("Net revenue", { exact: true })).toBeVisible();
-    await expect(chart.getByText("Partial week", { exact: true })).toHaveCount(expected.trendHasPartialWeek ? 1 : 0);
-    await expect(chart.getByText("Black Friday week", { exact: true })).toHaveCount(expected.trendHasBlackFriday ? 1 : 0);
+    await expect(legend.getByText("Partial week", { exact: true })).toHaveCount(expected.trendHasPartialWeek ? 1 : 0);
+    await expect(legend.getByText("Black Friday week", { exact: true })).toHaveCount(expected.trendHasBlackFriday ? 1 : 0);
+    await expect(legend.getByText("Net revenue", { exact: true })).toHaveCount(0);
   });
 });
 
-test.describe("the data-status strip", () => {
-  test("shows the latest full prod build and its failing tests", async ({ page }) => {
-    const strip = page.getByRole("group", { name: "Data status" });
+test.describe("the data-status footer and the data-problems box", () => {
+  test("the footer shows the latest full prod build, and the failing tests only when there are none", async ({ page }) => {
+    const footer = page.getByRole("group", { name: "Data status" });
 
-    await expect(strip).toContainText(
+    await expect(footer).toContainText(
       `Last full build ${formatBuildStart(expected.build.startedAt)} · ${expected.build.nodeCount} nodes`,
     );
-    const { failedNodes, failingTests } = expected.build;
-    if (failedNodes === 0) {
-      await expect(strip.getByText(/failed nodes?$/)).toHaveCount(0);
+    if (expected.build.failingTests === 0) {
+      await expect(footer.getByText("No failing tests")).toBeVisible();
     } else {
-      await expect(strip.getByRole("link", { name: `${failedNodes} failed ${failedNodes === 1 ? "node" : "nodes"}` })).toBeVisible();
-    }
-    if (failingTests === 0) {
-      await expect(strip.getByText("No failing tests")).toBeVisible();
-      await expect(strip.getByRole("link", { name: /failing tests?$/ })).toHaveCount(0);
-    } else {
-      await expect(strip.getByRole("link", { name: `${failingTests} failing ${failingTests === 1 ? "test" : "tests"}` })).toBeVisible();
+      await expect(footer.getByText(/failing tests?/)).toHaveCount(0);
     }
   });
 
-  test("shows every warn or error source of sources.json, or that they are fresh", async ({ page }) => {
+  test("the box lists the failed nodes and failing tests of the build, with links", async ({ page }) => {
+    const { failedNodes, failingTests } = expected.build;
+    const box = page.getByRole("region", { name: "Data problems" });
+
+    if (failedNodes === 0) {
+      await expect(page.getByText(/failed nodes?$/)).toHaveCount(0);
+    } else {
+      await expect(box.getByRole("link", { name: `${failedNodes} failed ${failedNodes === 1 ? "node" : "nodes"}` })).toBeVisible();
+    }
+    if (failingTests > 0) {
+      await expect(box.getByRole("link", { name: `${failingTests} failing ${failingTests === 1 ? "test" : "tests"}` })).toBeVisible();
+    }
+  });
+
+  test("shows every warn or error source of sources.json in the box, or that they are fresh in the footer", async ({ page }) => {
     const document = JSON.parse(readFileSync(SOURCES_FILE, "utf8")) as SourcesDocument;
     const problems = document.results.filter((row) => ["warn", "error", "runtime error"].includes(row.status));
-    const strip = page.getByRole("group", { name: "Data status" });
+    const checked = formatBuildStart(document.metadata.generated_at);
 
     if (problems.length === 0) {
-      await expect(strip).toContainText(`Sources fresh (checked ${formatBuildStart(document.metadata.generated_at)})`);
+      await expect(page.getByRole("group", { name: "Data status" })).toContainText(`Sources fresh (checked ${checked})`);
+    } else {
+      await expect(page.getByRole("group", { name: "Data status" })).not.toContainText("Sources fresh");
     }
+    const box = page.getByRole("region", { name: "Data problems" });
+    // The first three are visible; a fold hides the rest until it is opened.
+    if (problems.length > 3) await box.getByRole("button", { name: /^Show \d+ more$/ }).click();
     for (const row of problems) {
       const name = row.unique_id.split(".").slice(SOURCE_PREFIX_PARTS).join(".");
       const word = row.status === "warn" ? "warning" : "error";
@@ -130,14 +142,31 @@ test.describe("the data-status strip", () => {
           ? "never loaded"
           : `last loaded ${Math.floor(row.max_loaded_at_time_ago_in_s / SECONDS_PER_HOUR)} h ago`;
 
-      await expect(strip).toContainText(
-        `${name}: ${word}, ${loaded} (checked ${formatBuildStart(document.metadata.generated_at)})`,
-      );
+      await expect(box).toContainText(`${name}: ${word}, ${loaded} (checked ${checked})`);
     }
   });
 
+  test("shows no box when nothing is a problem", async ({ page }) => {
+    await page.route("**/api/home", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        status: {
+          build: { failing_tests: number; failed_nodes: number } | null;
+          freshness: { problems: unknown[] } | null;
+        };
+      };
+      if (body.status.build !== null) Object.assign(body.status.build, { failing_tests: 0, failed_nodes: 0 });
+      if (body.status.freshness !== null) body.status.freshness.problems = [];
+      await route.fulfill({ response, json: body });
+    });
+    await page.reload();
+
+    await expect(page.getByRole("group", { name: "Data status" })).toContainText("Sources fresh");
+    await expect(page.getByRole("region", { name: "Data problems" })).toHaveCount(0);
+  });
+
   // The warehouse may hold no failing test, so this one forces a count of 3 in the answer and follows the real link.
-  test("the failing-tests link opens Lineage with Failing only checked", async ({ page }) => {
+  test("the failing-tests link in the box opens Lineage with Failing only checked", async ({ page }) => {
     await page.route("**/api/home", async (route) => {
       const response = await route.fetch();
       const body = (await response.json()) as { status: { build: { failing_tests: number } | null } };
@@ -146,7 +175,7 @@ test.describe("the data-status strip", () => {
     });
     await page.reload();
 
-    await page.getByRole("link", { name: "3 failing tests" }).click();
+    await page.getByRole("region", { name: "Data problems" }).getByRole("link", { name: "3 failing tests" }).click();
 
     await expect(page).toHaveURL(/\/lineage\?failing=1$/);
     await expect(page.getByRole("switch", { name: "Failing only" })).toBeChecked();

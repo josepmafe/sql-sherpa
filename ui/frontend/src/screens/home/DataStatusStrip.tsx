@@ -1,16 +1,25 @@
-import { Anchor, Group, Text } from "@mantine/core";
+import { Alert, Anchor, Button, List, Text } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { IconAlertTriangle, IconCircleX } from "@tabler/icons-react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import type { components } from "../../api/schema";
 import { formatBuildStart } from "../../components/time";
-import { ORANGE, RED } from "../lineage/GraphNode";
 import { toSearchParams } from "../lineage/url";
 
 type DataStatus = components["schemas"]["DataStatus"];
 type SourceFreshness = components["schemas"]["SourceFreshness"];
 
-const ICON_SIZE = 16;
+interface Problem {
+  severity: "error" | "warning";
+  key: string;
+  content: ReactNode;
+}
+
+const ICON_SIZE = 18;
+// The box shows this many problems and folds the rest.
+const VISIBLE_PROBLEMS = 3;
 const FAILING_LINK = `/lineage?${toSearchParams({
   select: "",
   layers: undefined,
@@ -20,70 +29,144 @@ const FAILING_LINK = `/lineage?${toSearchParams({
 })}`;
 
 // Every item shows itself or the reason it is missing (UI spec §6.2), so one failed dependency blanks nothing else.
-export function DataStatusStrip({ status }: { status: DataStatus }) {
+// A problem goes in the box under the heading, a healthy fact in the footer: each item lives in one place.
+export function DataProblems({ status }: { status: DataStatus }) {
+  const problems = problemsOf(status);
+  const [open, { toggle }] = useDisclosure(false);
+  if (problems.length === 0) return null;
+
+  const hasError = problems.some(({ severity }) => severity === "error");
+  const shown = open ? problems : problems.slice(0, VISIBLE_PROBLEMS);
+  const folded = problems.length - VISIBLE_PROBLEMS;
   return (
-    <Group gap="md" aria-label="Data status" role="group">
-      <BuildItems status={status} />
-      <FreshnessItems status={status} />
-    </Group>
+    // Alert names itself by its title, which would override a label on it, so the region is the wrapper: it is a
+    // landmark, not a live alert announced on every load and refetch.
+    <div role="region" aria-label="Data problems">
+      <Alert
+        variant="light"
+        role="presentation"
+        color={hasError ? "red" : "yellow"}
+        icon={
+          hasError ? (
+            <IconCircleX size={ICON_SIZE} />
+          ) : (
+            <IconAlertTriangle size={ICON_SIZE} />
+          )
+        }
+        title={hasError ? "Data errors" : "Data warnings"}
+      >
+        {/* The text keeps the theme's colour: only the icon and the tint carry the severity, since coloured text would
+          miss AA on one of the themes. */}
+        <List size="sm" spacing={2} listStyleType="none">
+          {shown.map(({ key, content }) => (
+            <List.Item key={key}>{content}</List.Item>
+          ))}
+        </List>
+        {folded > 0 && (
+          <Button
+            mt="xs"
+            size="compact-xs"
+            variant="subtle"
+            color="gray"
+            onClick={toggle}
+          >
+            {open ? "Show less" : `Show ${folded} more`}
+          </Button>
+        )}
+      </Alert>
+    </div>
   );
 }
 
-function BuildItems({ status }: { status: DataStatus }) {
-  const { build, build_note: note } = status;
+export function DataFooter({ status }: { status: DataStatus }) {
+  const facts = factsOf(status);
+  if (facts.length === 0) return null;
+
+  return (
+    <Text size="xs" c="dimmed" role="group" aria-label="Data status">
+      {facts.map((fact, index) => (
+        <span key={fact}>
+          {index > 0 && " · "}
+          <span>{fact}</span>
+        </span>
+      ))}
+    </Text>
+  );
+}
+
+// Errors first, each group in the order the items are produced.
+function problemsOf(status: DataStatus): Problem[] {
+  const all = [...buildProblems(status), ...freshnessProblems(status)];
+  return [
+    ...all.filter(({ severity }) => severity === "error"),
+    ...all.filter(({ severity }) => severity === "warning"),
+  ];
+}
+
+function buildProblems({ build, build_note: note }: DataStatus): Problem[] {
   if (build === null)
-    return note === null ? null : <Text size="sm">{note}</Text>;
-  const failing = build.failing_tests;
-  const failed = build.failed_nodes;
-  return (
-    <>
-      <Text size="sm">
-        Last full build {formatBuildStart(build.started_at)} ·{" "}
-        {build.node_count} nodes
-      </Text>
-      {failed > 0 && (
-        <Anchor component={Link} to={FAILING_LINK} size="sm">
-          {failed} failed {failed === 1 ? "node" : "nodes"}
-        </Anchor>
-      )}
-      {failing === 0 ? (
-        <Text size="sm">No failing tests</Text>
-      ) : (
-        <Anchor component={Link} to={FAILING_LINK} size="sm">
-          {failing} failing {failing === 1 ? "test" : "tests"}
-        </Anchor>
-      )}
-    </>
-  );
+    return note === null
+      ? []
+      : [{ severity: "warning", key: "build-note", content: note }];
+  const problems: Problem[] = [];
+  const { failed_nodes: failed, failing_tests: failing } = build;
+  if (failed > 0) {
+    problems.push({
+      severity: "error",
+      key: "failed-nodes",
+      content: failingLink(
+        `${failed} failed ${failed === 1 ? "node" : "nodes"}`,
+      ),
+    });
+  }
+  if (failing > 0) {
+    problems.push({
+      severity: "error",
+      key: "failing-tests",
+      content: failingLink(
+        `${failing} failing ${failing === 1 ? "test" : "tests"}`,
+      ),
+    });
+  }
+  return problems;
 }
 
-function FreshnessItems({ status }: { status: DataStatus }) {
-  const { freshness, freshness_note: note } = status;
+function freshnessProblems({
+  freshness,
+  freshness_note: note,
+}: DataStatus): Problem[] {
   if (freshness === null)
-    return note === null ? null : <Text size="sm">{note}</Text>;
-  if (freshness.problems.length === 0) {
-    return (
-      <Text size="sm">
-        Sources fresh (checked {formatBuildStart(freshness.checked_at)})
-      </Text>
+    return note === null
+      ? []
+      : [{ severity: "warning", key: "freshness-note", content: note }];
+  return freshness.problems.map((source) => ({
+    severity: source.status === "error" ? "error" : "warning",
+    key: source.name,
+    content: `${describe(source)} (checked ${formatBuildStart(freshness.checked_at)})`,
+  }));
+}
+
+function factsOf({ build, freshness }: DataStatus): string[] {
+  const facts: string[] = [];
+  if (build !== null) {
+    facts.push(
+      `Last full build ${formatBuildStart(build.started_at)} · ${build.node_count} nodes`,
+    );
+    if (build.failing_tests === 0) facts.push("No failing tests");
+  }
+  if (freshness !== null && freshness.problems.length === 0) {
+    facts.push(
+      `Sources fresh (checked ${formatBuildStart(freshness.checked_at)})`,
     );
   }
+  return facts;
+}
+
+function failingLink(label: string): ReactNode {
   return (
-    <>
-      {freshness.problems.map((source) => (
-        <Group key={source.name} gap={4} wrap="nowrap">
-          {/* Only the icon is coloured: orange text does not reach AA on the light theme, so the text keeps the theme's colour. */}
-          {source.status === "error" ? (
-            <IconCircleX size={ICON_SIZE} color={RED} aria-hidden />
-          ) : (
-            <IconAlertTriangle size={ICON_SIZE} color={ORANGE} aria-hidden />
-          )}
-          <Text size="sm">
-            {describe(source)} (checked {formatBuildStart(freshness.checked_at)})
-          </Text>
-        </Group>
-      ))}
-    </>
+    <Anchor component={Link} to={FAILING_LINK} size="sm">
+      {label}
+    </Anchor>
   );
 }
 

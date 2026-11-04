@@ -1,6 +1,6 @@
 # Using Home
 
-Home is the first screen: five headline numbers for the last 30 days, a weekly revenue trend and a strip that says how fresh and how healthy the data is. It reads only `marts.dim_date`, `marts.fct_orders` and `marts.fct_refunds` and shows aggregates, never rows ([UI spec §6.2](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). Start the stack as in the [README Quickstart](../../../README.md#quickstart), run `make build-prod`, and open <http://127.0.0.1:8090>.
+Home is the first screen: five headline numbers for the last 30 days, a weekly revenue trend, a box that shows data problems when there are any and a quiet footer line for the healthy facts. It reads only `marts.dim_date`, `marts.fct_orders` and `marts.fct_refunds` and shows aggregates, never rows ([UI spec §6.2](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md)). Start the stack as in the [README Quickstart](../../../README.md#quickstart), run `make build-prod`, and open <http://127.0.0.1:8090>.
 
 ## The tiles
 
@@ -28,15 +28,18 @@ A tile shows "—" for its change, and keeps its value, when:
 
 Net revenue per week (Monday to Sunday) for the last 26 weeks, oldest first. The latest week is marked partial unless as of is its Sunday. Black Friday weeks are highlighted (a partial week shows as partial even in a Black Friday week). The chart has a title, "Weekly net revenue", and a caption: recent weeks read high until their refunds arrive (about 7 weeks). A small legend beside the caption names only the unusual kinds of week it draws. A shorter history shows fewer bars. A table of the same weeks sits beside the chart for screen readers.
 
-## The data-status strip
+## Data problems and the footer
 
-| Item | Source |
-|---|---|
-| Last full build, with its node count | the newest full `dbt build` on prod in `ops.dbt_run_results` |
-| N failed nodes (only when above 0), N failing tests | the same build: models, seeds and snapshots whose own run failed, and failed tests. Each links to [Lineage](using-lineage.md) with "Failing only" on, except "No failing tests" at 0. A warning is not failing |
-| Sources fresh, or one line per source in warning or error | `target-prod/sources.json`, written by `make build-prod` |
+Each item is in one place. A problem shows in a box under the heading (red "Data errors", or yellow "Data warnings" when none is an error; the first 3 items, then "Show N more"); with no problem there is no box. What is healthy is one dimmed line below the chart.
 
-Each item that cannot be shown says why in its place, and the others stay: one broken dependency never blanks the screen.
+| Item | Source | Where |
+|---|---|---|
+| Last full build, with its node count | the newest full `dbt build` on prod in `ops.dbt_run_results` | footer |
+| N failed nodes (only when above 0), N failing tests | the same build: models, seeds and snapshots whose own run failed, and failed tests. Each links to [Lineage](using-lineage.md) with "Failing only" on. A warning is not failing | box |
+| "No failing tests" | the same build, at 0 | footer |
+| One line per source in warning or error, or "Sources fresh" | `target-prod/sources.json`, written by `make build-prod` | box, or footer when fresh |
+
+Each item that cannot be shown says why in the box as a warning, and the others stay: one broken dependency never blanks the screen.
 
 ## Symptoms
 

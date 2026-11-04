@@ -210,22 +210,41 @@ describe("HomeScreen", () => {
   });
 
 
-  it("puts the data-status strip under the heading and above the tiles", () => {
+  it("orders the heading, the problems box, the tiles, the chart and the footer", () => {
+    useHome.mockReturnValue({
+      data: home({
+        figures: { tiles: TILES, trend: WEEKS },
+        status: { ...home().status, build: buildSummary({ failing_tests: 2 }) },
+      }),
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    const order = [
+      screen.getByRole("heading", { name: "Last 30 days" }),
+      screen.getByRole("region", { name: "Data problems" }),
+      screen.getByRole("region", { name: "Net revenue" }),
+      screen.getByRole("heading", { name: "Weekly net revenue" }),
+      screen.getByRole("group", { name: "Data status" }),
+    ];
+    order.slice(1).forEach((element, index) => {
+      expect(order[index]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+  });
+
+  it("shows neither the problems box nor an empty container when the data is healthy", () => {
     useHome.mockReturnValue({
       data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, build: buildSummary() } }),
     });
 
     renderWithProviders(<HomeScreen />);
 
-    const heading = screen.getByRole("heading", { name: "Last 30 days" });
-    const strip = screen.getByRole("group", { name: "Data status" });
-    const firstTile = screen.getByRole("region", { name: "Net revenue" });
-    expect(heading.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(strip.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Data problems" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Data status" })).toHaveTextContent("No failing tests");
   });
 
   describe.each(["no_data", "catalog_unavailable"] as const)("when the figures say %s", (code) => {
-    it("shows the empty state in place of the tiles and trend, and keeps the strip", () => {
+    it("shows the empty state in place of the tiles and trend, and keeps the problems box", () => {
       useHome.mockReturnValue({
         data: home({
           figures: null,
@@ -242,9 +261,14 @@ describe("HomeScreen", () => {
           "no orders in the marts yet: run make build-prod (first make backfill if uv run sherpa-generate status shows no simulation)",
         ),
       ).toBeInTheDocument();
-      expect(screen.queryAllByRole("region")).toHaveLength(0);
+      expect(screen.queryAllByRole("region", { name: /^(Net revenue|Orders|Average order value|Refund rate|New customers)$/ })).toHaveLength(0);
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "2 failing tests" })).toBeInTheDocument();
+      const box = within(screen.getByRole("region", { name: "Data problems" }));
+      expect(box.getByRole("link", { name: "2 failing tests" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("region", { name: "Data problems" }).compareDocumentPosition(screen.getByText("No data yet")) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     });
   });
 

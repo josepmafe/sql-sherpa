@@ -121,7 +121,7 @@ docs/
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, `make slim`, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions, campaigns and ad spend, leads), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, PII, limitations and tracing
-- [Using Home](docs/guides/basic/using-home.md): the five tiles with their windows and change rules, the weekly trend, the data-status strip, and what each "no data" or "unavailable" message means
+- [Using Home](docs/guides/basic/using-home.md): the five tiles with their windows and change rules, the weekly trend, the data-problems box and footer, and what each "no data" or "unavailable" message means
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, the resizable panes, worksheets, running, sorting and filtering, and what it won't let you do
 - [Using Lineage](docs/guides/basic/using-lineage.md): the three modes, the selector box, build status colours, expandable columns with their kinds, the column focus, the node panel (tabs, test dialogs) and copying a selector for `dbt`
 
