@@ -35,7 +35,7 @@ export function formatChange(tile: Tile): string {
     case "down":
       return `▼ ${amount}`;
     case "flat":
-      return "0.0%";
+      return tile.change_kind === "points" ? "0.0 pp" : "0.0%";
   }
 }
 

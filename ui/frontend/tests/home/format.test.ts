@@ -27,6 +27,8 @@ describe("formatChange", () => {
     [{ change: "-0.007", change_kind: "points", direction: "down" }, "▼ 0.7 pp"],
     [{ change: "0.02", change_kind: "points", direction: "up" }, "▲ 2.0 pp"],
     [{ change: "0", change_kind: "relative", direction: "flat" }, "0.0%"],
+    [{ change: "0.0001", change_kind: "relative", direction: "flat" }, "0.0%"],
+    [{ change: "0.0002", change_kind: "points", direction: "flat" }, "0.0 pp"],
     [{ change: null, change_kind: "relative", direction: null }, "—"],
   ] as const)("%j gives %s", (overrides, expected) => {
     expect(formatChange(tile(overrides))).toBe(expected);
@@ -50,6 +52,12 @@ describe("describeChange", () => {
     expect(describeChange(tile({ change: "0", direction: "flat", good: null }))).toBe(
       "unchanged on the previous 30 days",
     );
+  });
+
+  it("says unchanged for a flat percentage-point one too", () => {
+    const refunds = tile({ format: "percent", change: "0.0002", change_kind: "points", direction: "flat", good: null });
+
+    expect(describeChange(refunds)).toBe("unchanged on the previous 30 days");
   });
 
   it("says there is no comparison without a change", () => {
