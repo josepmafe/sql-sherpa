@@ -19,8 +19,6 @@ NO_COLUMN_DIFF: Final = "no agent column matches gold column {name}"
 NO_MAPPING_DIFF: Final = "no column mapping matches the gold rows as whole rows"
 TOO_MANY_DIFF: Final = "too many candidate column mappings"
 
-Column = tuple["Hashable", ...]
-
 
 class Result(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -65,8 +63,11 @@ def compare(gold: Result, agent: Result, *, ordered: bool) -> Comparison:
     agent_rows = [tuple(normalize(cell) for cell in row) for row in agent.rows]
     if len(gold_rows) != len(agent_rows):
         return Comparison(passed=False, diff=ROW_COUNT_DIFF.format(gold=len(gold_rows), agent=len(agent_rows)))
-    gold_columns = list(zip(*gold_rows, strict=True)) if gold_rows else [()] * len(gold.columns)
-    agent_columns = list(zip(*agent_rows, strict=True)) if agent_rows else [()] * len(agent.columns)
+    if not gold_rows:  # nothing to project: any agent with enough columns matches
+        passed = len(agent.columns) >= len(gold.columns)
+        return Comparison(passed=passed, diff=None if passed else NO_MAPPING_DIFF)
+    gold_columns = list(zip(*gold_rows, strict=True))
+    agent_columns = list(zip(*agent_rows, strict=True))
     candidates = []
     for name, column in zip(gold.columns, gold_columns, strict=True):
         fitting = [i for i, other in enumerate(agent_columns) if Counter(other) == Counter(column)]
@@ -90,14 +91,14 @@ def _find_mapping(
     tried = 0
 
     def matches(mapping: list[int]) -> bool:
-        nonlocal tried
-        if tried >= MAX_MAPPINGS:
-            raise _TooManyMappingsError
-        tried += 1
         projected = [tuple(row[i] for i in mapping) for row in agent_rows]
         return projected == gold_rows if ordered else Counter(projected) == Counter(gold_rows)
 
     def assign(mapping: list[int]) -> bool:
+        nonlocal tried
+        if tried >= MAX_MAPPINGS:  # every search node counts, so dead ends are bounded too
+            raise _TooManyMappingsError
+        tried += 1
         if len(mapping) == len(candidates):
             return matches(mapping)
         return any(assign([*mapping, i]) for i in candidates[len(mapping)] if i not in mapping)

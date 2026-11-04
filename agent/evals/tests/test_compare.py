@@ -168,6 +168,22 @@ class TestCompare:
         assert bounded == Comparison(passed=False, diff="too many candidate column mappings")
         assert unbounded.passed
 
+    def test_zero_rows_with_one_column_too_few_fail_without_searching(self) -> None:
+        gold = result(tuple(f"g{i}" for i in range(12)))
+        agent = result(tuple(f"a{i}" for i in range(11)))
+
+        outcome = compare.compare(gold, agent, ordered=False)
+
+        assert outcome == Comparison(passed=False, diff="no column mapping matches the gold rows as whole rows")
+
+    def test_dead_end_search_is_bounded(self) -> None:
+        gold = result(tuple(f"g{i}" for i in range(10)), (1,) * 10)
+        agent = result(tuple(f"a{i}" for i in range(10)), (*(1,) * 9, 2))
+
+        outcome = compare.compare(gold, agent, ordered=False)
+
+        assert outcome == Comparison(passed=False, diff="too many candidate column mappings")
+
 
 def test_utc_datetime_matches_the_same_instant_in_another_zone() -> None:
     plus_one = datetime(2025, 3, 1, 10, 0, tzinfo=timezone(timedelta(hours=1)))
