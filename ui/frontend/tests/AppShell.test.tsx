@@ -1,14 +1,15 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { routes } from "../src/app/routes";
-import { catalog, health, lineageGraph } from "./fixtures/api";
+import { catalog, health, home, lineageGraph } from "./fixtures/api";
 import { renderRoutes } from "./fixtures/render";
 
 const useCatalog = vi.fn();
 vi.mock("../src/api/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/api/queries")>()),
   useHealth: () => ({ data: health() }),
+  useHome: () => ({ data: home() }),
   useCatalog: () => useCatalog(),
   useTableDetails: () => ({ data: undefined }),
   useLineage: () => ({ error: null, data: lineageGraph() }),
@@ -35,10 +36,21 @@ describe("AppShell", () => {
     expect(screen.getByText("0 nodes")).toBeInTheDocument();
   });
 
-  it("redirects / to the Explorer", () => {
+  it("lists Home first and marks it only at /", () => {
     renderAt("/");
 
-    expect(screen.getByLabelText("Search tables and columns")).toBeInTheDocument();
+    const links = within(screen.getByRole("navigation", { name: "Main" })).getAllByRole("link");
+    expect(links[0]).toHaveAccessibleName("Home");
+    expect(links[0]).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("heading", { name: "Last 30 days" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search tables and columns")).not.toBeInTheDocument();
+  });
+
+  it("does not mark Home at /explorer", () => {
+    renderAt("/explorer");
+
+    expect(screen.getByRole("link", { name: "Home" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: "Explorer" })).toHaveAttribute("aria-current", "page");
   });
 
   it("the Explorer opens when the browser blocks localStorage", () => {

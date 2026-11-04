@@ -16,6 +16,7 @@
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
+    "@mantine/charts": "^9.7.4",
     "@mantine/core": "^9.7.4",
     "@mantine/hooks": "^9.7.4",
     "@tabler/icons-react": "^3.49.0",
@@ -28,8 +29,10 @@
     "openapi-fetch": "^0.17.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "react-is": "^19.3.1",
     "react-resizable-panels": "^4.16.1",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@codemirror/language": "^6.13.1",

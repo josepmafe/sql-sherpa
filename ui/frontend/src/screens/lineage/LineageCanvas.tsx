@@ -236,8 +236,10 @@ function Canvas({
         deleteKeyCode={null}
         selectionKeyCode={null}
         minZoom={MIN_ZOOM}
-        // Only a view placed for this layout is the subject's: a pan during the layout is still the old graph's.
-        onMoveEnd={(_, viewport) => {
+        // The view is kept on every move, not when a gesture ends (that comes 150 ms after a wheel's last tick), so a
+        // redraw right after a gesture, even one still settling, restores it. Only a view placed for this layout is the
+        // subject's: a pan during the layout is still the old graph's.
+        onMove={(_, viewport) => {
           if (fittedFor.current === layoutNodes) keepView(subject, viewport);
         }}
         defaultViewport={keptViewport(subject)}

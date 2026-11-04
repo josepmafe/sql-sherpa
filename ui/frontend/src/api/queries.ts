@@ -133,3 +133,15 @@ export function useColumnFocus(uniqueId: string | undefined, column: string | un
     ...QUERY_DEFAULTS,
   });
 }
+
+export function useHome() {
+  return useQuery({
+    queryKey: ["home"],
+    queryFn: async () => {
+      const { data, error, response } = await api.GET("/api/home");
+      if (error !== undefined) throw new ApiRequestError(apiError(error, response.status), response.status);
+      return data;
+    },
+    ...QUERY_DEFAULTS,
+  });
+}

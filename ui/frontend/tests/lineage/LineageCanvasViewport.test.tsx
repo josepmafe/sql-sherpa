@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { orderNodes } from "../../src/screens/lineage/layout";
-import { forgetView, keepView } from "../../src/screens/lineage/viewport";
+import { forgetView, keepView, keptViewport } from "../../src/screens/lineage/viewport";
 import { columnView, type LineageEdge } from "../fixtures/api";
 import { stubLayout } from "../fixtures/render";
 import { canvasProps, node, rankInInputOrder } from "./canvasHarness";
@@ -120,7 +120,7 @@ describe("the Lineage viewport across redraws", () => {
     expect(transform()).toBe(KEPT_TRANSFORM);
   });
 
-  it("a pan that ends while another subject is still being laid out is not kept under that subject", async () => {
+  it("a move made while another subject is still being laid out is not kept under that subject", async () => {
     keepView(SUBJECT, KEPT);
     const view = render(canvas());
     await waitFor(() => expect(transform()).toBe(KEPT_TRANSFORM));
@@ -131,12 +131,27 @@ describe("the Lineage viewport across redraws", () => {
     fireEvent.wheel(document.querySelector(".react-flow__renderer")!, { deltaY: 400, ctrlKey: true });
     await waitFor(() => expect(transform()).not.toBe(KEPT_TRANSFORM));
     const panned = transform();
-    await new Promise((resolve) => setTimeout(resolve, 400)); // the wheel's end event comes 150 ms after its last tick
     await act(async () => finish(new Map([A, B, C].map((n, index) => [n.unique_id, index]))));
     await screen.findByRole("button", { name: /^c\b/ });
 
     await waitFor(() => expect(transform()).not.toBe(panned));
     expect(transform()).not.toMatch(/translate\(0px,0px\)/);
+  });
+
+  it("keeps a zoom whose gesture is still settling when a layer is switched on", async () => {
+    keepView(SUBJECT, KEPT);
+    const view = render(canvas());
+    await buttons();
+    await waitFor(() => expect(transform()).toBe(KEPT_TRANSFORM));
+
+    fireEvent.wheel(document.querySelector(".react-flow__renderer")!, { deltaY: 400, ctrlKey: true });
+    await waitFor(() => expect(transform()).not.toBe(KEPT_TRANSFORM));
+    const zoomed = transform();
+    expect(keptViewport(SUBJECT)).not.toEqual(KEPT); // kept on the move itself, not 150 ms later
+    view.rerender(canvas({ nodes: [A, B, C] })); // before the wheel's end event, 150 ms after its last tick
+    await waitFor(() => expect(screen.getByRole("button", { name: /^c\b/ })).toBeVisible());
+
+    expect(transform()).toBe(zoomed);
   });
 
   it("does not use localStorage", async () => {

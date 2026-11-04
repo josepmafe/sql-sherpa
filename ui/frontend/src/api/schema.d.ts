@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Home */
+        get: operations["get_home_api_home_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lineage": {
         parameters: {
             query?: never;
@@ -211,6 +228,20 @@ export interface components {
              */
             state: "ok" | "no_build" | "unavailable";
         };
+        /** BuildSummary */
+        BuildSummary: {
+            /** Failed Nodes */
+            failed_nodes: number;
+            /** Failing Tests */
+            failing_tests: number;
+            /** Node Count */
+            node_count: number;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+        };
         /**
          * CatalogTree
          * @description database, then the `marts` schema, then domains, tables and columns.
@@ -299,6 +330,17 @@ export interface components {
             name: string;
             resolution: components["schemas"]["Resolution"];
         };
+        /** DataStatus */
+        DataStatus: {
+            /** As Of Date */
+            as_of_date: string | null;
+            build: components["schemas"]["BuildSummary"] | null;
+            /** Build Note */
+            build_note: string | null;
+            freshness: components["schemas"]["Freshness"] | null;
+            /** Freshness Note */
+            freshness_note: string | null;
+        };
         /** DomainNode */
         DomainNode: {
             /** Name */
@@ -310,6 +352,13 @@ export interface components {
         ErrorDetail: {
             /** Position */
             position?: number | null;
+        };
+        /** FiguresUnavailable */
+        FiguresUnavailable: {
+            /** Code */
+            code: "no_data" | ("guard_rejected" | "sql_error" | "timeout" | "cancelled" | "duplicate_query_id" | "busy" | "catalog_unavailable" | "database_unavailable" | "too_many_connections");
+            /** Message */
+            message: string;
         };
         /** FilterSpec */
         FilterSpec: {
@@ -361,6 +410,16 @@ export interface components {
             /** Sql */
             sql: string;
         };
+        /** Freshness */
+        Freshness: {
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Problems */
+            problems: components["schemas"]["SourceFreshness"][];
+        };
         /**
          * Health
          * @description What ui-1 can vouch for; the tool server and the model join in ui-5.
@@ -372,6 +431,22 @@ export interface components {
              * @enum {string}
              */
             database: "ok" | "down";
+        };
+        /**
+         * Home
+         * @description Exactly one of `figures` and `figures_error` is set.
+         */
+        Home: {
+            figures: components["schemas"]["HomeFigures"] | null;
+            figures_error: components["schemas"]["FiguresUnavailable"] | null;
+            status: components["schemas"]["DataStatus"];
+        };
+        /** HomeFigures */
+        HomeFigures: {
+            /** Tiles */
+            tiles: components["schemas"]["Tile"][];
+            /** Trend */
+            trend: components["schemas"]["TrendWeek"][];
         };
         JsonValue: unknown;
         /**
@@ -543,6 +618,20 @@ export interface components {
              */
             direction: "asc" | "desc";
         };
+        /** SourceFreshness */
+        SourceFreshness: {
+            /** Hours Ago */
+            hours_ago: number | null;
+            /** Max Loaded At */
+            max_loaded_at: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "warn" | "error";
+        };
         /** TableDetails */
         TableDetails: {
             /** Columns */
@@ -634,6 +723,51 @@ export interface components {
          * @enum {string}
          */
         TestOutcome: "passed" | "warned" | "failed" | "skipped" | "not_run";
+        /** Tile */
+        Tile: {
+            /** Change */
+            change: string | null;
+            /**
+             * Change Kind
+             * @enum {string}
+             */
+            change_kind: "relative" | "points";
+            /** Decimals */
+            decimals: number;
+            /** Direction */
+            direction: ("up" | "down" | "flat") | null;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "currency" | "count" | "percent";
+            /** Good */
+            good: boolean | null;
+            /** Id */
+            id: string;
+            /** Note */
+            note: string | null;
+            /** Title */
+            title: string;
+            /** Up Is Good */
+            up_is_good: boolean;
+            /** Value */
+            value: string | null;
+        };
+        /** TrendWeek */
+        TrendWeek: {
+            /** Is Black Friday Week */
+            is_black_friday_week: boolean;
+            /** Is Partial */
+            is_partial: boolean;
+            /** Net Revenue */
+            net_revenue: string;
+            /**
+             * Week Start
+             * Format: date
+             */
+            week_start: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -755,6 +889,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Unexpected server error: `internal_error` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+        };
+    };
+    get_home_api_home_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Home"];
                 };
             };
             /** @description Unexpected server error: `internal_error` */

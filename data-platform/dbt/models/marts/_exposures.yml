@@ -25,3 +25,17 @@ exposures:
       - ref('fct_refunds')
       - ref('fct_returns')
       - ref('fct_sessions')
+
+  - name: sherpa_home
+    label: SQL Sherpa Home
+    type: dashboard
+    owner:
+      name: Data platform
+    description: >
+      The UI's Home page (UI spec section 6.2): five figures for the last 30 days against the 30 before, and a
+      weekly net revenue trend. Its queries are in ui/backend/src/sherpa_ui/home/home_queries.yaml and read only
+      these marts.
+    depends_on:
+      - ref('dim_date')
+      - ref('fct_orders')
+      - ref('fct_refunds')

@@ -9,15 +9,16 @@ The backend is the Python package `sherpa_ui` (`ui/backend/src/sherpa_ui/`). The
 | Where | Holds |
 |---|---|
 | `app.py` | `create_app(settings, static_dir)`: builds the services once, mounts the routers under `/api`. The only place the pieces are wired |
-| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`, `lineage.py`), `errors.py` (error shape) and `body_limit.py` (1 MiB POST cap) |
+| `api/` | One router per resource (`health.py`, `catalog.py`, `queries.py`, `lineage.py`, `home.py`), `errors.py` (error shape) and `body_limit.py` (1 MiB POST cap) |
 | `catalog/`, `health/` | `CatalogService`, `HealthService`, built on `sherpa_mcp`'s `MartCatalogLoader` |
 | `lineage/`, `build/` | `ManifestGraph`, `SelectorEvaluator`, `StatusDeriver` and `ColumnLineageBuilder` (pure); `ManifestLoader`, `NodeSql`, `ColumnLineageLoader`, `LineageService` and `BuildStatusReader` (file and database reads) |
+| `home/` | `figures.py` (pure), `data_status.py` (reads `sources.json`), `home_queries.yaml`, `HomeService` |
 | `readonly/` | `query_runner.py`, `bounded_result.py`, `sort_filter.py` |
 | `settings.py` | `UiSettings`, the only place that reads configuration (`SHERPA_UI_*`, `SHERPA_DB_*`) |
 | `openapi_export.py` | Writes the OpenAPI schema the frontend types come from |
 | `ui/frontend/src/api/` | `client.ts` (typed `openapi-fetch`), `queries.ts` (TanStack Query hooks), `schema.d.ts` (generated, committed) |
 | `ui/frontend/src/app/` | `AppShell.tsx`, `routes.tsx`, `navItems.ts`, `HealthBanner.tsx` |
-| `ui/frontend/src/screens/<screen>/` | One folder per screen (`explorer/`, `lineage/`) |
+| `ui/frontend/src/screens/<screen>/` | One folder per screen (`explorer/`, `lineage/`, `home/`) |
 | `ui/frontend/src/components/` | Components shared between screens (`ResultGrid`, `SqlEditor`); `panes/` is the resizable-pane toolkit |
 
 Tests: `ui/backend/tests/` mirrors the package, `ui/frontend/tests/` holds Vitest, `ui/frontend/e2e/` holds Playwright, `ui/parity/` holds the sort/filter case file that pytest and Vitest both run.
@@ -90,7 +91,7 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 
 **Add a node status:**
 
-1. Add a case to `NodeStatus` in `lineage/node_status.py` and to `StatusDeriver.node_status`, with tests in `tests/lineage/test_node_status.py` that include its precedence against `failed` and `warned`. A new dbt result status goes in `_NODE_STATUSES` or `_TEST_OUTCOMES`; an unknown one is logged and treated as no row.
+1. Add a case to `NodeStatus` in `lineage/node_status.py` and to `StatusDeriver.node_status`, with tests in `tests/lineage/test_node_status.py` that include its precedence against `failed` and `warned`. A new dbt result status goes in `NODE_STATUSES` or `TEST_OUTCOMES`; an unknown one is logged and treated as no row.
 2. The status travels in `LineageNode` (`lineage/lineage_service.py`): run `make ui-client` and commit the schema.
 3. Give it a label, an icon and a colour in `STATUS` (`screens/lineage/GraphNode.tsx`); status is never colour alone, and the colours must pass AA contrast. Add a Vitest case.
 4. Add the row to the status list in the UI spec §6.5 and to the Lineage guide.
@@ -118,7 +119,7 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 | `edgeTravel` | total vertical distance of all edges | at most 0.7 of `BASELINE` |
 | `height` | the canvas height | at most 1.1 of `BASELINE`; and the whole project must fit the canvas above `MIN_ZOOM` |
 
-`BASELINE` is the plain stack with React Flow's default curve on the same fixture, measured in the same run as the bound (ELK's ordering differs a little across platforms, so no number is pinned). A change that raises a number past its bound fails there; read the number in the failure and decide if the layout or the bound is wrong, never edit the fixture to pass. When the project's graph grows, save a fresh copy of `GET /api/lineage` (names only) as the fixture and update `PLAN_TABLE` and `PLATFORM_FREE` in `layout.test.ts` from the plain stack's metrics.
+`BASELINE` is the plain stack with React Flow's default curve on the same fixture, measured in the same run as the bound (ELK's ordering differs a little across platforms, so the crossings and the travel are never pinned; only the plain stack's edges behind a node and its height are, in `PLATFORM_FREE`). A change that raises a number past its bound fails there; read the number in the failure and decide if the layout or the bound is wrong, never edit the fixture to pass. When the project's graph grows, save a fresh copy of `GET /api/lineage` (names only) as the fixture and update `PLATFORM_FREE` in `layout.test.ts` from the plain stack's metrics.
 
 **Change what a test row shows.** `GET /api/lineage/tests/{unique_id}` (`api/lineage.py`) returns `TestDetails` from `LineageService.test_details`: the manifest's `NodeTest` (`lineage/manifest_graph.py`) holds the definition (a generic test's arguments and set config, a unit test's YAML as JSON text) and `NodeSql.compiled_test` reads the compiled file under `compiled/`, resolved by the manifest's `path` (a long generic test name is shortened with a hash) and never outside it. Start with a case in `tests/lineage/test_manifest_graph.py` or `test_lineage_service.py`, `test_node_sql.py` for the path rule, and `tests/api/test_lineage_api.py` for the route; `make ui-client`; then `TestBody` (the dialog's content; `TestRow` opens it from the eye button) in `NodePanel.tsx` with its Vitest case. A unit test's rows are shown as written, so a fixture there must be synthetic.
 
@@ -126,7 +127,20 @@ The selector and the statuses are pure code with an oracle, so a change starts f
 
 The shared warehouse should not hold a really failing build, so `lineage.spec.ts` skips its failing-node check by default. `cd ui/frontend && SHERPA_E2E_LINEAGE_FAILING=1 npx playwright test lineage` inserts a synthetic full build into `ops.dbt_run_results`, checks that the node turns red and that a warning stays out of "Failing only", and deletes the rows. A killed run leaves a fake newest build behind; the next run clears it first.
 
-## 4. Where the read-only rules live
+## 4. Add or change a Home tile
+
+Tiles are data: `ui/backend/src/sherpa_ui/home/home_queries.yaml` lists them, and the screen draws whatever the API returns, so a tile needs no frontend change. The rules for the windows and the change are in [UI spec §6.2](../../superpowers/specs/2026-10-24-sql-sherpa-ui-design.md); `home/figures.py` applies them. Do the steps in order.
+
+1. **The YAML entry.** Add to `tiles:` an `id`, `title`, `format` (`currency`, `count` or `percent`), `decimals` (0 to 2), `up_is_good`, a `note` (the tooltip; every tile has one, `test_tiles_are_the_specs` requires it) and `sql`. The query returns one row of `this_period` and `last_period`, filtering on `order_date > as_of - 30` and `<= as_of - 30` over `as_of - 60`, with `as_of` from `max(order_date)`, never `now()`. A `percent` tile's change is in points; the others are relative. Leave a value `null` (use `nullif`) where it is undefined. Net revenue and AOV take their `last_period` as the earlier window stood 30 days ago (only refunds with `refund_date <= as_of - 30` deducted, UI spec §6.2), so a tile on refunded money needs the same care.
+2. **The guard test.** `test_every_home_query_passes_the_guard` runs every query through `SqlGuard`; it fails when a query uses a table or function the guard refuses. Add the tile's id to `test_tiles_are_the_specs` (ids, formats, `up_is_good`, notes) in `ui/backend/tests/home/test_home_queries.py`.
+3. **The exposure.** If the query reads a mart `sherpa_home` does not list, add its `ref()` to `depends_on` of `sherpa_home` in `data-platform/dbt/models/marts/_exposures.yml`. `test_sherpa_home_lists_exactly_the_marts_home_reads` fails until the two agree, in both directions.
+4. **The comparison rules.** A new rule (not "up or down") goes into `figures.py` with a case in `test_figures.py` for the boundary: an earlier value of 0, an empty value, a history of 58 and 59 days, and a change that rounds to zero. The warehouse test `TestEarlierWindowAsItStood` recomputes the as-stood figure independently.
+5. **The e2e expectation.** Add the tile to `TILES` and to the `values` map in `homeExpectations()` (`ui/frontend/e2e/warehouse.ts`), computed with SQL written a different way from the YAML's (explicit `between` ranges; Net revenue's and AOV's earlier value in `earlierNetAsStood`). `e2e/home.spec.ts` then checks the value and the change on the screen, and the value's shape against the tile's entry in `TILE_SHAPES` (add one: the spec fails for a tile without it). Run `make build-prod` and `make e2e`.
+6. **Prove it.** `uv run pytest ui/backend/tests/home` (the default suite: guard, exposure, figures, service), then `uv run --env-file .env pytest -m warehouse ui/backend/tests/home` for the real marts, `cd ui/frontend && npm test -- home`, and `make lint`.
+
+Changing a tile's window or definition changes the data platform spec §6.6 or the UI spec §6.2 first, then the YAML, the e2e expectation and the [Home guide](../basic/using-home.md).
+
+## 5. Where the read-only rules live
 
 Three layers, none of which trusts the one before it:
 
@@ -151,7 +165,7 @@ To loosen or tighten a rule:
 2. Change the code, then run the `warehouse` tests, which exercise the real role.
 3. If privileges change, edit `roles.sql` or the `grant_read_access` macro, run `make up` (re-applies the roles) and `make build-prod` (re-applies the grants), and update the data platform spec's role table.
 
-## 5. The three test layers
+## 6. The three test layers
 
 ```bash
 (cd ui/frontend && npm ci)                                # once (Node 22+)
@@ -221,6 +235,8 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | A warehouse trace gains or loses a source column | A sqlglot bump, or a change to `_leaves` or `_classify`, changed what the column reads (kinds never add or remove edges): re-derive the set by hand from the compiled SQL |
 | A pane keeps an old size, or a screen starts oddly after a limit change | Clear `sherpa.v1.layout.*` in site data; a stored size is clamped to the new limits, a pane without `defaultSize` is never stored |
 | The layout test fails on `edgesBehindNodes` or a bound | `layout.ts` or `edgeRoute.ts` moved an edge behind a node or lost ground on `BASELINE`; read the metric in the failure (table above) |
+| `test_sherpa_home_lists_exactly_the_marts_home_reads` fails | A Home query reads a mart `sherpa_home` does not list, or lists one that no query reads: edit `depends_on` in `_exposures.yml` |
+| A new tile shows "—" for its change | Expected for a history under 59 days, an earlier value of 0 or an empty value; otherwise check the query returns `this_period` and `last_period` |
 | `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next

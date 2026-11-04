@@ -75,6 +75,7 @@ export function AppShell() {
               key={path}
               component={RouterLink}
               to={path}
+              end
               aria-label={label}
               onClick={(event) => {
                 // A mouse click (detail > 0) ends the peek; a key press (detail 0) keeps the focus-held peek.

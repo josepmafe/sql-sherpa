@@ -9,7 +9,7 @@ make up           # starts postgres, mcp and ui; waits until all are healthy
 make build-prod   # the prod warehouse and the dbt docs the UI reads
 ```
 
-Open <http://127.0.0.1:8090>; the root redirects to `/explorer`. A link `/explorer?table=<name>` (Lineage's "Open in Explorer") selects that table in the Inspector; a name that is not a mart shows a dismissible "No mart named ..." alert above the editor.
+Open <http://127.0.0.1:8090/explorer> (the root is [Home](using-home.md)). A link `/explorer?table=<name>` (Lineage's "Open in Explorer") selects that table in the Inspector; a name that is not a mart shows a dismissible "No mart named ..." alert above the editor.
 
 - Before `make build-prod` the page shows a yellow "dbt artifacts missing" banner and the tree offers Retry. A reload picks up a later build; no restart needed.
 - The port is `SHERPA_UI_PORT` (default 8090). Put it in `.env` if 8090 is taken.

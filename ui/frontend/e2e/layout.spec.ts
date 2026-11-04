@@ -451,3 +451,77 @@ test.describe("the Explorer panes", () => {
     });
   }
 });
+
+const TILE_TITLES = ["Net revenue", "Orders", "Average order value", "Refund rate", "New customers"];
+
+// Mantine's theme breakpoints: five tiles across from lg (1200 px), three from md (992 px); the page never scrolls
+// sideways.
+for (const viewport of [
+  { width: 1024, height: 700, columns: 3 },
+  { width: 1440, height: 900, columns: 5 },
+]) {
+  test.describe(`Home at ${viewport.width} x ${viewport.height}`, () => {
+    test.use({ viewport });
+
+    test("lays the tiles out in the theme's number of columns", async ({ page }) => {
+      await page.goto("/");
+
+      const tops: number[] = [];
+      for (const title of TILE_TITLES) {
+        tops.push(Math.round((await page.getByRole("region", { name: title, exact: true }).boundingBox())!.y));
+      }
+
+      expect(tops.filter((top) => top === tops[0])).toHaveLength(viewport.columns);
+      expect(new Set(tops).size).toBe(Math.ceil(TILE_TITLES.length / viewport.columns));
+    });
+
+    test("aligns the values of the tiles in a row", async ({ page }) => {
+      await page.goto("/");
+
+      const tops: number[] = [];
+      for (const title of TILE_TITLES.slice(0, viewport.columns)) {
+        const value = page.getByRole("region", { name: title, exact: true }).locator("p").nth(1);
+        tops.push(Math.round((await value.boundingBox())!.y));
+      }
+
+      expect(new Set(tops).size).toBe(1);
+    });
+
+    test("has no horizontal scroll and shows every tile", async ({ page }) => {
+      await page.goto("/");
+
+      for (const title of TILE_TITLES) {
+        const tile = page.getByRole("region", { name: title, exact: true });
+        await expect(tile).toBeVisible();
+        const box = (await tile.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      }
+      const root = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+    });
+  });
+}
+
+// The y axis is wide enough for its labels: no tick label starts left of the chart.
+for (const width of [1024, 1280, 1440]) {
+  for (const scheme of ["light", "dark"] as const) {
+    test(`Home's y axis labels fit inside the chart at ${width} px in the ${scheme} theme`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.goto("/");
+      const chart = page.getByTestId("trend-chart").locator("svg.recharts-surface");
+      await expect(chart).toBeAttached();
+      const labels = page.getByTestId("trend-chart").locator(".recharts-yAxis-tick-labels text");
+      await expect(labels.first()).toBeAttached();
+
+      const left = (await chart.boundingBox())!.x;
+      for (const label of await labels.all()) {
+        expect((await label.boundingBox())!.x).toBeGreaterThanOrEqual(left);
+      }
+    });
+  }
+}

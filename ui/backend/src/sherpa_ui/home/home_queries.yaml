@@ -1,0 +1,153 @@
+# The Home page's figures (UI spec section 6.2). Every query reads only marts.dim_date, marts.fct_orders and
+# marts.fct_refunds (the sherpa_home exposure lists them), takes as_of from the data (never now()), and compares
+# the last 30 days (as_of - 30, as_of] with the 30 before (as_of - 60, as_of - 30].
+
+# One row: the last day with orders and the first.
+period: |
+  select max(order_date) as as_of_date, min(order_date) as first_order_date
+  from marts.fct_orders
+
+# Each tile returns one row: this_period and last_period.
+tiles:
+  - id: net_revenue
+    title: Net revenue
+    format: currency
+    decimals: 0
+    up_is_good: true
+    note: >-
+      The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an order,
+      so the latest 30 days have few refunds yet and read high.
+    # last_period: the earlier window's orders less only the refunds paid by as_of - 30 (fct_orders.net_revenue is
+    # gross - discount - all refunds, so the later refunds are the difference).
+    sql: |
+      with bounds as (select max(order_date) as as_of from marts.fct_orders),
+      known_refunds as (
+        select coalesce(sum(r.revenue_amount), 0) as amount
+        from bounds as b
+        inner join marts.fct_orders as o on o.order_date > b.as_of - 60 and o.order_date <= b.as_of - 30
+        inner join marts.fct_refunds as r on r.order_id = o.order_id and r.refund_date <= b.as_of - 30
+        where not o.is_cancelled
+      )
+      select
+        coalesce(sum(o.net_revenue) filter (where o.order_date > b.as_of - 30), 0) as this_period,
+        coalesce(sum(o.gross_revenue - o.discount_amount) filter (where o.order_date <= b.as_of - 30), 0)
+          - max(known_refunds.amount) as last_period
+      from bounds as b
+      cross join known_refunds
+      left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
+
+  - id: orders
+    title: Orders
+    format: count
+    decimals: 0
+    up_is_good: true
+    note: >-
+      Orders that were not cancelled, counted by order date.
+    sql: |
+      with bounds as (select max(order_date) as as_of from marts.fct_orders)
+      select
+        count(o.order_id) filter (where o.order_date > b.as_of - 30) as this_period,
+        count(o.order_id) filter (where o.order_date <= b.as_of - 30) as last_period
+      from bounds as b
+      left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
+
+  - id: aov
+    title: Average order value
+    format: currency
+    decimals: 2
+    up_is_good: true
+    note: >-
+      The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an order,
+      so the latest 30 days have few refunds yet and read high.
+    sql: |
+      with bounds as (select max(order_date) as as_of from marts.fct_orders),
+      known_refunds as (
+        select coalesce(sum(r.revenue_amount), 0) as amount
+        from bounds as b
+        inner join marts.fct_orders as o on o.order_date > b.as_of - 60 and o.order_date <= b.as_of - 30
+        inner join marts.fct_refunds as r on r.order_id = o.order_id and r.refund_date <= b.as_of - 30
+        where not o.is_cancelled
+      )
+      select
+        sum(o.net_revenue) filter (where o.order_date > b.as_of - 30)
+          / nullif(count(o.order_id) filter (where o.order_date > b.as_of - 30), 0) as this_period,
+        (
+          sum(o.gross_revenue - o.discount_amount) filter (where o.order_date <= b.as_of - 30)
+          - max(known_refunds.amount)
+        ) / nullif(count(o.order_id) filter (where o.order_date <= b.as_of - 30), 0) as last_period
+      from bounds as b
+      cross join known_refunds
+      left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
+
+  - id: refund_rate
+    title: Refund rate
+    format: percent
+    decimals: 1
+    up_is_good: false
+    note: >-
+      Refunds paid in the 30 days over sales placed in them, so it differs from a by-order rate of recent orders, which
+      reads low until their refunds arrive.
+    sql: |
+      with bounds as (select max(order_date) as as_of from marts.fct_orders),
+      refunds as (
+        select
+          coalesce(sum(r.revenue_amount) filter (where r.refund_date > b.as_of - 30), 0) as this_period,
+          coalesce(sum(r.revenue_amount) filter (where r.refund_date <= b.as_of - 30), 0) as last_period
+        from bounds as b
+        left join marts.fct_refunds as r on r.refund_date > b.as_of - 60 and r.refund_date <= b.as_of
+      ),
+      sales as (
+        select
+          coalesce(sum(o.gross_revenue) filter (where o.order_date > b.as_of - 30), 0) as this_period,
+          coalesce(sum(o.gross_revenue) filter (where o.order_date <= b.as_of - 30), 0) as last_period
+        from bounds as b
+        left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
+      )
+      select
+        refunds.this_period / nullif(sales.this_period, 0) as this_period,
+        refunds.last_period / nullif(sales.last_period, 0) as last_period
+      from refunds
+      cross join sales
+
+  - id: new_customers
+    title: New customers
+    format: count
+    decimals: 0
+    up_is_good: true
+    note: >-
+      Customers whose first order that was not cancelled was placed in the period, deleted customers included.
+    sql: |
+      with bounds as (select max(order_date) as as_of from marts.fct_orders)
+      select
+        count(o.order_id) filter (where o.order_date > b.as_of - 30) as this_period,
+        count(o.order_id) filter (where o.order_date <= b.as_of - 30) as last_period
+      from bounds as b
+      left join marts.fct_orders as o on o.order_date > b.as_of - 60 and o.is_first_order
+
+# The last 26 weeks (fewer when the history is shorter), oldest first, with zero for a week without orders.
+trend: |
+  with extent as (select max(order_date) as as_of, min(order_date) as first_order from marts.fct_orders),
+  bounds as (
+    select last_day.week_start as as_of_week, first_day.week_start as first_week
+    from extent
+    inner join marts.dim_date as last_day on last_day.date_day = extent.as_of
+    inner join marts.dim_date as first_day on first_day.date_day = extent.first_order
+  ),
+  weeks as (
+    select d.week_start, d.is_black_friday_week
+    from bounds as b
+    inner join marts.dim_date as d
+      on d.date_day = d.week_start
+      and d.week_start between greatest(b.as_of_week - 175, b.first_week) and b.as_of_week
+  ),
+  revenue as (
+    select d.week_start, sum(o.net_revenue) as net_revenue
+    from marts.fct_orders as o
+    inner join marts.dim_date as d on d.date_day = o.order_date
+    where not o.is_cancelled
+    group by d.week_start
+  )
+  select w.week_start, coalesce(r.net_revenue, 0) as net_revenue, w.is_black_friday_week
+  from weeks as w
+  left join revenue as r on r.week_start = w.week_start
+  order by w.week_start
