@@ -48,10 +48,13 @@ export interface HomeExpectations {
   trendWeeks: number;
   lastWeekStart: string;
   lastWeekNetRevenue: string;
-  build: { startedAt: string; nodeCount: number; failingTests: number };
+  trendHasPartialWeek: boolean;
+  trendHasBlackFriday: boolean;
+  build: { startedAt: string; nodeCount: number; failedNodes: number; failingTests: number };
 }
 
 const WINDOW_DAYS = 30;
+const FLAT_BELOW = 0.0005;
 const TREND_WEEKS = 26;
 const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS"Z"'`;
 const TILES = [
@@ -76,6 +79,8 @@ export function homeExpectations(): HomeExpectations {
       group by invocation_id order by max(run_started_at) desc, invocation_id desc limit 1
     )
     select to_char(min(run_started_at) at time zone 'UTC', ${ISO_UTC}), count(*),
+      count(*) filter (where resource_type in ('model', 'seed', 'snapshot')
+                         and status in ('error', 'runtime error', 'partial success')),
       count(*) filter (where resource_type in ('test', 'unit_test') and status in ('fail', 'error', 'runtime error'))
     from ops.dbt_run_results where invocation_id = (select invocation_id from latest)`).split("|");
   const lastWeekStart = adminScalar(`select to_char(date_trunc('week', date '${asOf}'), 'YYYY-MM-DD')`);
@@ -104,7 +109,15 @@ export function homeExpectations(): HomeExpectations {
       `select coalesce(sum(net_revenue), 0) from marts.fct_orders
        where not is_cancelled and order_date between date '${lastWeekStart}' and date '${lastWeekStart}' + 6`,
     ),
-    build: { startedAt: build[0]!, nodeCount: Number(build[1]), failingTests: Number(build[2]) },
+    // The last week is partial unless as_of is its Sunday; a Black Friday week shows when one falls in the 26 weeks.
+    trendHasPartialWeek: adminScalar(`select extract(isodow from date '${asOf}') < 7`) === "t",
+    trendHasBlackFriday:
+      adminScalar(`
+        select exists(select 1 from marts.dim_date where is_black_friday_week
+          and week_start >= greatest(date_trunc('week', date '${asOf}') - interval '${(TREND_WEEKS - 1) * 7} days',
+                                     date_trunc('week', (select min(order_date) from marts.fct_orders)))
+          and week_start <= date '${asOf}')`) === "t",
+    build: { startedAt: build[0]!, nodeCount: Number(build[1]), failedNodes: Number(build[2]), failingTests: Number(build[3]) },
   };
 }
 
@@ -149,7 +162,8 @@ function windowSums(asOf: string, daysBack: number): Sums {
 function homeTile(base: (typeof TILES)[number], value: number, earlier: number): Tile {
   const points = base.format === "percent";
   const change = earlier === 0 ? null : points ? value - earlier : (value - earlier) / Math.abs(earlier);
-  const direction = change === null ? null : change > 0 ? "up" : change < 0 ? "down" : "flat";
+  // A change under 0.05% (0.05 points for the refund rate) is flat (UI spec §6.2).
+  const direction = change === null ? null : Math.abs(change) < FLAT_BELOW ? "flat" : change > 0 ? "up" : "down";
   return {
     ...base,
     note: null,

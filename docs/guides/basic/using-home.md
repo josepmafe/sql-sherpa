@@ -50,7 +50,7 @@ Each item that cannot be shown says why in its place, and the others stay: one b
 | "freshness unavailable" | `sources.json` is half-written (a build is running) or unreadable: wait for `make build-prod` and reload |
 | "no freshness check recorded (run make build-prod)" | `sources.json` does not exist yet: `make build-prod` |
 | "Sources ... (checked <time>)" is older than the build line | The freshness comes from this checkout's `target-prod/sources.json`, the build line from the shared warehouse, so after a blocked or old `make build-prod` the freshness can be older; the time shows when the check ran. Run `make build-prod` |
-| `marketing.ad_spend_daily: warning, last loaded N h ago` | Expected once the campaigns end: they stop at the catalog horizon ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md#52-daily-simulation-scale--10); the warn threshold is 48 h (§7)), so the table stops growing |
+| `marketing.ad_spend_daily: warning, last loaded N h ago (checked <time>)` | Expected once the campaigns end: they stop at the catalog horizon ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md#52-daily-simulation-scale--10); the warn threshold is 48 h (§7)), so the table stops growing |
 | A tile's change is "—" | One of the three cases above; a short history is the usual one |
 | The numbers did not move after `make advance` | Run `make build-prod`, then reload: Home reads the marts, not the raw tables |
 
