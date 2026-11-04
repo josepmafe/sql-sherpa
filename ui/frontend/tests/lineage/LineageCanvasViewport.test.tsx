@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { orderNodes } from "../../src/screens/lineage/layout";
-import { forgetView, keepView } from "../../src/screens/lineage/viewport";
+import { forgetView, keepView, keptViewport } from "../../src/screens/lineage/viewport";
 import { columnView, type LineageEdge } from "../fixtures/api";
 import { stubLayout } from "../fixtures/render";
 import { canvasProps, node, rankInInputOrder } from "./canvasHarness";
@@ -139,7 +139,23 @@ describe("the Lineage viewport across redraws", () => {
     expect(transform()).not.toMatch(/translate\(0px,0px\)/);
   });
 
-  it("does not use localStorage", async () => {
+  it("keeps a zoom whose gesture is still settling when a layer is switched on", async () => {
+    keepView(SUBJECT, KEPT);
+    const view = render(canvas());
+    await buttons();
+    await waitFor(() => expect(transform()).toBe(KEPT_TRANSFORM));
+
+    fireEvent.wheel(document.querySelector(".react-flow__renderer")!, { deltaY: 400, ctrlKey: true });
+    await waitFor(() => expect(transform()).not.toBe(KEPT_TRANSFORM));
+    const zoomed = transform();
+    expect(keptViewport(SUBJECT)).not.toEqual(KEPT); // kept on the move itself, not 150 ms later
+    view.rerender(canvas({ nodes: [A, B, C] })); // before the wheel's end event, 150 ms after its last tick
+    await waitFor(() => expect(screen.getByRole("button", { name: /^c\b/ })).toBeVisible());
+
+    expect(transform()).toBe(zoomed);
+  });
+
+  it("does not use localStorage",async () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
 
     render(canvas());
