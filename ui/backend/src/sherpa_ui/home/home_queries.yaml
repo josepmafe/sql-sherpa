@@ -41,6 +41,8 @@ tiles:
     format: count
     decimals: 0
     up_is_good: true
+    note: >-
+      Orders that were not cancelled, counted by order date.
     sql: |
       with bounds as (select max(order_date) as as_of from marts.fct_orders)
       select
@@ -50,7 +52,7 @@ tiles:
       left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
 
   - id: aov
-    title: AOV
+    title: Average order value
     format: currency
     decimals: 2
     up_is_good: true
@@ -112,6 +114,8 @@ tiles:
     format: count
     decimals: 0
     up_is_good: true
+    note: >-
+      Customers whose first order that was not cancelled was placed in the period, deleted customers included.
     sql: |
       with bounds as (select max(order_date) as as_of from marts.fct_orders)
       select

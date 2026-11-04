@@ -452,7 +452,7 @@ test.describe("the Explorer panes", () => {
   }
 });
 
-const TILE_TITLES = ["Net revenue", "Orders", "AOV", "Refund rate", "New customers"];
+const TILE_TITLES = ["Net revenue", "Orders", "Average order value", "Refund rate", "New customers"];
 
 // Mantine's theme breakpoints: five tiles across from lg (1200 px), three from md (992 px); the page never scrolls
 // sideways.
@@ -473,6 +473,18 @@ for (const viewport of [
 
       expect(tops.filter((top) => top === tops[0])).toHaveLength(viewport.columns);
       expect(new Set(tops).size).toBe(Math.ceil(TILE_TITLES.length / viewport.columns));
+    });
+
+    test("aligns the values of the tiles in a row", async ({ page }) => {
+      await page.goto("/");
+
+      const tops: number[] = [];
+      for (const title of TILE_TITLES.slice(0, viewport.columns)) {
+        const value = page.getByRole("region", { name: title, exact: true }).locator("p").nth(1);
+        tops.push(Math.round((await value.boundingBox())!.y));
+      }
+
+      expect(new Set(tops).size).toBe(1);
     });
 
     test("has no horizontal scroll and shows every tile", async ({ page }) => {

@@ -27,7 +27,8 @@ def test_tiles_are_the_specs() -> None:
     assert tuple(tile.id for tile in tiles) == ("net_revenue", "orders", "aov", "refund_rate", "new_customers")
     assert tuple(tile.format for tile in tiles) == ("currency", "count", "currency", "percent", "count")
     assert [tile.id for tile in tiles if not tile.up_is_good] == ["refund_rate"]
-    assert [tile.id for tile in tiles if tile.note] == ["net_revenue", "aov", "refund_rate"]
+    assert [tile.id for tile in tiles if not tile.note] == []
+    assert tiles[2].title == "Average order value"
 
 
 @pytest.mark.parametrize("tile_id", ["net_revenue", "aov"])
@@ -37,6 +38,16 @@ def test_the_as_stood_notes_explain_the_30_days_and_the_refunds(tile_id: str) ->
     note = notes[tile_id] or ""
     assert "30 days" in note
     assert "refunds" in note
+
+
+def test_the_orders_and_new_customers_notes_name_their_definitions() -> None:
+    notes = {tile.id: (tile.note or "").lower() for tile in HomeQueries.from_yaml(HOME_QUERIES_PATH).tiles}
+
+    assert "cancelled" in notes["orders"]
+    assert "order date" in notes["orders"]
+    assert "first" in notes["new_customers"]
+    assert "cancelled" in notes["new_customers"]
+    assert "deleted" in notes["new_customers"]
 
 
 @pytest.mark.parametrize("name", list(HOME_SQL))

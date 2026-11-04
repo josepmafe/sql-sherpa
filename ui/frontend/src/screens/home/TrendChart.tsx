@@ -1,5 +1,5 @@
 import { BarChart } from "@mantine/charts";
-import { Table, Text, Title, VisuallyHidden } from "@mantine/core";
+import { ColorSwatch, Group, Stack, Table, Text, Title, VisuallyHidden } from "@mantine/core";
 
 import type { components } from "../../api/schema";
 import { formatCurrency } from "./format";
@@ -15,17 +15,38 @@ const SERIES = [
   { name: BLACK_FRIDAY, color: "orange.6" },
   { name: PARTIAL, color: "blue.2" },
 ];
+const SWATCH_SIZE = 12;
+const LEGEND_STYLE = { listStyle: "none", margin: 0, padding: 0, flexShrink: 0 } as const;
 
 export function TrendChart({ weeks }: { weeks: readonly TrendWeek[] }) {
   const rows = weeks.map(chartRow);
+  const series = SERIES.filter(({ name }) => rows.some((row) => name in row));
+  // The regular bar needs no key: only the unusual kinds of week are named.
+  const unusual = series.filter(({ name }) => name !== REGULAR);
   return (
     <>
-      <Title order={3} size="h4">
-        Weekly net revenue
-      </Title>
-      <Text size="sm" c="dimmed">
-        Recent weeks read high until their refunds arrive (about 7 weeks).
-      </Text>
+      <Stack gap={4}>
+        <Title order={3} size="h4">
+          Weekly net revenue
+        </Title>
+        <Group justify="space-between" align="flex-start" wrap="nowrap">
+          <Text size="sm" c="dimmed">
+            Recent weeks read high until their refunds arrive (about 7 weeks).
+          </Text>
+          {unusual.length > 0 && (
+            <Group component="ul" aria-label="Legend" gap="md" wrap="nowrap" style={LEGEND_STYLE}>
+              {unusual.map(({ name, color }) => (
+                <Group component="li" key={name} gap={6} wrap="nowrap">
+                  <ColorSwatch color={`var(--mantine-color-${color.replace(".", "-")})`} size={SWATCH_SIZE} withShadow={false} aria-hidden />
+                  <Text span size="sm">
+                    {name}
+                  </Text>
+                </Group>
+              ))}
+            </Group>
+          )}
+        </Group>
+      </Stack>
       {/* The bars say nothing the table next to them does not; a screen reader gets the table, and the chart is no
           keyboard stop (recharts' accessibility layer would make it one). */}
       <div data-testid="trend-chart" aria-hidden="true">
@@ -33,10 +54,9 @@ export function TrendChart({ weeks }: { weeks: readonly TrendWeek[] }) {
           h={CHART_HEIGHT}
           data={rows}
           dataKey="week"
-          series={SERIES.filter(({ name }) => rows.some((row) => name in row))}
+          series={series}
           accessibilityLayer={false}
           type="stacked"
-          withLegend
           valueFormatter={(value) => formatCurrency(String(value))}
           yAxisProps={{ tickFormatter: (value: number) => formatCurrency(String(value)), width: 80 }}
         />

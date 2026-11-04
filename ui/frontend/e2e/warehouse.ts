@@ -60,7 +60,7 @@ const ISO_UTC = `'YYYY-MM-DD"T"HH24:MI:SS"Z"'`;
 const TILES = [
   { id: "net_revenue", title: "Net revenue", format: "currency", decimals: 0, up_is_good: true },
   { id: "orders", title: "Orders", format: "count", decimals: 0, up_is_good: true },
-  { id: "aov", title: "AOV", format: "currency", decimals: 2, up_is_good: true },
+  { id: "aov", title: "Average order value", format: "currency", decimals: 2, up_is_good: true },
   { id: "refund_rate", title: "Refund rate", format: "percent", decimals: 1, up_is_good: false },
   { id: "new_customers", title: "New customers", format: "count", decimals: 0, up_is_good: true },
 ] as const;

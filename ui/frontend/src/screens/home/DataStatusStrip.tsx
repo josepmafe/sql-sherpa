@@ -23,9 +23,6 @@ const FAILING_LINK = `/lineage?${toSearchParams({
 export function DataStatusStrip({ status }: { status: DataStatus }) {
   return (
     <Group gap="md" aria-label="Data status" role="group">
-      {status.as_of_date !== null && (
-        <Text size="sm">Data as of {status.as_of_date}</Text>
-      )}
       <BuildItems status={status} />
       <FreshnessItems status={status} />
     </Group>

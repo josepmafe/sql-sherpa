@@ -21,7 +21,7 @@ test("a new build shows after a reload without restarting ui", async ({ page }) 
   const homeBefore = homeExpectations();
   const ordersBefore = formatValue(homeBefore.tiles.find((tile) => tile.id === "orders")!);
   await page.goto("/");
-  await expect(page.getByRole("group", { name: "Data status" })).toContainText(`Data as of ${homeBefore.asOf}`);
+  await expect(page.getByText(`to ${homeBefore.asOf}, compared with the 30 days before`)).toBeVisible();
   await page.goto("/explorer");
   await runQuery(page, "select count(*) from marts.fct_orders");
   await expect(page.getByRole("cell", { name: before, exact: true })).toBeVisible();
@@ -36,7 +36,7 @@ test("a new build shows after a reload without restarting ui", async ({ page }) 
   expect(homeAfter.asOf).toBe(new Date(Date.parse(homeBefore.asOf) + MS_PER_DAY).toISOString().slice(0, 10));
   expect(ordersAfter).not.toBe(ordersBefore);
   await page.goto("/");
-  await expect(page.getByRole("group", { name: "Data status" })).toContainText(`Data as of ${homeAfter.asOf}`);
+  await expect(page.getByText(`to ${homeAfter.asOf}, compared with the 30 days before`)).toBeVisible();
   await expect(page.getByRole("region", { name: "Orders", exact: true })).toContainText(ordersAfter);
 
   await page.goto("/explorer");

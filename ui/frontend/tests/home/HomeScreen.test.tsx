@@ -76,6 +76,55 @@ describe("HomeScreen", () => {
     expect(screen.getAllByRole("region")).toHaveLength(5);
   });
 
+  it.each([
+    ["Net revenue", "▲ 12.0%", "better"],
+    ["Orders", "▲ 3.0%", "better"],
+    ["New customers", "▼ 10.0%", "worse"],
+    ["Refund rate", "▼ 0.7 pp", "better"],
+    ["Average order value", "—", "no comparison"],
+  ])("tells the %s change in one word beside the arrow", (name, change, word) => {
+    renderWithProviders(<HomeScreen />);
+
+    const card = screen.getByRole("region", { name });
+    expect(within(card).getByText(change)).toBeInTheDocument();
+    expect(within(card).getByText(word, { exact: true })).toBeInTheDocument();
+  });
+
+  it("shows a flat change without a verdict word", () => {
+    const flat = tile({ id: "orders", title: "Orders", change: "0.0001", direction: "flat", good: null });
+    useHome.mockReturnValue({ data: home({ figures: { tiles: [flat], trend: WEEKS } }) });
+
+    renderWithProviders(<HomeScreen />);
+
+    const card = screen.getByRole("region", { name: "Orders" });
+    expect(within(card).getByText("0.0%")).toBeInTheDocument();
+    expect(within(card).queryByText(/^(better|worse|no comparison)$/)).not.toBeInTheDocument();
+    expect(within(card).getByText("unchanged on the previous 30 days")).toBeInTheDocument();
+  });
+
+  it("headlines the window and its dates, and drops the page title", () => {
+    useHome.mockReturnValue({
+      data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, as_of_date: "2026-10-31" } }),
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "Last 30 days" })).toBeInTheDocument();
+    expect(screen.getByText("to 2026-10-31, compared with the 30 days before")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Home" })).not.toBeInTheDocument();
+  });
+
+  it("leaves the dates out of the heading when there is no as-of date", () => {
+    useHome.mockReturnValue({
+      data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, as_of_date: null } }),
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "Last 30 days" })).toBeInTheDocument();
+    expect(screen.queryByText(/compared with the 30 days before/)).not.toBeInTheDocument();
+  });
+
   it("reads a falling refund rate as an improvement", () => {
     renderWithProviders(<HomeScreen />);
 
@@ -117,11 +166,22 @@ describe("HomeScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists in the legend only the kinds of week the trend has", () => {
+  it("keys only the unusual kinds of week present, in the caption row", () => {
     renderWithProviders(<HomeScreen />);
 
-    const series = within(screen.getByTestId("chart-series")).getAllByRole("listitem", { hidden: true });
-    expect(series.map((item) => item.textContent)).toEqual(["Net revenue", "Black Friday week", "Partial week"]);
+    const legend = screen.getByRole("list", { name: "Legend" });
+    expect(within(legend).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Black Friday week",
+      "Partial week",
+    ]);
+  });
+
+  it("draws no legend when every week is regular", () => {
+    useHome.mockReturnValue({ data: home({ figures: { tiles: TILES, trend: [trendWeek()] } }) });
+
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.queryByRole("list", { name: "Legend" })).not.toBeInTheDocument();
   });
 
   it("draws a partial Black Friday week as partial and still marks both in the table", () => {
@@ -150,15 +210,17 @@ describe("HomeScreen", () => {
   });
 
 
-  it("puts the data-status strip at the top, above the tiles", () => {
+  it("puts the data-status strip under the heading and above the tiles", () => {
     useHome.mockReturnValue({
-      data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, as_of_date: "2026-10-31" } }),
+      data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, build: buildSummary() } }),
     });
 
     renderWithProviders(<HomeScreen />);
 
-    const strip = screen.getByText("Data as of 2026-10-31");
+    const heading = screen.getByRole("heading", { name: "Last 30 days" });
+    const strip = screen.getByRole("group", { name: "Data status" });
     const firstTile = screen.getByRole("region", { name: "Net revenue" });
+    expect(heading.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(strip.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -194,7 +256,7 @@ describe("HomeScreen", () => {
         data: home({
           figures: null,
           figures_error: { code, message: `The figures failed (${code}).` },
-          status: { ...home().status, as_of_date: "2026-10-31" },
+          status: { ...home().status, build: buildSummary({ failing_tests: 2 }) },
         }),
         refetch,
       });
@@ -206,7 +268,8 @@ describe("HomeScreen", () => {
 
       expect(screen.getByText(`The figures failed (${code}).`)).toBeInTheDocument();
       expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
-      expect(screen.getByText("Data as of 2026-10-31")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "2 failing tests" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Last 30 days" })).not.toBeInTheDocument();
       expect(refetch).toHaveBeenCalledTimes(1);
     },
   );

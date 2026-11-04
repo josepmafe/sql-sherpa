@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeChange, formatChange, formatValue } from "../../src/screens/home/format";
+import { describeChange, formatChange, formatValue, verdictWord } from "../../src/screens/home/format";
 import { tile } from "../fixtures/api";
 
 describe("formatValue", () => {
@@ -64,5 +64,18 @@ describe("describeChange", () => {
     expect(describeChange(tile({ change: null, direction: null, good: null }))).toBe(
       "no comparison with the previous 30 days",
     );
+  });
+});
+
+describe("verdictWord", () => {
+  it.each([
+    [{ change: "0.12", direction: "up", good: true }, "better"],
+    [{ change: "-0.05", direction: "down", good: false }, "worse"],
+    [{ change: "-0.007", direction: "down", good: true }, "better"],
+    [{ change: "0.02", direction: "up", good: false }, "worse"],
+    [{ change: "0", direction: "flat", good: null }, null],
+    [{ change: null, direction: null, good: null }, "no comparison"],
+  ] as const)("%j gives %s", (overrides, expected) => {
+    expect(verdictWord(tile(overrides))).toBe(expected);
   });
 });

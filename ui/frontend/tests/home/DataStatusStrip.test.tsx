@@ -8,16 +8,14 @@ import { renderWithProviders } from "../fixtures/render";
 const CHECKED = "2026-11-01T14:40:30Z";
 
 describe("DataStatusStrip", () => {
-  it("shows the data date, the last full build and fresh sources", () => {
+  it("shows the last full build and fresh sources", () => {
     const status = dataStatus({
-      as_of_date: "2026-10-31",
       build: buildSummary(),
       freshness: { checked_at: CHECKED, problems: [] },
     });
 
     renderWithProviders(<DataStatusStrip status={status} />);
 
-    expect(screen.getByText("Data as of 2026-10-31")).toBeInTheDocument();
     expect(
       screen.getByText("Last full build 2026-11-01 14:39 UTC · 398 nodes"),
     ).toBeInTheDocument();

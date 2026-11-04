@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 
 import { formatBuildStart } from "../src/components/time";
-import { describeChange, formatChange, formatCurrency, formatValue } from "../src/screens/home/format";
+import { describeChange, formatChange, formatCurrency, formatValue, verdictWord } from "../src/screens/home/format";
 import { homeExpectations, type HomeExpectations } from "./warehouse";
 
 const SOURCES_FILE = resolve(import.meta.dirname, "../../../data-platform/dbt/target-prod/sources.json");
@@ -47,6 +47,19 @@ test("each tile shows the value and the change the warehouse gives", async ({ pa
     await expect(card).toContainText(formatValue(tile));
     await expect(card).toContainText(formatChange(tile));
     await expect(card).toContainText(describeChange(tile));
+    const word = verdictWord(tile);
+    if (word !== null) await expect(card.getByText(word, { exact: true })).toBeVisible();
+  }
+});
+
+test("the heading states the window and the as-of date", async ({ page }) => {
+  await expect(page.getByRole("heading", { level: 2, name: "Last 30 days" })).toBeVisible();
+  await expect(page.getByText(`to ${expected.asOf}, compared with the 30 days before`)).toBeVisible();
+});
+
+test("every tile has an info button", async ({ page }) => {
+  for (const tile of expected.tiles) {
+    await expect(page.getByRole("button", { name: `About ${tile.title}`, exact: true })).toBeVisible();
   }
 });
 
@@ -81,10 +94,9 @@ test.describe("the trend chart", () => {
 });
 
 test.describe("the data-status strip", () => {
-  test("shows the as-of date, the latest full prod build and its failing tests", async ({ page }) => {
+  test("shows the latest full prod build and its failing tests", async ({ page }) => {
     const strip = page.getByRole("group", { name: "Data status" });
 
-    await expect(strip).toContainText(`Data as of ${expected.asOf}`);
     await expect(strip).toContainText(
       `Last full build ${formatBuildStart(expected.build.startedAt)} · ${expected.build.nodeCount} nodes`,
     );

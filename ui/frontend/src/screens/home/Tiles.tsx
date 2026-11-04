@@ -1,12 +1,15 @@
-import { ActionIcon, Group, Paper, SimpleGrid, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Group, Paper, SimpleGrid, Text, Tooltip, VisuallyHidden } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 
 import type { components } from "../../api/schema";
-import { describeChange, formatChange, formatValue } from "./format";
+import { describeChange, formatChange, formatValue, verdictWord } from "./format";
 
 type Tile = components["schemas"]["Tile"];
 
 const ICON_SIZE = 16;
+// Every title row has the info button's height, so the values below line up across the row of tiles.
+const TITLE_ROW_HEIGHT = 22;
+const VERDICT_GAP = 6;
 // Mantine reads only its theme's breakpoint names here: md is 992 px, lg 1200 px. Two columns below md, three from md,
 // five from lg.
 const COLUMNS = { base: 2, md: 3, lg: 5 };
@@ -22,9 +25,10 @@ export function Tiles({ tiles }: { tiles: readonly Tile[] }) {
 }
 
 function TileCard({ tile }: { tile: Tile }) {
+  const verdict = verdictWord(tile);
   return (
     <Paper component="section" aria-label={tile.title} withBorder p="md">
-      <Group justify="space-between" wrap="nowrap" gap="xs">
+      <Group justify="space-between" wrap="nowrap" gap="xs" h={TITLE_ROW_HEIGHT}>
         <Text size="sm" c="dimmed">
           {tile.title}
         </Text>
@@ -39,12 +43,17 @@ function TileCard({ tile }: { tile: Tile }) {
       <Text fz={28} fw={600}>
         {formatValue(tile)}
       </Text>
-      <Text size="sm" fw={500} c={changeColour(tile)} aria-hidden="true">
-        {formatChange(tile)}
-      </Text>
-      <Text size="xs" c="dimmed">
-        {describeChange(tile)}
-      </Text>
+      <Group gap={VERDICT_GAP} wrap="nowrap">
+        <Text span size="sm" fw={500} c={changeColour(tile)} aria-hidden="true">
+          {formatChange(tile)}
+        </Text>
+        {verdict !== null && (
+          <Text span size="sm" c="dimmed" aria-hidden="true">
+            {verdict}
+          </Text>
+        )}
+        <VisuallyHidden>{describeChange(tile)}</VisuallyHidden>
+      </Group>
     </Paper>
   );
 }

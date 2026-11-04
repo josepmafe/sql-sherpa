@@ -46,7 +46,7 @@ test("Home works with every request outside the app's origin blocked", async ({ 
 
   await page.goto("/");
 
-  for (const title of ["Net revenue", "Orders", "AOV", "Refund rate", "New customers"]) {
+  for (const title of ["Net revenue", "Orders", "Average order value", "Refund rate", "New customers"]) {
     await expect(page.getByRole("region", { name: title, exact: true })).toBeVisible();
   }
   await expect(page.getByRole("table", { name: "Net revenue per week" })).toBeAttached();

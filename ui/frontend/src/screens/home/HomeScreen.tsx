@@ -23,8 +23,7 @@ export function HomeScreen() {
   const { data } = home;
 
   return (
-    <Stack gap="md" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-      <Title order={2}>Home</Title>
+    <Stack gap="lg" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
       {data === undefined && home.isError && (
         <LoadError
           title="Could not load Home"
@@ -37,6 +36,7 @@ export function HomeScreen() {
       )}
       {data !== undefined && (
         <>
+          {data.figures && <Heading asOf={data.status.as_of_date} />}
           <DataStatusStrip status={data.status} />
           {data.figures && (
             <>
@@ -52,6 +52,21 @@ export function HomeScreen() {
             />
           )}
         </>
+      )}
+    </Stack>
+  );
+}
+
+// The window every tile and the chart's recent weeks speak of; only shown with figures, so an empty or failed Home
+// does not claim one.
+function Heading({ asOf }: { asOf: string | null }) {
+  return (
+    <Stack gap={4}>
+      <Title order={2}>Last 30 days</Title>
+      {asOf !== null && (
+        <Text size="sm" c="dimmed">
+          to {asOf}, compared with the 30 days before
+        </Text>
       )}
     </Stack>
   );

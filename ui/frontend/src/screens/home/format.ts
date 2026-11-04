@@ -47,6 +47,13 @@ export function describeChange(tile: Tile): string {
   return `${tile.direction} ${changeAmount(tile)} on ${PERIOD}${verdict}`;
 }
 
+/** The one-word verdict beside the change: none when the change is flat, "no comparison" when there is none. */
+export function verdictWord(tile: Tile): string | null {
+  if (tile.change === null || tile.direction === null) return "no comparison";
+  if (tile.direction === "flat" || tile.good === null) return null;
+  return tile.good ? "better" : "worse";
+}
+
 function changeAmount(tile: Tile): string {
   const amount = number(Math.abs(Number(tile.change)) * PERCENT, CHANGE_DECIMALS);
   return tile.change_kind === "points" ? `${amount} pp` : `${amount}%`;
