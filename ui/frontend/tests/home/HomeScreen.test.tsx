@@ -9,12 +9,33 @@ const useHome = vi.fn();
 vi.mock("../../src/api/queries", () => ({ useHome: () => useHome() }));
 // jsdom has no layout, so recharts draws nothing; the stand-in shows the series it was given.
 vi.mock("@mantine/charts", () => ({
-  BarChart: ({ series }: { series: { name: string }[] }) => (
-    <ul data-testid="chart-series">
-      {series.map(({ name }) => (
-        <li key={name}>{name}</li>
-      ))}
-    </ul>
+  BarChart: ({
+    series,
+    data,
+    xAxisProps,
+    yAxisProps,
+    barProps,
+  }: {
+    series: { name: string }[];
+    data: { week: string }[];
+    xAxisProps: { tickFormatter: (value: string) => string };
+    yAxisProps: { width: number };
+    barProps: (series: { name: string }) => Record<string, unknown>;
+  }) => (
+    <div>
+      <ul data-testid="chart-series">
+        {series.map(({ name }) => (
+          <li key={name}>{name}</li>
+        ))}
+      </ul>
+      <p data-testid="chart-x-labels">{data.map(({ week }) => xAxisProps.tickFormatter(week)).join(",")}</p>
+      <p data-testid="chart-y-width">{yAxisProps.width}</p>
+      <ul data-testid="chart-bar-props">
+        {series.map(({ name }) => (
+          <li key={name}>{`${name}=${JSON.stringify(barProps({ name }))}`}</li>
+        ))}
+      </ul>
+    </div>
   ),
 }));
 
@@ -182,6 +203,26 @@ describe("HomeScreen", () => {
     renderWithProviders(<HomeScreen />);
 
     expect(screen.queryByRole("list", { name: "Legend" })).not.toBeInTheDocument();
+  });
+
+  it("labels the x axis with short dates and gives the y axis 56 px", () => {
+    renderWithProviders(<HomeScreen />);
+
+    expect(screen.getByTestId("chart-x-labels")).toHaveTextContent("16 Nov,23 Nov,30 Nov");
+    expect(screen.getByTestId("chart-y-width")).toHaveTextContent("56");
+  });
+
+  it("draws the partial week translucent with a dashed outline and the others plain", () => {
+    renderWithProviders(<HomeScreen />);
+
+    const props = within(screen.getByTestId("chart-bar-props"))
+      .getAllByRole("listitem", { hidden: true })
+      .map((item) => item.textContent);
+    expect(props).toEqual([
+      "Net revenue={}",
+      "Black Friday week={}",
+      'Partial week={"fillOpacity":0.45,"stroke":"var(--mantine-color-blue-6)","strokeWidth":1.5,"strokeDasharray":"4 3"}',
+    ]);
   });
 
   it("draws a partial Black Friday week as partial and still marks both in the table", () => {

@@ -13,9 +13,14 @@ const PARTIAL = "Partial week";
 const SERIES = [
   { name: REGULAR, color: "blue.6" },
   { name: BLACK_FRIDAY, color: "orange.6" },
-  { name: PARTIAL, color: "blue.2" },
+  { name: PARTIAL, color: "blue.6" },
 ];
 const SWATCH_SIZE = 12;
+const Y_AXIS_WIDTH = 56;
+// A partial week is the regular colour at low opacity with a dashed outline: both reach 3:1 against either theme.
+const PARTIAL_OPACITY = 0.45;
+const PARTIAL_DASH = "4 3";
+const PARTIAL_STROKE = "var(--mantine-color-blue-6)";
 const LEGEND_STYLE = { listStyle: "none", margin: 0, padding: 0, flexShrink: 0 } as const;
 
 export function TrendChart({ weeks }: { weeks: readonly TrendWeek[] }) {
@@ -58,7 +63,9 @@ export function TrendChart({ weeks }: { weeks: readonly TrendWeek[] }) {
           accessibilityLayer={false}
           type="stacked"
           valueFormatter={(value) => formatCurrency(String(value))}
-          yAxisProps={{ tickFormatter: (value: number) => formatCurrency(String(value)), width: 80 }}
+          barProps={partialLook}
+          xAxisProps={{ tickFormatter: formatWeekLabel }}
+          yAxisProps={{ tickFormatter: (value: number) => formatCurrency(String(value)), width: Y_AXIS_WIDTH }}
         />
       </div>
       <VisuallyHidden component="div">
@@ -83,6 +90,16 @@ export function TrendChart({ weeks }: { weeks: readonly TrendWeek[] }) {
       </VisuallyHidden>
     </>
   );
+}
+
+/** "2026-05-11" as "11 May". */
+export function formatWeekLabel(weekStart: string): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(weekStart));
+}
+
+function partialLook({ name }: { name: string }): Record<string, unknown> {
+  if (name !== PARTIAL) return {};
+  return { fillOpacity: PARTIAL_OPACITY, stroke: PARTIAL_STROKE, strokeWidth: 1.5, strokeDasharray: PARTIAL_DASH };
 }
 
 // One series per kind of bar, so each gets its colour and its legend entry; the others are absent for that week.
