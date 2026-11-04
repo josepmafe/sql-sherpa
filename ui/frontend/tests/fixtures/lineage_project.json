@@ -105,10 +105,6 @@
    "layer": "staging"
   },
   {
-   "id": "model.sherpa.stg_events__events",
-   "layer": "staging"
-  },
-  {
    "id": "model.sherpa.stg_marketing__ad_spend_daily",
    "layer": "staging"
   },
@@ -195,6 +191,10 @@
   {
    "id": "snapshot.sherpa.snap_product_variants",
    "layer": "snapshot"
+  },
+  {
+   "id": "model.sherpa.stg_events__events",
+   "layer": "staging"
   },
   {
    "id": "source.sherpa.crm.leads",
@@ -303,6 +303,10 @@
   },
   {
    "id": "exposure.sherpa.sherpa_agent",
+   "layer": "exposure"
+  },
+  {
+   "id": "exposure.sherpa.sherpa_home",
    "layer": "exposure"
   }
  ],
@@ -604,10 +608,6 @@
    "target": "model.sherpa.stg_crm__leads"
   },
   {
-   "source": "source.sherpa.events.events",
-   "target": "model.sherpa.stg_events__events"
-  },
-  {
    "source": "source.sherpa.marketing.ad_spend_daily",
    "target": "model.sherpa.stg_marketing__ad_spend_daily"
   },
@@ -692,6 +692,10 @@
    "target": "snapshot.sherpa.snap_product_variants"
   },
   {
+   "source": "source.sherpa.events.events",
+   "target": "model.sherpa.stg_events__events"
+  },
+  {
    "source": "model.sherpa.dim_campaigns",
    "target": "exposure.sherpa.sherpa_agent"
   },
@@ -742,6 +746,18 @@
   {
    "source": "model.sherpa.fct_sessions",
    "target": "exposure.sherpa.sherpa_agent"
+  },
+  {
+   "source": "model.sherpa.dim_date",
+   "target": "exposure.sherpa.sherpa_home"
+  },
+  {
+   "source": "model.sherpa.fct_orders",
+   "target": "exposure.sherpa.sherpa_home"
+  },
+  {
+   "source": "model.sherpa.fct_refunds",
+   "target": "exposure.sherpa.sherpa_home"
   }
  ]
 }
