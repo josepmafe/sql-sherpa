@@ -2,7 +2,7 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HomeScreen } from "../../src/screens/home/HomeScreen";
-import { home, tile, trendWeek } from "../fixtures/api";
+import { buildSummary, home, tile, trendWeek } from "../fixtures/api";
 import { renderWithProviders } from "../fixtures/render";
 
 const useHome = vi.fn();
@@ -102,5 +102,76 @@ describe("HomeScreen", () => {
     const { container } = renderWithProviders(<HomeScreen />);
 
     expect(container.querySelector("[data-testid='trend-chart']")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("puts the data-status strip at the top, above the tiles", () => {
+    useHome.mockReturnValue({
+      data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, as_of_date: "2026-10-31" } }),
+    });
+
+    renderWithProviders(<HomeScreen />);
+
+    const strip = screen.getByText("Data as of 2026-10-31");
+    const firstTile = screen.getByRole("region", { name: "Net revenue" });
+    expect(strip.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe.each(["no_data", "catalog_unavailable"] as const)("when the figures say %s", (code) => {
+    it("shows the empty state in place of the tiles and trend, and keeps the strip", () => {
+      useHome.mockReturnValue({
+        data: home({
+          figures: null,
+          figures_error: { code, message: "nothing" },
+          status: { ...home().status, build: buildSummary({ failing_tests: 2 }) },
+        }),
+      });
+
+      renderWithProviders(<HomeScreen />);
+
+      expect(screen.getByText("No data yet")).toBeInTheDocument();
+      expect(screen.getByText("make backfill && make build-prod")).toBeInTheDocument();
+      expect(screen.queryAllByRole("region")).toHaveLength(0);
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "2 failing tests" })).toBeInTheDocument();
+    });
+  });
+
+  it.each(["database_unavailable", "timeout", "busy"] as const)(
+    "shows the message and a Retry for %s, and keeps the strip",
+    async (code) => {
+      const refetch = vi.fn();
+      useHome.mockReturnValue({
+        data: home({
+          figures: null,
+          figures_error: { code, message: `The figures failed (${code}).` },
+          status: { ...home().status, as_of_date: "2026-10-31" },
+        }),
+        refetch,
+      });
+
+      renderWithProviders(<HomeScreen />);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      });
+
+      expect(screen.getByText(`The figures failed (${code}).`)).toBeInTheDocument();
+      expect(screen.queryByText("No data yet")).not.toBeInTheDocument();
+      expect(screen.getByText("Data as of 2026-10-31")).toBeInTheDocument();
+      expect(refetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("shows the shared load error with a retry when the request itself fails", async () => {
+    const refetch = vi.fn();
+    useHome.mockReturnValue({ data: undefined, isError: true, error: new Error("boom"), refetch });
+
+    renderWithProviders(<HomeScreen />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    });
+
+    expect(screen.getByText("Could not load Home")).toBeInTheDocument();
+    expect(screen.getByText("Could not reach the server.")).toBeInTheDocument();
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

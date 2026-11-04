@@ -27,6 +27,8 @@ export type Home = Schemas["Home"];
 export type Tile = Schemas["Tile"];
 export type TrendWeek = Schemas["TrendWeek"];
 export type DataStatus = Schemas["DataStatus"];
+export type BuildSummary = Schemas["BuildSummary"];
+export type SourceFreshness = Schemas["SourceFreshness"];
 
 /** What openapi-fetch resolves with for a 2xx answer. */
 export type OkResult<T> = { data: T; response: { status: number } };
@@ -251,6 +253,14 @@ export function trendWeek(overrides: Partial<TrendWeek> = {}): TrendWeek {
 
 export function dataStatus(overrides: Partial<DataStatus> = {}): DataStatus {
   return { as_of_date: "2026-10-21", build: null, build_note: null, freshness: null, freshness_note: null, ...overrides };
+}
+
+export function buildSummary(overrides: Partial<BuildSummary> = {}): BuildSummary {
+  return { failing_tests: 0, node_count: 398, started_at: "2026-11-01T14:39:12Z", ...overrides };
+}
+
+export function sourceFreshness(overrides: Partial<SourceFreshness> = {}): SourceFreshness {
+  return { name: "marketing.ad_spend_daily", status: "warn", hours_ago: 49, max_loaded_at: "2026-10-30T12:00:00Z", ...overrides };
 }
 
 export function home(overrides: Partial<Home> = {}): Home {

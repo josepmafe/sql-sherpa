@@ -1,6 +1,7 @@
 import { Button, Chip, Group, Switch, Text, VisuallyHidden } from "@mantine/core";
 import { useId } from "react";
 
+import { formatBuildStart } from "../../components/time";
 import { DEFAULT_LAYERS, type Layer } from "./url";
 
 type BuildState = "ok" | "no_build" | "unavailable";
@@ -88,8 +89,4 @@ export function LayerFilter({
 function note(buildState: BuildState, startedAt: string | null): string | undefined {
   if (buildState !== "ok") return BUILD_NOTES[buildState];
   return startedAt === null ? undefined : `Status from the full build of ${formatBuildStart(startedAt)}`;
-}
-
-function formatBuildStart(startedAt: string): string {
-  return `${new Date(startedAt).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
