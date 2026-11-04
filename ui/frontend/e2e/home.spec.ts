@@ -26,13 +26,13 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-// A value of the right shape, whatever the warehouse holds: the expected strings above come from the same formatter.
+// A value of the right shape, whatever the warehouse holds: the expected strings in the test come from the same formatter.
 const TILE_SHAPES: Record<string, RegExp> = {
-  net_revenue: /^€[d,]+$/,
-  orders: /^[d,]+$/,
-  aov: /^€[d,]+.d{2}$/,
-  refund_rate: /^d+.d%$/,
-  new_customers: /^[d,]+$/,
+  net_revenue: /^€[\d,]+$/,
+  orders: /^[\d,]+$/,
+  aov: /^€[\d,]+\.\d{2}$/,
+  refund_rate: /^\d+\.\d%$/,
+  new_customers: /^[\d,]+$/,
 };
 
 test("each tile shows the value and the change the warehouse gives", async ({ page }) => {
