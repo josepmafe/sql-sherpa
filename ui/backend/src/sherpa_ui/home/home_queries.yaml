@@ -14,13 +14,26 @@ tiles:
     format: currency
     decimals: 0
     up_is_good: true
-    note: Recent orders' refunds are still arriving (up to about 40 days), so the latest period reads slightly high.
+    note: >-
+      The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an order,
+      so the latest 30 days have few refunds yet and read slightly high.
+    # last_period: the earlier window's orders less only the refunds paid by as_of - 30 (fct_orders.net_revenue is
+    # gross - discount - all refunds, so the later refunds are the difference).
     sql: |
-      with bounds as (select max(order_date) as as_of from marts.fct_orders)
+      with bounds as (select max(order_date) as as_of from marts.fct_orders),
+      known_refunds as (
+        select coalesce(sum(r.revenue_amount), 0) as amount
+        from bounds as b
+        inner join marts.fct_orders as o on o.order_date > b.as_of - 60 and o.order_date <= b.as_of - 30
+        inner join marts.fct_refunds as r on r.order_id = o.order_id and r.refund_date <= b.as_of - 30
+        where not o.is_cancelled
+      )
       select
         coalesce(sum(o.net_revenue) filter (where o.order_date > b.as_of - 30), 0) as this_period,
-        coalesce(sum(o.net_revenue) filter (where o.order_date <= b.as_of - 30), 0) as last_period
+        coalesce(sum(o.gross_revenue - o.discount_amount) filter (where o.order_date <= b.as_of - 30), 0)
+          - max(known_refunds.amount) as last_period
       from bounds as b
+      cross join known_refunds
       left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
 
   - id: orders
@@ -41,14 +54,27 @@ tiles:
     format: currency
     decimals: 2
     up_is_good: true
+    note: >-
+      The previous period is shown as it stood 30 days ago, because refunds arrive up to about 7 weeks after an order,
+      so the latest 30 days have few refunds yet and read slightly high.
     sql: |
-      with bounds as (select max(order_date) as as_of from marts.fct_orders)
+      with bounds as (select max(order_date) as as_of from marts.fct_orders),
+      known_refunds as (
+        select coalesce(sum(r.revenue_amount), 0) as amount
+        from bounds as b
+        inner join marts.fct_orders as o on o.order_date > b.as_of - 60 and o.order_date <= b.as_of - 30
+        inner join marts.fct_refunds as r on r.order_id = o.order_id and r.refund_date <= b.as_of - 30
+        where not o.is_cancelled
+      )
       select
         sum(o.net_revenue) filter (where o.order_date > b.as_of - 30)
           / nullif(count(o.order_id) filter (where o.order_date > b.as_of - 30), 0) as this_period,
-        sum(o.net_revenue) filter (where o.order_date <= b.as_of - 30)
-          / nullif(count(o.order_id) filter (where o.order_date <= b.as_of - 30), 0) as last_period
+        (
+          sum(o.gross_revenue - o.discount_amount) filter (where o.order_date <= b.as_of - 30)
+          - max(known_refunds.amount)
+        ) / nullif(count(o.order_id) filter (where o.order_date <= b.as_of - 30), 0) as last_period
       from bounds as b
+      cross join known_refunds
       left join marts.fct_orders as o on o.order_date > b.as_of - 60 and not o.is_cancelled
 
   - id: refund_rate
@@ -56,6 +82,9 @@ tiles:
     format: percent
     decimals: 1
     up_is_good: false
+    note: >-
+      Refunds paid in the 30 days over sales placed in them, so it differs from a by-order rate of recent orders, which
+      reads low until their refunds arrive.
     sql: |
       with bounds as (select max(order_date) as as_of from marts.fct_orders),
       refunds as (

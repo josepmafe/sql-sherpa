@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 from datetime import timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.warehouse
 
+ROUNDING = Decimal("1e-9")  # Postgres divides to 16 decimals
 MAX_TREND_WEEKS = 26  # UI spec §6.2
 LATEST_FULL_BUILD_ROWS = """
 select count(*) from ops.dbt_run_results where invocation_id = (
@@ -25,6 +27,26 @@ select count(*) from ops.dbt_run_results where invocation_id = (
     where target_name = 'prod' and command = 'build' and is_full_run
     group by invocation_id order by max(run_started_at) desc, invocation_id desc limit 1
 )
+"""
+
+
+# Per earlier-window order: gross - discount minus the refunds paid by as_of - 30, written without the Home query's
+# shape; and the later refunds, so the two together can be reconciled with fct_orders.net_revenue.
+EARLIER_WINDOW = """
+with as_of as (select max(order_date) as day from marts.fct_orders),
+earlier as (
+    select o.order_id, o.gross_revenue - o.discount_amount as billed, o.net_revenue
+    from marts.fct_orders o, as_of
+    where not o.is_cancelled and o.order_date > as_of.day - 60 and o.order_date <= as_of.day - 30
+)
+select
+    count(*),
+    sum(e.billed - (select coalesce(sum(r.revenue_amount), 0) from marts.fct_refunds r, as_of
+                    where r.order_id = e.order_id and r.refund_date <= as_of.day - 30)),
+    sum((select coalesce(sum(r.revenue_amount), 0) from marts.fct_refunds r, as_of
+         where r.order_id = e.order_id and r.refund_date > as_of.day - 30)),
+    sum(e.net_revenue)
+from earlier e
 """
 
 
@@ -74,3 +96,33 @@ class TestHomeWarehouse:
         assert {w.week_start: w.is_black_friday_week for w in home.figures.trend} == {
             w.week_start: flags[w.week_start] for w in home.figures.trend
         }
+
+
+class TestEarlierWindowAsItStood:
+    def test_the_previous_period_has_only_the_refunds_known_30_days_ago(
+        self, home: Home, admin: psycopg.Connection
+    ) -> None:
+        row = admin.execute(EARLIER_WINDOW).fetchone()
+        assert home.figures is not None
+        tiles = {tile.id: tile for tile in home.figures.tiles}
+        assert row is not None
+        _, as_stood, later_refunds, net_now = row
+
+        assert as_stood - later_refunds == net_now  # the refunds that came later bring it to fct_orders.net_revenue
+        assert later_refunds > 0  # the window would not tell the rule from the plain net revenue otherwise
+        this_net = tiles["net_revenue"].value
+        assert this_net is not None
+        change = tiles["net_revenue"].change
+        assert change is not None
+        assert change == pytest.approx((this_net - as_stood) / as_stood, abs=ROUNDING)
+
+    def test_aov_compares_with_the_as_stood_net_revenue_per_order(self, home: Home, admin: psycopg.Connection) -> None:
+        row = admin.execute(EARLIER_WINDOW).fetchone()
+        assert home.figures is not None
+        aov = next(tile for tile in home.figures.tiles if tile.id == "aov")
+        assert row is not None
+        orders, as_stood, _, _ = row
+
+        assert aov.value is not None
+        assert aov.change is not None
+        assert aov.change == pytest.approx((aov.value - as_stood / orders) / (as_stood / orders), abs=ROUNDING)

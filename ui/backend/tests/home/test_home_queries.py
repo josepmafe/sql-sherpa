@@ -27,7 +27,7 @@ def test_tiles_are_the_specs() -> None:
     assert tuple(tile.id for tile in tiles) == ("net_revenue", "orders", "aov", "refund_rate", "new_customers")
     assert tuple(tile.format for tile in tiles) == ("currency", "count", "currency", "percent", "count")
     assert [tile.id for tile in tiles if not tile.up_is_good] == ["refund_rate"]
-    assert [tile.id for tile in tiles if tile.note is not None] == ["net_revenue"]
+    assert [tile.id for tile in tiles if tile.note is not None] == ["net_revenue", "aov", "refund_rate"]
 
 
 @pytest.mark.parametrize("name", list(HOME_SQL))
