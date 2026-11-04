@@ -68,17 +68,8 @@ export function DataProblems({ status }: { status: DataStatus }) {
         variant="light"
         role="presentation"
         color={hasError ? "red" : "yellow"}
-        icon={
-          hasError ? (
-            <IconCircleX size={ICON_SIZE} aria-hidden />
-          ) : (
-            <IconAlertTriangle
-              size={ICON_SIZE}
-              color={WARNING_ICON}
-              aria-hidden
-            />
-          )
-        }
+        // The warnings-only summary button holds its own icon, so the Alert's icon slot is for the error variant.
+        icon={hasError ? <IconCircleX size={ICON_SIZE} aria-hidden /> : undefined}
         title={
           hasError ? (
             "Data errors"
@@ -100,6 +91,7 @@ export function DataProblems({ status }: { status: DataStatus }) {
                 aria-hidden
                 style={{ transform: expanded ? "rotate(90deg)" : undefined }}
               />
+              <IconAlertTriangle size={ICON_SIZE} color={WARNING_ICON} aria-hidden />
               {`Data warnings (${problems.length})`}
             </UnstyledButton>
           )
@@ -113,30 +105,28 @@ export function DataProblems({ status }: { status: DataStatus }) {
       >
         {/* The text keeps the theme's colour: only the icon and the tint carry the severity, since coloured text would
           miss AA on one of the themes. */}
-        <div id={boxId}>
-          {isOpen && (
-            <>
-              <List id={listId} size="sm" spacing={2} listStyleType="none">
-                {shown.map(({ key, content }) => (
-                  <List.Item key={key}>{content}</List.Item>
-                ))}
-              </List>
-              {folded > 0 && (
-                <Button
-                  mt="xs"
-                  size="compact-xs"
-                  variant="subtle"
-                  color="gray"
-                  onClick={toggleAll}
-                  aria-expanded={showAll}
-                  aria-controls={listId}
-                >
-                  {showAll ? "Show less" : `Show ${folded} more`}
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+        {isOpen && (
+          <div id={boxId}>
+            <List id={listId} size="sm" spacing={2} listStyleType="none">
+              {shown.map(({ key, content }) => (
+                <List.Item key={key}>{content}</List.Item>
+              ))}
+            </List>
+            {folded > 0 && (
+              <Button
+                mt="xs"
+                size="compact-xs"
+                variant="subtle"
+                color="gray"
+                onClick={toggleAll}
+                aria-expanded={showAll}
+                aria-controls={listId}
+              >
+                {showAll ? "Show less" : `Show ${folded} more`}
+              </Button>
+            )}
+          </div>
+        )}
       </Alert>
     </div>
   );

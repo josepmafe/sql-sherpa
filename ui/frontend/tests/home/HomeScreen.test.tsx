@@ -208,15 +208,36 @@ describe("HomeScreen", () => {
     expect(screen.getByTestId("chart-x-labels")).toHaveTextContent("16 Nov,23 Nov,30 Nov");
   });
 
-  it("gives the partial week's bars a look the others do not have", () => {
+  it("draws the partial week's bar translucent with a dashed outline, and the others solid", () => {
     renderWithProviders(<HomeScreen />);
 
-    const props = within(screen.getByTestId("chart-bar-props"))
-      .getAllByRole("listitem", { hidden: true })
-      .map((item) => item.textContent?.split("=")[1]);
-    expect(props[0]).toBe("{}");
-    expect(props[1]).toBe("{}");
-    expect(props[2]).not.toBe("{}");
+    const looks = new Map(
+      within(screen.getByTestId("chart-bar-props"))
+        .getAllByRole("listitem", { hidden: true })
+        .map((item) => {
+          const [name, props] = item.textContent!.split("=");
+          return [name, JSON.parse(props!) as { fillOpacity?: number; strokeDasharray?: string }];
+        }),
+    );
+    expect(looks.get("Partial week")!.fillOpacity).toBeLessThan(1);
+    expect(looks.get("Partial week")!.strokeDasharray).toBeTruthy();
+    for (const name of ["Net revenue", "Black Friday week"]) {
+      expect(looks.get(name)!.fillOpacity).toBeUndefined();
+      expect(looks.get(name)!.strokeDasharray).toBeUndefined();
+    }
+  });
+
+  it("gives the legend's partial key the same look as the bar: a translucent fill and a dashed border", () => {
+    renderWithProviders(<HomeScreen />);
+
+    const swatch = (name: string): HTMLElement =>
+      within(screen.getByTestId("chart-legend"))
+        .getByText(name, { exact: true })
+        .parentElement!.querySelector("span")!;
+    expect(swatch("Partial week").style.backgroundColor).toContain("transparent");
+    expect(swatch("Partial week").style.border).toContain("dashed");
+    expect(swatch("Black Friday week").style.backgroundColor).not.toContain("transparent");
+    expect(swatch("Black Friday week").style.border).not.toContain("dashed");
   });
 
   it("draws a partial Black Friday week as partial and still marks both in the table", () => {
@@ -308,7 +329,7 @@ describe("HomeScreen", () => {
   });
 
   it.each(["database_unavailable", "timeout", "busy"] as const)(
-    "shows the message and a Retry for %s, and keeps the strip",
+    "shows the message and a Retry for %s, and keeps the box and the footer",
     async (code) => {
       const refetch = vi.fn();
       useHome.mockReturnValue({

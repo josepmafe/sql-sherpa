@@ -102,9 +102,10 @@ async function measureBox(page: Page): Promise<Measure[]> {
       };
       const found: [string, Element, number][] = [];
       const title = box.querySelector(".mantine-Alert-title");
-      const icon = box.querySelector(".mantine-Alert-icon svg");
-
-      const chevron = box.querySelector(".mantine-Alert-title svg");
+      // Errors keep the icon in the Alert's slot; the warnings-only summary button holds the chevron, then the icon.
+      const slotIcon = box.querySelector(".mantine-Alert-icon svg");
+      const [chevron, buttonIcon] = box.querySelectorAll(".mantine-Alert-title svg");
+      const icon = slotIcon ?? buttonIcon;
       if (title) found.push(["title", title, text]);
       if (icon) found.push(["icon", icon, graphic]);
       for (const button of box.querySelectorAll("button")) found.push(["button", button, text]);

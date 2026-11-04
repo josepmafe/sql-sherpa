@@ -122,6 +122,13 @@ describe("DataProblems", () => {
         },
       });
 
+    it("puts the chevron, the icon and the title inside the one summary button", () => {
+      renderWithProviders(<DataProblems status={warnings(1)} />);
+
+      const button = within(problemsBox()).getByRole("button", { name: "Data warnings (1)" });
+      expect(button.querySelectorAll("svg")).toHaveLength(2);
+    });
+
     it("is collapsed by default: the summary button counts the items and the list is not rendered", () => {
       renderWithProviders(<DataProblems status={warnings(1)} />);
 

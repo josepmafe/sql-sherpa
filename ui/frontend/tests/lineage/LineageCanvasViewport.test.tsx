@@ -120,7 +120,7 @@ describe("the Lineage viewport across redraws", () => {
     expect(transform()).toBe(KEPT_TRANSFORM);
   });
 
-  it("a pan that ends while another subject is still being laid out is not kept under that subject", async () => {
+  it("a move made while another subject is still being laid out is not kept under that subject", async () => {
     keepView(SUBJECT, KEPT);
     const view = render(canvas());
     await waitFor(() => expect(transform()).toBe(KEPT_TRANSFORM));
@@ -131,7 +131,6 @@ describe("the Lineage viewport across redraws", () => {
     fireEvent.wheel(document.querySelector(".react-flow__renderer")!, { deltaY: 400, ctrlKey: true });
     await waitFor(() => expect(transform()).not.toBe(KEPT_TRANSFORM));
     const panned = transform();
-    await new Promise((resolve) => setTimeout(resolve, 400)); // the wheel's end event comes 150 ms after its last tick
     await act(async () => finish(new Map([A, B, C].map((n, index) => [n.unique_id, index]))));
     await screen.findByRole("button", { name: /^c\b/ });
 
@@ -155,7 +154,7 @@ describe("the Lineage viewport across redraws", () => {
     expect(transform()).toBe(zoomed);
   });
 
-  it("does not use localStorage",async () => {
+  it("does not use localStorage", async () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
 
     render(canvas());
