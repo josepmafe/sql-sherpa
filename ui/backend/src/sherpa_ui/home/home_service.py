@@ -34,7 +34,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-NO_DATA_MESSAGE: Final = "no orders in the marts yet: run make backfill && make build-prod"
+NO_DATA_MESSAGE: Final = (
+    "no orders in the marts yet: run make build-prod "
+    "(first make backfill if uv run sherpa-generate status shows no simulation)"
+)
+UNDEFINED_TABLE: Final = "42P01"  # SQLSTATE: a missing relation, and a missing schema
 QUERY_ID_PREFIX: Final = "home"
 
 
@@ -92,6 +96,9 @@ class HomeService:
         try:
             period = self._run(self._queries.period)
         except UiQueryError as error:
+            if error.sqlstate == UNDEFINED_TABLE:
+                return None, FiguresUnavailable(code="no_data", message=NO_DATA_MESSAGE), None
+
             return None, _unavailable(error), None
 
         if not period or period[0][0] is None:

@@ -184,6 +184,20 @@ class TestQueryRunnerOffline:
         assert error.value.code == "sql_error"
         assert error.value.message == "bind message supplies 0 parameters, but prepared statement requires 1"
 
+    def test_an_sql_error_carries_its_sqlstate(
+        self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connection = _fake_connection()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.execute.side_effect = psycopg.errors.UndefinedTable('relation "marts.fct_orders" does not exist')
+        monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: connection)
+
+        with pytest.raises(UiQueryError) as error:
+            offline_runner.run("q1", "select 1 as a")
+
+        assert error.value.code == "sql_error"
+        assert error.value.sqlstate == "42P01"
+
     def test_unreachable_database_is_database_unavailable(
         self, offline_runner: QueryRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -81,8 +81,8 @@ FETCH_BATCH_CELLS: Final = 10_000
 CANCEL_TIMEOUT_SECONDS: Final = 5.0
 # UI spec §5. Runs holding a connection at once, below the sherpa_ui role's CONNECTION LIMIT 10
 # (data-platform/postgres/roles.sql). The other two slots are for the requests that open a connection of their own
-# while the runner is full: the health check and the lineage build-status read (one per graph or node request, which
-# can be several at once).
+# while the runner is full: the health check, the lineage build-status read (one per graph or node request) and Home's
+# build read (one per Home request), which can be several at once.
 MAX_CONCURRENT_QUERIES: Final = 8
 # SQLSTATE 53300 (too_many_connections). libpq gives no SQLSTATE for a refused connection, so it is recognised by
 # Postgres's messages for it: a role's or database's CONNECTION LIMIT, max_connections, the reserved slots.
@@ -121,11 +121,14 @@ class UiQueryError(Exception):
     """A failure the UI shows as it is: a stable `code`, a message, and, for Postgres errors that have one, the
     0-based character offset in the SQL as the user wrote it."""
 
-    def __init__(self, code: QueryErrorCode, message: str, position: int | None = None) -> None:
+    def __init__(
+        self, code: QueryErrorCode, message: str, position: int | None = None, sqlstate: str | None = None
+    ) -> None:
         super().__init__(message)
         self.code: QueryErrorCode = code
         self.message = message
         self.position = position
+        self.sqlstate = sqlstate  # Postgres's SQLSTATE for an `sql_error`; the API payload does not carry it
 
 
 class QueryOutcome(BaseModel):
@@ -440,7 +443,7 @@ class QueryRunner:
         if error.diag.message_hint:
             message = f"{message}; {error.diag.message_hint}"
 
-        return UiQueryError("sql_error", message, position)
+        return UiQueryError("sql_error", message, position, sqlstate=error.sqlstate)
 
 
 def user_position(statement_position: str | None, offset: int, length: int) -> int | None:

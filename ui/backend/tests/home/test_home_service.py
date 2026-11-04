@@ -167,6 +167,32 @@ class TestHome:
         assert home.status.as_of_date is None
         assert home.status.freshness == FRESHNESS
 
+    def test_missing_marts_give_the_empty_state(self, service: HomeService, runner: QueryRunner) -> None:
+        runner.run.side_effect = UiQueryError(
+            "sql_error", 'relation "marts.fct_orders" does not exist', sqlstate="42P01"
+        )
+
+        home = service.home()
+
+        assert home.figures is None
+        assert home.figures_error is not None
+        assert (home.figures_error.code, home.figures_error.message) == ("no_data", NO_DATA_MESSAGE)
+        assert home.status.freshness == FRESHNESS
+
+    def test_another_sql_error_keeps_its_own_code(self, service: HomeService, runner: QueryRunner) -> None:
+        runner.run.side_effect = UiQueryError("sql_error", "permission denied", sqlstate="42501")
+
+        home = service.home()
+
+        assert home.figures_error is not None
+        assert (home.figures_error.code, home.figures_error.message) == ("sql_error", "permission denied")
+
+    def test_no_data_message_names_the_way_out(self) -> None:
+        assert NO_DATA_MESSAGE == (
+            "no orders in the marts yet: run make build-prod "
+            "(first make backfill if uv run sherpa-generate status shows no simulation)"
+        )
+
     def test_a_failing_tile_stops_the_queries_after_it(
         self, service: HomeService, runner: QueryRunner, queries: HomeQueries
     ) -> None:
