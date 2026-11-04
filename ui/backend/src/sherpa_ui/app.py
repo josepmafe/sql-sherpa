@@ -9,13 +9,16 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response  # noqa: TC002  (FastAPI reads the route's return annotation)
 
-from sherpa_ui.api import catalog, health, lineage, queries
+from sherpa_ui.api import catalog, health, home, lineage, queries
 from sherpa_ui.api.body_limit import BodySizeLimit
 from sherpa_ui.api.errors import error_responses, install_error_handlers
 from sherpa_ui.api.queries import QueryService
 from sherpa_ui.build.build_status import BuildStatusReader
 from sherpa_ui.catalog.catalog_service import CatalogService
 from sherpa_ui.health.health_service import HealthService
+from sherpa_ui.home.data_status import FreshnessReader
+from sherpa_ui.home.home_queries import HOME_QUERIES_PATH, HomeQueries
+from sherpa_ui.home.home_service import HomeService
 from sherpa_ui.lineage.column_lineage_loader import ColumnLineageLoader
 from sherpa_ui.lineage.lineage_service import LineageService
 from sherpa_ui.lineage.manifest_loader import ManifestLoader
@@ -55,11 +58,18 @@ def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
     app.state.health_service = HealthService(settings, loader)
     manifests = ManifestLoader(settings.ui_dbt_target_path)
     node_sql = NodeSql(settings.ui_dbt_target_path)
+    builds = BuildStatusReader(settings)
     app.state.lineage_service = LineageService(
         manifests,
-        BuildStatusReader(settings),
+        builds,
         node_sql,
         ColumnLineageLoader(settings.ui_dbt_target_path, manifests, node_sql),
+    )
+    app.state.home_service = HomeService(
+        runner,
+        builds,
+        FreshnessReader(settings.ui_dbt_target_path),
+        HomeQueries.from_yaml(HOME_QUERIES_PATH),
     )
 
     api = APIRouter(prefix=API_PREFIX, responses=error_responses(500))  # the catch-all handler's internal_error
@@ -67,6 +77,7 @@ def create_app(settings: UiSettings, static_dir: Path | None) -> FastAPI:
     api.include_router(catalog.router)
     api.include_router(queries.router)
     api.include_router(lineage.router)
+    api.include_router(home.router)
     app.include_router(api)
 
     if static_dir is not None and static_dir.is_dir():
