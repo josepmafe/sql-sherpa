@@ -129,6 +129,16 @@ class TestCheckGold:
 
         assert rows[0].problems == ()
 
+    async def test_reconcile_sql_error_is_prefixed(
+        self, make_case: Callable[..., GoldCase], examples: ExampleIndex
+    ) -> None:
+        case = make_case("values-001", gold_sql=GOOD_SQL, reconcile_sql=RECONCILE_SQL)
+        db = fake_db({GOOD_SQL: [ONE_ROW]}, {RECONCILE_SQL: EvalSqlError("relation does not exist")})
+
+        rows = await check_gold(gold_set(case), db, VISIBLE, examples)
+
+        assert rows[0].problems == ("reconcile_sql: relation does not exist",)
+
     async def test_sql_error_is_a_problem_and_the_next_case_is_still_checked(
         self, make_case: Callable[..., GoldCase], examples: ExampleIndex
     ) -> None:

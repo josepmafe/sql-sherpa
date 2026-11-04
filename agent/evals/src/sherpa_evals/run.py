@@ -34,13 +34,14 @@ def main(
     ] = False,
     case: Annotated[str | None, typer.Option("--case", help="Only this case id.")] = None,
 ) -> None:
-    if not check_gold_option:
-        raise typer.BadParameter("pass --check-gold", param_hint="--check-gold")
+    if check_gold_option:
+        rows = asyncio.run(_check_gold(case), loop_factory=selector_event_loop)
+        typer.echo(render_table(rows))
+        if has_problems(rows):
+            raise typer.Exit(code=1)
+        return
 
-    rows = asyncio.run(_check_gold(case), loop_factory=selector_event_loop)
-    typer.echo(render_table(rows))
-    if has_problems(rows):
-        raise typer.Exit(code=1)
+    raise typer.BadParameter("pass --check-gold", param_hint="--check-gold")
 
 
 def has_problems(rows: Sequence[CheckRow]) -> bool:

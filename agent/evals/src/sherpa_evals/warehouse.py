@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import selectors
+import sys
 from typing import TYPE_CHECKING, Final
 
 import psycopg
@@ -70,10 +71,15 @@ class EvalDatabase:
         )
         try:
             async with await psycopg.AsyncConnection.connect(conninfo) as conn:
-                # The implicit transaction is rolled back on exit; nothing is ever committed.
-                cursor = await conn.execute(pg_sql.SQL(sql))  # type: ignore[arg-type]  # runtime string, guarded
-                columns = tuple(column.name for column in cursor.description or ())
-                rows = tuple(tuple(row) for row in await cursor.fetchall())
+                # BEGIN READ ONLY, and a rollback at the end: leaving `async with` would commit. prepare=True sends
+                # one statement over the extended protocol, so `set transaction read write; <write>` is refused.
+                await conn.set_read_only(True)
+                try:
+                    cursor = await conn.execute(pg_sql.SQL(sql), prepare=True)  # type: ignore[arg-type]  # runtime string
+                    columns = tuple(column.name for column in cursor.description or ())
+                    rows = tuple(tuple(row) for row in await cursor.fetchall())
+                finally:
+                    await conn.rollback()
         except psycopg.Error as error:
             message = error.diag.message_primary or str(error)
             raise EvalSqlError(message.splitlines()[0] if message else type(error).__name__) from error
@@ -81,8 +87,10 @@ class EvalDatabase:
 
 
 def selector_event_loop() -> asyncio.AbstractEventLoop:
-    """psycopg's async mode needs a selector loop, which Windows' default (Proactor) is not."""
-    return asyncio.SelectorEventLoop(selectors.SelectSelector())
+    """psycopg's async mode needs a selector loop; only Windows' default (Proactor) is not one."""
+    if sys.platform == "win32":
+        return asyncio.SelectorEventLoop(selectors.SelectSelector())
+    return asyncio.new_event_loop()
 
 
 async def check_gold(
@@ -121,7 +129,11 @@ async def _check_results(case: GoldCase, gold_sql: str, db: EvalDatabase, proble
     if not first.rows and not case.allow_empty:
         problems.append(NO_ROWS)
     if case.reconcile_sql is not None:
-        reconciled = compare(first, await db.execute_admin(case.reconcile_sql), ordered=case.ordered)
+        try:
+            admin = await db.execute_admin(case.reconcile_sql)
+        except EvalSqlError as error:
+            raise EvalSqlError(f"reconcile_sql: {error}") from error
+        reconciled = compare(first, admin, ordered=case.ordered)
         if not reconciled.passed:
             problems.append(RECONCILE_DISAGREES.format(diff=reconciled.diff))
     return len(first.rows)

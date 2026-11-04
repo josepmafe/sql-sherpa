@@ -77,3 +77,18 @@ class TestEvalDatabase:
     async def test_agent_cannot_read_unmasked_pii(self) -> None:
         with pytest.raises(EvalSqlError, match="permission denied"):
             await EvalDatabase(make_settings()).execute("select * from marts.dim_customers_unmasked")
+
+    @pytest.mark.parametrize("run_as", ["execute", "execute_admin"])
+    @pytest.mark.parametrize(
+        "escape",
+        [
+            "set transaction read write; create table marts.eval_probe (i int)",
+            "set transaction_read_only = off; create table marts.eval_probe (i int)",
+            "begin read write; create table marts.eval_probe (i int)",
+        ],
+    )
+    async def test_sql_cannot_leave_the_read_only_transaction(self, run_as: str, escape: str) -> None:
+        run = getattr(EvalDatabase(make_settings()), run_as)
+
+        with pytest.raises(EvalSqlError, match="cannot insert multiple commands into a prepared statement"):
+            await run(escape)
