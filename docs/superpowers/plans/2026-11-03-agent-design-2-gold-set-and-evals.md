@@ -280,7 +280,7 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
 
 **Model:** implementer `sonnet` · reviewer `sonnet`
 
-**Files:** `agent/evals/src/sherpa_evals/{answerers,report,run}.py`, `agent/evals/prices.yaml`, `.gitignore`, `agent/evals/tests/test_answerers.py`, `agent/evals/tests/test_run.py`, `agent/evals/tests/test_report.py`.
+**Files:** `agent/evals/src/sherpa_evals/{answerers,report,run}.py`, `agent/evals/prices.yaml`, `.gitignore`, `agent/evals/tests/test_answerers.py`, `agent/evals/tests/test_run.py`, `agent/evals/tests/test_report.py`, and the negative control: `agent/evals/tests/mutants.py` (test helpers, not shipped) and `agent/evals/tests/test_negative_control.py`.
 
 **Interfaces:**
 - **Consumes:** Tasks 1–3.
@@ -296,6 +296,7 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
   - `RunMeta` (frozen): `variant`, `gold_version`, `dataset_version`, `started_at: datetime`, `repeat`.
   - `render_report(meta: RunMeta, records: Sequence[CaseRecord], previous: Sequence[CaseRecord] | None, previous_name: str | None) -> str`, pure.
   - `previous_run(runs_dir, variant, gold_version, dataset_version) -> tuple[str, list[CaseRecord]] | None`: the newest run directory of the default variant with the same versions, read from its `cases.jsonl`.
+  - `async run_cases(cases: Sequence[GoldCase], answerer: Answerer, db: EvalDatabase, *, repeat: int = 1, concurrency: int = 4) -> list[CaseRecord]`: scores exactly the cases it is given. The CLI passes `gold.accepted()`, so the negative control can pass its own.
   - CLI: `uv run python -m sherpa_evals.run --variant oracle [--category …] [--case …] [--repeat 1] [--concurrency 4]`.
 
 **How the runner scores a case** (agent spec §7.2):
@@ -341,7 +342,25 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
     - `previous_run` picks the newest directory with the same versions and ignores one with another `gold_version`
 
   Run them. Expected: FAIL.
-- [ ] **Step 2: Implement.** Check the line budget: `wc -l run.py compare.py report.py` is under about 400. `make test`, `make lint`. Commit `feat: eval runner, oracle answerer and report`.
+- [ ] **Step 2: The negative control, tests first.** The oracle only proves that a right answer passes; a harness that passed everything would score 100% too. These answerers are wrong on purpose and run through `run_cases` on the real `sherpa_eval`.
+  - **`mutants.py`.** Each mutation is a sqlglot transform, never a string replace:
+    - `drop_cancelled_filter(sql) -> str`: removes `not <x>.is_cancelled`, `not is_cancelled` and `is_cancelled = false` from `AND` chains in `WHERE` and `JOIN … ON`
+    - `gross_for_net(sql) -> str`: turns each column reference `net_revenue` into `gross_revenue`, keeping the output aliases
+    - `flip_order(sql) -> str`: inverts every top-level `ORDER BY` direction
+    - `MutantAnswerer(gold, mutation)`: the oracle, answering with `mutation(gold_sql)`
+    - `AlwaysAnsweredAnswerer`: answers every question `answered` with `select 1 as x`
+    - `identical(gold: Result, other: Result, *, ordered: bool) -> bool`: a deliberately naive check, the same columns in the same order and the same normalised rows (as a `Counter`, or a list when `ordered`)
+  - **The fixture cases** (in the test module, `status: accepted`, gold SQL written by hand on `sherpa_eval`). Each mutation has a case it must change:
+    - `metrics-901`: net revenue by sales channel in March 2025. `gross_for_net` changes it. `drop_cancelled_filter` does not, because a cancelled order's `net_revenue` is 0 (data platform spec §6.5), which shows the control tells "different SQL" apart from "different answer".
+    - `metrics-902`: orders and gross revenue per month in Q1 2025, non-cancelled. `drop_cancelled_filter` changes it.
+    - `complex-901`: the top 5 products by 2025 net revenue, ties broken by `product_id`, `ordered: true`. `flip_order` changes it.
+    - `unanswerable-901`: "How many units of each product are in stock?"
+  - **`test_negative_control.py`** (`warehouse`):
+    - `test_a_mutant_passes_only_when_its_result_is_identical`: for every fixture case and mutation that changes the SQL, the record's `passed` equals `identical(gold result, mutant result)`, so the comparison neither accepts a different result nor rejects an identical one
+    - `test_each_mutation_fails_at_least_one_case`: each of the three mutations fails a fixture case, so each one bites
+    - `test_always_answered_fails_every_case`: every fixture case fails, the unanswerable one included
+    - **The same three over the accepted gold set**, parametrized from `cases.yaml`. Until Task 6 accepts cases, each skips itself with "no accepted gold cases yet"; from then on they run on the real set.
+- [ ] **Step 3: Implement.** Check the line budget: `wc -l run.py compare.py report.py` is under about 400; the test helpers don't count. `make test`, `make lint`, `uv run --env-file .env pytest -m warehouse agent/evals`. Commit `feat: eval runner, oracle answerer, report and the negative control`.
 
 ---
 
@@ -413,6 +432,7 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
 - [ ] **Step 3: The acceptance run.**
   - `--check-gold` exits 0 (agent spec §8).
   - `uv run --env-file .env python -m sherpa_evals.run --variant oracle` gives EX 100% on the 34 answered cases and outcome accuracy 100% on all 40.
+  - The negative control over the accepted gold set passes (`uv run --env-file .env pytest -m warehouse agent/evals/tests/test_negative_control.py`), with no skip left. How many accepted cases each mutation changed and failed goes in the PR description.
   - Commit `agent/evals/runs/<timestamp>-oracle/report.md` and `cases.yaml`: `feat: gold set tranche 1 accepted; the oracle scores 100%`.
 
 ---
@@ -466,7 +486,7 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
   - **Data engineer** (data platform spec §3, §7.0 of the agent spec): `sherpa_eval` as a frozen dataset, its grants as used here (the agent role and the admin role, read-only), the R8 spec change, and `dataset_version`.
 
   No security reviewer: no role, grant or network surface changes. The admin login is used read-only, only for `reconcile_sql`.
-- [ ] **Step 2: Devil's advocate,** with the diff and every finding. It asks which wrong answer would still pass the comparison (rounding, extra columns that hide a wrong grain, an empty result against `allow_empty`), and which gold cases a reviewer would read differently from the drafter.
+- [ ] **Step 2: Devil's advocate,** with the diff and every finding. It asks which wrong answer would still pass the comparison, beyond the three mutations the negative control proves (rounding, extra columns that hide a wrong grain, an empty result against `allow_empty`), and which gold cases a reviewer would read differently from the drafter.
 - [ ] **Step 3: Triage and fix:** `make lint`, `make test`, the `warehouse` eval tests, `--check-gold`, and the oracle run again. CI green. The triage table and the `--check-gold` table (with the closest examples) go in the PR description.
 
 ---
