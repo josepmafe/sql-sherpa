@@ -16,7 +16,7 @@ const SERIES = [
   { name: PARTIAL, color: "blue.6" },
 ];
 const SWATCH_SIZE = 12;
-const Y_AXIS_WIDTH = 56;
+const Y_AXIS_WIDTH = 64;
 // A partial week is the regular colour at low opacity with a dashed outline: both reach 3:1 against either theme.
 const PARTIAL_OPACITY = 0.45;
 const PARTIAL_DASH = "4 3";
@@ -99,7 +99,7 @@ export function formatWeekLabel(weekStart: string): string {
 
 function partialLook({ name }: { name: string }): Record<string, unknown> {
   if (name !== PARTIAL) return {};
-  return { fillOpacity: PARTIAL_OPACITY, stroke: PARTIAL_STROKE, strokeWidth: 1.5, strokeDasharray: PARTIAL_DASH };
+  return { fillOpacity: PARTIAL_OPACITY, stroke: PARTIAL_STROKE, strokeOpacity: 1, strokeWidth: 1.5, strokeDasharray: PARTIAL_DASH };
 }
 
 // One series per kind of bar, so each gets its colour and its legend entry; the others are absent for that week.

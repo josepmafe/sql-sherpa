@@ -205,11 +205,11 @@ describe("HomeScreen", () => {
     expect(screen.queryByRole("list", { name: "Legend" })).not.toBeInTheDocument();
   });
 
-  it("labels the x axis with short dates and gives the y axis 56 px", () => {
+  it("labels the x axis with short dates and gives the y axis 64 px", () => {
     renderWithProviders(<HomeScreen />);
 
     expect(screen.getByTestId("chart-x-labels")).toHaveTextContent("16 Nov,23 Nov,30 Nov");
-    expect(screen.getByTestId("chart-y-width")).toHaveTextContent("56");
+    expect(screen.getByTestId("chart-y-width")).toHaveTextContent("64");
   });
 
   it("draws the partial week translucent with a dashed outline and the others plain", () => {
@@ -221,7 +221,7 @@ describe("HomeScreen", () => {
     expect(props).toEqual([
       "Net revenue={}",
       "Black Friday week={}",
-      'Partial week={"fillOpacity":0.45,"stroke":"var(--mantine-color-blue-6)","strokeWidth":1.5,"strokeDasharray":"4 3"}',
+      'Partial week={"fillOpacity":0.45,"stroke":"var(--mantine-color-blue-6)","strokeOpacity":1,"strokeWidth":1.5,"strokeDasharray":"4 3"}',
     ]);
   });
 
