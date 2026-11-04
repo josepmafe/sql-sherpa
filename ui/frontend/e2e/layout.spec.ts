@@ -451,3 +451,30 @@ test.describe("the Explorer panes", () => {
     });
   }
 });
+
+// UI spec §6.2: five tiles across from 1280 px, three at 1024 px; the page never scrolls sideways.
+for (const viewport of [
+  { width: 1024, height: 700 },
+  { width: 1440, height: 900 },
+]) {
+  test.describe(`Home at ${viewport.width} x ${viewport.height}`, () => {
+    test.use({ viewport });
+
+    test("has no horizontal scroll and shows every tile", async ({ page }) => {
+      await page.goto("/");
+
+      for (const title of ["Net revenue", "Orders", "AOV", "Refund rate", "New customers"]) {
+        const tile = page.getByRole("region", { name: title, exact: true });
+        await expect(tile).toBeVisible();
+        const box = (await tile.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      }
+      const root = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+    });
+  });
+}

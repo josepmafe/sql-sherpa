@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { adminScalar, make, runQuery } from "./warehouse";
+import { formatValue } from "../src/screens/home/format";
+import { adminScalar, homeExpectations, make, runQuery } from "./warehouse";
 
 const BUILD_TIMEOUT_MS = 15 * 60_000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -8,6 +9,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // Criterion 2: a rebuilt warehouse shows up on reload without restarting `ui`. It simulates one more day and rebuilds
 // prod in the warehouse every checkout shares, which only `make reset` undoes, so it runs only when asked for
 // (`SHERPA_E2E_FRESHNESS=1 npx playwright test freshness`), and only while the data ends before yesterday (UTC).
+// Home moves with it: its as-of date advances one day and the orders tile, a 30-day count, changes.
 test("a new build shows after a reload without restarting ui", async ({ page }) => {
   test.skip(!process.env.SHERPA_E2E_FRESHNESS, "changes the shared warehouse: run it with SHERPA_E2E_FRESHNESS=1");
   test.setTimeout(BUILD_TIMEOUT_MS);
@@ -16,6 +18,10 @@ test("a new build shows after a reload without restarting ui", async ({ page }) 
   test.skip(lastDay >= yesterday, "the warehouse already runs through yesterday, so there is no day left to add");
 
   const before = adminScalar("select count(*) from marts.fct_orders");
+  const homeBefore = homeExpectations();
+  const ordersBefore = formatValue(homeBefore.tiles.find((tile) => tile.id === "orders")!);
+  await page.goto("/");
+  await expect(page.getByRole("group", { name: "Data status" })).toContainText(`Data as of ${homeBefore.asOf}`);
   await page.goto("/explorer");
   await runQuery(page, "select count(*) from marts.fct_orders");
   await expect(page.getByRole("cell", { name: before, exact: true })).toBeVisible();
@@ -25,7 +31,15 @@ test("a new build shows after a reload without restarting ui", async ({ page }) 
   const after = adminScalar("select count(*) from marts.fct_orders");
   expect(after).not.toBe(before);
 
-  await page.reload();
+  const homeAfter = homeExpectations();
+  const ordersAfter = formatValue(homeAfter.tiles.find((tile) => tile.id === "orders")!);
+  expect(homeAfter.asOf).toBe(new Date(Date.parse(homeBefore.asOf) + MS_PER_DAY).toISOString().slice(0, 10));
+  expect(ordersAfter).not.toBe(ordersBefore);
+  await page.goto("/");
+  await expect(page.getByRole("group", { name: "Data status" })).toContainText(`Data as of ${homeAfter.asOf}`);
+  await expect(page.getByRole("region", { name: "Orders", exact: true })).toContainText(ordersAfter);
+
+  await page.goto("/explorer");
   await runQuery(page, "select count(*) from marts.fct_orders");
   await expect(page.getByRole("cell", { name: after, exact: true })).toBeVisible();
 });
