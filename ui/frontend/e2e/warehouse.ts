@@ -109,14 +109,16 @@ export function homeExpectations(): HomeExpectations {
       `select coalesce(sum(net_revenue), 0) from marts.fct_orders
        where not is_cancelled and order_date between date '${lastWeekStart}' and date '${lastWeekStart}' + 6`,
     ),
-    // The last week is partial unless as_of is its Sunday; a Black Friday week shows when one falls in the 26 weeks.
+    // The last week is partial unless as_of is its Sunday, and the chart draws a partial week as partial even when it
+    // is a Black Friday week: a Black Friday bar needs one in the 26 weeks that is complete.
     trendHasPartialWeek: adminScalar(`select extract(isodow from date '${asOf}') < 7`) === "t",
     trendHasBlackFriday:
       adminScalar(`
         select exists(select 1 from marts.dim_date where is_black_friday_week
           and week_start >= greatest(date_trunc('week', date '${asOf}') - interval '${(TREND_WEEKS - 1) * 7} days',
                                      date_trunc('week', (select min(order_date) from marts.fct_orders)))
-          and week_start <= date '${asOf}')`) === "t",
+          and week_start <= date_trunc('week', date '${asOf}')
+            - case when extract(isodow from date '${asOf}') = 7 then interval '0 days' else interval '7 days' end)`) === "t",
     build: { startedAt: build[0]!, nodeCount: Number(build[1]), failedNodes: Number(build[2]), failingTests: Number(build[3]) },
   };
 }

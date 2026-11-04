@@ -26,7 +26,7 @@ A tile shows "—" for its change, and keeps its value, when:
 
 ## The trend
 
-Net revenue per week (Monday to Sunday) for the last 26 weeks, oldest first. The latest week is marked partial unless as of is its Sunday. Black Friday weeks are highlighted. A shorter history shows fewer bars. A table of the same weeks sits beside the chart for screen readers.
+Net revenue per week (Monday to Sunday) for the last 26 weeks, oldest first. The latest week is marked partial unless as of is its Sunday. Black Friday weeks are highlighted (a partial week shows as partial even in a Black Friday week). The chart has a title, "Weekly net revenue", and a caption: recent weeks read high until their refunds arrive (about 7 weeks). Its legend lists only the kinds of week it draws. A shorter history shows fewer bars. A table of the same weeks sits beside the chart for screen readers.
 
 ## The data-status strip
 

@@ -28,11 +28,11 @@ test.beforeEach(async ({ page }) => {
 
 // A value of the right shape, whatever the warehouse holds: the expected strings in the test come from the same formatter.
 const TILE_SHAPES: Record<string, RegExp> = {
-  net_revenue: /^€[\d,]+$/,
-  orders: /^[\d,]+$/,
-  aov: /^€[\d,]+\.\d{2}$/,
+  net_revenue: /^€\d{1,3}(,\d{3})*$/,
+  orders: /^\d{1,3}(,\d{3})*$/,
+  aov: /^€\d{1,3}(,\d{3})*\.\d{2}$/,
   refund_rate: /^\d+\.\d%$/,
-  new_customers: /^[\d,]+$/,
+  new_customers: /^\d{1,3}(,\d{3})*$/,
 };
 
 test("each tile shows the value and the change the warehouse gives", async ({ page }) => {
@@ -41,7 +41,9 @@ test("each tile shows the value and the change the warehouse gives", async ({ pa
   for (const tile of expected.tiles) {
     const card = page.getByRole("region", { name: tile.title, exact: true });
 
-    await expect(card.locator("p").nth(1)).toHaveText(TILE_SHAPES[tile.id]!);
+    const shape = TILE_SHAPES[tile.id];
+    expect(shape, `a shape for the ${tile.id} tile`).toBeDefined();
+    await expect(card.locator("p").nth(1)).toHaveText(shape!);
     await expect(card).toContainText(formatValue(tile));
     await expect(card).toContainText(formatChange(tile));
     await expect(card).toContainText(describeChange(tile));
@@ -58,7 +60,7 @@ test("the weekly trend lists the independent week count, and its last week's net
 
 test.describe("the trend chart", () => {
   test("is no keyboard stop", async ({ page }) => {
-    await expect(page.getByRole("table", { name: "Net revenue per week" })).toBeAttached();
+    await expect(page.getByTestId("trend-chart").locator("svg.recharts-surface")).toBeAttached();
 
     const stops = await page.getByTestId("trend-chart").evaluate((chart) =>
       [...chart.querySelectorAll<HTMLElement>("[tabindex], a[href], button, input, select, textarea")].filter(

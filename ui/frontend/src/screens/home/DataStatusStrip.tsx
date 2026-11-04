@@ -75,7 +75,7 @@ function FreshnessItems({ status }: { status: DataStatus }) {
     <>
       {freshness.problems.map((source) => (
         <Group key={source.name} gap={4} wrap="nowrap">
-          {/* Only the icon is coloured: orange or red text does not reach AA on both themes. */}
+          {/* Only the icon is coloured: orange text does not reach AA on the light theme, so the text keeps the theme's colour. */}
           {source.status === "error" ? (
             <IconCircleX size={ICON_SIZE} color={RED} aria-hidden />
           ) : (

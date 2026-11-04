@@ -7,10 +7,10 @@ import { renderWithProviders } from "../fixtures/render";
 
 const useHome = vi.fn();
 vi.mock("../../src/api/queries", () => ({ useHome: () => useHome() }));
-// jsdom has no layout, so recharts draws nothing; the stand-in shows the series and the keyboard layer it was given.
+// jsdom has no layout, so recharts draws nothing; the stand-in shows the series it was given.
 vi.mock("@mantine/charts", () => ({
-  BarChart: ({ series, accessibilityLayer }: { series: { name: string }[]; accessibilityLayer?: boolean }) => (
-    <ul data-testid="chart-series" data-accessibility-layer={String(accessibilityLayer)}>
+  BarChart: ({ series }: { series: { name: string }[] }) => (
+    <ul data-testid="chart-series">
       {series.map(({ name }) => (
         <li key={name}>{name}</li>
       ))}
@@ -124,6 +124,18 @@ describe("HomeScreen", () => {
     expect(series.map((item) => item.textContent)).toEqual(["Net revenue", "Black Friday week", "Partial week"]);
   });
 
+  it("draws a partial Black Friday week as partial and still marks both in the table", () => {
+    const weeks = [trendWeek({ week_start: "2026-11-23", is_black_friday_week: true, is_partial: true })];
+    useHome.mockReturnValue({ data: home({ figures: { tiles: TILES, trend: weeks } }) });
+
+    renderWithProviders(<HomeScreen />);
+
+    const series = within(screen.getByTestId("chart-series")).getAllByRole("listitem", { hidden: true });
+    expect(series.map((item) => item.textContent)).toEqual(["Partial week"]);
+    const row = within(screen.getByRole("table", { name: "Net revenue per week" })).getAllByRole("row")[1]!;
+    expect(row).toHaveTextContent("Black Friday week, partial");
+  });
+
   it.each([
     [[trendWeek({ week_start: "2026-10-05" })], ["Net revenue"]],
     [[trendWeek({ is_black_friday_week: true })], ["Black Friday week"]],
@@ -137,11 +149,6 @@ describe("HomeScreen", () => {
     expect(series.map((item) => item.textContent)).toEqual(expected);
   });
 
-  it("keeps the chart out of the keyboard order", () => {
-    renderWithProviders(<HomeScreen />);
-
-    expect(screen.getByTestId("chart-series")).toHaveAttribute("data-accessibility-layer", "false");
-  });
 
   it("puts the data-status strip at the top, above the tiles", () => {
     useHome.mockReturnValue({
