@@ -38,7 +38,7 @@ Also data platform spec §3 (the `eval` target and `make eval-db`), §6.5 and §
 
 **`CLAUDE.md` is binding.**
 
-**Base:** `main` at `c0fbd2d` (#22). The MCP test audit (#18) and the PII masked views (#20) are in, so the guard the gold SQL must pass is final.
+**Base:** `main` at `0165fac` (#23, ui-4 Home). The MCP test audit (#18) and the PII masked views (#20) are in, so the guard the gold SQL must pass is final.
 
 **Model selection:** every task names its implementer and reviewer models. Dispatch exactly those. Fix rounds 4–5 go one tier up. The final whole-branch review is Task 8's panel.
 
