@@ -85,7 +85,7 @@ test.describe("the trend chart", () => {
   });
 
   test("names in its legend only the unusual kinds of week it draws", async ({ page }) => {
-    const legend = page.getByRole("list", { name: "Legend" });
+    const legend = page.getByTestId("chart-legend");
 
     await expect(legend.getByText("Partial week", { exact: true })).toHaveCount(expected.trendHasPartialWeek ? 1 : 0);
     await expect(legend.getByText("Black Friday week", { exact: true })).toHaveCount(expected.trendHasBlackFriday ? 1 : 0);
@@ -132,8 +132,9 @@ test.describe("the data-status footer and the data-problems box", () => {
       await expect(page.getByRole("group", { name: "Data status" })).not.toContainText("Sources fresh");
     }
     const box = page.getByRole("region", { name: "Data problems" });
-    // The first three are visible; a fold hides the rest until it is opened.
-    if (problems.length > 3) await box.getByRole("button", { name: /^Show \d+ more$/ }).click();
+    // The box folds everything after its first three items (errors sort first), so open it whenever there is a fold.
+    const fold = box.getByRole("button", { name: /^Show \d+ more$/ });
+    if ((await fold.count()) > 0) await fold.click();
     for (const row of problems) {
       const name = row.unique_id.split(".").slice(SOURCE_PREFIX_PARTS).join(".");
       const word = row.status === "warn" ? "warning" : "error";

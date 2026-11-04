@@ -505,3 +505,23 @@ for (const viewport of [
     });
   });
 }
+
+// The y axis is wide enough for its labels: no tick label starts left of the chart.
+for (const width of [1024, 1280, 1440]) {
+  for (const scheme of ["light", "dark"] as const) {
+    test(`Home's y axis labels fit inside the chart at ${width} px in the ${scheme} theme`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.goto("/");
+      const chart = page.getByTestId("trend-chart").locator("svg.recharts-surface");
+      await expect(chart).toBeAttached();
+      const labels = page.getByTestId("trend-chart").locator(".recharts-yAxis-tick-labels text");
+      await expect(labels.first()).toBeAttached();
+
+      const left = (await chart.boundingBox())!.x;
+      for (const label of await labels.all()) {
+        expect((await label.boundingBox())!.x).toBeGreaterThanOrEqual(left);
+      }
+    });
+  }
+}

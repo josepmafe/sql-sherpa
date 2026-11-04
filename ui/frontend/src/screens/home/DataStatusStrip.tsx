@@ -1,7 +1,7 @@
 import { Alert, Anchor, Button, List, Text } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { IconAlertTriangle, IconCircleX } from "@tabler/icons-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import type { components } from "../../api/schema";
@@ -18,6 +18,11 @@ interface Problem {
 }
 
 const ICON_SIZE = 18;
+const WARNING_ICON =
+  "light-dark(var(--mantine-color-orange-9), var(--mantine-color-yellow-4))";
+// Links on the light red tint miss AA in the app's default link colour.
+const LINK_COLOUR =
+  "light-dark(var(--mantine-color-blue-9), var(--mantine-color-blue-4))";
 // The box shows this many problems and folds the rest.
 const VISIBLE_PROBLEMS = 3;
 const FAILING_LINK = `/lineage?${toSearchParams({
@@ -33,6 +38,7 @@ const FAILING_LINK = `/lineage?${toSearchParams({
 export function DataProblems({ status }: { status: DataStatus }) {
   const problems = problemsOf(status);
   const [open, { toggle }] = useDisclosure(false);
+  const listId = useId();
   if (problems.length === 0) return null;
 
   const hasError = problems.some(({ severity }) => severity === "error");
@@ -48,16 +54,26 @@ export function DataProblems({ status }: { status: DataStatus }) {
         color={hasError ? "red" : "yellow"}
         icon={
           hasError ? (
-            <IconCircleX size={ICON_SIZE} />
+            <IconCircleX size={ICON_SIZE} aria-hidden />
           ) : (
-            <IconAlertTriangle size={ICON_SIZE} />
+            <IconAlertTriangle
+              size={ICON_SIZE}
+              color={hasError ? undefined : WARNING_ICON}
+              aria-hidden
+            />
           )
         }
         title={hasError ? "Data errors" : "Data warnings"}
+        // Yellow on its own tint is 2.7:1: the warning title takes the theme's text colour and its icon a darker orange.
+        styles={
+          hasError
+            ? undefined
+            : { title: { color: "var(--mantine-color-text)" } }
+        }
       >
         {/* The text keeps the theme's colour: only the icon and the tint carry the severity, since coloured text would
           miss AA on one of the themes. */}
-        <List size="sm" spacing={2} listStyleType="none">
+        <List id={listId} size="sm" spacing={2} listStyleType="none">
           {shown.map(({ key, content }) => (
             <List.Item key={key}>{content}</List.Item>
           ))}
@@ -69,6 +85,8 @@ export function DataProblems({ status }: { status: DataStatus }) {
             variant="subtle"
             color="gray"
             onClick={toggle}
+            aria-expanded={open}
+            aria-controls={listId}
           >
             {open ? "Show less" : `Show ${folded} more`}
           </Button>
@@ -164,7 +182,7 @@ function factsOf({ build, freshness }: DataStatus): string[] {
 
 function failingLink(label: string): ReactNode {
   return (
-    <Anchor component={Link} to={FAILING_LINK} size="sm">
+    <Anchor component={Link} to={FAILING_LINK} size="sm" c={LINK_COLOUR}>
       {label}
     </Anchor>
   );

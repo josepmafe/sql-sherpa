@@ -1,4 +1,5 @@
 import { fireEvent, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { DataFooter, DataProblems } from "../../src/screens/home/DataStatusStrip";
@@ -155,6 +156,24 @@ describe("DataProblems", () => {
     fireEvent.click(within(box).getByRole("button", { name: "Show 1 more" }));
     expect(within(box).getAllByRole("listitem")).toHaveLength(4);
     expect(within(box).getByText(/^a\.one: warning/)).toBeInTheDocument();
+  });
+
+  it.each(["{Enter}", " "])("opens the fold from the keyboard (%j) and says so with aria-expanded", async (key) => {
+    const folded = dataStatus({
+      build: buildSummary({ failed_nodes: 2, failing_tests: 4 }),
+      freshness: { checked_at: CHECKED, problems: [sourceFreshness(), sourceFreshness({ name: "b.two" })] },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<DataProblems status={folded} />);
+    const button = screen.getByRole("button", { name: "Show 1 more" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+
+    button.focus();
+    await user.keyboard(key);
+
+    const opened = screen.getByRole("button", { name: "Show less" });
+    expect(opened).toHaveAttribute("aria-expanded", "true");
+    expect(opened.getAttribute("aria-controls")).toBe(within(problemsBox()).getAllByRole("list")[0]!.id);
   });
 
   it("does not fold exactly three items", () => {

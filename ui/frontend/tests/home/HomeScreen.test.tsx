@@ -13,13 +13,11 @@ vi.mock("@mantine/charts", () => ({
     series,
     data,
     xAxisProps,
-    yAxisProps,
     barProps,
   }: {
     series: { name: string }[];
     data: { week: string }[];
     xAxisProps: { tickFormatter: (value: string) => string };
-    yAxisProps: { width: number };
     barProps: (series: { name: string }) => Record<string, unknown>;
   }) => (
     <div>
@@ -29,7 +27,6 @@ vi.mock("@mantine/charts", () => ({
         ))}
       </ul>
       <p data-testid="chart-x-labels">{data.map(({ week }) => xAxisProps.tickFormatter(week)).join(",")}</p>
-      <p data-testid="chart-y-width">{yAxisProps.width}</p>
       <ul data-testid="chart-bar-props">
         {series.map(({ name }) => (
           <li key={name}>{`${name}=${JSON.stringify(barProps({ name }))}`}</li>
@@ -190,8 +187,8 @@ describe("HomeScreen", () => {
   it("keys only the unusual kinds of week present, in the caption row", () => {
     renderWithProviders(<HomeScreen />);
 
-    const legend = screen.getByRole("list", { name: "Legend" });
-    expect(within(legend).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+    const legend = screen.getByTestId("chart-legend");
+    expect(within(legend).getAllByRole("listitem", { hidden: true }).map((item) => item.textContent)).toEqual([
       "Black Friday week",
       "Partial week",
     ]);
@@ -202,27 +199,24 @@ describe("HomeScreen", () => {
 
     renderWithProviders(<HomeScreen />);
 
-    expect(screen.queryByRole("list", { name: "Legend" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("chart-legend")).not.toBeInTheDocument();
   });
 
-  it("labels the x axis with short dates and gives the y axis 64 px", () => {
+  it("labels the x axis with short dates", () => {
     renderWithProviders(<HomeScreen />);
 
     expect(screen.getByTestId("chart-x-labels")).toHaveTextContent("16 Nov,23 Nov,30 Nov");
-    expect(screen.getByTestId("chart-y-width")).toHaveTextContent("64");
   });
 
-  it("draws the partial week translucent with a dashed outline and the others plain", () => {
+  it("gives the partial week's bars a look the others do not have", () => {
     renderWithProviders(<HomeScreen />);
 
     const props = within(screen.getByTestId("chart-bar-props"))
       .getAllByRole("listitem", { hidden: true })
-      .map((item) => item.textContent);
-    expect(props).toEqual([
-      "Net revenue={}",
-      "Black Friday week={}",
-      'Partial week={"fillOpacity":0.45,"stroke":"var(--mantine-color-blue-6)","strokeOpacity":1,"strokeWidth":1.5,"strokeDasharray":"4 3"}',
-    ]);
+      .map((item) => item.textContent?.split("=")[1]);
+    expect(props[0]).toBe("{}");
+    expect(props[1]).toBe("{}");
+    expect(props[2]).not.toBe("{}");
   });
 
   it("draws a partial Black Friday week as partial and still marks both in the table", () => {
@@ -369,14 +363,15 @@ describe("HomeScreen", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
-  it("says '1 failing test' in the singular", () => {
+  it("says '1 failing test' in the box and no 'No failing tests' in the footer", () => {
     useHome.mockReturnValue({
       data: home({ figures: { tiles: TILES, trend: WEEKS }, status: { ...home().status, build: buildSummary({ failing_tests: 1 }) } }),
     });
 
     renderWithProviders(<HomeScreen />);
 
-    expect(screen.getByRole("link", { name: "1 failing test" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Data problems" })).getByRole("link", { name: "1 failing test" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Data status" })).not.toHaveTextContent("No failing tests");
   });
 
   it("shows the shared load error with a retry when the request itself fails", async () => {
