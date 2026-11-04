@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 # The earlier window is (as_of - 60, as_of - 30]: its first day, as_of - 59, must have data.
 EARLIER_WINDOW_START_DAYS: Final = 59
+# A change shows with one decimal (0.1% or 0.1 points); below half of that it reads 0.0 and is flat.
+FLAT_BELOW: Final = Decimal("0.0005")
 WEEK_LAST_DAY_OFFSET: Final = timedelta(days=6)  # a week starts on a Monday and ends on its Sunday
 
 
@@ -45,6 +47,16 @@ class TrendWeek(BaseModel):
     is_partial: bool
 
 
+class TrendRow(BaseModel):
+    """A week as the trend query returns it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    week_start: date
+    net_revenue: Decimal
+    is_black_friday_week: bool
+
+
 def comparable(as_of: date, first_order_date: date) -> bool:
     """Whether the earlier 30 days all have data; otherwise the change would compare 30 days with fewer."""
     return first_order_date <= as_of - timedelta(days=EARLIER_WINDOW_START_DAYS)
@@ -71,16 +83,16 @@ def tile(query: TileQuery, this_period: Decimal | None, last_period: Decimal | N
     )
 
 
-def trend_weeks(rows: Sequence[tuple[date, Decimal, bool]], as_of: date) -> tuple[TrendWeek, ...]:
+def trend_weeks(rows: Sequence[TrendRow], as_of: date) -> tuple[TrendWeek, ...]:
     """The weeks as the page draws them; only the last one can be partial, when `as_of` is before its Sunday."""
     return tuple(
         TrendWeek(
-            week_start=week_start,
-            net_revenue=net_revenue,
-            is_black_friday_week=is_black_friday_week,
-            is_partial=as_of < week_start + WEEK_LAST_DAY_OFFSET,
+            week_start=row.week_start,
+            net_revenue=row.net_revenue,
+            is_black_friday_week=row.is_black_friday_week,
+            is_partial=as_of < row.week_start + WEEK_LAST_DAY_OFFSET,
         )
-        for week_start, net_revenue, is_black_friday_week in rows
+        for row in rows
     )
 
 
@@ -95,9 +107,9 @@ def _direction(change: Decimal | None) -> Direction | None:
     match change:
         case None:
             return None
+        case _ if abs(change) < FLAT_BELOW:
+            return "flat"
         case _ if change > 0:
             return "up"
-        case _ if change < 0:
-            return "down"
         case _:
-            return "flat"
+            return "down"

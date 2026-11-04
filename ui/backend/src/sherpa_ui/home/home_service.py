@@ -23,7 +23,7 @@ from sherpa_ui.home.data_status import (
     FreshnessUnavailable,
     failing_test_count,
 )
-from sherpa_ui.home.figures import Tile, TrendWeek, comparable, tile, trend_weeks
+from sherpa_ui.home.figures import Tile, TrendRow, TrendWeek, comparable, tile, trend_weeks
 from sherpa_ui.readonly.query_runner import QueryErrorCode, QueryOutcome, UiQueryError
 
 if TYPE_CHECKING:
@@ -101,7 +101,10 @@ class HomeService:
         whole_window = comparable(as_of, date.fromisoformat(str(period[0][1])))
         try:
             tiles = tuple(self._tile(query, whole_window=whole_window) for query in self._queries.tiles)
-            weeks = [(date.fromisoformat(str(w)), _decimal(r), bool(b)) for w, r, b in self._run(self._queries.trend)]
+            weeks = [
+                TrendRow(week_start=date.fromisoformat(str(w)), net_revenue=_decimal(r), is_black_friday_week=bool(b))
+                for w, r, b in self._run(self._queries.trend)
+            ]
         except UiQueryError as error:
             return None, _unavailable(error), as_of
 

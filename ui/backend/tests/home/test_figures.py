@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from sherpa_ui.home.figures import TrendWeek, comparable, tile, trend_weeks
+from sherpa_ui.home.figures import TrendRow, TrendWeek, comparable, tile, trend_weeks
 from sherpa_ui.home.home_queries import TileQuery
 
 
@@ -75,6 +75,23 @@ class TestTile:
         assert result.direction == "flat"
         assert result.good is None
 
+    @pytest.mark.parametrize(
+        ("this", "last", "fmt", "direction"),
+        [
+            (Decimal("100.04"), Decimal(100), "count", "flat"),  # +0.04%
+            (Decimal("99.96"), Decimal(100), "count", "flat"),
+            (Decimal("100.06"), Decimal(100), "count", "up"),  # +0.06% shows as 0.1%
+            (Decimal("0.1004"), Decimal("0.1"), "percent", "flat"),  # +0.04 points
+            (Decimal("0.0996"), Decimal("0.1"), "percent", "flat"),
+            (Decimal("0.1006"), Decimal("0.1"), "percent", "up"),
+        ],
+    )
+    def test_a_change_that_rounds_to_zero_is_flat(self, this: Decimal, last: Decimal, fmt: str, direction: str) -> None:
+        result = tile(make_query(format=fmt, decimals=1, up_is_good=False), this, last, comparable=True)
+
+        assert result.direction == direction
+        assert (result.good is None) == (direction == "flat")
+
     def test_negative_base_follows_this_minus_last(self) -> None:
         result = tile(make_query(), Decimal(-50), Decimal(-100), comparable=True)
 
@@ -89,8 +106,8 @@ def test_change_needs_the_whole_earlier_window() -> None:
 
 def test_last_week_is_partial_unless_as_of_is_its_sunday() -> None:
     rows = [
-        (date(2026, 10, 19), Decimal(100), False),
-        (date(2026, 10, 26), Decimal(200), True),
+        TrendRow(week_start=date(2026, 10, 19), net_revenue=Decimal(100), is_black_friday_week=False),
+        TrendRow(week_start=date(2026, 10, 26), net_revenue=Decimal(200), is_black_friday_week=True),
     ]
 
     sunday = trend_weeks(rows, date(2026, 11, 1))
