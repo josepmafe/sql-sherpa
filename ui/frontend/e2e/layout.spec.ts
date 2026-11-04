@@ -452,18 +452,33 @@ test.describe("the Explorer panes", () => {
   }
 });
 
-// UI spec §6.2: five tiles across from 1280 px, three at 1024 px; the page never scrolls sideways.
+const TILE_TITLES = ["Net revenue", "Orders", "AOV", "Refund rate", "New customers"];
+
+// Mantine's theme breakpoints: five tiles across from lg (1200 px), three from md (992 px); the page never scrolls
+// sideways.
 for (const viewport of [
-  { width: 1024, height: 700 },
-  { width: 1440, height: 900 },
+  { width: 1024, height: 700, columns: 3 },
+  { width: 1440, height: 900, columns: 5 },
 ]) {
   test.describe(`Home at ${viewport.width} x ${viewport.height}`, () => {
     test.use({ viewport });
 
+    test("lays the tiles out in the theme's number of columns", async ({ page }) => {
+      await page.goto("/");
+
+      const tops: number[] = [];
+      for (const title of TILE_TITLES) {
+        tops.push(Math.round((await page.getByRole("region", { name: title, exact: true }).boundingBox())!.y));
+      }
+
+      expect(tops.filter((top) => top === tops[0])).toHaveLength(viewport.columns);
+      expect(new Set(tops).size).toBe(Math.ceil(TILE_TITLES.length / viewport.columns));
+    });
+
     test("has no horizontal scroll and shows every tile", async ({ page }) => {
       await page.goto("/");
 
-      for (const title of ["Net revenue", "Orders", "AOV", "Refund rate", "New customers"]) {
+      for (const title of TILE_TITLES) {
         const tile = page.getByRole("region", { name: title, exact: true });
         await expect(tile).toBeVisible();
         const box = (await tile.boundingBox())!;

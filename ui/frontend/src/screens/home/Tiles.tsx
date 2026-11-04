@@ -7,8 +7,9 @@ import { describeChange, formatChange, formatValue } from "./format";
 type Tile = components["schemas"]["Tile"];
 
 const ICON_SIZE = 16;
-// Five across from 1280 px, three at 1024 px, two below (UI spec §6.2).
-const COLUMNS = { base: 2, "64em": 3, "80em": 5 };
+// Mantine reads only its theme's breakpoint names here: md is 992 px, lg 1200 px. Two columns below md, three from md,
+// five from lg.
+const COLUMNS = { base: 2, md: 3, lg: 5 };
 
 export function Tiles({ tiles }: { tiles: readonly Tile[] }) {
   return (
@@ -48,8 +49,12 @@ function TileCard({ tile }: { tile: Tile }) {
   );
 }
 
-// Teal and red carry the verdict, the arrow and the words beside them say it too; dimmed when there is none.
+// Teal and red carry the verdict, the arrow and the words beside them say it too; dimmed when there is none. Shade 9 on
+// light and 4 on dark pass AA on each background (the pattern of GraphNode.tsx).
+const GOOD = "light-dark(var(--mantine-color-teal-9), var(--mantine-color-teal-4))";
+const BAD = "light-dark(var(--mantine-color-red-9), var(--mantine-color-red-4))";
+
 function changeColour({ good }: Tile): string {
   if (good === null) return "dimmed";
-  return good ? "teal.8" : "red.8";
+  return good ? GOOD : BAD;
 }
