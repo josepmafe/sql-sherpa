@@ -7,9 +7,11 @@ from unittest.mock import create_autospec
 import pytest
 import yaml
 from sherpa_evals import run
-from sherpa_evals.answerers import Attempt, AttemptStats
+from sherpa_evals.answerers import Attempt, AttemptStats, OracleAnswerer
+from sherpa_evals.cases import GoldSet
 from sherpa_evals.compare import Result
 from sherpa_evals.run import app, run_cases
+from sherpa_evals.settings import CASES_PATH, EvalSettings
 from sherpa_evals.warehouse import EvalDatabase, EvalSqlError
 from typer.testing import CliRunner
 
@@ -189,6 +191,31 @@ class TestRunCases:
 
         assert peak == 3
 
+    async def test_simultaneous_database_calls_never_exceed_the_concurrency(
+        self, make_case: Callable[..., GoldCase]
+    ) -> None:
+        # The sherpa_agent role allows 20 connections and every execute opens one.
+        cases = [make_case(f"values-{n:03d}", gold_sql=f"{GOLD_SQL} -- {n}") for n in range(1, 35)]
+        answerer = StubAnswerer({c.question: answered(AGENT_SQL) for c in cases})
+        calls = 0
+        peak = 0
+        db = create_autospec(EvalDatabase, instance=True)
+
+        async def execute(sql: str) -> Result:
+            nonlocal calls, peak
+            calls += 1
+            peak = max(peak, calls)
+            await asyncio.sleep(0.005)  # lets the other cases reach their database calls; the peak is asserted
+            calls -= 1
+            return ROW_5
+
+        db.execute.side_effect = execute
+
+        records = await run_cases(cases, answerer, db, concurrency=4)
+
+        assert all(r.passed for r in records)
+        assert peak <= 4
+
     async def test_schema_recall_is_false_when_a_gold_table_is_missing(
         self, make_case: Callable[..., GoldCase]
     ) -> None:
@@ -249,3 +276,19 @@ class TestCli:
         result = CliRunner().invoke(app, ["--variant", "no_such_variant"])
 
         assert result.exit_code == 2
+
+    def test_concurrency_above_the_role_limit_is_refused(self) -> None:
+        result = CliRunner().invoke(app, ["--variant", "oracle", "--concurrency", "17"])
+
+        assert result.exit_code == 2
+
+
+@pytest.mark.warehouse
+@pytest.mark.anyio
+async def test_the_oracle_passes_every_gold_case_at_the_default_concurrency() -> None:
+    gold = GoldSet.load(CASES_PATH)
+    db = EvalDatabase(EvalSettings())  # type: ignore[call-arg]  # fields come from the environment / .env
+
+    records = await run_cases(gold.cases, OracleAnswerer(gold), db)
+
+    assert [(r.case_id, r.diff) for r in records if not r.passed] == []

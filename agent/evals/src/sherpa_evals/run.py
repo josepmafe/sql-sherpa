@@ -43,6 +43,8 @@ app = typer.Typer(help="SQL Sherpa eval harness (agent spec §7).", add_completi
 
 TABLE_HEADER = "| case | problems | rows | closest example | score |\n| --- | --- | --- | --- | --- |"
 DEFAULT_CONCURRENCY = 4  # §7.2
+# One case holds one connection at a time, and the sherpa_agent role allows 20 (the MCP server uses it too).
+MAX_CONCURRENCY = 16
 
 
 @app.command()
@@ -52,7 +54,7 @@ def main(
     case: Annotated[str | None, typer.Option("--case", help="Only this case id.")] = None,
     repeat: Annotated[int, typer.Option("--repeat", min=1, help="Attempts per case.")] = 1,
     concurrency: Annotated[
-        int, typer.Option("--concurrency", min=1, help="Attempts in flight at once.")
+        int, typer.Option("--concurrency", min=1, max=MAX_CONCURRENCY, help="Cases in flight at once.")
     ] = DEFAULT_CONCURRENCY,
     check_gold_option: Annotated[
         bool, typer.Option("--check-gold", help="Check every gold case against the eval database.")
@@ -85,9 +87,9 @@ async def run_cases(
     in_flight = asyncio.Semaphore(concurrency)
 
     async def run_one(case: GoldCase, number: int) -> CaseRecord:
-        async with in_flight:
+        async with in_flight:  # the attempt and its scoring, so a case holds at most one connection
             attempt = await answerer.attempt(case.question)
-        return await scorer.record(case, number, attempt)
+            return await scorer.record(case, number, attempt)
 
     return list(await asyncio.gather(*(run_one(c, n) for n in range(1, repeat + 1) for c in cases)))
 
