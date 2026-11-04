@@ -46,7 +46,7 @@ def record(case_id: str = "values-001", **overrides: Any) -> CaseRecord:
 
 
 def render(records: list[CaseRecord], previous: list[CaseRecord] | None = None, meta: RunMeta = META) -> str:
-    return render_report(meta, records, previous, "20261101T000000Z-oracle" if previous is not None else None)
+    return render_report(meta, records, previous, "20261101T000000Z-oracle" if previous is not None else None, "oracle")
 
 
 class TestPrices:
@@ -187,9 +187,17 @@ class TestRenderReport:
         assert "EX change: -50.0 points" in render(current, previous)
 
     def test_without_a_previous_run_the_report_says_so(self) -> None:
-        report = render_report(META.model_copy(update={"variant": "v0_baseline"}), [record()], None, None)
+        report = render_report(META, [record()], None, None, "v0_baseline")
 
         assert "No earlier run of v0_baseline with gold_version 3 and dataset_version 2." in report
+
+    def test_ex_change_compares_only_the_cases_both_runs_have(self) -> None:
+        previous = [record("values-001"), record("values-002", passed=False), record("values-003", passed=False)]
+        current = [record("values-001")]  # a --case run
+
+        report = render(current, previous)
+
+        assert "EX change: +0.0 points (over the 1 shared case)" in report
 
 
 class TestPreviousRun:
@@ -224,6 +232,25 @@ class TestPreviousRun:
 
         assert previous_run(tmp_path, "oracle", 3, 2) is None
 
+    def test_a_run_without_cases_jsonl_is_skipped(self, tmp_path: Path) -> None:
+        self.make_run(tmp_path, "20261101T000000Z-oracle", META, [record("values-001")])
+        committed_only = tmp_path / "20261103T000000Z-oracle"
+        committed_only.mkdir()
+        (committed_only / "meta.json").write_text(META.model_dump_json(), encoding="utf-8")
+        (committed_only / "report.md").write_text("# report\n", encoding="utf-8")
+
+        found = previous_run(tmp_path, "oracle", 3, 2)
+
+        assert found is not None
+        assert found[0] == "20261101T000000Z-oracle"
+
+    def test_only_runs_without_cases_jsonl_gives_none(self, tmp_path: Path) -> None:
+        committed_only = tmp_path / "20261103T000000Z-oracle"
+        committed_only.mkdir()
+        (committed_only / "meta.json").write_text(META.model_dump_json(), encoding="utf-8")
+
+        assert previous_run(tmp_path, "oracle", 3, 2) is None
+
     def test_missing_runs_dir_gives_none(self, tmp_path: Path) -> None:
         assert previous_run(tmp_path / "runs", "oracle", 3, 2) is None
 
@@ -241,3 +268,15 @@ class TestWriteRun:
         found = previous_run(tmp_path, "oracle", 3, 2)
         assert found is not None
         assert found[1] == records
+
+    def test_two_runs_in_the_same_second_keep_both_and_the_later_is_newer(self, tmp_path: Path) -> None:
+        first = write_run(tmp_path, META, [record("values-001")], "# one\n")
+        second = write_run(tmp_path, META, [record("values-002")], "# two\n")
+
+        found = previous_run(tmp_path, "oracle", 3, 2)
+
+        assert first != second
+        assert (first / "report.md").read_text(encoding="utf-8") == "# one\n"
+        assert found is not None
+        assert found[0] == second.name
+        assert [r.case_id for r in found[1]] == ["values-002"]

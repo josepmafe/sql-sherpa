@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 from datetime import datetime
 from decimal import Decimal
@@ -84,8 +85,13 @@ class RunMeta(BaseModel):
 
 
 def render_report(
-    meta: RunMeta, records: Sequence[CaseRecord], previous: Sequence[CaseRecord] | None, previous_name: str | None
+    meta: RunMeta,
+    records: Sequence[CaseRecord],
+    previous: Sequence[CaseRecord] | None,
+    previous_name: str | None,
+    compared_variant: str,
 ) -> str:
+    """`compared_variant` is the variant whose earlier run was looked up (the default variant, §7.2)."""
     case_count = len({r.case_id for r in records})
     answered = [r for r in records if r.expected_outcome == "answered"]
     lines = [
@@ -113,7 +119,7 @@ def render_report(
         "",
         *_failing_lines(records),
         "",
-        *_diff_lines(meta, records, previous, previous_name),
+        *_diff_lines(meta, records, previous, previous_name, compared_variant),
     ]
     return "\n".join(lines) + "\n"
 
@@ -127,7 +133,12 @@ def previous_run(
 
     for directory in sorted(runs_dir.iterdir(), reverse=True):
         meta_path = directory / "meta.json"
-        if not directory.name.endswith(f"-{variant}") or not meta_path.exists():
+        # cases.jsonl is not committed, so a fresh clone has runs with only meta.json and report.md
+        if (
+            not directory.name.endswith(f"-{variant}")
+            or not meta_path.exists()
+            or not (directory / "cases.jsonl").exists()
+        ):
             continue
 
         meta = RunMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
@@ -138,8 +149,14 @@ def previous_run(
 
 
 def write_run(runs_dir: Path, meta: RunMeta, records: Sequence[CaseRecord], report: str) -> Path:
-    directory = runs_dir / f"{meta.started_at.strftime(TIMESTAMP_FORMAT)}-{meta.variant}"
-    directory.mkdir(parents=True)
+    stamp = meta.started_at.strftime(TIMESTAMP_FORMAT)
+    directory = runs_dir / f"{stamp}-{meta.variant}"
+    for number in itertools.count(1):  # a second run in the same second gets `.1`, which sorts after the first
+        try:
+            directory.mkdir(parents=True)
+            break
+        except FileExistsError:
+            directory = runs_dir / f"{stamp}.{number}-{meta.variant}"
     (directory / "meta.json").write_text(meta.model_dump_json(indent=2) + "\n", encoding="utf-8")
     (directory / "cases.jsonl").write_text("".join(r.model_dump_json() + "\n" for r in records), encoding="utf-8")
     (directory / "report.md").write_text(report, encoding="utf-8")
@@ -204,22 +221,27 @@ def _failing_lines(records: Sequence[CaseRecord]) -> list[str]:
 
 
 def _diff_lines(
-    meta: RunMeta, records: Sequence[CaseRecord], previous: Sequence[CaseRecord] | None, previous_name: str | None
+    meta: RunMeta,
+    records: Sequence[CaseRecord],
+    previous: Sequence[CaseRecord] | None,
+    previous_name: str | None,
+    compared_variant: str,
 ) -> list[str]:
     if previous is None:
-        return [NO_PREVIOUS.format(variant=meta.variant, gold=meta.gold_version, dataset=meta.dataset_version)]
+        return [NO_PREVIOUS.format(variant=compared_variant, gold=meta.gold_version, dataset=meta.dataset_version)]
 
     before = _case_results(previous)
     now = _case_results(records)
     shared = before.keys() & now.keys()
     passing = sorted(i for i in shared if now[i] and not before[i])
     failing = sorted(i for i in shared if before[i] and not now[i])
-    ex_now = _ex(records)
-    ex_before = _ex(previous)
+    ex_now = _ex([r for r in records if r.case_id in shared])  # a --case run is not weighed against a full one
+    ex_before = _ex([r for r in previous if r.case_id in shared])
+    plural = "" if len(shared) == 1 else "s"
     return [
         f"Against {previous_name}:",
         "",
-        f"EX change: {ex_now - ex_before:+.1f} points",
+        f"EX change: {ex_now - ex_before:+.1f} points (over the {len(shared)} shared case{plural})",
         f"Newly passing: {', '.join(passing) or '-'}",
         f"Newly failing: {', '.join(failing) or '-'}",
     ]

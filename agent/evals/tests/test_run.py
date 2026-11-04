@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
 
 import pytest
+import yaml
+from sherpa_evals import run
 from sherpa_evals.answerers import Attempt, AttemptStats
 from sherpa_evals.compare import Result
 from sherpa_evals.run import app, run_cases
@@ -13,6 +15,7 @@ from typer.testing import CliRunner
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from sherpa_evals.cases import GoldCase
 
@@ -119,6 +122,30 @@ class TestRunCases:
         assert [r.passed for r in records] == [False, True]
         assert records[0].diff == 'agent SQL failed: column "nope" does not exist'
 
+    async def test_answered_without_sql_fails_with_its_own_diff(self, make_case: Callable[..., GoldCase]) -> None:
+        case = make_case("values-001", gold_sql=GOLD_SQL)
+        answerer = StubAnswerer({case.question: refusal("answered")})
+
+        records = await run_cases([case], answerer, fake_db({GOLD_SQL: ROW_5}))
+
+        assert not records[0].passed
+        assert records[0].diff == "answered without SQL"
+
+    async def test_a_failing_gold_query_fails_its_cases_and_not_the_run(
+        self, make_case: Callable[..., GoldCase]
+    ) -> None:
+        broken = make_case("values-001", gold_sql=BAD_SQL)
+        fine = make_case("values-002", gold_sql=GOLD_SQL)
+        answerer = StubAnswerer({broken.question: answered(AGENT_SQL), fine.question: answered(AGENT_SQL)})
+        db = fake_db({BAD_SQL: EvalSqlError("gold is broken"), GOLD_SQL: ROW_5, AGENT_SQL: ROW_5})
+
+        records = await run_cases([broken, fine], answerer, db, repeat=2)
+
+        by_case = {(r.case_id, r.repeat): r for r in records}
+        assert [by_case[("values-001", n)].diff for n in (1, 2)] == ["gold SQL failed: gold is broken"] * 2
+        assert by_case[("values-002", 1)].passed
+        assert by_case[("values-002", 2)].passed
+
     async def test_repeat_gives_a_record_per_repeat(self, make_case: Callable[..., GoldCase]) -> None:
         cases = [make_case("values-001", gold_sql=GOLD_SQL), make_case("values-002", gold_sql=GOLD_SQL)]
         answerer = StubAnswerer({c.question: answered(AGENT_SQL) for c in cases})
@@ -185,6 +212,36 @@ class TestRunCases:
         records = await run_cases([case], answerer, fake_db({GOLD_SQL: ROW_5, agent_sql: ROW_5}))
 
         assert records[0].schema_recall is True
+
+
+@pytest.mark.anyio
+async def test_a_run_without_an_earlier_default_variant_run_names_the_default_variant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cases_path = tmp_path / "cases.yaml"
+    gold = {
+        "gold_version": 1,
+        "dataset_version": 1,
+        "cases": [
+            {
+                "id": "unanswerable-001",
+                "category": "unanswerable",
+                "question": "Who?",
+                "tranche": 1,
+                "expected_outcome": "unanswerable",
+                "gold_sql": None,
+                "rationale": "r",
+                "status": "accepted",
+            }
+        ],
+    }
+    cases_path.write_text(yaml.safe_dump(gold), encoding="utf-8")
+    monkeypatch.setattr(run, "CASES_PATH", cases_path)
+    monkeypatch.setattr(run, "RUNS_DIR", tmp_path / "runs")
+
+    output = await run._evaluate("oracle", None, None, 1, 1)
+
+    assert "No earlier run of v0_baseline with gold_version 1 and dataset_version 1." in output
 
 
 class TestCli:

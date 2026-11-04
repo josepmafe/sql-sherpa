@@ -139,13 +139,21 @@ class _CaseScorer:
         )
 
     async def _judge(self, case: GoldCase, attempt: Attempt) -> tuple[bool, str | None]:
-        if case.expected_outcome == "answered" and attempt.outcome == "answered" and attempt.sql is not None:
+        if case.expected_outcome == "answered" and attempt.outcome == "answered":
+            if attempt.sql is None:
+                return False, "answered without SQL"
+
             try:
                 agent = await self._db.execute(attempt.sql)
             except EvalSqlError as error:
                 return False, f"agent SQL failed: {error}"
 
-            comparison = compare(await self._gold_result(case), agent, ordered=case.ordered)
+            try:
+                gold = await self._gold_result(case)
+            except EvalSqlError as error:
+                return False, f"gold SQL failed: {error}"
+
+            comparison = compare(gold, agent, ordered=case.ordered)
             return comparison.passed, comparison.diff
 
         passed = case.expected_outcome != "answered" and attempt.outcome == case.expected_outcome
@@ -197,7 +205,9 @@ async def _evaluate(variant: str, category: str | None, case_id: str | None, rep
         prices=Prices.load(PRICES_PATH),
     )
     earlier = previous_run(RUNS_DIR, settings.default_variant, gold.gold_version, gold.dataset_version)
-    report = render_report(meta, records, earlier[1] if earlier else None, earlier[0] if earlier else None)
+    report = render_report(
+        meta, records, earlier[1] if earlier else None, earlier[0] if earlier else None, settings.default_variant
+    )
     return f"{report}\nWritten to {write_run(RUNS_DIR, meta, records, report)}"
 
 
