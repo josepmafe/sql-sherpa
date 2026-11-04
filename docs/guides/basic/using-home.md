@@ -6,19 +6,18 @@ Home is the first screen: five headline numbers for the last 30 days, a weekly r
 
 Each tile shows the last 30 days ending on **as of**, the latest day with orders in `marts.fct_orders` (never today's date), and its change against the 30 days before. The definitions are the data platform spec's ([§6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)):
 
-| Tile | Counts | Change shown as |
-|---|---|---|
-| Net revenue | non-cancelled orders by `order_date` | relative, in % |
-| Orders | non-cancelled orders by `order_date` | relative, in % |
-| AOV | net revenue / orders | relative, in % |
-| Refund rate | refunds by `refund_date` / gross revenue of non-cancelled orders by `order_date` | difference, in percentage points (`pp`) |
-| New customers | customers whose first order falls in the window, deleted ones included | relative, in % |
+| Tile | Change shown as |
+|---|---|
+| Net revenue, Orders, AOV, New customers | relative, in % |
+| Refund rate | difference, in percentage points (`pp`) |
+
+What each counts (non-cancelled orders by `order_date`, refunds by `refund_date`, new customers by first order) is in [data platform spec §6.6](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md).
 
 The windows are (as of − 30, as of] and (as of − 60, as of − 30]. The arrow and colour say whether the move is good (green) or bad (red): for the refund rate, up is bad. The words next to them say the same ("up 12.0% on the previous 30 days, an improvement"), so nothing relies on colour. Net revenue has a tooltip: refunds of recent orders keep arriving for about 40 days, so the latest period reads slightly high.
 
 A tile shows "—" for its change, and keeps its value, when:
 
-- the history is shorter than 60 days (the first order is later than 59 days before as of), so the earlier window would be incomplete;
+- the history is shorter than 59 days (the first order is later than 59 days before as of), so the earlier window would be incomplete;
 - the earlier value is 0 (no orders, no sales); or
 - the value itself is empty (an AOV with no orders).
 
@@ -47,7 +46,7 @@ Each item that cannot be shown says why in its place, and the others stay: one b
 | "no full prod build recorded (run make build-prod)" | No full `dbt build` on prod is recorded yet; a build of one model does not count |
 | "freshness unavailable" | `sources.json` is half-written (a build is running) or unreadable: wait for `make build-prod` and reload |
 | "no freshness check recorded (run make build-prod)" | `sources.json` does not exist yet: `make build-prod` |
-| `marketing.ad_spend_daily: warning, last loaded N h ago` | Expected once the campaigns end: they stop at the catalog horizon ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md)), so the table stops growing |
+| `marketing.ad_spend_daily: warning, last loaded N h ago` | Expected once the campaigns end: they stop at the catalog horizon ([data platform spec §5.2](../../superpowers/specs/2026-10-22-sql-sherpa-data-platform-design.md#52-daily-simulation-scale--10); the warn threshold is 48 h (§7)), so the table stops growing |
 | A tile's change is "—" | One of the three cases above; a short history is the usual one |
 | The numbers did not move after `make advance` | Run `make build-prod`, then reload: Home reads the marts, not the raw tables |
 

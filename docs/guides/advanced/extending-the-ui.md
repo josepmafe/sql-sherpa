@@ -235,8 +235,8 @@ It skips itself when the warehouse already runs through yesterday, so it runs at
 | A warehouse trace gains or loses a source column | A sqlglot bump, or a change to `_leaves` or `_classify`, changed what the column reads (kinds never add or remove edges): re-derive the set by hand from the compiled SQL |
 | A pane keeps an old size, or a screen starts oddly after a limit change | Clear `sherpa.v1.layout.*` in site data; a stored size is clamped to the new limits, a pane without `defaultSize` is never stored |
 | The layout test fails on `edgesBehindNodes` or a bound | `layout.ts` or `edgeRoute.ts` moved an edge behind a node or lost ground on `BASELINE`; read the metric in the failure (table above) |
-| `test_sherpa_home_lists_exactly_the_marts_home_reads` fails | A Home query reads a mart `sherpa_home` does not list, or lists one it no longer reads: edit `depends_on` in `_exposures.yml` |
-| A new tile shows "—" for its change | Expected for a history under 60 days, an earlier value of 0 or an empty value; otherwise check the query returns `this_period` and `last_period` |
+| `test_sherpa_home_lists_exactly_the_marts_home_reads` fails | A Home query reads a mart `sherpa_home` does not list, or lists one that no query reads: edit `depends_on` in `_exposures.yml` |
+| A new tile shows "—" for its change | Expected for a history under 59 days, an earlier value of 0 or an empty value; otherwise check the query returns `this_period` and `last_period` |
 | `freshness` is skipped | Expected without `SHERPA_E2E_FRESHNESS=1`, or when the data already ends yesterday |
 
 ## Next
