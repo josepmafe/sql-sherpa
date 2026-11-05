@@ -25,7 +25,10 @@ if TYPE_CHECKING:
 
 EVAL_STATEMENT_TIMEOUT: Final = "30s"  # a gold query may be slower than the agent's 5 s (§7.2)
 CONNECT_TIMEOUT_SECONDS: Final = 10
-SESSION_OPTIONS: Final = f"-c default_transaction_read_only=on -c statement_timeout={EVAL_STATEMENT_TIMEOUT}"
+# TimeZone=UTC: a timestamptz comes back in UTC, so a date_trunc bucket is a midnight UTC instant (compare.normalize)
+SESSION_OPTIONS: Final = (
+    f"-c default_transaction_read_only=on -c statement_timeout={EVAL_STATEMENT_TIMEOUT} -c TimeZone=UTC"
+)
 TABLE_HEADER: Final = "| case | problems | rows | closest example | score |\n| --- | --- | --- | --- | --- |"
 NO_ROWS: Final = "returns no rows"
 NOT_DETERMINISTIC: Final = "not deterministic: {diff}"

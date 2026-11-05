@@ -41,6 +41,7 @@ class TestNormalize:
 
     def test_bool_stays_a_bool(self) -> None:
         assert normalize(True) is True
+        assert normalize(False) is False
 
     def test_nan_does_not_raise(self) -> None:
         assert normalize(float("nan")) == "nan"
@@ -55,6 +56,21 @@ class TestNormalize:
 
     def test_naive_datetime_is_kept(self) -> None:
         assert normalize(datetime(2025, 3, 1, 10, 0)) == "2025-03-01T10:00:00"
+
+    def test_aware_midnight_utc_normalises_like_its_date(self) -> None:
+        assert normalize(datetime(2025, 3, 1, tzinfo=UTC)) == normalize(date(2025, 3, 1))
+
+    def test_naive_midnight_normalises_like_its_date(self) -> None:
+        assert normalize(datetime(2025, 3, 1)) == normalize(date(2025, 3, 1))
+
+    def test_non_midnight_datetime_stays_distinct_from_its_date(self) -> None:
+        assert normalize(datetime(2025, 3, 1, 22, 0, tzinfo=UTC)) != normalize(date(2025, 3, 1))
+        assert normalize(datetime(2025, 3, 1, 0, 0, 1, tzinfo=UTC)) != normalize(date(2025, 3, 1))
+
+    def test_midnight_in_another_zone_converts_first_and_stays_a_datetime(self) -> None:
+        value = datetime(2025, 3, 1, tzinfo=timezone(timedelta(hours=1)))
+
+        assert normalize(value) == "2025-02-28T23:00:00+00:00"
 
     def test_text_is_case_sensitive(self) -> None:
         assert normalize("ABC") != normalize("abc")
@@ -189,3 +205,17 @@ def test_utc_datetime_matches_the_same_instant_in_another_zone() -> None:
     plus_one = datetime(2025, 3, 1, 10, 0, tzinfo=timezone(timedelta(hours=1)))
 
     assert normalize(plus_one) == normalize(datetime(2025, 3, 1, 9, 0, tzinfo=UTC))
+
+
+def test_gold_date_column_matches_an_agent_midnight_timestamptz_column() -> None:
+    gold = result(("month",), (date(2025, 1, 1),), (date(2025, 2, 1),))
+    agent = result(("month",), (datetime(2025, 1, 1, tzinfo=UTC),), (datetime(2025, 2, 1, tzinfo=UTC),))
+
+    assert compare.compare(gold, agent, ordered=True) == Comparison(passed=True)
+
+
+def test_boolean_gold_column_matches_a_zero_one_agent_column() -> None:
+    gold = result(("flag",), (True,), (False,))
+    agent = result(("flag",), (1,), (0,))
+
+    assert compare.compare(gold, agent, ordered=False) == Comparison(passed=True)

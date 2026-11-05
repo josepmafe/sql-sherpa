@@ -24,7 +24,7 @@ class TestConnections:
             await EvalDatabase(settings).execute("select 1")
 
         info = conninfo_to_dict(connect.call_args.args[0])
-        assert info["options"] == "-c default_transaction_read_only=on -c statement_timeout=30s"
+        assert info["options"] == "-c default_transaction_read_only=on -c statement_timeout=30s -c TimeZone=UTC"
         assert info["dbname"] == "sherpa_eval"
         assert info["user"] == settings.agent_user
 
@@ -38,7 +38,7 @@ class TestConnections:
 
         info = conninfo_to_dict(connect.call_args.args[0])
         assert info["user"] == settings.admin_user
-        assert info["options"] == "-c default_transaction_read_only=on -c statement_timeout=30s"
+        assert info["options"] == "-c default_transaction_read_only=on -c statement_timeout=30s -c TimeZone=UTC"
 
     async def test_unreachable_database_is_an_eval_sql_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(psycopg.AsyncConnection, "connect", AsyncMock(side_effect=psycopg.OperationalError("down")))
@@ -54,6 +54,11 @@ class TestEvalDatabase:
         result = await EvalDatabase(make_settings()).execute("select current_setting('statement_timeout')")
 
         assert result.rows == (("30s",),)
+
+    async def test_session_time_zone_is_utc(self) -> None:
+        result = await EvalDatabase(make_settings()).execute("select current_setting('TimeZone')")
+
+        assert result.rows == (("UTC",),)
 
     async def test_execute_returns_every_row_without_a_cap(self) -> None:
         result = await EvalDatabase(make_settings()).execute("select order_id from marts.fct_orders")

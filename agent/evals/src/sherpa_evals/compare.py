@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Final
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 if TYPE_CHECKING:
     from collections.abc import Hashable
 
-MAX_MAPPINGS: Final = 10_000  # candidate column mappings tried per case (§7.2)
+MAX_MAPPINGS: Final = 10_000  # candidate column mappings tried per case; the implementation's bound
 CENT: Final = Decimal("0.01")
 ROW_COUNT_DIFF: Final = "gold has {gold} rows, the agent {agent}"
 NO_COLUMN_DIFF: Final = "no agent column matches gold column {name}"
@@ -51,7 +51,9 @@ def normalize(value: Any) -> Hashable:
                 return str(value)
             return Decimal("0.00") if number.is_zero() else number
         case datetime():
-            return (value.astimezone(UTC) if value.tzinfo else value).isoformat()
+            instant = value.astimezone(UTC) if value.tzinfo else value
+            # a timestamp at exactly midnight UTC is how an agent writes a date_trunc bucket (§7.2)
+            return instant.date().isoformat() if instant.time() == time.min else instant.isoformat()
         case date():
             return value.isoformat()
         case _:

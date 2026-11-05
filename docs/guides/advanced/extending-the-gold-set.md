@@ -27,7 +27,7 @@ The schema is in spec §7.1 (`GoldCase` validates it: an answered case needs `go
 - **No clock and no 32-hex literal.** Relative questions are written against `(select max(order_date) from marts.fct_orders)`; hashes change with every eval database rebuild.
 - **Ties under `LIMIT` are broken by a key**, and `ordered: true` only when the question asks for an order, with a total `ORDER BY`.
 - **Select only the columns the question asks for.** Every gold column must be matched by an agent column, while extra agent columns are fine, so an unrequested gold column fails a correct agent.
-- **Write for the comparison**: numbers round to 2 decimals half-up, so express rates and shares as percentages; a `date` and a midnight timestamp do not match, so cast month and week buckets with `::date`; a boolean matches a 0/1 column. A gold result with many equal columns can exceed `MAX_MAPPINGS` and fail every attempt with `too many candidate column mappings`.
+- **Write for the comparison**: numbers round to 2 decimals half-up, so express rates and shares as percentages; a timestamp at exactly midnight UTC compares as its date, so a month bucket matches with or without `::date` (casting it stays good practice, and a non-midnight timestamp does not match a date); a boolean matches a 0/1 column. A gold result with many equal columns can exceed `MAX_MAPPINGS` and fail every attempt with `too many candidate column mappings`.
 - **Defaults are not clarified**: a question using "revenue" or "customers" is `answered` under the defaults in spec §5.3.
 - **Does not reuse a few-shot question's words** (`test_gold_set.py` checks the word sets); the closest-example score from `--check-gold` flags paraphrases.
 - **A `reconcile_sql`** rebuilds the answer from `raw_shop` (test accounts removed there, since only the marts exclude them). It runs as `sherpa_admin` in a read-only transaction and must give the same result. At least three answered cases carry one.
@@ -57,7 +57,7 @@ Both are top-level keys in `cases.yaml`, recorded in each run's `meta.json`. A r
 | Key | Changes when | Then |
 |---|---|---|
 | `gold_version` | a tranche lands (1 = tranche 1, 2 = both); each tranche is frozen once accepted | Re-run the current default variant first to set the new baseline |
-| `dataset_version` | `make eval-db` rebuilds the eval database (new data, new salt) | Re-run `--check-gold`, since a gold result may change, then the baseline |
+| `dataset_version` | `make eval-db` rebuilds the eval database (new data, new salt) | Re-run `--check-gold` (it cannot see a changed gold result: it checks errors, emptiness, run-to-run determinism and reconcile agreement), compare the oracle run and the numbers in each rationale by hand, then re-run the baseline |
 
 `test_gold_set.py` pins the tranche-1 shape (counts per category, the marts it reads, versions of 1); update it with the tranche.
 
@@ -93,7 +93,7 @@ Files, in order:
 1. **The answerer class** (agent-design-3 adds the one that wraps `AgentService`): its constructor takes what it needs, and `attempt` returns `outcome="failed"` with a reason instead of raising on a model failure.
 2. **`ANSWERERS` in `answerers.py`**: add `"name": lambda gold, settings: MyAnswerer(...)`. The key is what `--variant` accepts.
 3. **A test** in `test_answerers.py`, with no network. `run_cases` is tested in `test_run.py` on fake answerers.
-4. **Concurrency**: the runner holds at most one connection per case in flight, during scoring (at most 16, because `sherpa_agent` allows 20). A variant that opens its own database connections, such as an MCP server per case, must count them in its share of that limit, or lower `MAX_CONCURRENCY` in `run.py`.
+4. **Concurrency**: the runner holds at most one connection per case in flight, during scoring (at most 12: `sherpa_agent` allows 20 connections cluster-wide, which leaves 8 for the MCP server pools and a session). A variant that opens its own database connections, such as an MCP server per case, must count them in its share of that limit, or lower `MAX_CONCURRENCY` in `run.py`.
 
 ## When something goes wrong
 

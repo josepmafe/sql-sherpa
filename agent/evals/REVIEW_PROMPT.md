@@ -32,7 +32,7 @@ only the syntax: a gold query that runs but answers a slightly different questio
 - **How results are compared:**
   - numbers are rounded to 2 decimals, so rates should be percentages
   - text is exact
-  - a date and a midnight timestamp differ
+  - a timestamp at exactly midnight UTC compares as its date; any other timestamp differs from a date
   - column names and order are ignored, and the agent may return extra columns
   - rows must match as whole rows and in equal number: as a list when `ordered: true`, otherwise as a multiset
 - **PII:** customers' `email` is a salted 32-character hash and their names are not exposed. Counting,

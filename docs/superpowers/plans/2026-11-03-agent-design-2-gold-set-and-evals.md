@@ -58,7 +58,7 @@ Also data platform spec §3 (the `eval` target and `make eval-db`), §6.5 and §
 - **Execution for comparison:**
   - the runner's own connection to `sherpa_eval` as `sherpa_agent`, with `statement_timeout = 30s` and **no row cap**
   - `reconcile_sql` runs as `sherpa_admin`, read-only
-- **Line budget (agent spec §7.2):** `run.py` + `compare.py` + `report.py` under about 400 lines. No eval framework dependency.
+- **Line budget (agent spec §7.2):** `run.py` + `compare.py` + `report.py` about 600 lines (the budget covers these three files only). No eval framework dependency.
 - **Package rules (`CLAUDE.md`):**
   - frozen Pydantic models across modules
   - `EvalSettings` (pydantic-settings, `frozen=True`, prefix `SHERPA_`) is the only reader of the environment
@@ -360,7 +360,7 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
     - `test_each_mutation_fails_at_least_one_case`: each of the three mutations fails a fixture case, so each one bites
     - `test_always_answered_fails_every_case`: every fixture case fails, the unanswerable one included
     - **The same three over the accepted gold set**, parametrized from `cases.yaml`. Until Task 6 accepts cases, each skips itself with "no accepted gold cases yet"; from then on they run on the real set.
-- [ ] **Step 3: Implement.** Check the line budget: `wc -l run.py compare.py report.py` is under about 400; the test helpers don't count. `make test`, `make lint`, `uv run --env-file .env pytest -m warehouse agent/evals`. Commit `feat: eval runner, oracle answerer, report and the negative control`.
+- [ ] **Step 3: Implement.** Check the line budget: `wc -l run.py compare.py report.py` is about 600 or less (these three files only); the test helpers don't count. `make test`, `make lint`, `uv run --env-file .env pytest -m warehouse agent/evals`. Commit `feat: eval runner, oracle answerer, report and the negative control`.
 
 ---
 

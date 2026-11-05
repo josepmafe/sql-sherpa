@@ -33,7 +33,7 @@ uv run --env-file .env python -m sherpa_evals.run --variant oracle [--category m
 | `--variant` | The answerer to score. `oracle` returns each case's gold SQL and expected outcome, needs no model and must score 100%; it proves the comparison rules. |
 | `--category`, `--case` | Run only that category or case id. Only `accepted` cases are ever run. |
 | `--repeat` | Attempts per case (default 1). |
-| `--concurrency` | Cases in flight, each holding at most one connection at a time, during scoring (default 4, at most 16: the `sherpa_agent` role allows 20 connections and the MCP server shares them). |
+| `--concurrency` | Cases in flight, each holding at most one connection at a time, during scoring (default 4, at most 12: the `sherpa_agent` role allows 20 connections cluster-wide, which leaves 8 for the MCP server pools and a session). |
 
 Each query runs as a single statement in a real read-only transaction with a 30 s statement timeout and no row cap. A case that fails never stops the run.
 
@@ -77,11 +77,11 @@ A run you only made to try something is yours to delete before committing.
 
 | Symptom | Fix |
 |---|---|
-| `--check-gold` reports `not deterministic: ...` | The gold query returns different results on two runs: add a total `ORDER BY` tie-break to a `LIMIT`, drop a clock or random function, or fix a join that fans out |
+| `--check-gold` reports `not deterministic: ...` | The gold query returned different results on two runs of the same query on the same data: drop a clock or random function, or fix a join that fans out. A missing `ORDER BY` tie-break is not caught here; it is checked in review (`REVIEW_PROMPT.md`, item 5) |
 | `--check-gold` reports `connection failed: ... database "sherpa_eval" does not exist` | Build the eval database: `make eval-db`, with the owner's OK (it drops and rebuilds `sherpa_eval`) |
 | `--check-gold` reports `returns no rows` | Fix the query, or set `allow_empty: true` when an empty result is the right answer and the rationale says why |
 | Report shows `Cost: cost unknown (no price for <model>)` | `agent/evals/prices.yaml` has no entry for that model ID; add it ([Extending the gold set](../advanced/extending-the-gold-set.md#prices)). The oracle uses no model, so its cost is 0 |
-| `Invalid value for '--concurrency': 17 is not in the range 1<=x<=16` | Lower it; the connection limit is shared with the MCP server |
+| `Invalid value for '--concurrency': 13 is not in the range 1<=x<=12` | Lower it; the connection limit is shared with the MCP server |
 | `Invalid value for --variant` | Pass one of the names it lists (`oracle` until the agent variants exist) |
 | `no accepted gold case matches` | The `--category` or `--case` names no accepted case; `--check-gold --case <id>` also covers draft cases |
 | `too many candidate column mappings` in a failing diff | The gold result has many equal columns, so the comparison gave up; change the gold query ([Extending the gold set](../advanced/extending-the-gold-set.md#writing-a-case)) |

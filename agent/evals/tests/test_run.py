@@ -292,3 +292,19 @@ async def test_the_oracle_passes_every_gold_case_at_the_default_concurrency() ->
     records = await run_cases(gold.cases, OracleAnswerer(gold), db)
 
     assert [(r.case_id, r.diff) for r in records if not r.passed] == []
+
+
+@pytest.mark.warehouse
+@pytest.mark.anyio
+async def test_a_month_bucket_left_as_a_timestamp_matches_the_gold_date() -> None:
+    gold = GoldSet.load(CASES_PATH)
+    case = next(c for c in gold.cases if c.id == "time-004")
+    assert case.gold_sql is not None
+    assert "::date" in case.gold_sql
+    uncast = case.gold_sql.replace("::date", "")
+    db = EvalDatabase(EvalSettings())  # type: ignore[call-arg]  # fields come from the environment / .env
+    answerer = StubAnswerer({case.question: answered(uncast)})
+
+    records = await run_cases([case], answerer, db)
+
+    assert [(r.case_id, r.diff) for r in records if not r.passed] == []
