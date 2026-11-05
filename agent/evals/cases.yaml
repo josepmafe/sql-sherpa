@@ -632,8 +632,11 @@ cases:
     rationale: >-
       Multiple discounts per order (data platform spec §4.4 R8): fct_order_discounts has one row per discount, so
       joining it to fct_orders and summing discount_amount counts a stacked order's discount twice; per order the
-      rows sum to fct_orders.discount_amount (§6.5 fct_order_discounts). A free-shipping promotion (amount 0) is a
-      promotion, so it counts towards the two. The reconcile query finds the same orders in raw_shop.
+      rows sum to fct_orders.discount_amount (§6.5 fct_order_discounts): the fan-out join gives 54 orders and
+      3174.76 against the gold's 54 and 1587.38, and keeping cancelled orders gives 56 and 1678.60. A free-shipping
+      promotion (amount 0) is a promotion, so it counts towards the two; it adds nothing to the total, but counting
+      only promotions with an amount above 0 gives 35 orders (1135.28), so the count separates that reading. The
+      reconcile query finds the same orders in raw_shop.
     tables: [fct_order_discounts, fct_orders]
     status: accepted
     reviews:
@@ -734,9 +737,11 @@ cases:
     rationale: >-
       The email is a salted hash in dim_customers, but equal values hash equally, so count(distinct email) works
       (data platform spec §6.5 PII masking); the question is answerable, unlike one about email domains. Orders join
-      customers by customer_id, never by a hash. Order grain fans out to one row per order, hence distinct; a
-      soft-deleted customer's email is NULL (§6.5 global rules, R6) and is not an address, which also matches the
-      default customer count (agent spec §5.3).
+      customers by customer_id, never by a hash. Order grain fans out to one row per order, hence distinct. A
+      soft-deleted customer's email is NULL (§6.5 global rules, R6) and is not an address. Emails are unique per
+      customer, so count(distinct customer_id) over non-deleted customers gives the same 2239. The case checks that
+      the agent excludes soft-deleted customers (§5.3) and counts through orders: the unfiltered customer count
+      (2248) is the wrong reading it catches.
     tables: [fct_orders, dim_customers]
     status: accepted
     reviews:
@@ -830,8 +835,10 @@ cases:
       where not o.is_cancelled
     rationale: >-
       "Last quarter" is the previous calendar quarter of as_of_date (agent spec §5.3; data platform spec §6.5
-      as_of_date = max(order_date)), so Q3 2025 on the frozen data, not the last 90 days. Unqualified "revenue" is
-      net_revenue (§5.3), over non-cancelled orders (§6.6).
+      as_of_date = max(order_date)), so Q3 2025 (117451.58) on the frozen data, not the last 90 days. Because
+      as_of_date (2025-12-31) is a quarter end, "the last complete quarter" (Q4, 175977.68) is a natural wrong
+      reading; the gold follows the §5.3 default. Unqualified "revenue" is net_revenue (§5.3), over non-cancelled
+      orders (§6.6).
     tables: [fct_orders]
     status: accepted
     reviews:
@@ -848,7 +855,7 @@ cases:
 
   - id: time-002
     category: time
-    question: How many orders did we receive in the past 14 days, and how many in the 14 days before that, cancelled ones aside?
+    question: How many orders did we receive in the past 14 days, and how many in the 14 days before that, cancelled ones aside? Give both counts side by side.
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -889,6 +896,11 @@ cases:
         notes: >-
           Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
           gold.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner-approved panel triage (devil's advocate and four reviewers): wording changed so the case has one
+          natural result shape / one reading.
 
   - id: time-003
     category: time
@@ -912,7 +924,8 @@ cases:
       Quarter to date runs from the first day of as_of_date's calendar quarter to as_of_date, inclusive (agent spec
       §5.3; data platform spec §6.5 as_of_date), so 1 October to 31 December 2025 on the frozen data: neither the
       whole dataset (which starts on 1 January 2025) nor the previous calendar quarter or month. "Sales" defaults to
-      gross_revenue (§5.3), over non-cancelled orders (data platform spec §6.6).
+      gross_revenue (§5.3), over non-cancelled orders (data platform spec §6.6). as_of_date is a quarter, month and
+      year end, so the data alone does not separate every reading (quarter to date equals the whole of Q4).
     tables: [fct_orders]
     status: accepted
     reviews:
@@ -951,6 +964,7 @@ cases:
       Calendar months before the month of as_of_date (agent spec §5.3, calendar periods): "this one" is
       as_of_date's month, December 2025, so June to November 2025.
       Unqualified "revenue" is net_revenue over non-cancelled orders (data platform spec §6.6). Months are dates.
+      as_of_date is a month and year end, so the data alone does not separate every reading of "this month".
     tables: [fct_orders]
     status: accepted
     reviews:
@@ -1002,7 +1016,7 @@ cases:
 
   - id: time-006
     category: time
-    question: How did web and app revenue compare over the trailing 90 days?
+    question: How did web and app revenue compare over the trailing 90 days, for each sales channel?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -1037,11 +1051,16 @@ cases:
         notes: >-
           Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted. a
           pivoted one-row answer (web, app columns) fails on row count.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner-approved panel triage (devil's advocate and four reviewers): wording changed so the case has one
+          natural result shape / one reading.
 
   # --- complex: CTEs, window functions, a cohort ---------------------------------------------------------------
   - id: complex-001
     category: complex
-    question: Of the first orders placed in each month of the first half of 2025, what percentage were followed by a second order from the same customer within 90 days?
+    question: Of the first orders placed in each month of the first half of 2025, what percentage were followed by a second order from the same customer within 90 days of it, the 90th day included?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -1074,7 +1093,9 @@ cases:
       A monthly cohort of first orders (data platform spec §6.5 fct_orders: is_first_order and customer_order_number
       number a customer's non-cancelled orders by placed_at, so a cancelled order is neither a first nor a second).
       Within 90 days means at most 90 days between the two order dates, the same day included. The question is
-      about orders, so soft-deleted customers' orders stay in. Percentages, rounded to 2 decimals.
+      about orders, so soft-deleted customers' orders stay in: the non-deleted default for customers (agent spec
+      §5.3) is deliberately not applied, and dropping soft-deleted customers' first orders changes five of the six
+      rows. Percentages, rounded to 2 decimals.
     tables: [fct_orders]
     status: accepted
     reviews:
@@ -1094,6 +1115,11 @@ cases:
         notes: >-
           Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
           gold.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner-approved panel triage (devil's advocate and four reviewers): wording changed so the case has one
+          natural result shape / one reading.
 
   - id: complex-002
     category: complex
@@ -1177,7 +1203,9 @@ cases:
     rationale: >-
       A window per brand. Product net revenue at line level is net_amount - refunded_revenue (data platform spec
       §6.5 fct_order_items, §6.6), grouped by product_id because dim_products has one row per variant; ties broken
-      by product_id. Not a paraphrase of the few-shot top-10 products: this ranks within each brand.
+      by product_id. Not a paraphrase of the few-shot top-10 products: this ranks within each brand. Ranking by
+      net_amount alone or by gross_amount gives the same 25 brand winners, so the case tests the window and the
+      product grain, not the metric choice (the question names net revenue explicitly).
     tables: [fct_order_items, dim_products]
     status: accepted
     reviews:
