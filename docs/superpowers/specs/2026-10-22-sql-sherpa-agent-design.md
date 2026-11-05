@@ -339,6 +339,8 @@ Case schema:
 3. **Cross-model review:** Codex and Gemini each review every case against the data platform spec §6.6 (semantics, not just syntax). The owner runs them through their own CLIs or chat with a fixed review prompt stored in `agent/evals/REVIEW_PROMPT.md`, and records each verdict in `reviews`. If either reviewer is unavailable, a fresh Opus session with no access to the drafting conversation takes its place, and this is noted in `reviews`. The owner resolves disagreements. Only `accepted` cases count in reports.
 4. The few-shot disjointness check (§4.3).
 
+Gold text filters are case-insensitive (`lower(column) = 'literal'`), in `gold_sql` and `reconcile_sql` alike. Every gold column must be matched by an agent column (§7.2), so a gold query selects only the columns the question asks for.
+
 Gold dates are absolute (e.g. "March 2025"), except in the `time` category, where relative questions are expected. Those cases' gold SQL is written relative to `as_of_date` (`(select max(order_date) from marts.fct_orders)`). That is fixed at 2025-12-31 on the frozen eval dataset, and the relative form still documents intent.
 
 - **Gold SQL holds no 32-hex literal:** an `eval-db` rebuild makes a new salt, so a hash literal would stop matching.
@@ -349,7 +351,7 @@ Gold dates are absolute (e.g. "March 2025"), except in the `time` category, wher
 uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--case metrics-003] [--repeat 1] [--concurrency 4] [--check-gold]
 ```
 
-- Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` questions are in flight at once.
+- Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` counts cases in flight (an answer and its scoring), at most 16: the `sherpa_agent` role allows 20 connections and the MCP server shares them.
 - **The runner's interface to a variant** is its own, so the evals depend on no agent type: an `Answerer` turns a question into an `Attempt` (the outcome type, the final executed SQL, and the run's stats with tokens per model). The `oracle` answerer (agent-design-2) answers each question with its case's gold SQL and expected outcome, and needs no MCP server or model; agent-design-3 adds one answerer that chains `AgentService.plan` and `answer`.
 - **Execution for comparison** uses the runner's own connection to `sherpa_eval` as `sherpa_agent`, with `SET statement_timeout = '30s'` and **no row cap**. It re-executes the agent's final SQL (the recorded `executed_sql`) and the gold SQL directly.
 - **Comparison rules (`compare.py`):**
@@ -359,7 +361,8 @@ uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--
   - **Whole-row check.** Under a candidate mapping, the agent's rows are projected onto the mapped columns and compared with the gold rows as **whole tuples**: as a multiset of tuples if `ordered: false`, as an ordered list if `ordered: true`. The case passes if any mapping matches. This stops values from being paired with the wrong keys.
 - **Scoring:** `answered` cases pass on result match. `unanswerable` and `needs_clarification` cases pass if the outcome type matches.
 - **Comparisons and promotion:** every candidate report is compared with a run of the current default **made in the same session**, so both see the same models and the same day's provider behaviour. Promotion decisions require `--repeat 2` on both.
-- **Per-case record** (`runs/<timestamp>-<variant>/cases.jsonl`): case id, outcome type, pass/fail, the diff summary on failure, agent SQL, `RunStats`, schema recall (gold `tables` ⊆ tables the agent queried), trace id.
+- **Run directory** (`runs/<timestamp>-<variant>/`, with a `.n` suffix when two runs start in the same second): `cases.jsonl` (gitignored), `report.md` and `meta.json` (both committed). `meta.json` holds the variant, `gold_version`, `dataset_version`, start time and repeat count, so the next run can find the previous run of the default variant to diff against.
+- **Per-case record** (`cases.jsonl`): case id, outcome type, pass/fail, the diff summary on failure, agent SQL, `RunStats`, schema recall (gold `tables` ⊆ tables the agent queried), trace id.
 - **Report** (`runs/<…>/report.md`): execution accuracy (EX) overall and per category; outcome-type accuracy; p50/p95 latency; mean and total cost; mean tool calls and SQL attempts; schema recall; failing case ids with trace links; and the diff against the previous run of the current default variant.
 - **Cost** = tokens × `prices.yaml` (EUR per million input/output tokens per model ID, maintained by hand). A model missing from it makes the run's cost unknown, which the report says, rather than 0.
 - Budget for code: `run.py` + `compare.py` + `report.py` together stay **under ~400 lines**. No eval framework dependency.
