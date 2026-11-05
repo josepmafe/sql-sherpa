@@ -26,11 +26,6 @@ CLOCK_PROBLEM: Final = "reads the clock ({name}); write dates, or use (select ma
 HASH_PROBLEM: Final = "holds a 32-hex literal; hashes change with every eval-db rebuild"
 ORDER_PROBLEM: Final = "ordered or limited without ORDER BY"
 TABLES_PROBLEM: Final = "tables lists {listed}, the SQL reads {read}"
-# sqlglot parses now() as CURRENT_TIMESTAMP.
-_CLOCK_NODES: Final[tuple[tuple[type[exp.Expr], str], ...]] = (
-    (exp.CurrentTimestamp, "now/current_timestamp"),
-    (exp.CurrentDate, "current_date"),
-)
 
 
 class Review(BaseModel):
@@ -117,9 +112,9 @@ def static_problems(case: GoldCase, visible_marts: frozenset[str]) -> list[str]:
     result = SqlGuard(visible_marts).check(case.gold_sql)
     problems = list(result.errors)
 
+    problems.extend(CLOCK_PROBLEM.format(name=name) for name in result.clock_calls)
+
     statement = _parse(case.gold_sql)
-    if statement is not None:
-        problems.extend(CLOCK_PROBLEM.format(name=name) for name in _clock_names(statement))
 
     if any(_has_hash(sql) for sql in (case.gold_sql, case.reconcile_sql) if sql is not None):
         problems.append(HASH_PROBLEM)
@@ -142,11 +137,6 @@ def _parse(sql: str) -> exp.Expr | None:
         return sqlglot.parse_one(sql, read=DIALECT)
     except SqlglotError:
         return None
-
-
-def _clock_names(statement: exp.Expr) -> list[str]:
-    names = [name for node in statement.walk() for kind, name in _CLOCK_NODES if isinstance(node, kind)]
-    return list(dict.fromkeys(names))
 
 
 def _has_hash(sql: str) -> bool:

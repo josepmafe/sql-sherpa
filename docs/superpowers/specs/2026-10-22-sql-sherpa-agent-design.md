@@ -201,8 +201,10 @@ NeedsClarification:  question_to_user, candidate_interpretations: list[str], par
 Unanswerable:        reason, closest_supported: str | None      # e.g. "inventory is not in the warehouse"
 Failed:              reason, last_sql: str | None, last_error: str | None
 
-RunStats: variant, models, latency_ms, input_tokens, output_tokens, cost_eur, tool_calls, sql_attempts, trace_id
+RunStats: variant, usage, latency_ms, cost_eur, tool_calls, sql_attempts, trace_id
 ```
+
+- **`RunStats.usage`** is a list of (model, input_tokens, output_tokens), one entry per model, summed from each `ModelResponse`'s `model_name` and `usage`, so a run that mixes models is priced per model (`cost_eur` is computed from it). The shared `RunUsage` stays for the limits (§5.3). It matches the eval runner's `AttemptStats.usage` (§7.2).
 
 - **`plan` executes no data query.** It may call `get_context`, `list_tables`, `describe_table` (whose 3 sample rows it may read), `search_values`, `get_metric_definitions`, `get_examples` and `validate_sql` (`EXPLAIN` only), but **not `run_sql`**. The draft's SQL is valid but has not been run.
 - **`answer` runs the draft's SQL** with `run_sql`, writes `answer_text` and `caveats`, and applies the guards (§5.2). A variant that refines SQL after seeing results (§5.4) records what it changed in `sql_revision`, which every consumer must show.
