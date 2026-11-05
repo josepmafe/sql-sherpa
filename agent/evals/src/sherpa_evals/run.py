@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import sqlglot
 import typer
-from sherpa_mcp.catalog import MARTS_SCHEMA, MartCatalogLoader
+from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalogLoader
 from sherpa_mcp.examples import ExampleIndex
 from sherpa_mcp.server import EXAMPLES_PATH
 from sherpa_mcp.sql_guard import DIALECT
@@ -44,8 +44,13 @@ if TYPE_CHECKING:
 app = typer.Typer(help="SQL Sherpa eval harness (agent spec §7).", add_completion=False)
 
 DEFAULT_CONCURRENCY = 4  # §7.2
-# One case holds one connection at a time, and the sherpa_agent role allows 20 (the MCP server uses it too).
-MAX_CONCURRENCY = 16
+CATALOG_HINT = (
+    "the eval catalog (target-eval) is missing: run `make eval-db` (it drops and rebuilds sherpa_eval, so ask the "
+    "owner first), or copy target-eval from the checkout that built the database"
+)
+# One case holds one connection at a time. The sherpa_agent role allows 20 connections cluster-wide; 12 leaves 8 for
+# the MCP server pools and a session.
+MAX_CONCURRENCY = 12
 
 
 @app.command()
@@ -140,6 +145,7 @@ class _CaseScorer:
             try:
                 gold = await self._gold_result(case)
             except EvalSqlError as error:
+                self._gold_results.pop(case.id, None)  # the next repeat of this case retries the query
                 return False, f"gold SQL failed: {error}"
 
             comparison = compare(gold, agent, ordered=case.ordered)
@@ -160,7 +166,7 @@ def _marts_read(sql: str) -> set[str]:
         tree = sqlglot.parse_one(sql, read=DIALECT)
     except SqlglotError:
         return set()
-    return {table.name for table in tree.find_all(exp.Table) if table.db == MARTS_SCHEMA}
+    return {table.name.lower() for table in tree.find_all(exp.Table) if table.db.lower() == MARTS_SCHEMA}
 
 
 def _load_gold() -> GoldSet:
@@ -177,6 +183,11 @@ async def _evaluate(variant: str, category: str | None, case_id: str | None, rep
     if not cases:
         raise typer.BadParameter("no accepted gold case matches")
 
+    # Everything that can fail cheaply comes before the paid run.
+    earlier = previous_run(RUNS_DIR, settings.default_variant, gold.gold_version, gold.dataset_version)
+    db = EvalDatabase(settings)
+    await _require_agent_role(db)
+
     meta = RunMeta(
         variant=variant,
         gold_version=gold.gold_version,
@@ -188,16 +199,22 @@ async def _evaluate(variant: str, category: str | None, case_id: str | None, rep
     records = await run_cases(
         cases,
         answerer,
-        EvalDatabase(settings),
+        db,
         repeat=repeat,
         concurrency=concurrency,
         prices=Prices.load(PRICES_PATH),
     )
-    earlier = previous_run(RUNS_DIR, settings.default_variant, gold.gold_version, gold.dataset_version)
     report = render_report(
         meta, records, earlier[1] if earlier else None, earlier[0] if earlier else None, settings.default_variant
     )
     return f"{report}\nWritten to {write_run(RUNS_DIR, meta, records, report)}"
+
+
+async def _require_agent_role(db: EvalDatabase) -> None:
+    try:
+        await db.execute("select 1")
+    except EvalSqlError as error:
+        raise typer.BadParameter(f"cannot run SQL on the eval database as the agent role: {error}") from error
 
 
 async def _check_gold(case_id: str | None) -> tuple[CheckRow, ...]:
@@ -209,7 +226,10 @@ async def _check_gold(case_id: str | None) -> tuple[CheckRow, ...]:
             raise typer.BadParameter(f"no case {case_id!r}", param_hint="--case")
         gold = gold.model_copy(update={"cases": selected})
 
-    visible = MartCatalogLoader(settings.eval_target_path).load().visible_marts()
+    try:
+        visible = MartCatalogLoader(settings.eval_target_path).load().visible_marts()
+    except CatalogUnavailable as error:
+        raise typer.BadParameter(f"{error}; {CATALOG_HINT}") from error
     examples = ExampleIndex.from_yaml(EXAMPLES_PATH)
     return await check_gold(gold, EvalDatabase(settings), visible, examples)
 

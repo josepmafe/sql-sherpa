@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from sherpa_evals.cases import static_problems
 from sherpa_evals.compare import Result, compare
+from sherpa_evals.report import table_cell
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -115,8 +116,13 @@ def render_table(rows: Sequence[CheckRow]) -> str:
         problems = "; ".join(row.problems) or "-"
         count = "-" if row.rows is None else str(row.rows)
         cells = (row.case_id, problems, count, row.closest_example or "-", f"{row.closest_score:.2f}")
-        lines.append("| " + " | ".join(cell.replace("|", "\\|").replace("\n", " ") for cell in cells) + " |")
+        lines.append("| " + " | ".join(table_cell(cell) for cell in cells) + " |")
     return "\n".join(lines)
+
+
+def _is_empty(result: Result) -> bool:
+    """No rows, or the single all-NULL row of an aggregate over nothing (a 0 is a value)."""
+    return not result.rows or (len(result.rows) == 1 and all(cell is None for cell in result.rows[0]))
 
 
 async def _check_case(
@@ -146,7 +152,7 @@ async def _check_results(case: GoldCase, gold_sql: str, db: EvalDatabase, proble
     again = compare(first, second, ordered=case.ordered)
     if not again.passed:
         problems.append(NOT_DETERMINISTIC.format(diff=again.diff))
-    if not first.rows and not case.allow_empty:
+    if _is_empty(first) and not case.allow_empty:
         problems.append(NO_ROWS)
     if case.reconcile_sql is not None:
         try:

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
 
 import pytest
+import typer
 import yaml
 from sherpa_evals import run
 from sherpa_evals.answerers import Attempt, AttemptStats, OracleAnswerer
@@ -13,6 +14,7 @@ from sherpa_evals.compare import Result
 from sherpa_evals.run import app, run_cases
 from sherpa_evals.settings import CASES_PATH, EvalSettings
 from sherpa_evals.warehouse import EvalDatabase, EvalSqlError
+from sherpa_mcp.catalog import CatalogUnavailable, MartCatalogLoader
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
@@ -214,7 +216,29 @@ class TestRunCases:
         records = await run_cases(cases, answerer, db, concurrency=4)
 
         assert all(r.passed for r in records)
-        assert peak <= 4
+        assert peak == 4
+
+    async def test_a_failed_gold_query_is_retried_by_the_next_repeat(self, make_case: Callable[..., GoldCase]) -> None:
+        case = make_case("values-001", gold_sql=GOLD_SQL)
+        gold_calls = 0
+        db = create_autospec(EvalDatabase, instance=True)
+
+        async def execute(sql: str) -> Result:
+            nonlocal gold_calls
+            if sql != GOLD_SQL:
+                return ROW_5
+            gold_calls += 1
+            if gold_calls == 1:
+                raise EvalSqlError("connection reset")
+            return ROW_5
+
+        db.execute.side_effect = execute
+
+        answerer = StubAnswerer({case.question: answered(AGENT_SQL)})
+        records = await run_cases([case], answerer, db, repeat=2, concurrency=1)
+
+        assert [(r.repeat, r.passed) for r in records] == [(1, False), (2, True)]
+        assert records[0].diff == "gold SQL failed: connection reset"
 
     async def test_schema_recall_is_false_when_a_gold_table_is_missing(
         self, make_case: Callable[..., GoldCase]
@@ -229,6 +253,17 @@ class TestRunCases:
 
         assert records[0].schema_recall is False
 
+    async def test_schema_recall_ignores_the_case_of_the_agent_table_names(
+        self, make_case: Callable[..., GoldCase]
+    ) -> None:
+        agent_sql = "select count(*) as n from MARTS.FCT_ORDERS"
+        case = make_case("values-001", gold_sql=GOLD_SQL)
+        answerer = StubAnswerer({case.question: answered(agent_sql)})
+
+        records = await run_cases([case], answerer, fake_db({GOLD_SQL: ROW_5, agent_sql: ROW_5}))
+
+        assert records[0].schema_recall is True
+
     async def test_schema_recall_is_true_when_the_agent_reads_extra_tables(
         self, make_case: Callable[..., GoldCase]
     ) -> None:
@@ -241,34 +276,95 @@ class TestRunCases:
         assert records[0].schema_recall is True
 
 
-@pytest.mark.anyio
-async def test_a_run_without_an_earlier_default_variant_run_names_the_default_variant(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+ACCEPTED_UNANSWERABLE = {
+    "id": "unanswerable-001",
+    "category": "unanswerable",
+    "question": "Who?",
+    "tranche": 1,
+    "expected_outcome": "unanswerable",
+    "gold_sql": None,
+    "rationale": "r",
+    "status": "accepted",
+}
+
+
+class CountingAnswerer:
+    name = "counting"
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def attempt(self, question: str) -> Attempt:
+        self.attempts += 1
+        return refusal("unanswerable")
+
+
+def point_run_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, db: EvalDatabase | None = None) -> CountingAnswerer:
+    """An accepted-case file and a runs directory under tmp_path; returns the answerer used for 'oracle'."""
     cases_path = tmp_path / "cases.yaml"
-    gold = {
-        "gold_version": 1,
-        "dataset_version": 1,
-        "cases": [
-            {
-                "id": "unanswerable-001",
-                "category": "unanswerable",
-                "question": "Who?",
-                "tranche": 1,
-                "expected_outcome": "unanswerable",
-                "gold_sql": None,
-                "rationale": "r",
-                "status": "accepted",
-            }
-        ],
-    }
+    gold = {"gold_version": 1, "dataset_version": 1, "cases": [ACCEPTED_UNANSWERABLE]}
     cases_path.write_text(yaml.safe_dump(gold), encoding="utf-8")
+    database = db or fake_db({"select 1": ROW_5})
     monkeypatch.setattr(run, "CASES_PATH", cases_path)
     monkeypatch.setattr(run, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(run, "EvalDatabase", lambda settings: database)
+    answerer = CountingAnswerer()
+    monkeypatch.setitem(run.ANSWERERS, "oracle", lambda gold, settings: answerer)
+    return answerer
 
-    output = await run._evaluate("oracle", None, None, 1, 1)
 
-    assert "No earlier run of v0_baseline with gold_version 1 and dataset_version 1." in output
+@pytest.mark.anyio
+class TestEvaluate:
+    async def test_a_run_without_an_earlier_default_variant_run_names_the_default_variant(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        point_run_at(tmp_path, monkeypatch)
+
+        output = await run._evaluate("oracle", None, None, 1, 1)
+
+        assert "No earlier run of v0_baseline with gold_version 1 and dataset_version 1." in output
+
+    async def test_an_unreadable_earlier_run_fails_before_any_attempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        answerer = point_run_at(tmp_path, monkeypatch)
+        earlier = tmp_path / "runs" / "20250101T000000Z-v0_baseline"
+        earlier.mkdir(parents=True)
+        (earlier / "meta.json").write_text("{not json", encoding="utf-8")
+        (earlier / "cases.jsonl").write_text("", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="JSON"):
+            await run._evaluate("oracle", None, None, 1, 1)
+
+        assert answerer.attempts == 0
+
+    async def test_a_database_the_agent_role_cannot_use_fails_before_any_attempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = create_autospec(EvalDatabase, instance=True)
+        db.execute.side_effect = EvalSqlError('database "sherpa_eval" does not exist')
+        answerer = point_run_at(tmp_path, monkeypatch, db)
+
+        with pytest.raises(typer.BadParameter, match="does not exist"):
+            await run._evaluate("oracle", None, None, 1, 1)
+
+        assert answerer.attempts == 0
+        assert not (tmp_path / "runs").exists()
+
+
+class TestCheckGoldCatalog:
+    def test_a_missing_eval_catalog_names_the_fix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def unavailable(self: MartCatalogLoader) -> None:
+            raise CatalogUnavailable("no manifest")
+
+        monkeypatch.setattr(MartCatalogLoader, "load", unavailable)
+
+        result = CliRunner().invoke(app, ["--check-gold"])
+
+        assert result.exit_code == 2
+        assert "make eval-db" in result.output
+        assert "target-eval" in result.output
+        assert "make build-prod" not in result.output
 
 
 class TestCli:
@@ -277,10 +373,16 @@ class TestCli:
 
         assert result.exit_code == 2
 
-    def test_concurrency_above_the_role_limit_is_refused(self) -> None:
-        result = CliRunner().invoke(app, ["--variant", "oracle", "--concurrency", "17"])
+    @pytest.mark.parametrize(("concurrency", "exit_code"), [("13", 2), ("12", 1)])
+    def test_concurrency_limit_is_12(self, monkeypatch: pytest.MonkeyPatch, concurrency: str, exit_code: int) -> None:
+        async def fake_evaluate(*args: object) -> str:
+            raise RuntimeError("past the option check")  # the CLI turns an unhandled error into exit code 1
 
-        assert result.exit_code == 2
+        monkeypatch.setattr(run, "_evaluate", fake_evaluate)
+
+        result = CliRunner().invoke(app, ["--variant", "oracle", "--concurrency", concurrency])
+
+        assert result.exit_code == exit_code
 
 
 @pytest.mark.warehouse

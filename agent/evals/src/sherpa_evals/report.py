@@ -125,6 +125,11 @@ def render_report(
     return "\n".join(lines) + "\n"
 
 
+def table_cell(text: str) -> str:
+    """Text safe inside a markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
 def previous_run(
     runs_dir: Path, variant: str, gold_version: int, dataset_version: int
 ) -> tuple[str, list[CaseRecord]] | None:
@@ -213,7 +218,10 @@ def _failing_lines(records: Sequence[CaseRecord]) -> list[str]:
     failing = [r for r in records if not r.passed]
     if not failing:
         return ["No failing cases."]
-    rows = (f"| {r.case_id} | {r.outcome} | {r.diff or '-'} | {r.trace_id or '-'} |" for r in failing)
+    rows = (
+        "| " + " | ".join(table_cell(cell) for cell in (r.case_id, r.outcome, r.diff or "-", r.trace_id or "-")) + " |"
+        for r in failing
+    )
     return ["Failing cases:", "", "| case | outcome | diff | trace |", "| --- | --- | --- | --- |", *rows]
 
 

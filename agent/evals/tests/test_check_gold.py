@@ -23,6 +23,8 @@ RECONCILE_SQL = "select count(*) as n from raw_shop.orders"
 ONE_ROW = Result(columns=("n",), rows=((5,),))
 OTHER_ROW = Result(columns=("n",), rows=((6,),))
 EMPTY = Result(columns=("n",), rows=())
+ALL_NULL = Result(columns=("n", "m"), rows=((None, None),))
+ZERO = Result(columns=("n",), rows=((0,),))
 
 
 @pytest.fixture
@@ -104,6 +106,33 @@ class TestCheckGold:
         case = make_case("values-001", gold_sql=GOOD_SQL, allow_empty=True)
 
         rows = await check_gold(gold_set(case), fake_db({GOOD_SQL: [EMPTY]}), VISIBLE, examples)
+
+        assert rows[0].problems == ()
+
+    async def test_a_single_all_null_row_is_no_rows(
+        self, make_case: Callable[..., GoldCase], examples: ExampleIndex
+    ) -> None:
+        case = make_case("values-001", gold_sql=GOOD_SQL)
+
+        rows = await check_gold(gold_set(case), fake_db({GOOD_SQL: [ALL_NULL]}), VISIBLE, examples)
+
+        assert rows[0].problems == ("returns no rows",)
+
+    async def test_a_single_zero_row_is_a_result(
+        self, make_case: Callable[..., GoldCase], examples: ExampleIndex
+    ) -> None:
+        case = make_case("values-001", gold_sql=GOOD_SQL)
+
+        rows = await check_gold(gold_set(case), fake_db({GOOD_SQL: [ZERO]}), VISIBLE, examples)
+
+        assert rows[0].problems == ()
+
+    async def test_a_single_all_null_row_with_allow_empty_is_fine(
+        self, make_case: Callable[..., GoldCase], examples: ExampleIndex
+    ) -> None:
+        case = make_case("values-001", gold_sql=GOOD_SQL, allow_empty=True)
+
+        rows = await check_gold(gold_set(case), fake_db({GOOD_SQL: [ALL_NULL]}), VISIBLE, examples)
 
         assert rows[0].problems == ()
 

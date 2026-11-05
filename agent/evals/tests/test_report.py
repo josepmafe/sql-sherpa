@@ -156,6 +156,13 @@ class TestRenderReport:
         assert "| metrics-007 | answered | row count differs | abc123 |" in report
         assert "| values-001 |" not in report
 
+    def test_a_diff_with_a_pipe_or_newline_stays_in_its_table_cell(self) -> None:
+        records = [record("metrics-007", passed=False, diff="agent SQL failed: a | b\nsecond line", trace_id="abc123")]
+
+        report = render(records)
+
+        assert "| metrics-007 | answered | agent SQL failed: a \\| b second line | abc123 |" in report
+
     def test_ex_per_repeat_only_when_repeating(self) -> None:
         records = [record(repeat=1), record(repeat=2, passed=False)]
         repeating = META.model_copy(update={"repeat": 2})
