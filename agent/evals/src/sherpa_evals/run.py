@@ -24,11 +24,12 @@ from sherpa_evals.cases import GoldSet
 from sherpa_evals.compare import compare
 from sherpa_evals.report import CaseRecord, Prices, RunMeta, previous_run, render_report, write_run
 from sherpa_evals.settings import CASES_PATH, PRICES_PATH, RUNS_DIR, EvalSettings
-from sherpa_evals.warehouse import (  # CheckRow is in an annotation
-    CheckRow,
+from sherpa_evals.warehouse import (
     EvalDatabase,
     EvalSqlError,
     check_gold,
+    has_problems,
+    render_table,
     selector_event_loop,
 )
 
@@ -38,10 +39,10 @@ if TYPE_CHECKING:
     from sherpa_evals.answerers import Answerer, Attempt
     from sherpa_evals.cases import GoldCase
     from sherpa_evals.compare import Result
+    from sherpa_evals.warehouse import CheckRow
 
 app = typer.Typer(help="SQL Sherpa eval harness (agent spec §7).", add_completion=False)
 
-TABLE_HEADER = "| case | problems | rows | closest example | score |\n| --- | --- | --- | --- | --- |"
 DEFAULT_CONCURRENCY = 4  # §7.2
 # One case holds one connection at a time, and the sherpa_agent role allows 20 (the MCP server uses it too).
 MAX_CONCURRENCY = 16
@@ -92,20 +93,6 @@ async def run_cases(
             return await scorer.record(case, number, attempt)
 
     return list(await asyncio.gather(*(run_one(c, n) for n in range(1, repeat + 1) for c in cases)))
-
-
-def has_problems(rows: Sequence[CheckRow]) -> bool:
-    return any(row.problems for row in rows)
-
-
-def render_table(rows: Sequence[CheckRow]) -> str:
-    lines = [TABLE_HEADER]
-    for row in rows:
-        problems = "; ".join(row.problems) or "-"
-        count = "-" if row.rows is None else str(row.rows)
-        cells = (row.case_id, problems, count, row.closest_example or "-", f"{row.closest_score:.2f}")
-        lines.append("| " + " | ".join(cell.replace("|", "\\|").replace("\n", " ") for cell in cells) + " |")
-    return "\n".join(lines)
 
 
 class _CaseScorer:

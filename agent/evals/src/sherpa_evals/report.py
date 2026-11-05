@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Final
@@ -109,13 +110,13 @@ def render_report(
         "",
         f"Outcome-type accuracy: {_share(sum(r.outcome == r.expected_outcome for r in records), len(records))}",
         "",
-        *_latency_lines(records),
+        _latency_line(records),
         _cost_line(records),
         "",
         f"Effort: mean tool calls {_mean([r.tool_calls for r in records]):.1f}, "
         f"mean SQL attempts {_mean([r.sql_attempts for r in records]):.1f}",
         "",
-        *_recall_lines(records),
+        _recall_line(records),
         "",
         *_failing_lines(records),
         "",
@@ -132,18 +133,14 @@ def previous_run(
         return None
 
     for directory in sorted(runs_dir.iterdir(), reverse=True):
-        meta_path = directory / "meta.json"
+        meta_path, cases_path = directory / "meta.json", directory / "cases.jsonl"
         # cases.jsonl is not committed, so a fresh clone has runs with only meta.json and report.md
-        if (
-            not directory.name.endswith(f"-{variant}")
-            or not meta_path.exists()
-            or not (directory / "cases.jsonl").exists()
-        ):
+        if not directory.name.endswith(f"-{variant}") or not (meta_path.exists() and cases_path.exists()):
             continue
 
         meta = RunMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
         if (meta.variant, meta.gold_version, meta.dataset_version) == (variant, gold_version, dataset_version):
-            lines = (directory / "cases.jsonl").read_text(encoding="utf-8").splitlines()
+            lines = cases_path.read_text(encoding="utf-8").splitlines()
             return directory.name, [CaseRecord.model_validate_json(line) for line in lines if line]
     return None
 
@@ -176,9 +173,9 @@ def _mean(values: Sequence[int]) -> float:
 
 
 def _ex_rows(answered: Sequence[CaseRecord], key: Callable[[CaseRecord], str]) -> list[str]:
-    groups: dict[str, list[CaseRecord]] = {}
+    groups = defaultdict(list)
     for record in answered:
-        groups.setdefault(key(record), []).append(record)
+        groups[key(record)].append(record)
     return [f"| {name} | {_share(_passed(group), len(group))} |" for name, group in sorted(groups.items())]
 
 
@@ -187,14 +184,14 @@ def _percentile_s(values: Sequence[int], fraction: float) -> float:
     return ranked[max(math.ceil(fraction * len(ranked)) - 1, 0)] / 1000
 
 
-def _latency_lines(records: Sequence[CaseRecord]) -> list[str]:
+def _latency_line(records: Sequence[CaseRecord]) -> str:
     latencies = [r.latency_ms for r in records]
     if not latencies:
-        return ["Latency: n/a"]
-    return [
+        return "Latency: n/a"
+    return (
         f"Latency: p50 {_percentile_s(latencies, 0.5):.1f} s (target {P50_TARGET_S} s), "
         f"p95 {_percentile_s(latencies, 0.95):.1f} s (target {P95_TARGET_S} s)"
-    ]
+    )
 
 
 def _cost_line(records: Sequence[CaseRecord]) -> str:
@@ -207,9 +204,9 @@ def _cost_line(records: Sequence[CaseRecord]) -> str:
     return f"Cost: mean EUR {mean:.4f} per case, total EUR {total:.4f}"
 
 
-def _recall_lines(records: Sequence[CaseRecord]) -> list[str]:
+def _recall_line(records: Sequence[CaseRecord]) -> str:
     measured = [r.schema_recall for r in records if r.schema_recall is not None]
-    return [f"Schema recall: {_share(sum(measured), len(measured))}"]
+    return f"Schema recall: {_share(sum(measured), len(measured))}"
 
 
 def _failing_lines(records: Sequence[CaseRecord]) -> list[str]:
@@ -255,5 +252,5 @@ def _case_results(records: Sequence[CaseRecord]) -> dict[str, bool]:
 
 
 def _ex(records: Sequence[CaseRecord]) -> float:
-    answered = [r for r in records if r.expected_outcome == "answered"]
-    return 100 * _passed(answered) / len(answered) if answered else 0.0
+    answered = [r.passed for r in records if r.expected_outcome == "answered"]
+    return 100 * sum(answered) / len(answered) if answered else 0.0

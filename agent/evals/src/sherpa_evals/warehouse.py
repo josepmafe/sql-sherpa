@@ -16,6 +16,8 @@ from sherpa_evals.cases import static_problems
 from sherpa_evals.compare import Result, compare
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sherpa_mcp.examples import ExampleIndex
 
     from sherpa_evals.cases import GoldCase, GoldSet
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 EVAL_STATEMENT_TIMEOUT: Final = "30s"  # a gold query may be slower than the agent's 5 s (§7.2)
 CONNECT_TIMEOUT_SECONDS: Final = 10
 SESSION_OPTIONS: Final = f"-c default_transaction_read_only=on -c statement_timeout={EVAL_STATEMENT_TIMEOUT}"
+TABLE_HEADER: Final = "| case | problems | rows | closest example | score |\n| --- | --- | --- | --- | --- |"
 NO_ROWS: Final = "returns no rows"
 NOT_DETERMINISTIC: Final = "not deterministic: {diff}"
 RECONCILE_DISAGREES: Final = "reconcile_sql disagrees: {diff}"
@@ -97,6 +100,20 @@ async def check_gold(
     gold: GoldSet, db: EvalDatabase, visible_marts: frozenset[str], examples: ExampleIndex
 ) -> tuple[CheckRow, ...]:
     return tuple([await _check_case(case, db, visible_marts, examples) for case in gold.cases])
+
+
+def has_problems(rows: Sequence[CheckRow]) -> bool:
+    return any(row.problems for row in rows)
+
+
+def render_table(rows: Sequence[CheckRow]) -> str:
+    lines = [TABLE_HEADER]
+    for row in rows:
+        problems = "; ".join(row.problems) or "-"
+        count = "-" if row.rows is None else str(row.rows)
+        cells = (row.case_id, problems, count, row.closest_example or "-", f"{row.closest_score:.2f}")
+        lines.append("| " + " | ".join(cell.replace("|", "\\|").replace("\n", " ") for cell in cells) + " |")
+    return "\n".join(lines)
 
 
 async def _check_case(

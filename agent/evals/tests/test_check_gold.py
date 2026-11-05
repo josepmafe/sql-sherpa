@@ -7,8 +7,7 @@ import pytest
 from sherpa_evals import run
 from sherpa_evals.cases import GoldSet
 from sherpa_evals.compare import Result
-from sherpa_evals.run import has_problems
-from sherpa_evals.warehouse import CheckRow, EvalDatabase, EvalSqlError, check_gold
+from sherpa_evals.warehouse import CheckRow, EvalDatabase, EvalSqlError, check_gold, has_problems
 from sherpa_mcp.examples import Example, ExampleIndex
 from typer.testing import CliRunner
 
