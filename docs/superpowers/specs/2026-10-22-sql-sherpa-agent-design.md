@@ -465,3 +465,4 @@ Everything the agent needs from the warehouse is defined there, not here.
 - Multi-turn follow-ups ("now only Germany"), reusing the previous `Interpretation`.
 - Saving accepted analyst queries as new few-shot examples (with review).
 - Explaining an existing SQL query in plain language (SQL → words), for the UI's Explorer.
+- Tie `dataset_version` to the data: a small fingerprint stored beside it in `cases.yaml` (for example `max(order_date)`, `count(*)`, `sum(net_revenue)` of `marts.fct_orders`) that `--check-gold` and the runner compare, so a rebuild with changed code cannot go unnoticed. Today `dataset_version` is a process rule (§7.0), and a rebuild is visible only through the rationales' quoted numbers and a human check.

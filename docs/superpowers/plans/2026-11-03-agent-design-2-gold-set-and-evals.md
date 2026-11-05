@@ -500,4 +500,21 @@ The CLI prints a markdown table (case, problems, rows, closest example, score) a
   - adds the `AgentService` answerer to `ANSWERERS`, mapping `PlanOutcome`/`AnswerOutcome` and `RunStats` to `Attempt`, with tokens per model
   - creates `FINDINGS.md` with the first baseline
   - the fabricated-number guard must not read the digit runs of a hash as numbers (agent spec §5.2)
-- **agent-design-4 (tranche 2):** the owner's PR #20 questions ("customers whose last name starts with A?", "most common first name?") are candidates for its `unanswerable` slot or for later techniques. Its lead questions count by `lead_id` and join customers through `converted_customer_id`, never through a hash (data-platform-4 notes).
+  - `CaseRecord` records the unmapped-column count per case; the report lists the passing cases that had unmapped agent columns (hedged answers pass single-row cases: 26 of 34 answered cases are single-row)
+  - the runner tags each attempt's spans with `eval_run_id` and `case_id`; the case id is not passed to the answerer, because the ids name the category
+  - an answerer exception or a hung call fails that case (outcome `failed`, with a timeout) and does not abort the run
+  - `previous_run` skips partial (`--case`/`--category`) runs and prints the baseline's age
+  - protocol fields are added when needed: `sql_revision`, `last_sql` on failure, linked tables for `v2_linking`
+  - answerer factories get only what they need: not the gold SQL, and not the admin credentials (the admin settings become optional, required only for `--check-gold`)
+  - design decision: the stdio MCP server cannot run under the Windows selector event loop that psycopg async needs (asyncio subprocesses raise `NotImplementedError`); choose between HTTP MCP for evals and sync psycopg on the default loop
+  - prompt conventions that keep format failures out of the score: do not round in SQL (round in `answer_text`); periods as their first date; durations as numbers; one row per group; "`as_of_date` is today" (3 of 6 time cases flip if it is read as the last complete day); match names case-insensitively with `lower(column) = 'literal'`, so no entity resolution is needed
+  - FINDINGS notes that several gold cases are one substitution from a few-shot example's SQL, so they partly measure example retrieval
+- **agent-design-4 (tranche 2):**
+  - the owner's PR #20 questions ("customers whose last name starts with A?", "most common first name?") are candidates for its `unanswerable` slot or for later techniques. Its lead questions count by `lead_id` and join customers through `converted_customer_id`, never through a hash (data-platform-4 notes)
+  - `reconcile_sql` for metrics-005, metrics-006 and metrics-007 (raw queries verified by the analytics reviewer)
+  - a Black Friday week case (`dim_date.is_black_friday_week`); the 'Black Friday 20%' promotion has only 39 redemptions among 435 non-cancelled Black Friday week orders
+  - an `allow_empty` case says in its rationale why a mistyped filter cannot produce the same emptiness
+  - more ordered, tie-heavy and rounding-sensitive cases (tranche 1 has one ordered case in 34)
+  - cases where dropping the cancelled-orders filter changes the answer beyond net-revenue questions
+  - relative-time cases whose `as_of_date` is not a quarter, month or year end
+- **agent-design-5 (first milestone to promote with `--repeat 2`):** the report shows the flip count across repeats (`unstable across repeats: ids (n)`) and a repeat column in the failing-cases table, because repeats are ANDed per case.
