@@ -365,7 +365,7 @@ uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--
 - **Per-case record** (`cases.jsonl`): case id, outcome type, pass/fail, the diff summary on failure, agent SQL, `RunStats`, schema recall (gold `tables` ⊆ tables the agent queried), trace id.
 - **Report** (`runs/<…>/report.md`): execution accuracy (EX) overall and per category; outcome-type accuracy; p50/p95 latency; mean and total cost; mean tool calls and SQL attempts; schema recall; failing case ids with trace links; and the diff against the previous run of the current default variant (it reads that run's `meta.json` and its local `cases.jsonl`, so a fresh clone reports no earlier run).
 - **Cost** = tokens × `prices.yaml` (EUR per million input/output tokens per model ID, maintained by hand). A model missing from it makes the run's cost unknown, which the report says, rather than 0.
-- Budget for code: `run.py` + `compare.py` + `report.py` together stay **under ~400 lines**. No eval framework dependency.
+- Budget for code: `run.py` + `compare.py` + `report.py` together stay **under ~600 lines** (the report's sections, the per-case scoring and the CLI are the bulk). No eval framework dependency.
 
 ### 7.3 Budgets (reported, not enforced)
 p50 latency < 20 s, p95 < 60 s per question; mean cost per question is reported, with no fixed target. These are targets to compare variants against, not gates.
