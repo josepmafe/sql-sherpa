@@ -1,6 +1,7 @@
 # Gold set (agent spec §7.1). Tranche 1 reads only the data-platform-2 marts. Dates are absolute in 2025, except in
 # `time`, whose SQL is relative to as_of_date = (select max(order_date) from marts.fct_orders), 2025-12-31 on the
 # frozen sherpa_eval data (agent spec §7.0). Metric definitions: data platform spec §6.6; defaults: agent spec §5.3.
+# Text filters in gold SQL are case-insensitive: lower(column) = 'literal'.
 gold_version: 1
 dataset_version: 1
 cases:
@@ -15,7 +16,7 @@ cases:
       from marts.fct_order_items as i
       inner join marts.dim_products as p on p.variant_id = i.variant_id
       where
-          p.product_name = 'Meridian Trail Sleeping Bags'
+          lower(p.product_name) = 'meridian trail sleeping bags'
           and not i.is_cancelled
           and i.order_date >= date '2025-01-01'
           and i.order_date < date '2025-07-01'
@@ -38,7 +39,7 @@ cases:
       from marts.fct_order_items as i
       inner join marts.dim_products as p on p.variant_id = i.variant_id
       where
-          p.brand = 'Nordvik'
+          lower(p.brand) = 'nordvik'
           and not i.is_cancelled
           and i.order_date >= date '2025-04-01'
           and i.order_date < date '2025-07-01'
@@ -60,7 +61,7 @@ cases:
       from marts.fct_order_items as i
       inner join marts.dim_products as p on p.variant_id = i.variant_id
       where
-          p.category_l2 = 'Running Shoes'
+          lower(p.category_l2) = 'running shoes'
           and not i.is_cancelled
           and i.order_date >= date '2025-07-01'
           and i.order_date < date '2025-10-01'
@@ -82,7 +83,7 @@ cases:
       select sum(net_revenue) as net_revenue
       from marts.fct_orders
       where
-          ship_country_code = 'GB'
+          lower(ship_country_code) = 'gb'
           and not is_cancelled
           and order_date >= date '2025-10-01'
           and order_date < date '2025-11-01'
@@ -94,8 +95,8 @@ cases:
           inner join raw_shop.addresses as a on a.id = o.shipping_address_id
           where
               not c.is_test_account
-              and o.status <> 'cancelled'
-              and upper(trim(a.country_code)) in ('GB', 'UK')
+              and lower(o.status) <> 'cancelled'
+              and lower(trim(a.country_code)) in ('gb', 'uk')
               and (o.placed_at at time zone 'UTC')::date >= date '2025-10-01'
               and (o.placed_at at time zone 'UTC')::date < date '2025-11-01'
       )
@@ -106,7 +107,7 @@ cases:
           - (
               select coalesce(sum(round(amount / 1.2, 2)), 0)
               from raw_shop.refunds
-              where reason in ('return', 'goodwill') and order_id in (select id from orders)
+              where lower(reason) in ('return', 'goodwill') and order_id in (select id from orders)
           ) as net_revenue
     rationale: >-
       "UK" is the ISO code GB (data platform spec §4.4 R4, §6.1 country_code_variants: the raw data also holds 'UK',
@@ -126,7 +127,7 @@ cases:
       select count(*) as customers
       from marts.dim_customers
       where
-          country_code = 'AT'
+          lower(country_code) = 'at'
           and not is_deleted
           and order_count >= 1
     rationale: >-
@@ -147,7 +148,7 @@ cases:
       select sum(i.returned_quantity) as returned_units
       from marts.fct_order_items as i
       inner join marts.dim_products as p on p.variant_id = i.variant_id
-      where p.product_name = 'Halden Max Dumbbells'
+      where lower(p.product_name) = 'halden max dumbbells'
     rationale: >-
       "Halden Max" alone is ambiguous (Halden Max Beanies, Duffel Bags, Dumbbells and Headbands exist); with
       "dumbbells" it grounds to 'Halden Max Dumbbells'. Units sent back are the lines' returned_quantity, the
@@ -160,7 +161,7 @@ cases:
 
   - id: values-007
     category: values
-    question: What gross margin did ironpeak equipment earn in 2025?
+    question: What gross margin did ironpeak products in the equipment category earn in 2025?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -168,14 +169,15 @@ cases:
       from marts.fct_order_items as i
       inner join marts.dim_products as p on p.variant_id = i.variant_id
       where
-          p.brand = 'Ironpeak'
-          and p.category_l1 = 'Equipment'
+          lower(p.brand) = 'ironpeak'
+          and lower(p.category_l1) = 'equipment'
           and not i.is_cancelled
           and i.order_date >= date '2025-01-01'
           and i.order_date < date '2026-01-01'
     rationale: >-
       The lower-case brand "ironpeak" grounds to 'Ironpeak' and "equipment" to the level-1 category 'Equipment'
-      (Ironpeak also sells footwear and apparel). Line gross_margin per data platform spec §6.5 fct_order_items and
+      (Ironpeak also sells footwear and apparel); the filters are case-insensitive, and no two brands or categories
+      differ only by case, so lower() merges nothing. Line gross_margin per data platform spec §6.5 fct_order_items and
       §6.6 cogs / gross_margin: net amount minus return refunds minus the cost of sale not recovered; it is 0 on
       cancelled orders anyway.
     tables: [fct_order_items, dim_products]
@@ -192,7 +194,7 @@ cases:
       from marts.fct_order_discounts as d
       inner join marts.dim_promotions as p on p.promotion_id = d.promotion_id
       where
-          p.promotion_name = 'Christmas Newsletter 2025 30%'
+          lower(p.promotion_name) = 'christmas newsletter 2025 30%'
           and not d.is_cancelled
     rationale: >-
       "christmas newsletter promotion" grounds to the promotion 'Christmas Newsletter 2025 30%' (data platform spec
@@ -223,7 +225,7 @@ cases:
           inner join raw_shop.customers as c on c.id = o.customer_id
           where
               not c.is_test_account
-              and o.status <> 'cancelled'
+              and lower(o.status) <> 'cancelled'
               and (o.placed_at at time zone 'UTC')::date >= date '2025-05-01'
               and (o.placed_at at time zone 'UTC')::date < date '2025-06-01'
       )
@@ -234,7 +236,7 @@ cases:
           - (
               select coalesce(sum(round(amount / 1.2, 2)), 0)
               from raw_shop.refunds
-              where reason in ('return', 'goodwill') and order_id in (select id from orders)
+              where lower(reason) in ('return', 'goodwill') and order_id in (select id from orders)
           ) as net_revenue
     rationale: >-
       Unqualified "revenue" defaults to net_revenue (agent spec §5.3) and must be answered, not clarified. Net
@@ -254,7 +256,7 @@ cases:
       select sum(net_revenue) as net_revenue
       from marts.fct_orders
       where
-          sales_channel = 'app'
+          lower(sales_channel) = 'app'
           and not is_cancelled
           and order_date >= date '2025-01-01'
           and order_date < date '2025-04-01'
@@ -391,7 +393,7 @@ cases:
   # --- grain: fan-out traps ---------------------------------------------------------------------------------------
   - id: grain-001
     category: grain
-    question: How many payment attempts did we process for orders placed in March 2025, and how many of them failed?
+    question: How many payment attempts did we process for all orders placed in March 2025, cancelled ones included, and how many of them failed?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -405,7 +407,7 @@ cases:
     reconcile_sql: |
       select
           count(*) as payment_attempts,
-          count(*) filter (where p.status = 'failed') as failed_attempts
+          count(*) filter (where lower(p.status) = 'failed') as failed_attempts
       from raw_shop.payments as p
       inner join raw_shop.orders as o on o.id = p.order_id
       inner join raw_shop.customers as c on c.id = o.customer_id
@@ -416,7 +418,8 @@ cases:
     rationale: >-
       Payment grain: an order can have several payment attempts (data platform spec §4.4 R7, failed then retried, or
       split). fct_orders carries payment_count (every attempt) and failed_payment_count (§6.5 fct_orders), so
-      attempts are their sums, not a count of orders. Cancelled orders are kept: their attempts were processed. The
+      attempts are their sums, not a count of orders. Cancelled orders are included on purpose, because the question says
+      so: their attempts were processed. The
       reconcile query counts raw_shop.payments rows of non-test orders.
     tables: [fct_orders]
     status: draft
@@ -462,7 +465,7 @@ cases:
       inner join raw_shop.customers as c on c.id = o.customer_id
       where
           not c.is_test_account
-          and o.status <> 'cancelled'
+          and lower(o.status) <> 'cancelled'
           and (o.placed_at at time zone 'UTC')::date >= date '2025-01-01'
           and (o.placed_at at time zone 'UTC')::date < date '2026-01-01'
     rationale: >-
@@ -490,7 +493,7 @@ cases:
               select i.order_id
               from marts.fct_order_items as i
               inner join marts.dim_products as p on p.variant_id = i.variant_id
-              where p.category_l2 = 'Socks'
+              where lower(p.category_l2) = 'socks'
           )
     rationale: >-
       Order against line grain: shipping_amount is an order-level column (data platform spec §6.5 fct_orders), so
@@ -582,7 +585,7 @@ cases:
       select avg(order_count) as avg_orders_per_customer
       from marts.dim_customers
       where
-          acquisition_channel = 'app'
+          lower(acquisition_channel) = 'app'
           and not is_deleted
           and order_count >= 1
     rationale: >-
@@ -625,7 +628,7 @@ cases:
 
   - id: time-002
     category: time
-    question: How many orders did we receive in the past 14 days, leaving cancellations out?
+    question: How many orders did we receive in the past 14 days, and how many in the 14 days before that?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -634,16 +637,20 @@ cases:
           from marts.fct_orders
       )
 
-      select count(*) as orders
+      select
+          count(*) filter (where o.order_date > p.as_of_date - 14) as orders_past_14_days,
+          count(*) filter (where o.order_date <= p.as_of_date - 14) as orders_previous_14_days
       from marts.fct_orders as o
       inner join period as p
           on
-              o.order_date > p.as_of_date - 14
+              o.order_date > p.as_of_date - 28
               and o.order_date <= p.as_of_date
       where not o.is_cancelled
     rationale: >-
-      A rolling period: the 14 days ending at as_of_date and including it (agent spec §5.3; data platform spec §6.5
-      as_of_date), so 18 to 31 December 2025 on the frozen data, never anchored to today's date.
+      Two rolling periods ending at as_of_date (agent spec §5.3; data platform spec §6.5 as_of_date): the past 14 days
+      are 18 to 31 December 2025 (401 orders) and the 14 days before are 4 to 17 December (399 orders) on the frozen
+      data, never anchored to today's date. Cancelled orders are left out by the default (data platform spec §6.6).
+      One row with two counts.
     tables: [fct_orders]
     status: draft
     reviews: []
@@ -790,7 +797,6 @@ cases:
 
       select
           date_trunc('month', f.order_date)::date as cohort_month,
-          count(*) as first_orders,
           round(100.0 * count(*) filter (where s.order_date - f.order_date <= 90) / count(*), 2) as repeat_pct
       from first_orders as f
       left join second_orders as s on s.customer_id = f.customer_id
@@ -922,7 +928,7 @@ cases:
 
   - id: complex-005
     category: complex
-    question: Which 5 customers had the longest gap between two consecutive orders in 2025, ignoring cancelled orders? List them longest first with the gap in days.
+    question: Which 5 customers had the longest gap between two consecutive orders in 2025, ignoring cancelled orders? List them longest first with the gap in days between their order dates.
     tranche: 1
     ordered: true
     expected_outcome: answered
@@ -945,7 +951,8 @@ cases:
       limit 5
     rationale: >-
       A window per customer: the days between consecutive non-cancelled orders, in customer_order_number order
-      (data platform spec §6.5 fct_orders), then each customer's longest gap. Customers are identified by
+      (data platform spec §6.5 fct_orders), then each customer's longest gap. order_date is a date, so the gap is whole
+      days between order dates. Customers are identified by
       customer_id (§6.5 PII masking: no names). The fifth and sixth gaps differ (299 and 295 days), so the top 5 has
       no tie; ties would break by customer_id. The question asks for an order, so ordered is true.
     tables: [fct_orders]
