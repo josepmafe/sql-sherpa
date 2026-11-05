@@ -82,6 +82,7 @@ A run you only made to try something is yours to delete before committing.
 | `--check-gold` reports `returns no rows` | Fix the query, or set `allow_empty: true` when an empty result is the right answer and the rationale says why |
 | Report shows `Cost: cost unknown (no price for <model>)` | `agent/evals/prices.yaml` has no entry for that model ID; add it ([Extending the gold set](../advanced/extending-the-gold-set.md#prices)). The oracle uses no model, so its cost is 0 |
 | `Invalid value for '--concurrency': 13 is not in the range 1<=x<=12` | Lower it; the connection limit is shared with the MCP server |
+| `ValueError` / `ValidationError` traceback about a run's `meta.json` or `cases.jsonl` before any case runs | The previous-run lookup reads the newest default-variant run; delete or repair that run directory under `agent/evals/runs/` (a stale schema from an older release is the usual cause) |
 | `Invalid value for --variant` | Pass one of the names it lists (`oracle` until the agent variants exist) |
 | `no accepted gold case matches` | The `--category` or `--case` names no accepted case; `--check-gold --case <id>` also covers draft cases |
 | `too many candidate column mappings` in a failing diff | The gold result has many equal columns, so the comparison gave up; change the gold query ([Extending the gold set](../advanced/extending-the-gold-set.md#writing-a-case)) |

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
 
@@ -14,7 +15,6 @@ from sherpa_evals.compare import Result
 from sherpa_evals.run import app, run_cases
 from sherpa_evals.settings import CASES_PATH, EvalSettings
 from sherpa_evals.warehouse import EvalDatabase, EvalSqlError
-from sherpa_mcp.catalog import CatalogUnavailable, MartCatalogLoader
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
@@ -353,18 +353,16 @@ class TestEvaluate:
 
 
 class TestCheckGoldCatalog:
-    def test_a_missing_eval_catalog_names_the_fix(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def unavailable(self: MartCatalogLoader) -> None:
-            raise CatalogUnavailable("no manifest")
-
-        monkeypatch.setattr(MartCatalogLoader, "load", unavailable)
+    def test_a_missing_eval_catalog_names_the_fix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SHERPA_EVAL_TARGET_PATH", str(tmp_path))  # an empty folder: the real loader finds nothing
 
         result = CliRunner().invoke(app, ["--check-gold"])
 
+        message = " ".join(re.sub(r"[│┌┐└┘─]", " ", result.output).split())  # typer boxes and wraps the error
         assert result.exit_code == 2
-        assert "make eval-db" in result.output
-        assert "target-eval" in result.output
-        assert "make build-prod" not in result.output
+        assert "make eval-db" in message
+        assert "target-eval" in message
+        assert "make build-prod" not in message
 
 
 class TestCli:
@@ -383,6 +381,9 @@ class TestCli:
         result = CliRunner().invoke(app, ["--variant", "oracle", "--concurrency", concurrency])
 
         assert result.exit_code == exit_code
+        if exit_code == 1:
+            assert isinstance(result.exception, RuntimeError)
+            assert str(result.exception) == "past the option check"
 
 
 @pytest.mark.warehouse

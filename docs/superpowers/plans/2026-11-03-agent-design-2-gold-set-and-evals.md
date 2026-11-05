@@ -51,7 +51,7 @@ Also data platform spec §3 (the `eval` target and `make eval-db`), §6.5 and §
 - **Tranche 1 reads only the data-platform-2 marts:** `dim_customers`, `dim_products`, `dim_promotions`, `dim_date`, `fct_orders`, `fct_order_items`, `fct_order_discounts`, `fct_returns`, `fct_refunds`. It reads no `fct_sessions`, campaign, ad-spend or lead mart (tranche 2).
 - **Category counts (agent spec §7.1, tranche 1):** `values` 8, `metrics` 8, `grain` 7, `time` 6, `complex` 5, `unanswerable` 3, `clarification` 3 = **40**.
 - **Comparison rules (agent spec §7.2):**
-  - numbers rounded to 2 decimals; `NULL = NULL`; text exact; dates and timestamps as ISO strings
+  - numbers rounded to 2 decimals; `NULL = NULL`; text exact; dates and timestamps as ISO strings; a timestamp at exactly midnight UTC compares as its date
   - equal row counts
   - column names and order ignored, extra agent columns allowed
   - whole-row match under some candidate mapping, as a multiset or, when `ordered`, as a list
@@ -206,6 +206,9 @@ A gold result with zero rows matches an agent result with zero rows when the age
     - `None` never equals `Decimal("0")`
     - `date(2025, 12, 31)` gives `"2025-12-31"`
     - a `datetime` in UTC+01:00 gives its UTC ISO string
+    - an aware or naive midnight `datetime` gives the same string as its `date`
+    - a non-midnight `datetime` differs from its `date`
+    - midnight in UTC+01:00 converts first, so it stays a `datetime` (`2025-02-28T23:00:00+00:00`)
     - `"ABC"` and `"abc"` differ
   - **`TestCompare`:**
     - column permutation passes

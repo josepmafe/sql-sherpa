@@ -142,10 +142,13 @@ class _CaseScorer:
             except EvalSqlError as error:
                 return False, f"agent SQL failed: {error}"
 
+            future = self._gold_result(case)
             try:
-                gold = await self._gold_result(case)
+                gold = await future
             except EvalSqlError as error:
-                self._gold_results.pop(case.id, None)  # the next repeat of this case retries the query
+                # The next repeat retries the query; only drop the entry if no other repeat has replaced it already.
+                if self._gold_results.get(case.id) is future:
+                    del self._gold_results[case.id]
                 return False, f"gold SQL failed: {error}"
 
             comparison = compare(gold, agent, ordered=case.ordered)
@@ -229,7 +232,7 @@ async def _check_gold(case_id: str | None) -> tuple[CheckRow, ...]:
     try:
         visible = MartCatalogLoader(settings.eval_target_path).load().visible_marts()
     except CatalogUnavailable as error:
-        raise typer.BadParameter(f"{error}; {CATALOG_HINT}") from error
+        raise typer.BadParameter(CATALOG_HINT) from error
     examples = ExampleIndex.from_yaml(EXAMPLES_PATH)
     return await check_gold(gold, EvalDatabase(settings), visible, examples)
 

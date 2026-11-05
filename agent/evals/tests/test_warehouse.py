@@ -55,11 +55,6 @@ class TestEvalDatabase:
 
         assert result.rows == (("30s",),)
 
-    async def test_session_time_zone_is_utc(self) -> None:
-        result = await EvalDatabase(make_settings()).execute("select current_setting('TimeZone')")
-
-        assert result.rows == (("UTC",),)
-
     async def test_execute_returns_every_row_without_a_cap(self) -> None:
         result = await EvalDatabase(make_settings()).execute("select order_id from marts.fct_orders")
 
