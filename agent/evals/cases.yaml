@@ -26,8 +26,17 @@ cases:
       variant). Units sold are line quantities of non-cancelled orders (§6.5 cancelled orders: nothing was sold);
       the first half is 1 January to 30 June inclusive.
     tables: [fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds product name, filters non-cancelled line quantities, half-open H1 2025 bounds under 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          inclusive Jul-1 bound also gives 296, case does not test the date boundary.
 
   - id: values-002
     category: values
@@ -48,8 +57,17 @@ cases:
       spec §5.3), which data platform spec §6.6 defines over non-cancelled orders as quantity x unit price; at line
       level that is gross_amount. Q2 is 1 April to 30 June inclusive.
     tables: [fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Brand 'Nordvik', gross_revenue default for sales at line grain, excludes cancelled orders under 5.3 and
+          6.6.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: values-003
     category: values
@@ -71,8 +89,16 @@ cases:
       dim_products). Orders are counted distinct, because an order can hold several running-shoe lines (§6.5
       fct_order_items is one row per line).
     tables: [fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Maps to L2 category 'Running Shoes', counts distinct orders over line items, Q3 2025 bounds under 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: values-004
     category: values
@@ -115,8 +141,18 @@ cases:
       reconcile query recomputes it from raw_shop: gross minus order discounts minus refunds of reason return or
       goodwill without their 20% tax, test accounts out (R5).
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          UK to ISO code 'GB', sums net_revenue over non-cancelled orders, reconcile_sql computes net revenue from
+          raw_shop.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          customer country_code='GB' gives same 3293.55 as shipping country: cannot tell them apart (harmless).
 
   - id: values-005
     category: values
@@ -136,8 +172,16 @@ cases:
       dim_customers), so prospects and soft-deleted customers are out. Not a paraphrase of the few-shot "How many
       customers do we have?": the point here is the country name to code mapping on top of the default.
     tables: [dim_customers]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Austria to 'AT', customer defaults (non-deleted, order_count >= 1) under 5.3 and 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: values-006
     category: values
@@ -156,8 +200,17 @@ cases:
       fct_order_items); requested, approved or rejected returns have not come back. A cancelled order has no
       return, so no cancelled filter is needed. All the data is in 2025, so there is no date filter.
     tables: [fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds product name, sums received returned_quantity from fct_order_items without fanning out under 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          approved returns (8 units) are a defensible reading of "sent back"; marts reach only received per product.
 
   - id: values-007
     category: values
@@ -181,8 +234,23 @@ cases:
       §6.6 cogs / gross_margin: net amount minus return refunds minus the cost of sale not recovered; it is 0 on
       cancelled orders anyway.
     tables: [fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds brand and L1 category, sums line-level gross_margin, excludes cancelled orders under 6.5 and 6.6.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          "ironpeak equipment" reads as the whole brand as naturally as the Equipment category; whole brand gives
+          10583.85, Equipment category 7494.77 (gold). Reword to "What gross margin did ironpeak products in the
+          equipment category earn in 2025?" and keep the SQL.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
 
   - id: values-008
     category: values
@@ -202,8 +270,17 @@ cases:
       uses a promotion at most once, so count(*) gives the same. dim_promotions.redemption_count would include the
       cancelled orders the question leaves out.
     tables: [fct_order_discounts, dim_promotions]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds promotion name, counts distinct order IDs on fct_order_discounts, excludes cancelled orders under
+          6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   # --- metrics: the §6.6 definitions and the §5.3 defaults ------------------------------------------------------
   - id: metrics-001
@@ -244,8 +321,17 @@ cases:
       refunds attributed to the order date. The reconcile query rebuilds it from raw_shop with test accounts out
       (§4.4 R5) and refunds of reason return or goodwill without their 20% tax (§6.6 refunded_revenue).
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          net_revenue default for unqualified revenue over non-cancelled orders; reconcile_sql agrees under 5.3,
+          6.6, R5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: metrics-002
     category: metrics
@@ -265,8 +351,16 @@ cases:
       §6.5 fct_orders; marketing_channel 'app' is the same set, §6.5 marketing channel of an order). Net revenue per
       §6.6 over non-cancelled orders; Q1 is 1 January to 31 March inclusive.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Revenue defaults to net_revenue, sales_channel 'app', excludes cancelled orders for Q1 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: metrics-003
     category: metrics
@@ -286,8 +380,16 @@ cases:
       one discount with amount > 0 (data platform spec §6.6 "Has a discount"), so orders whose only promotion is
       free shipping (amount 0.00) are not discounted. Joining fct_order_discounts without that rule counts them.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Revenue defaults to net_revenue; has_discount excludes zero-amount free shipping orders under 5.3 and 6.6.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: metrics-004
     category: metrics
@@ -307,8 +409,17 @@ cases:
       denominator understates the share. Expressed as a percentage so the comparison's 2-decimal rounding (agent
       spec §7.2) tells close answers apart.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Non-cancelled filter on gross_revenue denominator and net_revenue numerator, percentage rounded to 2
+          decimals.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: metrics-005
     category: metrics
@@ -328,8 +439,16 @@ cases:
       cancellation refunds; fct_orders.refunded_amount (what was paid back, tax and cancellations included) is a
       different figure.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Refunds attributed to order date via fct_orders.refunded_revenue for non-cancelled September orders.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: metrics-006
     category: metrics
@@ -347,8 +466,18 @@ cases:
       §6.6 refunded_revenue), unlike fct_orders, which uses the order date. revenue_amount removes the tax and is 0
       for cancellation refunds; amount is the money paid back.
     tables: [fct_refunds]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Refunds attributed to payout date via fct_refunds.revenue_amount for October 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          round(sum(amount excl. cancellations)/1.2,2)=4557.86 fails by one cent vs revenue_amount 4557.85;
+          acceptable.
 
   - id: metrics-007
     category: metrics
@@ -366,8 +495,16 @@ cases:
       AOV per data platform spec §6.6: net_revenue over the count of non-cancelled orders, fully refunded orders
       included. avg(order_total) (tax and shipping included) or gross revenue per order are wrong.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          AOV as net_revenue divided by count of non-cancelled orders in November 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: metrics-008
     category: metrics
@@ -387,8 +524,17 @@ cases:
       fct_order_items). Both are 0 on cancelled orders, so the filter does not change the ratio. Q4 is 1 October to
       31 December inclusive; a percentage, rounded to 2 decimals.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Gross margin percentage of net revenue at order level in fct_orders, excludes cancelled orders for Q4
+          2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   # --- grain: fan-out traps ---------------------------------------------------------------------------------------
   - id: grain-001
@@ -421,8 +567,24 @@ cases:
       are their sums, not a count of orders. Cancelled orders are included on purpose, because the question says so:
       their attempts were processed. The reconcile query counts raw_shop.payments rows of non-test orders.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Order-level payment attempts and failed counts without line fan-out; reconcile_sql agrees over
+          raw_shop.payments (R7, 6.5).
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold (689, 17), reconcile agrees. Excluding cancelled orders gives (652, 17): two readings. Few-shots
+          exclude cancelled "as in every metric". Reword to "How many payment attempts did we process for all orders
+          placed in March 2025, cancelled ones included, and how many of them failed?"
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
 
   - id: grain-002
     category: grain
@@ -473,8 +635,17 @@ cases:
       rows sum to fct_orders.discount_amount (§6.5 fct_order_discounts). A free-shipping promotion (amount 0) is a
       promotion, so it counts towards the two. The reconcile query finds the same orders in raw_shop.
     tables: [fct_order_discounts, fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Pre-aggregates fct_order_discounts to order grain before joining fct_orders; reconcile_sql agrees (R8,
+          6.5).
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: grain-003
     category: grain
@@ -500,8 +671,16 @@ cases:
       sock line. Socks is a level-2 category with no level-3 leaf (§6.5 dim_products: category_l3 is null when the
       leaf is L2).
     tables: [fct_orders, fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Avoids fan-out of order shipping_amount with an IN subquery against fct_order_items.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: grain-004
     category: grain
@@ -528,8 +707,16 @@ cases:
       order instead of distinct product_id overcounts (3,651 orders with two or more lines, 3,638 with two or more
       products).
     tables: [fct_order_items]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Groups by order_id and tests count(distinct product_id) >= 2 rather than distinct variants.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: grain-005
     category: grain
@@ -551,8 +738,16 @@ cases:
       soft-deleted customer's email is NULL (§6.5 global rules, R6) and is not an address, which also matches the
       default customer count (agent spec §5.3).
     tables: [fct_orders, dim_customers]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Counts distinct masked customer emails across orders, soft-deleted null emails excluded naturally.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: grain-006
     category: grain
@@ -572,8 +767,16 @@ cases:
       'Free Shipping Q2'), so fct_orders.has_discount, which leaves them out (§6.6 "Has a discount"), answers a
       different question.
     tables: [fct_order_discounts]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Queries fct_order_discounts to capture all promotions including zero-amount free shipping.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: grain-007
     category: grain
@@ -593,8 +796,16 @@ cases:
       in fct_orders (marketing_channel 'app') answers a different question, since app-acquired customers also order
       on the web. Customers default to non-deleted with at least one order (agent spec §5.3).
     tables: [dim_customers]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Averages order_count per customer for acquisition_channel 'app' on dim_customers.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   # --- time: relative periods against as_of_date -------------------------------------------------------------------
   - id: time-001
@@ -622,8 +833,18 @@ cases:
       as_of_date = max(order_date)), so Q3 2025 on the frozen data, not the last 90 days. Unqualified "revenue" is
       net_revenue (§5.3), over non-cancelled orders (§6.6).
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Previous calendar quarter relative to max(order_date), net_revenue over non-cancelled orders.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          Q4 (last complete quarter) is a reasonable reading that fails; rationale should name the Q4 trap
+          explicitly.
 
   - id: time-002
     category: time
@@ -650,8 +871,24 @@ cases:
       are 18 to 31 December 2025 (401 orders) and the 14 days before are 4 to 17 December (399 orders) on the frozen
       data, never anchored to today's date. The question itself leaves cancelled orders out. One row with two counts.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Rolling 14-day window anchored to max(order_date) inclusive, cancelled filtered.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold 401. The question paraphrases the few-shot "How many orders did we get in the last 30 days?" (30
+          becomes 14): breaks checklist item 9. Change to a rolling question the example does not template, e.g.
+          past 14 days and the 14 days before that, cancellations left out, gold returning both counts (18-31 Dec
+          and 4-17 Dec).
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
 
   - id: time-003
     category: time
@@ -677,8 +914,17 @@ cases:
       whole dataset (which starts on 1 January 2025) nor the previous calendar quarter or month. "Sales" defaults to
       gross_revenue (§5.3), over non-cancelled orders (data platform spec §6.6).
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Quarter-to-date relative to max(order_date), gross_revenue default for sales, excludes cancelled orders.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          as_of_date is a quarter end, quarter-to-date equals whole Q4; those readings cannot be told apart.
 
   - id: time-004
     category: time
@@ -706,8 +952,16 @@ cases:
       as_of_date's month, December 2025, so June to November 2025.
       Unqualified "revenue" is net_revenue over non-cancelled orders (data platform spec §6.6). Months are dates.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Six full calendar months before the month of max(order_date), month truncated to date, net_revenue.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: time-005
     category: time
@@ -735,8 +989,16 @@ cases:
       (2025-12-31, a Wednesday) sits in an unfinished week, so the four full weeks start on 1, 8, 15 and 22
       December 2025. A rolling 28 days would be a different answer. Week starts are dates.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          ISO Monday-to-Sunday week truncation for the four completed weeks before the current week start.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: time-006
     category: time
@@ -764,8 +1026,17 @@ cases:
       §6.5 as_of_date), not the last calendar quarter. Unqualified "revenue" is net_revenue (§5.3), per
       sales_channel, web or app (§6.5 fct_orders).
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Trailing 90 days inclusive up to max(order_date), net_revenue by sales_channel.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted. a
+          pivoted one-row answer (web, app columns) fails on row count.
 
   # --- complex: CTEs, window functions, a cohort ---------------------------------------------------------------
   - id: complex-001
@@ -805,8 +1076,24 @@ cases:
       Within 90 days means at most 90 days between the two order dates, the same day included. The question is
       about orders, so soft-deleted customers' orders stay in. Percentages, rounded to 2 decimals.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Monthly first-order cohorts, 90-day retention via customer_order_number = 2, no fan-out.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold returns an unrequested first_orders column (142, 215, 214, 232, 212, 209); every gold column must be
+          matched by an agent column, so a correct month + percentage answer fails. Drop `count(*) as first_orders,`
+          from the select, leaving cohort_month and repeat_pct (Jan 77.46, Feb 65.58, Mar 65.89, Apr 62.50, May
+          43.87, Jun 42.58).
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
 
   - id: complex-002
     category: complex
@@ -842,8 +1129,16 @@ cases:
       late November (the window is computed before the December filter). Every day of 2025 has non-cancelled
       orders, so 7 rows are 7 days. Net revenue per data platform spec §6.6.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          7-day moving average over daily net_revenue computed before filtering to December 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: complex-003
     category: complex
@@ -884,8 +1179,18 @@ cases:
       §6.5 fct_order_items, §6.6), grouped by product_id because dim_products has one row per variant; ties broken
       by product_id. Not a paraphrase of the few-shot top-10 products: this ranks within each brand.
     tables: [fct_order_items, dim_products]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Line net revenue aggregated to product level, partitioned by brand, rank ties broken by product_id.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          ranking by net_amount without refunds or by gross gives identical winners (question names net revenue;
+          acceptable).
 
   - id: complex-004
     category: complex
@@ -921,8 +1226,17 @@ cases:
       compares with January. Unqualified "revenue" is net_revenue (agent spec §5.3; data platform spec §6.6).
       Percentages, rounded to 2 decimals; months are dates.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Month-over-month net revenue growth percentage via lag over monthly aggregates before filtering February
+          to December.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: complex-005
     category: complex
@@ -954,8 +1268,24 @@ cases:
       gaps differ (299 and 295 days), so the top 5 has no tie; ties would break by customer_id. The question asks for an
       order, so ordered is true.
     tables: [fct_orders]
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Order intervals via customer_order_number, ordered true for longest first, limit ties broken by
+          customer_id.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold (6,330),(33,326),(147,305),(56,302),(42,299); no tie at 6th (295). Elapsed time on placed_at gives
+          329.8 days for customer 6 (extract(day) 329), failing a defensible reading. Reword the end to "...with the
+          gap in days between their order dates".
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
 
   # --- unanswerable -----------------------------------------------------------------------------------------------
   - id: unanswerable-001
@@ -967,8 +1297,16 @@ cases:
     rationale: >-
       Inventory is not in the warehouse: no source or mart holds stock levels (data platform spec §4.1, §6.5). The
       product exists, so the refusal must come from the missing data, not a missing value.
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Inventory and stock levels are not tracked in the warehouse.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: unanswerable-002
     category: unanswerable
@@ -980,8 +1318,16 @@ cases:
       dim_customers holds the email only as a salted 32-character hash (data platform spec §6.5 PII masking): a
       pattern such as LIKE '%@gmail.com' gives meaningless results, and questions about email domains cannot be
       answered (agent spec §7.1 unanswerable).
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Emails are salted hashes, domain-level patterns cannot be queried.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: unanswerable-003
     category: unanswerable
@@ -993,8 +1339,16 @@ cases:
       A write request: the agent only reads, through a read-only role and session (agent spec §4.2, §5.3
       out-of-scope questions). The order exists (delivered), so the refusal must come from the write, not a
       missing order.
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Write request outside the agent's read-only scope.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   # --- clarification: ambiguous with no documented default ------------------------------------------------------
   - id: clarification-001
@@ -1006,8 +1360,16 @@ cases:
     rationale: >-
       "Best" has no documented default (agent spec §5.3): by lifetime net revenue, order count, recency or VIP flag
       each gives a different list. The spec names this very question.
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          'Best customers' lacks a documented default metric.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: clarification-002
     category: clarification
@@ -1018,8 +1380,16 @@ cases:
     rationale: >-
       No metric is named and "performing" has no documented default (agent spec §5.3, like "top performers"): units
       sold, net revenue, gross margin or return rate each rank products differently, and the period is open too.
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          'Performing worst' has neither a documented default metric nor a timeframe.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
 
   - id: clarification-003
     category: clarification
@@ -1031,5 +1401,13 @@ cases:
       "Worked best" has no documented default (agent spec §5.3): redemptions, discount granted, net revenue of the
       orders that used it, or discount per order each rank the promotions differently (data platform spec §6.5
       dim_promotions, fct_order_discounts).
-    status: draft
-    reviews: []
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          'Worked best' for promotions lacks a documented default metric.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
