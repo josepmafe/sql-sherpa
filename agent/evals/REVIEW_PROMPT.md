@@ -55,6 +55,8 @@ only the syntax: a gold query that runs but answers a slightly different questio
 7. **`tables`** lists exactly the marts the gold SQL reads.
 8. **`expected_outcome`** is right.
 9. **Not a paraphrase** of a few-shot example's question.
+10. **`reconcile_sql`, when present,** agrees in meaning with the gold SQL: the same period, filters and metric,
+    rebuilt from the raw schemas (test accounts removed there, since only the marts exclude them).
 
 Also say when the rationale is wrong or does not cite the spec section it relies on.
 

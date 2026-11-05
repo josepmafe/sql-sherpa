@@ -650,7 +650,7 @@ cases:
 
   - id: time-003
     category: time
-    question: What are our sales so far this year?
+    question: What have our sales been since the start of this quarter?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -663,12 +663,14 @@ cases:
       from marts.fct_orders as o
       inner join period as p
           on
-              o.order_date >= date_trunc('year', p.as_of_date)::date
+              o.order_date >= date_trunc('quarter', p.as_of_date)::date
               and o.order_date <= p.as_of_date
       where not o.is_cancelled
     rationale: >-
-      Year to date runs from 1 January of as_of_date's year to as_of_date (agent spec §5.3; data platform spec §6.5
-      as_of_date). "Sales" defaults to gross_revenue (§5.3), over non-cancelled orders (data platform spec §6.6).
+      Quarter to date runs from the first day of as_of_date's calendar quarter to as_of_date, inclusive (agent spec
+      §5.3; data platform spec §6.5 as_of_date), so 1 October to 31 December 2025 on the frozen data: neither the
+      whole dataset (which starts on 1 January 2025) nor the previous calendar quarter or month. "Sales" defaults to
+      gross_revenue (§5.3), over non-cancelled orders (data platform spec §6.6).
     tables: [fct_orders]
     status: draft
     reviews: []
