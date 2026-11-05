@@ -1,0 +1,1441 @@
+# Gold set (agent spec §7.1). Tranche 1 reads only the data-platform-2 marts. Dates are absolute in 2025, except in
+# `time`, whose SQL is relative to as_of_date = (select max(order_date) from marts.fct_orders), 2025-12-31 on the
+# frozen sherpa_eval data (agent spec §7.0). Metric definitions: data platform spec §6.6; defaults: agent spec §5.3.
+# Text filters in gold_sql and reconcile_sql are case-insensitive: lower(column) = 'literal'.
+gold_version: 1
+dataset_version: 1
+cases:
+  # --- values: grounding noisy or partial names in the data -----------------------------------------------------
+  - id: values-001
+    category: values
+    question: How many Meridian Trail sleeping bags did we sell in the first half of 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(i.quantity) as units
+      from marts.fct_order_items as i
+      inner join marts.dim_products as p on p.variant_id = i.variant_id
+      where
+          lower(p.product_name) = 'meridian trail sleeping bags'
+          and not i.is_cancelled
+          and i.order_date >= date '2025-01-01'
+          and i.order_date < date '2025-07-01'
+    rationale: >-
+      Grounds the singular, partial "Meridian Trail sleeping bags" to the product name 'Meridian Trail Sleeping Bags'
+      (data platform spec §6.5 dim_products, one row per variant, so the filter is on the product name, not a
+      variant). Units sold are line quantities of non-cancelled orders (§6.5 cancelled orders: nothing was sold);
+      the first half is 1 January to 30 June inclusive.
+    tables: [fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds product name, filters non-cancelled line quantities, half-open H1 2025 bounds under 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          inclusive Jul-1 bound also gives 296, case does not test the date boundary.
+
+  - id: values-002
+    category: values
+    question: What were sales for the nordvick brand in Q2 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(i.gross_amount) as sales
+      from marts.fct_order_items as i
+      inner join marts.dim_products as p on p.variant_id = i.variant_id
+      where
+          lower(p.brand) = 'nordvik'
+          and not i.is_cancelled
+          and i.order_date >= date '2025-04-01'
+          and i.order_date < date '2025-07-01'
+    rationale: >-
+      The misspelt, lower-case "nordvick" grounds to the brand 'Nordvik'. "Sales" defaults to gross_revenue (agent
+      spec §5.3), which data platform spec §6.6 defines over non-cancelled orders as quantity x unit price; at line
+      level that is gross_amount. Q2 is 1 April to 30 June inclusive.
+    tables: [fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Brand 'Nordvik', gross_revenue default for sales at line grain, excludes cancelled orders under 5.3 and
+          6.6.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: values-003
+    category: values
+    question: How many orders included running shoes in Q3 2025, not counting cancelled orders?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select count(distinct i.order_id) as orders
+      from marts.fct_order_items as i
+      inner join marts.dim_products as p on p.variant_id = i.variant_id
+      where
+          lower(p.category_l2) = 'running shoes'
+          and not i.is_cancelled
+          and i.order_date >= date '2025-07-01'
+          and i.order_date < date '2025-10-01'
+    rationale: >-
+      "Running shoes" grounds to the level-2 category 'Running Shoes' (Footwear > Running Shoes, which holds Racing
+      Flats, Road Running and Trail Running), not to one of its level-3 leaves (data platform spec §6.5
+      dim_products). Orders are counted distinct, because an order can hold several running-shoe lines (§6.5
+      fct_order_items is one row per line).
+    tables: [fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Maps to L2 category 'Running Shoes', counts distinct orders over line items, Q3 2025 bounds under 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: values-004
+    category: values
+    question: What was net revenue from orders shipped to the UK in October 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(net_revenue) as net_revenue
+      from marts.fct_orders
+      where
+          lower(ship_country_code) = 'gb'
+          and not is_cancelled
+          and order_date >= date '2025-10-01'
+          and order_date < date '2025-11-01'
+    reconcile_sql: |
+      with orders as (
+          select o.id
+          from raw_shop.orders as o
+          inner join raw_shop.customers as c on c.id = o.customer_id
+          inner join raw_shop.addresses as a on a.id = o.shipping_address_id
+          where
+              not c.is_test_account
+              and lower(o.status) <> 'cancelled'
+              and lower(trim(a.country_code)) in ('gb', 'uk')
+              and (o.placed_at at time zone 'UTC')::date >= date '2025-10-01'
+              and (o.placed_at at time zone 'UTC')::date < date '2025-11-01'
+      )
+
+      select
+          (select sum(quantity * unit_price) from raw_shop.order_items where order_id in (select id from orders))
+          - (select coalesce(sum(amount), 0) from raw_shop.order_discounts where order_id in (select id from orders))
+          - (
+              select coalesce(sum(round(amount / 1.2, 2)), 0)
+              from raw_shop.refunds
+              where lower(reason) in ('return', 'goodwill') and order_id in (select id from orders)
+          ) as net_revenue
+    rationale: >-
+      "UK" is the ISO code GB (data platform spec §4.4 R4, §6.1 country_code_variants: the raw data also holds 'UK',
+      'uk' and 'gb'). Net revenue per §6.6, over non-cancelled orders with refunds attributed to the order date. The
+      reconcile query recomputes it from raw_shop: gross minus order discounts minus refunds of reason return or
+      goodwill without their 20% tax, test accounts out (R5).
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          UK to ISO code 'GB', sums net_revenue over non-cancelled orders, reconcile_sql computes net revenue from
+          raw_shop.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          customer country_code='GB' gives same 3293.55 as shipping country: cannot tell them apart (harmless).
+
+  - id: values-005
+    category: values
+    question: How many of our customers live in Austria?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select count(*) as customers
+      from marts.dim_customers
+      where
+          lower(country_code) = 'at'
+          and not is_deleted
+          and order_count >= 1
+    rationale: >-
+      Austria maps to the code AT (data platform spec §6.1 countries). "Customers" defaults to non-deleted customers
+      with at least one non-cancelled order (agent spec §5.3; order_count counts only those, data platform spec §6.5
+      dim_customers), so prospects and soft-deleted customers are out. Not a paraphrase of the few-shot "How many
+      customers do we have?": the point here is the country name to code mapping on top of the default.
+    tables: [dim_customers]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Austria to 'AT', customer defaults (non-deleted, order_count >= 1) under 5.3 and 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: values-006
+    category: values
+    question: How many Halden Max dumbbells have customers sent back?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(i.returned_quantity) as returned_units
+      from marts.fct_order_items as i
+      inner join marts.dim_products as p on p.variant_id = i.variant_id
+      where lower(p.product_name) = 'halden max dumbbells'
+    rationale: >-
+      "Halden Max" alone is ambiguous (Halden Max Beanies, Duffel Bags, Dumbbells and Headbands exist); with
+      "dumbbells" it grounds to 'Halden Max Dumbbells'. Units sent back are the lines' returned_quantity, the
+      quantity of received returns (data platform spec §6.4 int_order_items__returns_summarized, §6.5
+      fct_order_items); requested, approved or rejected returns have not come back. A cancelled order has no
+      return, so no cancelled filter is needed. All the data is in 2025, so there is no date filter.
+    tables: [fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds product name, sums received returned_quantity from fct_order_items without fanning out under 6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          approved returns (8 units) are a defensible reading of "sent back"; marts reach only received per product.
+
+  - id: values-007
+    category: values
+    question: What gross margin did ironpeak products in the equipment category earn in 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(i.gross_margin) as gross_margin
+      from marts.fct_order_items as i
+      inner join marts.dim_products as p on p.variant_id = i.variant_id
+      where
+          lower(p.brand) = 'ironpeak'
+          and lower(p.category_l1) = 'equipment'
+          and not i.is_cancelled
+          and i.order_date >= date '2025-01-01'
+          and i.order_date < date '2026-01-01'
+    rationale: >-
+      The lower-case brand "ironpeak" grounds to 'Ironpeak' and "equipment" to the level-1 category 'Equipment'
+      (Ironpeak also sells footwear and apparel); the filters are case-insensitive, and no two brands or categories
+      differ only by case, so lower() merges nothing. Line gross_margin per data platform spec §6.5 fct_order_items and
+      §6.6 cogs / gross_margin: net amount minus return refunds minus the cost of sale not recovered; it is 0 on
+      cancelled orders anyway.
+    tables: [fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds brand and L1 category, sums line-level gross_margin, excludes cancelled orders under 6.5 and 6.6.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          "ironpeak equipment" reads as the whole brand as naturally as the Equipment category; whole brand gives
+          10583.85, Equipment category 7494.77 (gold). Reword to "What gross margin did ironpeak products in the
+          equipment category earn in 2025?" and keep the SQL.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
+
+  - id: values-008
+    category: values
+    question: How many orders used the christmas newsletter promotion, leaving out cancelled ones?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select count(distinct d.order_id) as orders
+      from marts.fct_order_discounts as d
+      inner join marts.dim_promotions as p on p.promotion_id = d.promotion_id
+      where
+          lower(p.promotion_name) = 'christmas newsletter 2025 30%'
+          and not d.is_cancelled
+    rationale: >-
+      "christmas newsletter promotion" grounds to the promotion 'Christmas Newsletter 2025 30%' (data platform spec
+      §6.5 dim_promotions). fct_order_discounts has one row per discount applied, cancelled orders flagged; an order
+      uses a promotion at most once, so count(*) gives the same. dim_promotions.redemption_count would include the
+      cancelled orders the question leaves out.
+    tables: [fct_order_discounts, dim_promotions]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Grounds promotion name, counts distinct order IDs on fct_order_discounts, excludes cancelled orders under
+          6.5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  # --- metrics: the §6.6 definitions and the §5.3 defaults ------------------------------------------------------
+  - id: metrics-001
+    category: metrics
+    question: What was our revenue in May 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(net_revenue) as net_revenue
+      from marts.fct_orders
+      where
+          not is_cancelled
+          and order_date >= date '2025-05-01'
+          and order_date < date '2025-06-01'
+    reconcile_sql: |
+      with orders as (
+          select o.id
+          from raw_shop.orders as o
+          inner join raw_shop.customers as c on c.id = o.customer_id
+          where
+              not c.is_test_account
+              and lower(o.status) <> 'cancelled'
+              and (o.placed_at at time zone 'UTC')::date >= date '2025-05-01'
+              and (o.placed_at at time zone 'UTC')::date < date '2025-06-01'
+      )
+
+      select
+          (select sum(quantity * unit_price) from raw_shop.order_items where order_id in (select id from orders))
+          - (select coalesce(sum(amount), 0) from raw_shop.order_discounts where order_id in (select id from orders))
+          - (
+              select coalesce(sum(round(amount / 1.2, 2)), 0)
+              from raw_shop.refunds
+              where lower(reason) in ('return', 'goodwill') and order_id in (select id from orders)
+          ) as net_revenue
+    rationale: >-
+      Unqualified "revenue" defaults to net_revenue (agent spec §5.3) and must be answered, not clarified. Net
+      revenue per data platform spec §6.6: gross minus discounts minus refunded revenue, non-cancelled orders,
+      refunds attributed to the order date. The reconcile query rebuilds it from raw_shop with test accounts out
+      (§4.4 R5) and refunds of reason return or goodwill without their 20% tax (§6.6 refunded_revenue).
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          net_revenue default for unqualified revenue over non-cancelled orders; reconcile_sql agrees under 5.3,
+          6.6, R5.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: metrics-002
+    category: metrics
+    question: How much revenue did app orders bring in during the first quarter of 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(net_revenue) as net_revenue
+      from marts.fct_orders
+      where
+          lower(sales_channel) = 'app'
+          and not is_cancelled
+          and order_date >= date '2025-01-01'
+          and order_date < date '2025-04-01'
+    rationale: >-
+      Unqualified "revenue" is net_revenue (agent spec §5.3). App orders are sales_channel 'app' (data platform spec
+      §6.5 fct_orders; marketing_channel 'app' is the same set, §6.5 marketing channel of an order). Net revenue per
+      §6.6 over non-cancelled orders; Q1 is 1 January to 31 March inclusive.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Revenue defaults to net_revenue, sales_channel 'app', excludes cancelled orders for Q1 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: metrics-003
+    category: metrics
+    question: How much revenue came from discounted orders in June 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(net_revenue) as net_revenue
+      from marts.fct_orders
+      where
+          has_discount
+          and not is_cancelled
+          and order_date >= date '2025-06-01'
+          and order_date < date '2025-07-01'
+    rationale: >-
+      Unqualified "revenue" is net_revenue (agent spec §5.3). A discounted order is one with has_discount: at least
+      one discount with amount > 0 (data platform spec §6.6 "Has a discount"), so orders whose only promotion is
+      free shipping (amount 0.00) are not discounted. Joining fct_order_discounts without that rule counts them.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Revenue defaults to net_revenue; has_discount excludes zero-amount free shipping orders under 5.3 and 6.6.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: metrics-004
+    category: metrics
+    question: What percentage of gross revenue did we keep as net revenue in Q2 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select round(100.0 * sum(net_revenue) / sum(gross_revenue), 2) as net_share_pct
+      from marts.fct_orders
+      where
+          not is_cancelled
+          and order_date >= date '2025-04-01'
+          and order_date < date '2025-07-01'
+    rationale: >-
+      Net against gross (data platform spec §6.6): both are defined over non-cancelled orders. A cancelled order
+      keeps its gross_revenue but has net_revenue 0 (§6.5 cancelled orders), so leaving cancelled orders in the
+      denominator understates the share. Expressed as a percentage so the comparison's 2-decimal rounding (agent
+      spec §7.2) tells close answers apart.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Non-cancelled filter on gross_revenue denominator and net_revenue numerator, percentage rounded to 2
+          decimals.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: metrics-005
+    category: metrics
+    question: How much revenue was refunded on orders placed in September 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(refunded_revenue) as refunded_revenue
+      from marts.fct_orders
+      where
+          not is_cancelled
+          and order_date >= date '2025-09-01'
+          and order_date < date '2025-10-01'
+    rationale: >-
+      Refunds by order date: fct_orders.refunded_revenue attributes each refund to its order's date (data platform
+      spec §6.6 refunded_revenue), whenever it was paid out. Refunded revenue excludes the tax and is 0 for
+      cancellation refunds; fct_orders.refunded_amount (what was paid back, tax and cancellations included) is a
+      different figure.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Refunds attributed to order date via fct_orders.refunded_revenue for non-cancelled September orders.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: metrics-006
+    category: metrics
+    question: How much revenue did we refund during October 2025, counting each refund on the day it was paid out?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(revenue_amount) as refunded_revenue
+      from marts.fct_refunds
+      where
+          refund_date >= date '2025-10-01'
+          and refund_date < date '2025-11-01'
+    rationale: >-
+      Refunds by refund date: fct_refunds attributes refunded revenue to the refund's own date (data platform spec
+      §6.6 refunded_revenue), unlike fct_orders, which uses the order date. revenue_amount removes the tax and is 0
+      for cancellation refunds; amount is the money paid back.
+    tables: [fct_refunds]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Refunds attributed to payout date via fct_refunds.revenue_amount for October 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          round(sum(amount excl. cancellations)/1.2,2)=4557.86 fails by one cent vs revenue_amount 4557.85;
+          acceptable.
+
+  - id: metrics-007
+    category: metrics
+    question: What was the average order value in November 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(net_revenue) / count(*) as aov
+      from marts.fct_orders
+      where
+          not is_cancelled
+          and order_date >= date '2025-11-01'
+          and order_date < date '2025-12-01'
+    rationale: >-
+      AOV per data platform spec §6.6: net_revenue over the count of non-cancelled orders, fully refunded orders
+      included. avg(order_total) (tax and shipping included) or gross revenue per order are wrong.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          AOV as net_revenue divided by count of non-cancelled orders in November 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: metrics-008
+    category: metrics
+    question: What was our gross margin as a percentage of net revenue in Q4 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select round(100.0 * sum(gross_margin) / sum(net_revenue), 2) as gross_margin_pct
+      from marts.fct_orders
+      where
+          not is_cancelled
+          and order_date >= date '2025-10-01'
+          and order_date < date '2026-01-01'
+    rationale: >-
+      Margin per data platform spec §6.6 cogs / gross_margin: gross_margin = net_revenue - (cogs - returned_cogs),
+      at order level in fct_orders (the order level includes goodwill refunds, which the lines leave out, §6.5
+      fct_order_items). Both are 0 on cancelled orders, so the filter does not change the ratio. Q4 is 1 October to
+      31 December inclusive; a percentage, rounded to 2 decimals.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Gross margin percentage of net revenue at order level in fct_orders, excludes cancelled orders for Q4
+          2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  # --- grain: fan-out traps ---------------------------------------------------------------------------------------
+  - id: grain-001
+    category: grain
+    question: How many payment attempts did we process for all orders placed in March 2025, cancelled ones included, and how many of them failed?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select
+          sum(payment_count) as payment_attempts,
+          sum(failed_payment_count) as failed_attempts
+      from marts.fct_orders
+      where
+          order_date >= date '2025-03-01'
+          and order_date < date '2025-04-01'
+    reconcile_sql: |
+      select
+          count(*) as payment_attempts,
+          count(*) filter (where lower(p.status) = 'failed') as failed_attempts
+      from raw_shop.payments as p
+      inner join raw_shop.orders as o on o.id = p.order_id
+      inner join raw_shop.customers as c on c.id = o.customer_id
+      where
+          not c.is_test_account
+          and (o.placed_at at time zone 'UTC')::date >= date '2025-03-01'
+          and (o.placed_at at time zone 'UTC')::date < date '2025-04-01'
+    rationale: >-
+      Payment grain: an order can have several payment attempts (data platform spec §4.4 R7, failed then retried, or
+      split). fct_orders carries payment_count (every attempt) and failed_payment_count (§6.5 fct_orders), so attempts
+      are their sums, not a count of orders. Cancelled orders are included on purpose, because the question says so:
+      their attempts were processed. The reconcile query counts raw_shop.payments rows of non-test orders.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Order-level payment attempts and failed counts without line fan-out; reconcile_sql agrees over
+          raw_shop.payments (R7, 6.5).
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold (689, 17), reconcile agrees. Excluding cancelled orders gives (652, 17): two readings. Few-shots
+          exclude cancelled "as in every metric". Reword to "How many payment attempts did we process for all orders
+          placed in March 2025, cancelled ones included, and how many of them failed?"
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
+
+  - id: grain-002
+    category: grain
+    question: How many orders in 2025 combined two or more promotions, and what was the total discount on them? Leave out cancelled orders.
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with stacked as (
+          select order_id
+          from marts.fct_order_discounts
+          group by order_id
+          having count(*) >= 2
+      )
+
+      select
+          count(*) as orders,
+          sum(o.discount_amount) as discount_amount
+      from marts.fct_orders as o
+      inner join stacked as s on s.order_id = o.order_id
+      where
+          not o.is_cancelled
+          and o.order_date >= date '2025-01-01'
+          and o.order_date < date '2026-01-01'
+    reconcile_sql: |
+      with stacked as (
+          select
+              order_id,
+              sum(amount) as amount
+          from raw_shop.order_discounts
+          group by order_id
+          having count(*) >= 2
+      )
+
+      select
+          count(*) as orders,
+          sum(s.amount) as discount_amount
+      from stacked as s
+      inner join raw_shop.orders as o on o.id = s.order_id
+      inner join raw_shop.customers as c on c.id = o.customer_id
+      where
+          not c.is_test_account
+          and lower(o.status) <> 'cancelled'
+          and (o.placed_at at time zone 'UTC')::date >= date '2025-01-01'
+          and (o.placed_at at time zone 'UTC')::date < date '2026-01-01'
+    rationale: >-
+      Multiple discounts per order (data platform spec §4.4 R8): fct_order_discounts has one row per discount, so
+      joining it to fct_orders and summing discount_amount counts a stacked order's discount twice; per order the
+      rows sum to fct_orders.discount_amount (§6.5 fct_order_discounts): the fan-out join gives 54 orders and
+      3174.76 against the gold's 54 and 1587.38, and keeping cancelled orders gives 56 and 1678.60. A free-shipping
+      promotion (amount 0) is a promotion, so it counts towards the two; it adds nothing to the total, but counting
+      only promotions with an amount above 0 gives 35 orders (1135.28), so the count separates that reading. The
+      reconcile query finds the same orders in raw_shop.
+    tables: [fct_order_discounts, fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Pre-aggregates fct_order_discounts to order grain before joining fct_orders; reconcile_sql agrees (R8,
+          6.5).
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: grain-003
+    category: grain
+    question: How much shipping did we charge on orders containing socks in 2025, cancelled orders excluded?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select sum(o.shipping_amount) as shipping_amount
+      from marts.fct_orders as o
+      where
+          not o.is_cancelled
+          and o.order_date >= date '2025-01-01'
+          and o.order_date < date '2026-01-01'
+          and o.order_id in (
+              select i.order_id
+              from marts.fct_order_items as i
+              inner join marts.dim_products as p on p.variant_id = i.variant_id
+              where lower(p.category_l2) = 'socks'
+          )
+    rationale: >-
+      Order against line grain: shipping_amount is an order-level column (data platform spec §6.5 fct_orders), so
+      the orders are reduced to one row each before summing; joining the lines repeats an order's shipping once per
+      sock line. Socks is a level-2 category with no level-3 leaf (§6.5 dim_products: category_l3 is null when the
+      leaf is L2).
+    tables: [fct_orders, fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Avoids fan-out of order shipping_amount with an IN subquery against fct_order_items.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: grain-004
+    category: grain
+    question: How many non-cancelled orders in 2025 contained two or more different products?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with multi_product as (
+          select order_id
+          from marts.fct_order_items
+          where
+              not is_cancelled
+              and order_date >= date '2025-01-01'
+              and order_date < date '2026-01-01'
+          group by order_id
+          having count(distinct product_id) >= 2
+      )
+
+      select count(*) as orders
+      from multi_product
+    rationale: >-
+      Line against product grain: an order line is a variant (data platform spec §6.5 fct_order_items, dim_products
+      one row per variant), and one order can hold two sizes or colours of the same product. Counting lines per
+      order instead of distinct product_id overcounts (3,651 orders with two or more lines, 3,638 with two or more
+      products).
+    tables: [fct_order_items]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Groups by order_id and tests count(distinct product_id) >= 2 rather than distinct variants.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: grain-005
+    category: grain
+    question: How many distinct customer email addresses bought from us in the second half of 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select count(distinct c.email) as email_addresses
+      from marts.fct_orders as o
+      inner join marts.dim_customers as c on c.customer_id = o.customer_id
+      where
+          not o.is_cancelled
+          and o.order_date >= date '2025-07-01'
+          and o.order_date < date '2026-01-01'
+    rationale: >-
+      The email is a salted hash in dim_customers, but equal values hash equally, so count(distinct email) works
+      (data platform spec §6.5 PII masking); the question is answerable, unlike one about email domains. Orders join
+      customers by customer_id, never by a hash. Order grain fans out to one row per order, hence distinct. A
+      soft-deleted customer's email is NULL (§6.5 global rules, R6) and is not an address. Emails are unique per
+      customer, so count(distinct customer_id) over non-deleted customers gives the same 2239. The case checks that
+      the agent excludes soft-deleted customers (§5.3) and counts through orders: the unfiltered customer count
+      (2248) is the wrong reading it catches.
+    tables: [fct_orders, dim_customers]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Counts distinct masked customer emails across orders, soft-deleted null emails excluded naturally.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: grain-006
+    category: grain
+    question: How many orders in Q2 2025 used at least one promotion, cancelled orders aside?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select count(distinct order_id) as orders
+      from marts.fct_order_discounts
+      where
+          not is_cancelled
+          and order_date >= date '2025-04-01'
+          and order_date < date '2025-07-01'
+    rationale: >-
+      fct_order_discounts has one row per discount applied (data platform spec §6.5), so an order with two
+      promotions (R8) appears twice: count distinct order_id. Free-shipping promotions are promotions too (Q2 has
+      'Free Shipping Q2'), so fct_orders.has_discount, which leaves them out (§6.6 "Has a discount"), answers a
+      different question.
+    tables: [fct_order_discounts]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Queries fct_order_discounts to capture all promotions including zero-amount free shipping.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: grain-007
+    category: grain
+    question: How many orders does a customer acquired through the app place on average?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      select avg(order_count) as avg_orders_per_customer
+      from marts.dim_customers
+      where
+          lower(acquisition_channel) = 'app'
+          and not is_deleted
+          and order_count >= 1
+    rationale: >-
+      Customer grain: acquisition_channel is the channel of the customer's first non-cancelled order and order_count
+      counts their non-cancelled orders (data platform spec §6.5 dim_customers). Averaging app orders per customer
+      in fct_orders (marketing_channel 'app') answers a different question, since app-acquired customers also order
+      on the web. Customers default to non-deleted with at least one order (agent spec §5.3).
+    tables: [dim_customers]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Averages order_count per customer for acquisition_channel 'app' on dim_customers.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  # --- time: relative periods against as_of_date -------------------------------------------------------------------
+  - id: time-001
+    category: time
+    question: How much revenue did we make last quarter?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with period as (
+          select
+              (date_trunc('quarter', max(order_date)) - interval '3 months')::date as quarter_start,
+              date_trunc('quarter', max(order_date))::date as next_quarter_start
+          from marts.fct_orders
+      )
+
+      select sum(o.net_revenue) as net_revenue
+      from marts.fct_orders as o
+      inner join period as p
+          on
+              o.order_date >= p.quarter_start
+              and o.order_date < p.next_quarter_start
+      where not o.is_cancelled
+    rationale: >-
+      "Last quarter" is the previous calendar quarter of as_of_date (agent spec §5.3; data platform spec §6.5
+      as_of_date = max(order_date)), so Q3 2025 (117451.58) on the frozen data, not the last 90 days. Because
+      as_of_date (2025-12-31) is a quarter end, "the last complete quarter" (Q4, 175977.68) is a natural wrong
+      reading; the gold follows the §5.3 default. Unqualified "revenue" is net_revenue (§5.3), over non-cancelled
+      orders (§6.6).
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Previous calendar quarter relative to max(order_date), net_revenue over non-cancelled orders.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          Q4 (last complete quarter) is a reasonable reading that fails; rationale should name the Q4 trap
+          explicitly.
+
+  - id: time-002
+    category: time
+    question: How many orders did we receive in the past 14 days, and how many in the 14 days before that, cancelled ones aside? Give both counts side by side.
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with period as (
+          select max(order_date) as as_of_date
+          from marts.fct_orders
+      )
+
+      select
+          count(*) filter (where o.order_date > p.as_of_date - 14) as orders_past_14_days,
+          count(*) filter (where o.order_date <= p.as_of_date - 14) as orders_previous_14_days
+      from marts.fct_orders as o
+      inner join period as p
+          on
+              o.order_date > p.as_of_date - 28
+              and o.order_date <= p.as_of_date
+      where not o.is_cancelled
+    rationale: >-
+      Two rolling periods ending at as_of_date (agent spec §5.3; data platform spec §6.5 as_of_date): the past 14 days
+      are 18 to 31 December 2025 (401 orders) and the 14 days before are 4 to 17 December (399 orders) on the frozen
+      data, never anchored to today's date. The question itself leaves cancelled orders out. One row with two counts.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Rolling 14-day window anchored to max(order_date) inclusive, cancelled filtered.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold 401. The question paraphrases the few-shot "How many orders did we get in the last 30 days?" (30
+          becomes 14): breaks checklist item 9. Change to a rolling question the example does not template, e.g.
+          past 14 days and the 14 days before that, cancellations left out, gold returning both counts (18-31 Dec
+          and 4-17 Dec).
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner-approved panel triage (devil's advocate and four reviewers): wording changed so the case has one
+          natural result shape / one reading.
+
+  - id: time-003
+    category: time
+    question: What have our sales been since the start of this quarter?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with period as (
+          select max(order_date) as as_of_date
+          from marts.fct_orders
+      )
+
+      select sum(o.gross_revenue) as sales
+      from marts.fct_orders as o
+      inner join period as p
+          on
+              o.order_date >= date_trunc('quarter', p.as_of_date)::date
+              and o.order_date <= p.as_of_date
+      where not o.is_cancelled
+    rationale: >-
+      Quarter to date runs from the first day of as_of_date's calendar quarter to as_of_date, inclusive (agent spec
+      §5.3; data platform spec §6.5 as_of_date), so 1 October to 31 December 2025 on the frozen data: neither the
+      whole dataset (which starts on 1 January 2025) nor the previous calendar quarter or month. "Sales" defaults to
+      gross_revenue (§5.3), over non-cancelled orders (data platform spec §6.6). as_of_date is a quarter, month and
+      year end, so the data alone does not separate every reading (quarter to date equals the whole of Q4).
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Quarter-to-date relative to max(order_date), gross_revenue default for sales, excludes cancelled orders.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          as_of_date is a quarter end, quarter-to-date equals whole Q4; those readings cannot be told apart.
+
+  - id: time-004
+    category: time
+    question: What was revenue in each of the six months before this one?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with period as (
+          select date_trunc('month', max(order_date))::date as current_month_start
+          from marts.fct_orders
+      )
+
+      select
+          date_trunc('month', o.order_date)::date as month,
+          sum(o.net_revenue) as net_revenue
+      from marts.fct_orders as o
+      inner join period as p
+          on
+              o.order_date >= (p.current_month_start - interval '6 months')::date
+              and o.order_date < p.current_month_start
+      where not o.is_cancelled
+      group by 1
+    rationale: >-
+      Calendar months before the month of as_of_date (agent spec §5.3, calendar periods): "this one" is
+      as_of_date's month, December 2025, so June to November 2025.
+      Unqualified "revenue" is net_revenue over non-cancelled orders (data platform spec §6.6). Months are dates.
+      as_of_date is a month and year end, so the data alone does not separate every reading of "this month".
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Six full calendar months before the month of max(order_date), month truncated to date, net_revenue.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: time-005
+    category: time
+    question: How many orders did we get in each of the last four full Monday-to-Sunday weeks, excluding cancelled ones?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with period as (
+          select date_trunc('week', max(order_date))::date as current_week_start
+          from marts.fct_orders
+      )
+
+      select
+          date_trunc('week', o.order_date)::date as week_start,
+          count(*) as orders
+      from marts.fct_orders as o
+      inner join period as p
+          on
+              o.order_date >= p.current_week_start - 28
+              and o.order_date < p.current_week_start
+      where not o.is_cancelled
+      group by 1
+    rationale: >-
+      Calendar weeks run Monday to Sunday (data platform spec §6.5 dim_date.week_start, §4.4). as_of_date
+      (2025-12-31, a Wednesday) sits in an unfinished week, so the four full weeks start on 1, 8, 15 and 22
+      December 2025. A rolling 28 days would be a different answer. Week starts are dates.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          ISO Monday-to-Sunday week truncation for the four completed weeks before the current week start.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: time-006
+    category: time
+    question: How did web and app revenue compare over the trailing 90 days, for each sales channel?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with period as (
+          select max(order_date) as as_of_date
+          from marts.fct_orders
+      )
+
+      select
+          o.sales_channel,
+          sum(o.net_revenue) as net_revenue
+      from marts.fct_orders as o
+      inner join period as p
+          on
+              o.order_date > p.as_of_date - 90
+              and o.order_date <= p.as_of_date
+      where not o.is_cancelled
+      group by o.sales_channel
+    rationale: >-
+      Trailing 90 days is rolling: the 90 days ending at as_of_date, inclusive (agent spec §5.3; data platform spec
+      §6.5 as_of_date), not the last calendar quarter. Unqualified "revenue" is net_revenue (§5.3), per
+      sales_channel, web or app (§6.5 fct_orders).
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Trailing 90 days inclusive up to max(order_date), net_revenue by sales_channel.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted. a
+          pivoted one-row answer (web, app columns) fails on row count.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner-approved panel triage (devil's advocate and four reviewers): wording changed so the case has one
+          natural result shape / one reading.
+
+  # --- complex: CTEs, window functions, a cohort ---------------------------------------------------------------
+  - id: complex-001
+    category: complex
+    question: Of the first orders placed in each month of the first half of 2025, what percentage were followed by a second order from the same customer within 90 days of it, the 90th day included?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with first_orders as (
+          select
+              customer_id,
+              order_date
+          from marts.fct_orders
+          where
+              is_first_order
+              and order_date >= date '2025-01-01'
+              and order_date < date '2025-07-01'
+      ),
+
+      second_orders as (
+          select
+              customer_id,
+              order_date
+          from marts.fct_orders
+          where customer_order_number = 2
+      )
+
+      select
+          date_trunc('month', f.order_date)::date as cohort_month,
+          round(100.0 * count(*) filter (where s.order_date - f.order_date <= 90) / count(*), 2) as repeat_pct
+      from first_orders as f
+      left join second_orders as s on s.customer_id = f.customer_id
+      group by 1
+    rationale: >-
+      A monthly cohort of first orders (data platform spec §6.5 fct_orders: is_first_order and customer_order_number
+      number a customer's non-cancelled orders by placed_at, so a cancelled order is neither a first nor a second).
+      Within 90 days means at most 90 days between the two order dates, the same day included. The question is
+      about orders, so soft-deleted customers' orders stay in: the non-deleted default for customers (agent spec
+      §5.3) is deliberately not applied, and dropping soft-deleted customers' first orders changes five of the six
+      rows. Percentages, rounded to 2 decimals.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Monthly first-order cohorts, 90-day retention via customer_order_number = 2, no fan-out.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold returns an unrequested first_orders column (142, 215, 214, 232, 212, 209); every gold column must be
+          matched by an agent column, so a correct month + percentage answer fails. Drop `count(*) as first_orders,`
+          from the select, leaving cohort_month and repeat_pct (Jan 77.46, Feb 65.58, Mar 65.89, Apr 62.50, May
+          43.87, Jun 42.58).
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner-approved panel triage (devil's advocate and four reviewers): wording changed so the case has one
+          natural result shape / one reading.
+
+  - id: complex-002
+    category: complex
+    question: What was the 7-day moving average of daily net revenue on each day of December 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with daily as (
+          select
+              order_date,
+              sum(net_revenue) as net_revenue
+          from marts.fct_orders
+          where not is_cancelled
+          group by order_date
+      ),
+
+      moving as (
+          select
+              order_date,
+              avg(net_revenue) over (order by order_date rows between 6 preceding and current row) as moving_avg
+          from daily
+      )
+
+      select
+          order_date,
+          moving_avg
+      from moving
+      where
+          order_date >= date '2025-12-01'
+          and order_date < date '2026-01-01'
+    rationale: >-
+      A window over daily totals: the average of the day and the 6 days before it, so 1 December reaches back into
+      late November (the window is computed before the December filter). Every day of 2025 has non-cancelled
+      orders, so 7 rows are 7 days. Net revenue per data platform spec §6.6.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          7-day moving average over daily net_revenue computed before filtering to December 2025.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: complex-003
+    category: complex
+    question: For each brand, which product brought in the most net revenue in 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with product_revenue as (
+          select
+              p.brand,
+              p.product_id,
+              p.product_name,
+              sum(i.net_amount - i.refunded_revenue) as net_revenue
+          from marts.fct_order_items as i
+          inner join marts.dim_products as p on p.variant_id = i.variant_id
+          where
+              not i.is_cancelled
+              and i.order_date >= date '2025-01-01'
+              and i.order_date < date '2026-01-01'
+          group by p.brand, p.product_id, p.product_name
+      ),
+
+      ranked as (
+          select
+              brand,
+              product_name,
+              row_number() over (partition by brand order by net_revenue desc, product_id) as revenue_rank
+          from product_revenue
+      )
+
+      select
+          brand,
+          product_name
+      from ranked
+      where revenue_rank = 1
+    rationale: >-
+      A window per brand. Product net revenue at line level is net_amount - refunded_revenue (data platform spec
+      §6.5 fct_order_items, §6.6), grouped by product_id because dim_products has one row per variant; ties broken
+      by product_id. Not a paraphrase of the few-shot top-10 products: this ranks within each brand. Ranking by
+      net_amount alone or by gross_amount gives the same 25 brand winners, so the case tests the window and the
+      product grain, not the metric choice (the question names net revenue explicitly).
+    tables: [fct_order_items, dim_products]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Line net revenue aggregated to product level, partitioned by brand, rank ties broken by product_id.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+          ranking by net_amount without refunds or by gross gives identical winners (question names net revenue;
+          acceptable).
+
+  - id: complex-004
+    category: complex
+    question: By what percentage did revenue change from one month to the next, from February to December 2025?
+    tranche: 1
+    expected_outcome: answered
+    gold_sql: |
+      with monthly as (
+          select
+              date_trunc('month', order_date)::date as month,
+              sum(net_revenue) as net_revenue
+          from marts.fct_orders
+          where not is_cancelled
+          group by 1
+      ),
+
+      changes as (
+          select
+              month,
+              round(100.0 * (net_revenue / lag(net_revenue) over (order by month) - 1), 2) as change_pct
+          from monthly
+      )
+
+      select
+          month,
+          change_pct
+      from changes
+      where
+          month >= date '2025-02-01'
+          and month < date '2026-01-01'
+    rationale: >-
+      Month-over-month change with lag over monthly totals, computed before the February filter so February
+      compares with January. Unqualified "revenue" is net_revenue (agent spec §5.3; data platform spec §6.6).
+      Percentages, rounded to 2 decimals; months are dates.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Month-over-month net revenue growth percentage via lag over monthly aggregates before filtering February
+          to December.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: complex-005
+    category: complex
+    question: Which 5 customers had the longest gap between two consecutive orders in 2025, ignoring cancelled orders? List them longest first with the gap in days between their order dates.
+    tranche: 1
+    ordered: true
+    expected_outcome: answered
+    gold_sql: |
+      with gaps as (
+          select
+              customer_id,
+              order_date - lag(order_date) over (partition by customer_id order by customer_order_number) as gap_days
+          from marts.fct_orders
+          where not is_cancelled
+      )
+
+      select
+          customer_id,
+          max(gap_days) as longest_gap_days
+      from gaps
+      group by customer_id
+      having max(gap_days) is not null
+      order by longest_gap_days desc, customer_id
+      limit 5
+    rationale: >-
+      A window per customer: the days between consecutive non-cancelled orders, in customer_order_number order (data
+      platform spec §6.5 fct_orders), then each customer's longest gap. order_date is a date, so the gap is whole days
+      between order dates. Customers are identified by customer_id (§6.5 PII masking: no names). The fifth and sixth
+      gaps differ (299 and 295 days), so the top 5 has no tie; ties would break by customer_id. The question asks for an
+      order, so ordered is true.
+    tables: [fct_orders]
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Order intervals via customer_order_number, ordered true for longest first, limit ties broken by
+          customer_id.
+      - reviewer: opus
+        verdict: fix
+        notes: >-
+          Gold (6,330),(33,326),(147,305),(56,302),(42,299); no tie at 6th (295). Elapsed time on placed_at gives
+          329.8 days for customer 6 (extract(day) 329), failing a defensible reading. Reword the end to "...with the
+          gap in days between their order dates".
+      - reviewer: human
+        verdict: accept
+        notes: >-
+          Owner approved the reviewer's change; the fixed case was re-checked by a second Opus review and --check-
+          gold.
+
+  # --- unanswerable -----------------------------------------------------------------------------------------------
+  - id: unanswerable-001
+    category: unanswerable
+    question: How many units of Orbit Elite Hydration are left in stock?
+    tranche: 1
+    expected_outcome: unanswerable
+    gold_sql: null
+    rationale: >-
+      Inventory is not in the warehouse: no source or mart holds stock levels (data platform spec §4.1, §6.5). The
+      product exists, so the refusal must come from the missing data, not a missing value.
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Inventory and stock levels are not tracked in the warehouse.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: unanswerable-002
+    category: unanswerable
+    question: How many of our customers use a gmail address?
+    tranche: 1
+    expected_outcome: unanswerable
+    gold_sql: null
+    rationale: >-
+      dim_customers holds the email only as a salted 32-character hash (data platform spec §6.5 PII masking): a
+      pattern such as LIKE '%@gmail.com' gives meaningless results, and questions about email domains cannot be
+      answered (agent spec §7.1 unanswerable).
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Emails are salted hashes, domain-level patterns cannot be queried.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: unanswerable-003
+    category: unanswerable
+    question: Please cancel order SS-004321 and refund the customer.
+    tranche: 1
+    expected_outcome: unanswerable
+    gold_sql: null
+    rationale: >-
+      A write request: the agent only reads, through a read-only role and session (agent spec §4.2, §5.3
+      out-of-scope questions). The order exists (delivered), so the refusal must come from the write, not a
+      missing order.
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          Write request outside the agent's read-only scope.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  # --- clarification: ambiguous with no documented default ------------------------------------------------------
+  - id: clarification-001
+    category: clarification
+    question: Who are our best customers?
+    tranche: 1
+    expected_outcome: needs_clarification
+    gold_sql: null
+    rationale: >-
+      "Best" has no documented default (agent spec §5.3): by lifetime net revenue, order count, recency or VIP flag
+      each gives a different list. The spec names this very question.
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          'Best customers' lacks a documented default metric.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: clarification-002
+    category: clarification
+    question: Which products are performing worst?
+    tranche: 1
+    expected_outcome: needs_clarification
+    gold_sql: null
+    rationale: >-
+      No metric is named and "performing" has no documented default (agent spec §5.3, like "top performers"): units
+      sold, net revenue, gross margin or return rate each rank products differently, and the period is open too.
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          'Performing worst' has neither a documented default metric nor a timeframe.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.
+
+  - id: clarification-003
+    category: clarification
+    question: Which promotions worked best?
+    tranche: 1
+    expected_outcome: needs_clarification
+    gold_sql: null
+    rationale: >-
+      "Worked best" has no documented default (agent spec §5.3): redemptions, discount granted, net revenue of the
+      orders that used it, or discount per order each rank the promotions differently (data platform spec §6.5
+      dim_promotions, fct_order_discounts).
+    status: accepted
+    reviews:
+      - reviewer: gemini
+        verdict: accept
+        notes: >-
+          'Worked best' for promotions lacks a documented default metric.
+      - reviewer: opus
+        verdict: accept
+        notes: >-
+          Independent Opus review ran the gold SQL against sherpa_eval and the likeliest wrong readings; accepted.

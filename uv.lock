@@ -1696,7 +1696,7 @@ wheels = [
 name = "sql-sherpa"
 version = "0.1.0"
 source = { editable = "." }
-default-groups = ["dbt", "dev", "generator", "mcp", "ui"]
+default-groups = ["dbt", "dev", "evals", "generator", "mcp", "ui"]
 
 [package.dev-dependencies]
 dbt = [
@@ -1713,6 +1713,9 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "types-pyyaml" },
+]
+evals = [
+    { name = "typer" },
 ]
 generator = [
     { name = "faker" },
@@ -1754,6 +1757,7 @@ dev = [
     { name = "ruff" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260906" },
 ]
+evals = [{ name = "typer", specifier = ">=0.27.3" }]
 generator = [
     { name = "faker", specifier = ">=40.43.0" },
     { name = "psycopg", extras = ["binary"] },

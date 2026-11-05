@@ -1,0 +1,14 @@
+# prices as of 2026-11-05, USD→EUR 0.86
+# PLACEHOLDERS: the writer had no access to the AWS Bedrock price list or the ECB rate. The owner verifies every value
+# against the Bedrock on-demand price list for eu-central-1 and the ECB reference rate of the day, then updates this header.
+# Source figures in USD per million tokens (input/output): sonnet 3/15, haiku 1/5, opus 5/25.
+models:
+  eu.anthropic.claude-sonnet-5-5:
+    input_eur_per_mtok: 2.58
+    output_eur_per_mtok: 12.90
+  eu.anthropic.claude-haiku-5-5:
+    input_eur_per_mtok: 0.86
+    output_eur_per_mtok: 4.30
+  eu.anthropic.claude-opus-5-5:
+    input_eur_per_mtok: 4.30
+    output_eur_per_mtok: 21.50

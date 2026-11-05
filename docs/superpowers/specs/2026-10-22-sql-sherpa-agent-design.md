@@ -201,8 +201,10 @@ NeedsClarification:  question_to_user, candidate_interpretations: list[str], par
 Unanswerable:        reason, closest_supported: str | None      # e.g. "inventory is not in the warehouse"
 Failed:              reason, last_sql: str | None, last_error: str | None
 
-RunStats: variant, models, latency_ms, input_tokens, output_tokens, cost_eur, tool_calls, sql_attempts, trace_id
+RunStats: variant, usage, latency_ms, cost_eur, tool_calls, sql_attempts, trace_id
 ```
+
+- **`RunStats.usage`** is a list of (model, input_tokens, output_tokens), one entry per model, summed from each `ModelResponse`'s `model_name` and `usage`, so a run that mixes models is priced per model (`cost_eur` is computed from it). The shared `RunUsage` stays for the limits (§5.3). It matches the eval runner's `AttemptStats.usage` (§7.2).
 
 - **`plan` executes no data query.** It may call `get_context`, `list_tables`, `describe_table` (whose 3 sample rows it may read), `search_values`, `get_metric_definitions`, `get_examples` and `validate_sql` (`EXPLAIN` only), but **not `run_sql`**. The draft's SQL is valid but has not been run.
 - **`answer` runs the draft's SQL** with `run_sql`, writes `answer_text` and `caveats`, and applies the guards (§5.2). A variant that refines SQL after seeing results (§5.4) records what it changed in `sql_revision`, which every consumer must show.
@@ -325,6 +327,8 @@ Case schema:
     where not is_cancelled and order_date >= '2026-03-01' and order_date < '2026-04-01'
     group by 1
   ordered: false                        # true if row order matters
+  allow_empty: false                    # true if an empty result is the right answer (the rationale says why)
+  reconcile_sql: null                   # optional raw-schema query, run as sherpa_admin, that must give the same result
   rationale: "Net revenue per §6.6, refunds attributed to order date; cancelled excluded."
   tables: [fct_orders]                  # for schema-recall measurement
   status: draft                         # draft → reviewed → accepted
@@ -333,9 +337,11 @@ Case schema:
 
 **Authoring workflow (agent-design-2):**
 1. Opus 5.5 drafts the tranche's cases (question, gold SQL, rationale, tables) from the data platform spec §6 and the `sherpa_eval` marts.
-2. **Automatic checks** (`sherpa_evals.run --check-gold`): every `answered` case executes, returns ≥ 1 row (unless the rationale says an empty result is expected), returns identical results on two runs, and passes `sql_guard` (so gold SQL follows the same rules as the agent). Cases whose rationale cites a raw-data reconciliation also run a small hand-written raw-schema query (as `sherpa_admin`, stored in the case as `reconcile_sql`) that must give the same totals.
+2. **Automatic checks** (`sherpa_evals.run --check-gold`, over every case whatever its status): every `answered` case executes, returns ≥ 1 row (unless it sets `allow_empty: true`), returns identical results on two runs, and passes `sql_guard` (so gold SQL follows the same rules as the agent). Its gold SQL reads no clock (`now()`, `current_date`, `current_timestamp`), holds no 32-hex literal, has an `ORDER BY` when it is `ordered` or uses `LIMIT`, and reads exactly the marts its `tables` list. A case with a `reconcile_sql` (a small hand-written raw-schema query, run as `sherpa_admin` in a read-only transaction) must give the same result as its gold SQL under the comparison rules (§7.2). The check also lists, per case, the closest few-shot example and its score (§4.3).
 3. **Cross-model review:** Codex and Gemini each review every case against the data platform spec §6.6 (semantics, not just syntax). The owner runs them through their own CLIs or chat with a fixed review prompt stored in `agent/evals/REVIEW_PROMPT.md`, and records each verdict in `reviews`. If either reviewer is unavailable, a fresh Opus session with no access to the drafting conversation takes its place, and this is noted in `reviews`. The owner resolves disagreements. Only `accepted` cases count in reports.
 4. The few-shot disjointness check (§4.3).
+
+Gold text filters are case-insensitive (`lower(column) = 'literal'`), in `gold_sql` and `reconcile_sql` alike. Every gold column must be matched by an agent column (§7.2), so a gold query selects only the columns the question asks for.
 
 Gold dates are absolute (e.g. "March 2025"), except in the `time` category, where relative questions are expected. Those cases' gold SQL is written relative to `as_of_date` (`(select max(order_date) from marts.fct_orders)`). That is fixed at 2025-12-31 on the frozen eval dataset, and the relative form still documents intent.
 
@@ -347,19 +353,21 @@ Gold dates are absolute (e.g. "March 2025"), except in the `time` category, wher
 uv run python -m sherpa_evals.run --variant v0_baseline [--category metrics] [--case metrics-003] [--repeat 1] [--concurrency 4] [--check-gold]
 ```
 
-- Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` questions are in flight at once.
+- Runs each accepted case through the variant (in-process, one shared MCP stdio server): `plan`, then `answer` on the draft without pausing; a plan outcome other than `Draft` is the case's outcome. `--concurrency` counts cases in flight (an answer and its scoring), at most 12: the `sherpa_agent` role allows 20 connections cluster-wide, which leaves 8 for the MCP server pools and a session.
+- **The runner's interface to a variant** is its own, so the evals depend on no agent type: an `Answerer` turns a question into an `Attempt` (the outcome type, the final executed SQL, and the run's stats with tokens per model). The `oracle` answerer (agent-design-2) answers each question with its case's gold SQL and expected outcome, and needs no MCP server or model; agent-design-3 adds one answerer that chains `AgentService.plan` and `answer`.
 - **Execution for comparison** uses the runner's own connection to `sherpa_eval` as `sherpa_agent`, with `SET statement_timeout = '30s'` and **no row cap**. It re-executes the agent's final SQL (the recorded `executed_sql`) and the gold SQL directly.
 - **Comparison rules (`compare.py`):**
-  - **Value normalization:** numbers rounded to 2 decimals; `NULL = NULL`; text compared exactly; dates and timestamps compared as ISO strings.
+  - **Value normalization:** numbers rounded to 2 decimals; `NULL = NULL`; text compared exactly; dates and timestamps compared as ISO strings in UTC (the eval session's time zone), and a timestamp at exactly midnight UTC compares as its date, so a gold `date` bucket matches an agent's `date_trunc` timestamp.
   - **Row count** must be equal.
   - **Column mapping.** Column names and order are ignored. Each gold column is matched to a distinct agent column whose normalized values form the same multiset; extra agent columns are allowed (e.g. a name next to an id). This only proposes candidate mappings. If several agent columns fit one gold column, every combination is tried, which is bounded because results are small.
   - **Whole-row check.** Under a candidate mapping, the agent's rows are projected onto the mapped columns and compared with the gold rows as **whole tuples**: as a multiset of tuples if `ordered: false`, as an ordered list if `ordered: true`. The case passes if any mapping matches. This stops values from being paired with the wrong keys.
 - **Scoring:** `answered` cases pass on result match. `unanswerable` and `needs_clarification` cases pass if the outcome type matches.
 - **Comparisons and promotion:** every candidate report is compared with a run of the current default **made in the same session**, so both see the same models and the same day's provider behaviour. Promotion decisions require `--repeat 2` on both.
-- **Per-case record** (`runs/<timestamp>-<variant>/cases.jsonl`): case id, outcome type, pass/fail, the diff summary on failure, agent SQL, `RunStats`, schema recall (gold `tables` ⊆ tables the agent queried), trace id.
-- **Report** (`runs/<…>/report.md`): execution accuracy (EX) overall and per category; outcome-type accuracy; p50/p95 latency; mean and total cost; mean tool calls and SQL attempts; schema recall; failing case ids with trace links; and the diff against the previous run of the current default variant.
-- **Cost** = tokens × `prices.yaml` (EUR per million input/output tokens per model ID, maintained by hand).
-- Budget for code: `run.py` + `compare.py` + `report.py` together stay **under ~400 lines**. No eval framework dependency.
+- **Run directory** (`runs/<timestamp>-<variant>/`, with a `.n` suffix when two runs start in the same second): `cases.jsonl` (gitignored), `report.md` and `meta.json` (both committed). `meta.json` holds the variant, `gold_version`, `dataset_version`, start time and repeat count, so the next run can find the previous run of the default variant to diff against.
+- **Per-case record** (`cases.jsonl`): case id, outcome type, pass/fail, the diff summary on failure, agent SQL, `RunStats`, schema recall (gold `tables` ⊆ tables the agent queried), trace id.
+- **Report** (`runs/<…>/report.md`): execution accuracy (EX) overall and per category; outcome-type accuracy; p50/p95 latency; mean and total cost; mean tool calls and SQL attempts; schema recall; failing case ids with trace links; and the diff against the previous run of the current default variant (it reads that run's `meta.json` and its local `cases.jsonl`, so a fresh clone reports no earlier run).
+- **Cost** = tokens × `prices.yaml` (EUR per million input/output tokens per model ID, maintained by hand). A model missing from it makes the run's cost unknown, which the report says, rather than 0.
+- Budget for code: `run.py` + `compare.py` + `report.py` together stay **under ~600 lines** (the report's sections, the per-case scoring and the CLI are the bulk). No eval framework dependency.
 
 ### 7.3 Budgets (reported, not enforced)
 p50 latency < 20 s, p95 < 60 s per question; mean cost per question is reported, with no fixed target. These are targets to compare variants against, not gates.
@@ -457,3 +465,4 @@ Everything the agent needs from the warehouse is defined there, not here.
 - Multi-turn follow-ups ("now only Germany"), reusing the previous `Interpretation`.
 - Saving accepted analyst queries as new few-shot examples (with review).
 - Explaining an existing SQL query in plain language (SQL → words), for the UI's Explorer.
+- Tie `dataset_version` to the data: a small fingerprint stored beside it in `cases.yaml` (for example `max(order_date)`, `count(*)`, `sum(net_revenue)` of `marts.fct_orders`) that `--check-gold` and the runner compare, so a rebuild with changed code cannot go unnoticed. Today `dataset_version` is a process rule (§7.0), and a rebuild is visible only through the rationales' quoted numbers and a human check.

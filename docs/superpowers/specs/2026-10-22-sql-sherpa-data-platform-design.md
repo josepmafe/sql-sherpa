@@ -170,7 +170,7 @@ Passwords come from `.env`.
 | R5 | Internal test accounts (`@sqlsherpa-test.com`) that place orders | 0.5% of customers | exclude from all marts |
 | R6 | Soft-deleted customers (GDPR) | 1% of customers, 30–199 days after signup; a deletion takes effect at the end of its day (`deleted_at` = the day's last microsecond), so no order is placed and no event occurs after `deleted_at` | keep, anonymize PII in marts |
 | R7 | Failed payment attempts; split payments (gift card + card) | 3% failed then retried; 5% split | sum only `captured` |
-| R8 | Multiple discounts per order (promotion + coupon) | 3% of orders | allocate the sum |
+| R8 | Multiple discounts per order (promotion + coupon) | 3% of the orders that qualify, about 0.7% of all orders (§5.4) | allocate the sum |
 | R9 | Partial returns; refunds without returns (goodwill, cancellation) | see §5.2 | separate returns from refunds |
 | R10 | Price changes over time | 0.3% of variants change `list_price` (±5–20%) per day; 0.1% change `cost_price` | cost at time of sale via snapshot |
 | R11 | Ad-platform clicks ≠ tracked sessions | clicks = paid sessions × U(0.85, 1.15) | don't treat them as equal |
@@ -231,7 +231,7 @@ Changing `seed` or `scale` against existing state is an error (use `reset`).
 - Ad spend is budget-driven, so cost per click is not realistic; ROAS and CAC (data-platform-4) reflect the budgets, not click prices.
 - `remove_from_cart` events are never generated.
 - All coupon codes are unlimited: none is single-use.
-- R8 (stacked discounts) reaches about 0.7% of orders, not 3%: only email-campaign promotions carry coupons, so few orders qualify for a promotion plus another promotion's coupon. The generator is to be changed to meet 3% before the agent's gold answers are frozen on `sherpa_eval` (agent-design-2); until then the R8 test measures the draw on a synthetic shop where every order qualifies, not the rate on the generator's output.
+- R8 (stacked discounts) reaches about 0.7% of orders: only email-campaign promotions carry coupons, so few orders qualify for a promotion plus another promotion's coupon, and 3% of those stack. The R8 test measures that draw on a synthetic shop where every order qualifies, not the rate on the generator's output. Fan-out traps over discounts (agent spec §7.1, `grain`) still have orders to find.
 - A visitor who is not a customer gets a fresh `anonymous_id` every session, so anonymous visitors never return: every such session is a first session and `fct_sessions.is_first_session` counts them as new visitors. Only customers (whose devices are stitched through logins) have returning sessions.
 
 ---
