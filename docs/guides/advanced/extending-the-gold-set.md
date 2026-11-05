@@ -8,11 +8,11 @@ Code is in `agent/evals/src/sherpa_evals/`; tests in `agent/evals/tests/`, rough
 
 | File | Holds |
 |---|---|
-| `cases.py` | `GoldCase`, `GoldSet`, `Review`, and `static_problems` (the checks that need no database); pure |
+| `cases.py` | `GoldCase`, `GoldSet`, `Review`, and `static_problems` (the checks that need no database); pure except `GoldSet.load`, which reads `cases.yaml` |
 | `compare.py` | `compare`, the comparison rules (§7.2) and `MAX_MAPPINGS`; pure |
 | `warehouse.py` | `EvalDatabase` (one read-only connection per query), `check_gold` |
 | `answerers.py` | `Answerer`, `Attempt`, `AttemptStats`, `ModelUsage`, the `oracle`, the `ANSWERERS` registry |
-| `report.py` | `Prices`, `CaseRecord`, `render_report`, `previous_run`, `write_run` |
+| `report.py` | `Prices` (`Prices.load` reads `prices.yaml`), `CaseRecord`, `render_report` (pure), `previous_run`, `write_run` |
 | `run.py` | The CLI and `run_cases`, which scores the cases it is given |
 | `agent/evals/` | `cases.yaml`, `REVIEW_PROMPT.md`, `prices.yaml`, `runs/` |
 
@@ -29,10 +29,14 @@ The schema is in spec §7.1 (`GoldCase` validates it: an answered case needs `go
 - **Select only the columns the question asks for.** Every gold column must be matched by an agent column, while extra agent columns are fine, so an unrequested gold column fails a correct agent.
 - **Write for the comparison**: numbers round to 2 decimals half-up, so express rates and shares as percentages; a `date` and a midnight timestamp do not match, so cast month and week buckets with `::date`; a boolean matches a 0/1 column. A gold result with many equal columns can exceed `MAX_MAPPINGS` and fail every attempt with `too many candidate column mappings`.
 - **Defaults are not clarified**: a question using "revenue" or "customers" is `answered` under the defaults in spec §5.3.
-- **Not a paraphrase of a few-shot example** (`test_gold_set.py` checks it).
+- **Does not reuse a few-shot question's words** (`test_gold_set.py` checks the word sets); the closest-example score from `--check-gold` flags paraphrases.
 - **A `reconcile_sql`** rebuilds the answer from `raw_shop` (test accounts removed there, since only the marts exclude them). It runs as `sherpa_admin` in a read-only transaction and must give the same result. At least three answered cases carry one.
 
 Check as you go: `uv run --env-file .env python -m sherpa_evals.run --check-gold --case <id>`.
+
+## Adding tranche 2
+
+Tranche 1 has one ordered case in 34, so tranche 2 adds more ordered, tie-heavy and rounding-sensitive cases. It adds cases where dropping the cancelled-orders filter changes the answer beyond net-revenue questions, and relative-time cases whose `as_of_date` is not a quarter or year end. The agent's prompt should match names case-insensitively (`lower(column) = 'literal'`), which is why gold text filters are lowercase.
 
 ## The review workflow
 
@@ -52,7 +56,7 @@ Both are top-level keys in `cases.yaml`, recorded in each run's `meta.json`. A r
 
 | Key | Changes when | Then |
 |---|---|---|
-| `gold_version` | a case's question, SQL or expected outcome changes, or cases are added (tranche 2 makes it 2) | Re-run the current default variant first to set the new baseline |
+| `gold_version` | a tranche lands (1 = tranche 1, 2 = both); each tranche is frozen once accepted | Re-run the current default variant first to set the new baseline |
 | `dataset_version` | `make eval-db` rebuilds the eval database (new data, new salt) | Re-run `--check-gold`, since a gold result may change, then the baseline |
 
 `test_gold_set.py` pins the tranche-1 shape (counts per category, the marts it reads, versions of 1); update it with the tranche.
@@ -89,7 +93,7 @@ Files, in order:
 1. **The answerer class** (agent-design-3 adds the one that wraps `AgentService`): its constructor takes what it needs, and `attempt` returns `outcome="failed"` with a reason instead of raising on a model failure.
 2. **`ANSWERERS` in `answerers.py`**: add `"name": lambda gold, settings: MyAnswerer(...)`. The key is what `--variant` accepts.
 3. **A test** in `test_answerers.py`, with no network. `run_cases` is tested in `test_run.py` on fake answerers.
-4. **Concurrency**: the runner holds one connection per case in flight (at most 16, because `sherpa_agent` allows 20). A variant that opens its own database connections, such as an MCP server per case, must count them in its share of that limit, or lower `MAX_CONCURRENCY` in `run.py`.
+4. **Concurrency**: the runner holds at most one connection per case in flight, during scoring (at most 16, because `sherpa_agent` allows 20). A variant that opens its own database connections, such as an MCP server per case, must count them in its share of that limit, or lower `MAX_CONCURRENCY` in `run.py`.
 
 ## When something goes wrong
 

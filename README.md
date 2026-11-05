@@ -10,7 +10,7 @@ The answers can be trusted because of the platform underneath: one documented, t
 
 It is a learning project held to production standards: a realistic synthetic e-commerce business, dbt Core features used the way practitioners use them, and an agent where observability and evaluation come first. All data is synthetic.
 
-> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), data-platform-4 (Marketing, governance and CI), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage), ui-3 (column lineage) and ui-4 (Home) and agent-design-2 (gold set and evals) are built. agent-design-3 (baseline agent) is next. Each spec's milestones section lists the rest.
+> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), data-platform-4 (Marketing, governance and CI), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage), ui-3 (column lineage), ui-4 (Home) and agent-design-2 (gold set and evals) are built. agent-design-3 (baseline agent) is next. Each spec's milestones section lists the rest.
 
 ## How it works
 

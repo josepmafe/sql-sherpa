@@ -4,7 +4,7 @@
 
 ## What you need
 
-- Postgres up and the frozen `sherpa_eval` database built ([Building the warehouse](building-the-warehouse.md#the-frozen-eval-database)). Every query runs there, never on the main database. `make eval-db` rebuilds it from scratch and bumps `dataset_version`, so run it only when the owner agrees.
+- Postgres up and the frozen `sherpa_eval` database built ([Building the warehouse](building-the-warehouse.md#the-frozen-eval-database)). Every query runs there, never on the main database. `make eval-db` rebuilds it from scratch, after which the owner bumps `dataset_version` in `cases.yaml` by hand, so run it only when the owner agrees.
 - `.env` filled in ([README Quickstart](../../../README.md)) and `uv sync` done.
 
 Both commands are plain commands, run from the repository root.
@@ -33,7 +33,7 @@ uv run --env-file .env python -m sherpa_evals.run --variant oracle [--category m
 | `--variant` | The answerer to score. `oracle` returns each case's gold SQL and expected outcome, needs no model and must score 100%; it proves the comparison rules. |
 | `--category`, `--case` | Run only that category or case id. Only `accepted` cases are ever run. |
 | `--repeat` | Attempts per case (default 1). |
-| `--concurrency` | Cases in flight, each holding one database connection while the answer and its scoring run (default 4, at most 16: the `sherpa_agent` role allows 20 connections and the MCP server shares them). |
+| `--concurrency` | Cases in flight, each holding at most one connection at a time, during scoring (default 4, at most 16: the `sherpa_agent` role allows 20 connections and the MCP server shares them). |
 
 Each query runs as a single statement in a real read-only transaction with a 30 s statement timeout and no row cap. A case that fails never stops the run.
 
@@ -43,7 +43,13 @@ The runner prints `report.md` and the directory it wrote. The parts that matter:
 
 ```
 Execution accuracy (EX): 100.0% (34/34)
-| complex | 100.0% (5/5) |  | grain | 100.0% (7/7) |  ...
+
+| category | EX |
+| --- | --- |
+| complex | 100.0% (5/5) |
+| grain | 100.0% (7/7) |
+| ... one row per category |
+
 Outcome-type accuracy: 100.0% (40/40)
 Latency: p50 0.0 s (target 20 s), p95 0.0 s (target 60 s)
 Cost: mean EUR 0.0000 per case, total EUR 0.0000
@@ -56,13 +62,13 @@ No earlier run of v0_baseline with gold_version 1 and dataset_version 1.
 - **Outcome-type accuracy**: over all cases, whether the variant answered, declined (`unanswerable`) or asked (`needs_clarification`) as expected. Unanswerable and clarification cases pass on the outcome alone.
 - **Schema recall**: of the answered cases, the share whose SQL reads every mart in the case's `tables`.
 - **Failing cases**: a table of case id, outcome, a one-line diff (such as `gold has 12 rows, the agent 13`) and the trace id.
-- **The diff against the default**: the last section compares with the newest earlier run of the default variant (`v0_baseline`) with the same `gold_version` and `dataset_version`: the EX change in points, and the cases newly passing and newly failing. With `--category` or `--case` the change is computed over the case ids both runs share. Without such a run it says so.
+- **The diff against the default**: the last section compares with the newest earlier run of the default variant (`v0_baseline`) with the same `gold_version` and `dataset_version`: the EX change in points, and the cases newly passing and newly failing. With `--category` or `--case` the change is computed over the case ids both runs share. It needs that earlier run's `meta.json` and its local `cases.jsonl` (gitignored), so on a fresh clone the report prints `No earlier run of ...`.
 
 ## Where the records live
 
 `agent/evals/runs/<timestamp>-<variant>/` (a `.n` suffix when two runs start in the same second):
 
-- `report.md` and `meta.json` are committed. `meta.json` holds the variant, `gold_version`, `dataset_version`, start time and repeats, which is how the next run finds the run to diff against.
+- `report.md` and `meta.json` are committed. `meta.json` holds the variant, `gold_version`, `dataset_version`, start time and repeats, which is how the next run finds the run to diff against (the diff also reads that run's local `cases.jsonl`).
 - `cases.jsonl` (one record per attempt) is gitignored.
 
 A run you only made to try something is yours to delete before committing.
