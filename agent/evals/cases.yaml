@@ -1,7 +1,7 @@
 # Gold set (agent spec §7.1). Tranche 1 reads only the data-platform-2 marts. Dates are absolute in 2025, except in
 # `time`, whose SQL is relative to as_of_date = (select max(order_date) from marts.fct_orders), 2025-12-31 on the
 # frozen sherpa_eval data (agent spec §7.0). Metric definitions: data platform spec §6.6; defaults: agent spec §5.3.
-# Text filters in gold SQL are case-insensitive: lower(column) = 'literal'.
+# Text filters in gold_sql and reconcile_sql are case-insensitive: lower(column) = 'literal'.
 gold_version: 1
 dataset_version: 1
 cases:
@@ -417,10 +417,9 @@ cases:
           and (o.placed_at at time zone 'UTC')::date < date '2025-04-01'
     rationale: >-
       Payment grain: an order can have several payment attempts (data platform spec §4.4 R7, failed then retried, or
-      split). fct_orders carries payment_count (every attempt) and failed_payment_count (§6.5 fct_orders), so
-      attempts are their sums, not a count of orders. Cancelled orders are included on purpose, because the question says
-      so: their attempts were processed. The
-      reconcile query counts raw_shop.payments rows of non-test orders.
+      split). fct_orders carries payment_count (every attempt) and failed_payment_count (§6.5 fct_orders), so attempts
+      are their sums, not a count of orders. Cancelled orders are included on purpose, because the question says so:
+      their attempts were processed. The reconcile query counts raw_shop.payments rows of non-test orders.
     tables: [fct_orders]
     status: draft
     reviews: []
@@ -628,7 +627,7 @@ cases:
 
   - id: time-002
     category: time
-    question: How many orders did we receive in the past 14 days, and how many in the 14 days before that?
+    question: How many orders did we receive in the past 14 days, and how many in the 14 days before that, cancelled ones aside?
     tranche: 1
     expected_outcome: answered
     gold_sql: |
@@ -649,8 +648,7 @@ cases:
     rationale: >-
       Two rolling periods ending at as_of_date (agent spec §5.3; data platform spec §6.5 as_of_date): the past 14 days
       are 18 to 31 December 2025 (401 orders) and the 14 days before are 4 to 17 December (399 orders) on the frozen
-      data, never anchored to today's date. Cancelled orders are left out by the default (data platform spec §6.6).
-      One row with two counts.
+      data, never anchored to today's date. The question itself leaves cancelled orders out. One row with two counts.
     tables: [fct_orders]
     status: draft
     reviews: []
@@ -950,11 +948,11 @@ cases:
       order by longest_gap_days desc, customer_id
       limit 5
     rationale: >-
-      A window per customer: the days between consecutive non-cancelled orders, in customer_order_number order
-      (data platform spec §6.5 fct_orders), then each customer's longest gap. order_date is a date, so the gap is whole
-      days between order dates. Customers are identified by
-      customer_id (§6.5 PII masking: no names). The fifth and sixth gaps differ (299 and 295 days), so the top 5 has
-      no tie; ties would break by customer_id. The question asks for an order, so ordered is true.
+      A window per customer: the days between consecutive non-cancelled orders, in customer_order_number order (data
+      platform spec §6.5 fct_orders), then each customer's longest gap. order_date is a date, so the gap is whole days
+      between order dates. Customers are identified by customer_id (§6.5 PII masking: no names). The fifth and sixth
+      gaps differ (299 and 295 days), so the top 5 has no tie; ties would break by customer_id. The question asks for an
+      order, so ordered is true.
     tables: [fct_orders]
     status: draft
     reviews: []
