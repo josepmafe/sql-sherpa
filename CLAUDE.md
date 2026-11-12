@@ -150,7 +150,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
 ### Logging and output
 - Stdlib `logging` only: `logger = logging.getLogger(__name__)` per module, with `%`-style arguments (`logger.info("wrote %d rows", n)`, not f-strings). No `print()` outside CLI output (Typer/Rich) and helper scripts (`data-platform/scripts/`).
-- **The MCP server never writes to stdout** (it carries the JSON-RPC stream): logs go to stderr, and Logfire runs with `console=False`.
+- **The MCP server never writes to stdout** (it carries the JSON-RPC stream): logs go to stderr, and OpenTelemetry has no console exporter.
 
 ### Formatting
 - ruff format; line length 120 (prompt strings in agent modules may exceed it).

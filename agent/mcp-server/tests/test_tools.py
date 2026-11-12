@@ -19,7 +19,8 @@ if TYPE_CHECKING:
     from unittest.mock import Mock
 
     import psycopg
-    from logfire.testing import CaptureLogfire
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from sherpa_mcp.database import AgentDatabase
 
 METRICS = (
@@ -329,40 +330,47 @@ class TestWarehouseTools:
 
 @pytest.mark.warehouse
 class TestGuardTracing:
-    def test_rejection_is_traced_without_the_sql(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+    def test_rejection_is_traced_without_the_sql(
+        self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
+    ) -> None:
         with pytest.raises(WarehouseToolError):
             tools.run_sql(HOSTILE_SQL)
 
-        spans = capfire.exporter.exported_spans_as_dict()
+        spans = span_exporter.get_finished_spans()
         guard = _only_span(spans, "sherpa.guard")
-        assert guard["attributes"]["tool"] == "run_sql"
-        assert guard["attributes"]["ok"] is False
-        assert guard["attributes"]["error_count"] == 1
-        assert guard["attributes"]["execution_id"] == hashlib.sha256(HOSTILE_SQL.encode()).hexdigest()[:16]
-        rejected = _only_span(spans, "guard rejected")
-        assert rejected["attributes"]["rule"] == "statement_count"
-        assert rejected["attributes"]["error_count"] == 1
-        assert PII_LITERAL not in str(spans)
-        assert "drop table" not in str(spans)
+        assert guard.attributes is not None
+        assert guard.attributes["tool"] == "run_sql"
+        assert guard.attributes["ok"] is False
+        assert guard.attributes["error_count"] == 1
+        assert guard.attributes["rule"] == "statement_count"
+        assert guard.attributes["execution_id"] == hashlib.sha256(HOSTILE_SQL.encode()).hexdigest()[:16]
+        assert PII_LITERAL not in str(_spans_json(spans))
+        assert "drop table" not in str(_spans_json(spans))
 
-    def test_rejection_rule_comes_from_the_error_code(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+    def test_rejection_rule_comes_from_the_error_code(
+        self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
+    ) -> None:
         tools.validate_sql("select pg_sleep(1) from marts.fct_orders")
 
-        rejected = _only_span(capfire.exporter.exported_spans_as_dict(), "guard rejected")
-        assert rejected["attributes"]["rule"] == "function"
+        guard = _only_span(span_exporter.get_finished_spans(), "sherpa.guard")
+        assert guard.attributes is not None
+        assert guard.attributes["rule"] == "function"
 
-    def test_accepted_query_is_traced_with_its_marts(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+    def test_accepted_query_is_traced_with_its_marts(
+        self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
+    ) -> None:
         tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")
 
-        spans = capfire.exporter.exported_spans_as_dict()
+        spans = span_exporter.get_finished_spans()
         guard = _only_span(spans, "sherpa.guard")
-        assert guard["attributes"]["tool"] == "validate_sql"
-        assert guard["attributes"]["ok"] is True
-        assert guard["attributes"]["error_count"] == 0
-        assert json.loads(guard["attributes"]["tables"]) == ["marts.fct_orders"]  # Logfire sends tuples as JSON
-        assert "execution_id" not in guard["attributes"]
-        assert not [span for span in spans if span["name"] == "guard rejected"]
-        assert "41" not in str([span["attributes"] for span in spans if span["name"] == "sherpa.guard"])
+        assert guard.attributes is not None
+        assert guard.attributes["tool"] == "validate_sql"
+        assert guard.attributes["ok"] is True
+        assert guard.attributes["error_count"] == 0
+        assert guard.attributes["tables"] == ("marts.fct_orders",)
+        assert "execution_id" not in guard.attributes
+        assert "rule" not in guard.attributes
+        assert "41" not in str(_spans_json(spans))
 
 
 class TestGetContext:
@@ -797,10 +805,14 @@ class TestToolsWithoutArtifacts:
         assert len(tools.get_examples("net revenue by month", k=2).examples) == 2
 
 
-def _only_span(spans: list[dict[str, Any]], name: str) -> dict[str, Any]:
-    matching = [span for span in spans if span["name"] == name]
-    assert len(matching) == 1, [span["name"] for span in spans]
+def _only_span(spans: Sequence[ReadableSpan], name: str) -> ReadableSpan:
+    matching = [span for span in spans if span.name == name]
+    assert len(matching) == 1, [span.name for span in spans]
     return matching[0]
+
+
+def _spans_json(spans: Sequence[ReadableSpan]) -> list[str]:
+    return [span.to_json() for span in spans]
 
 
 def _result(

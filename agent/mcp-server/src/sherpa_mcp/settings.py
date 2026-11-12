@@ -28,6 +28,8 @@ class McpSettings(BaseSettings):
     mcp_pool_size: int = Field(default=DEFAULT_POOL_SIZE, ge=1)
     # Unprefixed on purpose: MCP_TRANSPORT is the variable the server's launch configuration sets (spec §10).
     transport: Literal["stdio", "http"] = Field(default="stdio", validation_alias="MCP_TRANSPORT")
+    # The standard OpenTelemetry variable, read here for the on/off decision; the exporter reads it itself (spec §10).
+    otel_exporter_otlp_endpoint: str | None = Field(default=None, validation_alias="OTEL_EXPORTER_OTLP_ENDPOINT")
 
     def agent_conninfo(self) -> str:
         """libpq connection string for the read-only agent role."""

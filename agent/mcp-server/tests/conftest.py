@@ -14,6 +14,10 @@ import psycopg
 import pytest
 from mcp import Client, StdioServerParameters
 from mcp.client.stdio import get_default_environment
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from psycopg.conninfo import make_conninfo
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -170,6 +174,23 @@ def prod_loader(warehouse_settings: McpSettings) -> MartCatalogLoader:
 @pytest.fixture(scope="module")
 def tools(prod_loader: MartCatalogLoader, agent_database: AgentDatabase) -> WarehouseTools:
     return WarehouseTools(prod_loader, agent_database, ExampleIndex.from_yaml(EXAMPLES_PATH))
+
+
+@pytest.fixture(scope="session")
+def _span_exporter() -> InMemorySpanExporter:
+    """The one global tracer provider of the test process, exporting every span to memory."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return exporter
+
+
+@pytest.fixture
+def span_exporter(_span_exporter: InMemorySpanExporter) -> InMemorySpanExporter:
+    """The finished spans of this test only (cleared before it)."""
+    _span_exporter.clear()
+    return _span_exporter
 
 
 @pytest.fixture
