@@ -233,7 +233,7 @@ RunStats: variant, usage, latency_ms, cost_eur, tool_calls, sql_attempts, trace_
 
 | Situation | Behaviour |
 |---|---|
-| Bedrock throttling / 5xx | botocore adaptive retries, `max_attempts = 5` (botocore counts that as 5 retries: 6 attempts in all); then `Failed(reason="model provider unavailable: …")` |
+| Bedrock throttling / 5xx | botocore adaptive retries, `max_attempts = 5` (botocore counts that as 5 retries: 6 attempts in all); then `Failed(reason="model provider unavailable: <code>")`, or `Failed(reason="model provider rejected the request: <status>")` for a 4xx other than 429. The reason holds only a stable code, status or exception class name, never the provider's text (it can carry account ids and role ARNs, and reports are committed); the full error goes to the log and the span. A botocore read timeout of 300 s is set explicitly, because a non-streaming call with thinking can run past the 60 s default |
 | SQL error from `validate_sql` / `run_sql` | Returned to the model as a tool error; counts as one SQL attempt |
 | SQL timeout | Tool error with a hint; counts as one SQL attempt |
 | SQL attempts > 3 | `Failed` with `last_sql` and `last_error`. The RecordingToolset counts attempts (`validate_sql` failures + `run_sql` calls) and raises a run-ending error on the 4th. PydanticAI's MCP toolset `max_retries` is set **explicitly** to 4, so the framework's own retry limit (default 1) never ends a run before this rule does. |
@@ -242,7 +242,9 @@ RunStats: variant, usage, latency_ms, cost_eur, tool_calls, sql_attempts, trace_
 | Ambiguous question | `NeedsClarification` only when **no documented default applies** and the readings would lead to different queries. Examples: "best customers" (by revenue? by order count?), or "top performers" with no metric. Terms that *have* a documented default (below) are **never** clarified. The default is used and recorded in `assumptions`. This is a judgement call from the prompt plus the default list; the agent does not run both readings. |
 | Empty result | Allowed. `caveats` must say why it is plausible or flag it as suspicious |
 | Truncated result | `caveats` must say so; the answer must not claim totals computed over truncated rows |
-| MCP server crash | `Failed(reason="tool server unavailable")`; the CLI exits non-zero |
+| MCP server crash, or no answer to a call within 30 s | `Failed(reason="tool server unavailable")`; the CLI exits non-zero. A server that does not start is an `AgentError` ("tool server unavailable: …") and the CLI exits 1 |
+| A tool's retries run out | `Failed(reason="tool calls kept failing")` |
+| `get_context` refuses (for example no dbt artifacts) | `Failed(reason="warehouse context unavailable: <the server's message>")` |
 
 Default interpretations (documented in the system prompt and the metric doc blocks): "revenue" = `net_revenue`; "sales" = `gross_revenue`; "customers" = non-deleted customers with ≥ 1 non-cancelled order unless stated; relative periods are resolved against `as_of_date`, with calendar periods ("last quarter" = previous calendar quarter).
 
@@ -277,9 +279,9 @@ sherpa ask "net revenue by month in 2026 for Germany" [--variant v0_baseline] [-
 
 ## 6. Observability
 
-- **Setup, in each process:** `sherpa_mcp.telemetry.configure(service_name)` installs a tracer provider whether or not anything is exported, so every run has a trace id, and adds the OTLP/HTTP exporter only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. The default W3C propagator carries the context.
-- **The server (`sherpa-mcp`):** one `tools/call <tool>` span per tool call (the MCP SDK's own instrumentation: the tool name and, on failure, `error.type`, never the arguments or the error text), a `sherpa.guard` span per guard decision, and psycopg statements instrumented (OpenTelemetry's psycopg instrumentor). The instrumentation sees statements on a plain connection (the `set local` settings, `validate_sql`'s `explain`, whose text and any error message can carry the query's literals); queries on the named server-side cursor get no database span, so neither their text nor a class 22 error quoting a stored value reaches the trace.
-- **The agent (`sherpa-agent`):** PydanticAI's instrumentation on every agent (`Agent.instrument_all` with our tracer provider). It records prompts and completions, which suits a local backend; a cloud backend is a choice to review first.
+- **Setup, in each process:** `sherpa_mcp.telemetry.configure(service_name, otlp_endpoint)` installs a tracer provider whether or not anything is exported, so every run has a trace id, and adds the OTLP/HTTP exporter, posting to `<endpoint>/v1/traces`, only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (read from `.env` too; no other `OTEL_*` variable redirects it). The default W3C propagator carries the context.
+- **The server (`sherpa-mcp`):** one `tools/call <tool>` span per tool call (the MCP SDK's own instrumentation: the tool name and, on failure, `error.type`, never the arguments or the error text), a `sherpa.guard` span per guard decision, and psycopg statements instrumented (OpenTelemetry's psycopg instrumentor). The server's spans keep query text out of the trace. The instrumentation sees statements on a plain connection (the `set local` settings, `validate_sql`'s `explain`, whose text and any error message can carry the query's literals); queries on the named server-side cursor get no database span, so neither their text nor a class 22 error quoting a stored value reaches the trace.
+- **The agent (`sherpa-agent`):** PydanticAI's instrumentation on every agent (`Agent.instrument_all` with our tracer provider). It records prompts and completions and, on the tool-call spans, the tool arguments and results: the SQL, the result rows and the database's error text. The agent's spans therefore hold query text and stored values (the masked columns as hashes), which suits a local backend; a cloud backend is a choice to review first, and the Jaeger profile should be stopped when nothing is being traced. A `Failed` outcome's reason carries no provider text, only the full error as a span event and a log line.
 - **Cross-process trace:** the MCP SDK's client puts the W3C `traceparent` into each request's `_meta`, and its server parents the `tools/call` span on it, so the agent's and the server's spans form one trace. agent-design-3b checks it in Jaeger.
 - **Span conventions:** one root span per call (`sherpa.plan` or `sherpa.answer`, attributes: variant, outcome type, `draft_id`); child spans per pipeline step (`ground`, `link`, `generate`, `critic`, `vote`), the same steps the progress events report; `RunStats` attached to the root span.
 - **Eval runs** tag every root span with `eval_run_id` and `case_id`, so a failing case can be opened as a trace directly from the report.
@@ -471,4 +473,5 @@ Everything the agent needs from the warehouse is defined there, not here.
 - Multi-turn follow-ups ("now only Germany"), reusing the previous `Interpretation`.
 - Saving accepted analyst queries as new few-shot examples (with review).
 - Explaining an existing SQL query in plain language (SQL → words), for the UI's Explorer.
+- Check the numbers in `caveats`: the numbers guard (§5.2) checks `answer_text` only, so a number in a caveat is not verified against the result.
 - Tie `dataset_version` to the data: a small fingerprint stored beside it in `cases.yaml` (for example `max(order_date)`, `count(*)`, `sum(net_revenue)` of `marts.fct_orders`) that `--check-gold` and the runner compare, so a rebuild with changed code cannot go unnoticed. Today `dataset_version` is a process rule (§7.0), and a rebuild is visible only through the rationales' quoted numbers and a human check.

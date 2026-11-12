@@ -59,15 +59,16 @@ A guard turns a model mistake into a retry before it becomes an outcome (agent s
 | Tool retries of an agent | 4 | `TOOL_RETRIES` in `variants/v0_baseline.py` | `test_calls_to_an_unknown_tool_do_not_end_the_run_within_the_spec_retries` |
 | MCP toolset retries | 4 | `MCP_MAX_RETRIES` in `service.py` | `test_the_framework_retries_never_end_a_run_before_the_sql_attempt_limit` |
 | SQL attempts | 3 (the 4th ends the run) | `MAX_SQL_ATTEMPTS` in `recording.py` | the `test_a_fourth_*` tests in `test_recording.py` |
-| Bedrock retries and connect timeout | `max_attempts` 5 (botocore counts 5 retries: 6 attempts), 5 s | `BEDROCK_CONFIG` in `models.py` | `test_bedrock_prefix_builds_a_converse_model_with_the_retry_and_timeout_config` |
+| MCP call and start timeouts | 30 s per call; start-up 30 s (the server's 15 s warehouse wait plus 15 s) | `MCP_READ_TIMEOUT_SECONDS`, `MCP_INIT_TIMEOUT_SECONDS` in `service.py` | `test_a_call_is_given_up_after_30_seconds_and_the_start_outlasts_the_servers_warehouse_wait` |
+| Bedrock retries and timeouts | `max_attempts` 5 (botocore counts 5 retries: 6 attempts), connect 5 s, read 300 s | `BEDROCK_CONFIG` in `models.py` | `test_bedrock_prefix_builds_a_converse_model_with_the_retry_and_timeout_config` |
 
-Both tool-retry values stay above `MAX_SQL_ATTEMPTS`, so the framework never ends a run before the SQL-attempt rule does. A limit test asserts what we pass (`UsageLimits`, the botocore config), not that PydanticAI enforces it. Change the spec (§5.3) in the same commit.
+Both tool-retry values stay above `MAX_SQL_ATTEMPTS`, so the framework never ends a run before the SQL-attempt rule does. A limit test asserts what we pass (`UsageLimits`, the botocore config), not that PydanticAI enforces it. Change the spec (§5.3) in the same commit. A `Failed.reason` carries a stable code, status or class name and never the provider's or the database's text (`_provider_reason` in `service.py`; `test_a_bedrock_http_error_reports_a_code_or_a_status_and_never_the_providers_text`): reports are committed, and the full error goes to the log and the span.
 
 Two switches change how the model is called: `OUTPUT_MODE` in `variants/base.py` (how structured output is requested; `NativeOutput`) and `model_settings` in `models.py` (the effort field and the token ceiling; never temperature, top_p or tool_choice, which `test_no_setting_forces_sampling_or_tool_choice` pins).
 
 ## Traces
 
-`AgentService` opens a `sherpa.plan` or `sherpa.answer` span per call and sets run statistics as attributes (`_annotate`), never SQL or row values. PydanticAI's own model and tool spans nest under it, and the MCP server's spans join when the stdio server gets `OTEL_EXPORTER_OTLP_ENDPOINT` (`server_env`). A new attribute follows the same rule: nothing from the database or the environment.
+`AgentService` opens a `sherpa.plan` or `sherpa.answer` span per call and sets run statistics as attributes (`_annotate`: counts, latency, tokens, cost; no SQL or rows). PydanticAI's own model and tool spans nest under it and record prompts, tool arguments and tool results, so the SQL, the result rows and the database's error text are in the trace; the MCP server's spans keep query text out. A new attribute of ours follows the `_annotate` rule: nothing from the database or the environment. The MCP server's spans join when the stdio server gets `OTEL_EXPORTER_OTLP_ENDPOINT` (`server_env`).
 
 ## When something goes wrong
 
