@@ -26,7 +26,13 @@ from sherpa_agent.outcomes import (
     Unanswerable,
     UsageSnapshot,
 )
-from sherpa_agent.recording import Execution, RecordingToolset, plan_tools
+from sherpa_agent.recording import (
+    Execution,
+    RecordingToolset,
+    WarehouseContextUnavailable,
+    plan_tools,
+    tool_server_gone,
+)
 from sherpa_agent.variants.base import OUTPUT_MODE, OUTPUT_RETRIES, VariantContext
 
 if TYPE_CHECKING:
@@ -325,7 +331,12 @@ async def _scope(ctx: VariantContext) -> _Scope:
     """One direct call, not one of the model's: the prompt and the numbers check must not depend on what it asked."""
     run_ctx = RunContext(deps=None, model=ctx.model_for(ctx.settings.model_default), usage=ctx.usage)
     tools = await ctx.toolset.get_tools(run_ctx)
-    scope = await ctx.toolset.call_tool(GET_CONTEXT, {}, run_ctx, tools[GET_CONTEXT])
+    try:
+        scope = await ctx.toolset.call_tool(GET_CONTEXT, {}, run_ctx, tools[GET_CONTEXT])
+    except ModelRetry as refusal:
+        if gone := tool_server_gone(refusal):
+            raise gone from refusal
+        raise WarehouseContextUnavailable(str(refusal)) from refusal
     return _Scope.model_validate(scope)
 
 

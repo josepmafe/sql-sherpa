@@ -316,6 +316,38 @@ class TestErrors:
         assert "Traceback" not in result.output
 
 
+class FailsToStart(FunctionToolset[None]):
+    async def __aenter__(self) -> FailsToStart:
+        raise RuntimeError("Client failed to connect: Connection closed\n" + "traceback line\n" * 5)
+
+
+class TestToolServerStartup:
+    def test_a_tool_server_that_does_not_start_is_a_clean_message_and_exit_1(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cli, "load_settings", lambda: AgentSettings(_env_file=None))  # type: ignore[call-arg]
+        monkeypatch.setattr(cli, "mcp_toolset", lambda settings: FailsToStart())
+
+        result = runner.invoke(app, ["ask", "q"])
+
+        assert result.exit_code == EXIT_FAILED
+        assert "error: tool server unavailable: Client failed to connect: Connection closed" in result.stderr
+        assert "traceback line" not in result.output
+        assert "Traceback" not in result.output
+
+    def test_any_other_runtime_error_is_not_hidden(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Broken(FunctionToolset[None]):
+            async def __aenter__(self) -> Broken:
+                raise RuntimeError("a bug")
+
+        monkeypatch.setattr(cli, "load_settings", lambda: AgentSettings(_env_file=None))  # type: ignore[call-arg]
+        monkeypatch.setattr(cli, "mcp_toolset", lambda settings: Broken())
+
+        result = runner.invoke(app, ["ask", "q"])
+
+        assert isinstance(result.exception, RuntimeError)
+
+
 class CountingToolset(FunctionToolset[None]):
     def __init__(self) -> None:
         super().__init__()

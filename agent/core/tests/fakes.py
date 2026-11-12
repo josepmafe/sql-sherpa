@@ -5,8 +5,9 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel
-from pydantic_ai import RunContext
+from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -124,3 +125,10 @@ def _default_result(name: str) -> Any:
             return sql_result()
         case _:
             raise KeyError(name)
+
+
+def mcp_failure(code: int, message: str = "the server went away") -> ModelRetry:
+    """What `MCPToolset` raises when the server's session dies under a call: a `ModelRetry` caused by an `MCPError`."""
+    retry = ModelRetry(message)
+    retry.__cause__ = MCPError(code, message)
+    return retry

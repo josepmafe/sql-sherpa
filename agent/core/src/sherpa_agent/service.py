@@ -16,16 +16,18 @@ from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
 from mcp.shared.exceptions import MCPError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.mcp import MCPError as PydanticAiMCPError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RunUsage
+from sherpa_mcp.server import STARTUP_WAIT_SECONDS
 from sherpa_mcp.telemetry import configure
 
 from sherpa_agent import AgentError
 from sherpa_agent.models import build_model
 from sherpa_agent.outcomes import Answered, Draft, Failed, ModelUsage, NeedsClarification, RunStats, Unanswerable
-from sherpa_agent.recording import SqlAttemptsExhausted
+from sherpa_agent.recording import SqlAttemptsExhausted, ToolServerUnavailable, WarehouseContextUnavailable
 from sherpa_agent.variants import VARIANTS, VariantContext
 
 if TYPE_CHECKING:
@@ -51,6 +53,12 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME: Final = "sherpa-agent"
 REPO_ROOT: Final = Path(__file__).resolve().parents[4]
 MCP_SERVER_COMMAND: Final = ["-c", "from sherpa_mcp.server import main; main()"]
+# A call the server has not answered after this long is given up: the server's statement timeout is 5 s, so the rest is
+# margin for the round trip and the server's own work.
+MCP_READ_TIMEOUT_SECONDS: Final = 30
+# The stdio server waits up to STARTUP_WAIT_SECONDS for the warehouse before it listens; the start must outlast that
+# and the interpreter's own start-up, or the client reports a connect failure while the server is still waiting.
+MCP_INIT_TIMEOUT_SECONDS: Final = STARTUP_WAIT_SECONDS + 15
 MCP_MAX_RETRIES: Final = 4  # §5.3: above the SQL-attempt limit, so the framework never ends a run first
 PLAN_SPAN: Final = "sherpa.plan"
 ANSWER_SPAN: Final = "sherpa.answer"
@@ -61,6 +69,7 @@ PLAN_NOT_VALIDATED: Final = "plan could not be validated"
 ANSWER_NOT_VERIFIED: Final = "answer could not be verified against results"
 PROVIDER_UNAVAILABLE: Final = "model provider unavailable: {detail}"
 TOOL_SERVER_UNAVAILABLE: Final = "tool server unavailable"
+CONTEXT_UNAVAILABLE: Final = "warehouse context unavailable: {detail}"
 # What PydanticAI raises when a validator (or the output schema) sends the model back more often than allowed; the
 # other UnexpectedModelBehavior causes (a tool's retries, a limit on the model's own behaviour) are not the model's
 # unverified output, so they propagate.
@@ -184,9 +193,9 @@ def mcp_toolset(settings: AgentSettings) -> MCPToolset[None]:
     match settings.mcp_transport:
         case "stdio":
             transport = StdioTransport(sys.executable, MCP_SERVER_COMMAND, env=server_env(settings), cwd=str(REPO_ROOT))
-            return MCPToolset(transport, max_retries=MCP_MAX_RETRIES)
+            return _toolset(transport)
         case "http":
-            return MCPToolset(StreamableHttpTransport(settings.mcp_http_url), max_retries=MCP_MAX_RETRIES)
+            return _toolset(StreamableHttpTransport(settings.mcp_http_url))
 
 
 def server_env(settings: AgentSettings) -> dict[str, str]:
@@ -250,6 +259,15 @@ def _usage_from(snapshot: UsageSnapshot) -> RunUsage:
     )
 
 
+def _toolset(transport: StdioTransport | StreamableHttpTransport) -> MCPToolset[None]:
+    return MCPToolset(
+        transport,
+        max_retries=MCP_MAX_RETRIES,
+        init_timeout=MCP_INIT_TIMEOUT_SECONDS,
+        read_timeout=MCP_READ_TIMEOUT_SECONDS,
+    )
+
+
 def _failure(error: BaseException, unverified_reason: str) -> Failed | None:
     """The `Failed` outcome of an error a run can end in, or None when the error is not one of them."""
     match error:
@@ -261,7 +279,15 @@ def _failure(error: BaseException, unverified_reason: str) -> Failed | None:
             return _failed(unverified_reason)
         case ModelHTTPError() | ClientError() | EndpointConnectionError():
             return _failed(PROVIDER_UNAVAILABLE.format(detail=_first_line(str(error))))
-        case MCPError() | ConnectionError() | anyio.ClosedResourceError():
+        case WarehouseContextUnavailable():
+            return _failed(CONTEXT_UNAVAILABLE.format(detail=_first_line(str(error))))
+        case (
+            ToolServerUnavailable()
+            | MCPError()
+            | PydanticAiMCPError()
+            | ConnectionError()
+            | anyio.ClosedResourceError()
+        ):
             return _failed(TOOL_SERVER_UNAVAILABLE)
         case RuntimeError() if SESSION_CLOSED_MESSAGE in str(error):
             return _failed(TOOL_SERVER_UNAVAILABLE)

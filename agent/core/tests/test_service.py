@@ -7,13 +7,15 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError
-from fakes import FakeWarehouse, validation
+from fakes import FakeWarehouse, mcp_failure, validation
 from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
 from mcp.shared.exceptions import MCPError
+from mcp.types import CONNECTION_CLOSED, INVALID_PARAMS, REQUEST_TIMEOUT
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.mcp import MCPError as PydanticMCPError
 from pydantic_ai.messages import ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -417,13 +419,58 @@ class TestFailureMapping:
         assert "\n" not in outcome.reason
         assert "request id" not in outcome.reason
 
-    async def test_tool_server_gone_is_failed(
+    @pytest.mark.parametrize("code", [CONNECTION_CLOSED, REQUEST_TIMEOUT], ids=["connection-closed", "timeout"])
+    @pytest.mark.parametrize(
+        ("tool_name", "phase"),
+        [("validate_sql", "plan"), ("run_sql", "answer"), ("list_tables", "plan")],
+        ids=["validate-sql", "run-sql", "other-tool"],
+    )
+    async def test_a_tool_server_that_dies_mid_run_is_tool_server_unavailable_not_a_sql_attempt(
+        self,
+        make_service: Callable[..., AgentService],
+        warehouse: FakeWarehouse,
+        tool_name: str,
+        phase: str,
+        code: int,
+    ) -> None:
+        warehouse.set(tool_name, mcp_failure(code))  # the ModelRetry MCPToolset makes of the McpError
+        script = Script(tool(tool_name, **({"sql": SQL} if "sql" in tool_name else {})))
+        service = make_service(script)
+
+        outcome = await (service.answer(make_draft()) if phase == "answer" else service.plan(QUESTION))
+
+        failed = await self.assert_failed(outcome, "tool server unavailable")
+        assert failed.last_sql is None
+        assert failed.stats is not None
+        assert failed.stats.sql_attempts == 0
+
+    async def test_a_tool_error_that_is_not_the_session_ending_stays_a_retry(
         self, make_service: Callable[..., AgentService], warehouse: FakeWarehouse
     ) -> None:
-        warehouse.set("validate_sql", ConnectionError("stdio server exited"))
-        script = Script(tool("validate_sql", sql=SQL))
+        warehouse.set("validate_sql", mcp_failure(INVALID_PARAMS, "bad sql argument"))
+        script = Script(*[tool("validate_sql", sql=f"selct {n}") for n in range(1, 6)])
 
         outcome = await make_service(script).plan(QUESTION)
+
+        await self.assert_failed(outcome, "sql attempts exhausted")
+
+    async def test_a_missing_catalog_fails_the_run_with_the_servers_message(
+        self, make_service: Callable[..., AgentService], warehouse: FakeWarehouse
+    ) -> None:
+        warehouse.set("get_context", ModelRetry("The dbt artifacts are missing; run make build-prod.\nsecond line"))
+
+        outcome = await make_service(Script(clarify([]))).plan(QUESTION)
+
+        await self.assert_failed(
+            outcome, "warehouse context unavailable: The dbt artifacts are missing; run make build-prod."
+        )
+
+    async def test_a_tool_server_that_dies_while_the_scope_is_read_is_tool_server_unavailable(
+        self, make_service: Callable[..., AgentService], warehouse: FakeWarehouse
+    ) -> None:
+        warehouse.set("get_context", mcp_failure(CONNECTION_CLOSED))
+
+        outcome = await make_service(Script(clarify([]))).plan(QUESTION)
 
         await self.assert_failed(outcome, "tool server unavailable")
 
@@ -431,13 +478,22 @@ class TestFailureMapping:
         "error",
         [
             MCPError(-32000, "connection closed"),
+            PydanticMCPError("gone", code=-32000),
             ConnectionRefusedError("refused"),
             anyio.ClosedResourceError(),
             RuntimeError("Server session was closed unexpectedly"),
             ExceptionGroup("task group", [ConnectionError("pipe closed")]),
             ExceptionGroup("outer", [ExceptionGroup("inner", [MCPError(-1, "gone"), anyio.ClosedResourceError()])]),
         ],
-        ids=["mcp-error", "connection-refused", "closed-resource", "session-closed", "group", "nested-group"],
+        ids=[
+            "mcp-error",
+            "pydantic-ai-mcp-error",
+            "connection-refused",
+            "closed-resource",
+            "session-closed",
+            "group",
+            "nested-group",
+        ],
     )
     async def test_every_way_the_tool_server_goes_away_is_tool_server_unavailable(
         self, make_service: Callable[..., AgentService], error: BaseException
@@ -503,6 +559,14 @@ class TestMcpToolset:
     def test_the_framework_retries_never_end_a_run_before_the_sql_attempt_limit(self, settings: AgentSettings) -> None:
         assert MCP_MAX_RETRIES == 4
         assert mcp_toolset(settings).max_retries == 4
+
+    def test_a_call_is_given_up_after_30_seconds_and_the_start_outlasts_the_servers_warehouse_wait(
+        self, settings: AgentSettings
+    ) -> None:
+        client = mcp_toolset(settings).client
+
+        assert client._session_kwargs["read_timeout_seconds"] == 30  # the server's 5 s statement timeout plus margin
+        assert client._init_timeout > 15  # the server waits up to 15 s for the warehouse before it listens
 
     def test_stdio_starts_the_same_interpreter_in_the_repository_root(self, settings: AgentSettings) -> None:
         transport = mcp_toolset(settings).client.transport

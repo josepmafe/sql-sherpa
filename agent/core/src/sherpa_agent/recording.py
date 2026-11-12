@@ -5,7 +5,10 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Final, Self
 
+from mcp.shared.exceptions import MCPError
+from mcp.types import CONNECTION_CLOSED, REQUEST_TIMEOUT
 from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic_ai import ModelRetry
 from pydantic_ai.toolsets import WrapperToolset
 
 from sherpa_agent import AgentError
@@ -21,6 +24,8 @@ if TYPE_CHECKING:
 MAX_SQL_ATTEMPTS: Final = 3  # §5.3: the 4th attempt ends the run
 RUN_SQL: Final = "run_sql"
 VALIDATE_SQL: Final = "validate_sql"
+# The codes of an MCPError that mean the server's session is gone, not that a call was refused.
+SESSION_GONE_CODES: Final = (CONNECTION_CLOSED, REQUEST_TIMEOUT)
 STEP_OF_TOOL: Final[dict[str, StepName]] = {
     "get_context": "scope",
     "list_tables": "scope",
@@ -56,6 +61,14 @@ class SqlAttemptsExhausted(AgentError):
         self.last_error = last_error
 
 
+class ToolServerUnavailable(AgentError):
+    """The MCP server's session ended or a call timed out: a run-ending error, not a failed SQL attempt."""
+
+
+class WarehouseContextUnavailable(AgentError):
+    """`get_context` refused (for example no dbt artifacts): the run cannot start; carries the server's message."""
+
+
 class RecordingToolset(WrapperToolset[Any]):
     """Wraps the MCP toolset for one run. The record lives in `self._record`, which a copy made by PydanticAI's
     `for_run` shares with this instance, so it survives the framework re-wrapping the toolset."""
@@ -79,6 +92,10 @@ class RecordingToolset(WrapperToolset[Any]):
         try:
             result = await super().call_tool(name, tool_args, ctx, tool)
         except Exception as error:
+            if gone := tool_server_gone(error):
+                if name == RUN_SQL:
+                    self._record.attempts -= 1  # the call never reached the database
+                raise gone from error
             message = str(error)
             await self._add_call(name, tool_args, f"failed: {_first_line(message)}")
             if name in (RUN_SQL, VALIDATE_SQL):
@@ -178,6 +195,14 @@ class RecordingToolset(WrapperToolset[Any]):
     async def _report(self, step: Step | None) -> None:
         if step is not None and self._on_progress is not None:
             await self._on_progress(step)
+
+
+def tool_server_gone(error: BaseException) -> ToolServerUnavailable | None:
+    """MCPToolset turns an MCPError into a `ModelRetry` caused by it; one that says the session ended is not a retry."""
+    cause = error.__cause__
+    if isinstance(error, ModelRetry) and isinstance(cause, MCPError) and cause.code in SESSION_GONE_CODES:
+        return ToolServerUnavailable(str(cause))
+    return None
 
 
 def plan_tools(toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:

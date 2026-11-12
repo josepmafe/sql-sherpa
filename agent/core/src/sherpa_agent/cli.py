@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Final, Protocol
 
 import typer
@@ -44,6 +44,9 @@ CHOICES: Final = (CHOICE_RUN, CHOICE_CORRECT, CHOICE_ABORT)
 CONFIRM_PROMPT: Final = "Run, correct or abort?"
 CORRECTION_PROMPT: Final = "Correction:"
 INVALID_CONFIGURATION: Final = "invalid configuration: {details}"
+TOOL_SERVER_UNAVAILABLE: Final = "tool server unavailable: {detail}"
+# What the FastMCP client raises when the session cannot be opened (the stdio server exited, the URL is down).
+CONNECT_FAILED_PREFIX: Final = "Client failed to connect"
 
 app = typer.Typer(help="SQL Sherpa text-to-SQL agent (agent spec §5.5).", no_args_is_help=True, add_completion=False)
 
@@ -184,7 +187,14 @@ async def open_service(settings: AgentSettings) -> AsyncIterator[AgentRun]:
     """The service over one MCP session: the stdio server is a single subprocess for plan and answer alike. The
     variants enter the toolset too; MCPToolset counts its entries, so theirs are nested inside this one."""
     toolset = mcp_toolset(settings)
-    async with toolset:
+    async with AsyncExitStack() as stack:
+        try:
+            await stack.enter_async_context(toolset)
+        except RuntimeError as error:
+            if not str(error).startswith(CONNECT_FAILED_PREFIX):
+                raise
+            detail = (str(error).splitlines() or [""])[0]
+            raise AgentError(TOOL_SERVER_UNAVAILABLE.format(detail=detail)) from error
         yield AgentService(settings, toolset, prices=Prices.load(PRICES_PATH))
 
 
