@@ -11,11 +11,17 @@ from time import monotonic
 from typing import TYPE_CHECKING, Final, cast
 
 import anyio
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import BotoCoreError, ClientError
 from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
 from mcp.shared.exceptions import MCPError
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRequestRejectedError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.mcp import MCPError as PydanticAiMCPError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -67,13 +73,19 @@ BUDGET_EXCEEDED: Final = "budget exceeded"
 SQL_ATTEMPTS_EXHAUSTED: Final = "sql attempts exhausted"
 PLAN_NOT_VALIDATED: Final = "plan could not be validated"
 ANSWER_NOT_VERIFIED: Final = "answer could not be verified against results"
-PROVIDER_UNAVAILABLE: Final = "model provider unavailable: {detail}"
+# Only a stable code or status goes into a reason: the provider's own text can carry account ids, role ARNs and emails,
+# and reports are committed. The full text goes to the log and the span.
+PROVIDER_UNAVAILABLE: Final = "model provider unavailable: {code}"
+PROVIDER_REJECTED: Final = "model provider rejected the request: {status}"
+TOO_MANY_REQUESTS: Final = 429
+SERVER_ERROR_FROM: Final = 500
+TOOL_CALLS_KEPT_FAILING: Final = "tool calls kept failing"
 TOOL_SERVER_UNAVAILABLE: Final = "tool server unavailable"
 CONTEXT_UNAVAILABLE: Final = "warehouse context unavailable: {detail}"
-# What PydanticAI raises when a validator (or the output schema) sends the model back more often than allowed; the
-# other UnexpectedModelBehavior causes (a tool's retries, a limit on the model's own behaviour) are not the model's
-# unverified output, so they propagate.
+# What PydanticAI raises when a validator (or the output schema) sends the model back more often than allowed, and when
+# a tool's retries run out; the other UnexpectedModelBehavior causes (a limit on the model's own behaviour) propagate.
 OUTPUT_RETRIES_MESSAGE: Final = "Exceeded maximum output retries"
+TOOL_RETRIES_MESSAGE: Final = "exceeded max retries count"
 # What the MCP client raises when the server's session ends under a running call.
 SESSION_CLOSED_MESSAGE: Final = "Server session was closed unexpectedly"
 
@@ -166,7 +178,8 @@ class AgentService:
                 failed = _failure(error, unverified_reason)
                 if failed is None:
                     raise
-                logger.warning("%s ended in a failure: %s", span_name, failed.reason)
+                logger.warning("%s ended in a failure: %s (%s)", span_name, failed.reason, error)
+                span.record_exception(error)
                 outcome = failed
             stats = self._stats(variant, meter, ctx.recorders, int((monotonic() - started) * 1000), span)
             outcome = cast("T | Failed", outcome.model_copy(update={"stats": stats}))
@@ -277,8 +290,10 @@ def _failure(error: BaseException, unverified_reason: str) -> Failed | None:
             return _failed(SQL_ATTEMPTS_EXHAUSTED, last_sql=error.last_sql, last_error=error.last_error)
         case UnexpectedModelBehavior() if error.message.startswith(OUTPUT_RETRIES_MESSAGE):
             return _failed(unverified_reason)
-        case ModelHTTPError() | ClientError() | EndpointConnectionError():
-            return _failed(PROVIDER_UNAVAILABLE.format(detail=_first_line(str(error))))
+        case UnexpectedModelBehavior() if TOOL_RETRIES_MESSAGE in error.message:
+            return _failed(TOOL_CALLS_KEPT_FAILING)
+        case ModelAPIError() | BotoCoreError() | ClientError():
+            return _failed(_provider_reason(error))
         case WarehouseContextUnavailable():
             return _failed(CONTEXT_UNAVAILABLE.format(detail=_first_line(str(error))))
         case (
@@ -297,6 +312,28 @@ def _failure(error: BaseException, unverified_reason: str) -> Failed | None:
             return failures[0] if failures and all(failures) else None
         case _:
             return None
+
+
+def _provider_reason(error: ModelAPIError | BotoCoreError | ClientError) -> str:
+    """A 4xx other than 429 is the request's fault, not an outage; everything else is the provider being unreachable."""
+    match error:
+        case ModelHTTPError(status_code=status) if _rejects(status):
+            return PROVIDER_REJECTED.format(status=status)
+        case ModelHTTPError():
+            return PROVIDER_UNAVAILABLE.format(code=error.provider_error_code or error.status_code)
+        case ModelRequestRejectedError():
+            return PROVIDER_REJECTED.format(status=type(error).__name__)
+        case ClientError():
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if isinstance(status, int) and _rejects(status):
+                return PROVIDER_REJECTED.format(status=status)
+            return PROVIDER_UNAVAILABLE.format(code=error.response.get("Error", {}).get("Code") or type(error).__name__)
+        case _:
+            return PROVIDER_UNAVAILABLE.format(code=type(error).__name__)
+
+
+def _rejects(status: int) -> bool:
+    return status < SERVER_ERROR_FROM and status != TOO_MANY_REQUESTS
 
 
 def _failed(reason: str, *, last_sql: str | None = None, last_error: str | None = None) -> Failed:

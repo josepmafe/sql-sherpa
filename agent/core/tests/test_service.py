@@ -5,8 +5,15 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import boto3
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import (
+    EndpointConnectionError,
+    NoCredentialsError,
+    ReadTimeoutError,
+    TokenRetrievalError,
+)
+from botocore.stub import Stubber
 from fakes import FakeWarehouse, mcp_failure, validation
 from fastmcp.client.transports import StdioTransport, StreamableHttpTransport
 from mcp.shared.exceptions import MCPError
@@ -14,11 +21,13 @@ from mcp.types import CONNECTION_CLOSED, INVALID_PARAMS, REQUEST_TIMEOUT
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.mcp import MCPError as PydanticMCPError
 from pydantic_ai.messages import ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.providers.bedrock import BedrockProvider
 from pydantic_ai.usage import RequestUsage
 from scripts import QUESTION, SQL, Script, answer_out, clarify, item, plan_draft, tool
 from sherpa_agent import AgentError
@@ -41,6 +50,7 @@ from sherpa_mcp.telemetry import configure
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from botocore.client import BaseClient
     from opentelemetry.sdk.trace import ReadableSpan
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
@@ -52,6 +62,8 @@ PRICES = Prices(
     models={"model-a": ModelPrice(input_eur_per_mtok=Decimal(3), output_eur_per_mtok=Decimal(15))},
 )
 PASSWORD = "s3cret-pw"
+BEDROCK_URL = "https://bedrock-runtime.eu-central-1.amazonaws.com"
+ARN_MESSAGE = "User: arn:aws:sts::123456789012:assumed-role/x/someone@example.com is not authorized"
 
 
 class UsageScript(Script):
@@ -102,6 +114,17 @@ def spans() -> Any:
     configure("sherpa-agent", None).add_span_processor(processor)
     yield exporter
     exporter.clear()  # the provider is process-wide and keeps its processors
+
+
+@pytest.fixture
+def bedrock_client() -> BaseClient:
+    return boto3.client(
+        "bedrock-runtime", region_name="eu-central-1", aws_access_key_id="key", aws_secret_access_key="secret"
+    )
+
+
+def bedrock_model(client: BaseClient) -> BedrockConverseModel:
+    return BedrockConverseModel("eu.anthropic.claude-sonnet-5-5", provider=BedrockProvider(bedrock_client=client))
 
 
 @pytest.fixture
@@ -360,64 +383,113 @@ class TestFailureMapping:
 
         await self.assert_failed(outcome, "answer could not be verified against results")
 
+    async def test_a_tool_whose_retries_run_out_is_tool_calls_kept_failing(
+        self, make_service: Callable[..., AgentService], warehouse: FakeWarehouse
+    ) -> None:
+        warehouse.set("list_tables", ModelRetry("the catalog is being rebuilt"))
+
+        outcome = await make_service(Script(tool("list_tables"))).plan(QUESTION)
+
+        await self.assert_failed(outcome, "tool calls kept failing")
+
     async def test_unexpected_model_behaviour_of_another_cause_propagates(
         self, make_service: Callable[..., AgentService]
     ) -> None:
-        error = UnexpectedModelBehavior("Tool 'run_sql' exceeded max retries count of 4.")
-        service = make_service(variants={"raising": Raising(error)})
+        service = make_service(variants={"raising": Raising(UnexpectedModelBehavior("Received an empty response"))})
 
         with pytest.raises(UnexpectedModelBehavior):
             await service.plan(QUESTION, variant="raising")
 
-    async def test_throttling_after_retries_is_model_provider_unavailable(
-        self, make_service: Callable[..., AgentService]
+    @pytest.mark.parametrize(
+        ("code", "status", "reason"),
+        [
+            ("ThrottlingException", 429, "model provider unavailable: ThrottlingException"),
+            ("ServiceUnavailableException", 503, "model provider unavailable: ServiceUnavailableException"),
+            ("AccessDeniedException", 403, "model provider rejected the request: 403"),
+            ("ValidationException", 400, "model provider rejected the request: 400"),
+        ],
+    )
+    async def test_a_bedrock_http_error_reports_a_code_or_a_status_and_never_the_providers_text(
+        self,
+        make_service: Callable[..., AgentService],
+        bedrock_client: BaseClient,
+        code: str,
+        status: int,
+        reason: str,
     ) -> None:
-        error = ModelHTTPError(429, "model-a", "Too many requests")
+        stubber = Stubber(bedrock_client)
+        stubber.add_client_error(
+            "converse", service_error_code=code, service_message=ARN_MESSAGE, http_status_code=status
+        )
 
-        def throttled(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise error
+        with stubber:
+            outcome = await make_service(model=bedrock_model(bedrock_client)).plan(QUESTION)
 
-        outcome = await make_service(model=FunctionModel(throttled)).plan(QUESTION)
+        failed = await self.assert_failed(outcome, reason)
+        assert "arn:aws" not in failed.reason
+        assert "example.com" not in failed.reason
 
-        failed = await self.assert_failed(outcome, f"model provider unavailable: {str(error).splitlines()[0]}")
-        assert "429" in failed.reason
-        assert failed.last_sql is None
+    async def test_the_providers_full_text_goes_to_the_log_and_the_span(
+        self,
+        make_service: Callable[..., AgentService],
+        bedrock_client: BaseClient,
+        spans: InMemorySpanExporter,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        stubber = Stubber(bedrock_client)
+        stubber.add_client_error(
+            "converse", service_error_code="AccessDeniedException", service_message=ARN_MESSAGE, http_status_code=403
+        )
+
+        with stubber, caplog.at_level("WARNING", logger="sherpa_agent.service"):
+            await make_service(model=bedrock_model(bedrock_client)).plan(QUESTION)
+
+        assert "someone@example.com" in caplog.text
+        (event,) = root_span(spans, "sherpa.plan").events
+        assert "someone@example.com" in str((event.attributes or {})["exception.message"])
 
     @pytest.mark.parametrize(
-        "error",
+        ("error", "reason"),
         [
-            ClientError({"Error": {"Code": "ThrottlingException", "Message": "Rate exceeded"}}, "Converse"),
-            EndpointConnectionError(endpoint_url="https://bedrock-runtime.eu-central-1.amazonaws.com"),
+            (EndpointConnectionError(endpoint_url=BEDROCK_URL), "ModelConnectionError"),
+            (ReadTimeoutError(endpoint_url=BEDROCK_URL), "ModelTimeoutError"),
+            (NoCredentialsError(), "NoCredentialsError"),
+            (TokenRetrievalError(provider="sso", error_msg="the token expired"), "TokenRetrievalError"),
         ],
-        ids=["botocore-client-error", "botocore-endpoint-connection"],
+        ids=["connection", "read-timeout", "no-credentials", "expired-sso-token"],
     )
-    async def test_botocore_errors_after_retries_are_model_provider_unavailable(
-        self, make_service: Callable[..., AgentService], error: Exception
+    async def test_a_transport_or_credentials_error_reports_its_class_name(
+        self,
+        make_service: Callable[..., AgentService],
+        bedrock_client: BaseClient,
+        monkeypatch: pytest.MonkeyPatch,
+        error: Exception,
+        reason: str,
     ) -> None:
-        service = make_service(variants={"raising": Raising(error)})
+        def unreachable(**params: Any) -> Any:
+            raise error
 
-        outcome = await service.answer(make_draft(), variant="raising")
+        monkeypatch.setattr(bedrock_client, "converse", unreachable)
 
-        failed = await self.assert_failed_variant(outcome, "raising")
-        assert failed.reason == f"model provider unavailable: {str(error).splitlines()[0]}"
+        outcome = await make_service(model=bedrock_model(bedrock_client)).plan(QUESTION)
+
+        await self.assert_failed(outcome, f"model provider unavailable: {reason}")
+
+    async def test_an_unknown_aws_profile_is_failed_not_a_traceback(
+        self, warehouse: FakeWarehouse, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AWS_PROFILE", "no-such-profile-sherpa")
+        service = AgentService(AgentSettings(_env_file=None), warehouse.toolset, prices=PRICES)  # type: ignore[call-arg]
+
+        outcome = await service.plan(QUESTION)
+
+        await self.assert_failed(outcome, "model provider unavailable: ProfileNotFound")
 
     async def assert_failed_variant(self, outcome: Any, variant: str) -> Failed:
         assert isinstance(outcome, Failed)
         assert outcome.stats is not None
         assert outcome.stats.variant == variant
         return outcome
-
-    async def test_only_the_first_line_of_a_provider_error_is_reported(
-        self, make_service: Callable[..., AgentService]
-    ) -> None:
-        error = ClientError({"Error": {"Code": "Throttling", "Message": "Rate exceeded\nrequest id: abc"}}, "Converse")
-        service = make_service(variants={"raising": Raising(error)})
-
-        outcome = await service.plan(QUESTION, variant="raising")
-
-        assert isinstance(outcome, Failed)
-        assert "\n" not in outcome.reason
-        assert "request id" not in outcome.reason
 
     @pytest.mark.parametrize("code", [CONNECTION_CLOSED, REQUEST_TIMEOUT], ids=["connection-closed", "timeout"])
     @pytest.mark.parametrize(

@@ -43,6 +43,7 @@ class TestBuildModel:
         assert config.retries["mode"] == "adaptive"
         assert config.retries["total_max_attempts"] == 6  # botocore reads max_attempts=5 as five retries
         assert config.connect_timeout == 5
+        assert config.read_timeout == 300
         assert model.client.meta.region_name == "eu-central-1"
         assert REQUESTED_PROFILES[-1] == "ClaudeCode"
 

@@ -21,7 +21,11 @@ if TYPE_CHECKING:
 BEDROCK_PREFIX: Final = "bedrock:"
 ANTHROPIC_PREFIX: Final = "anthropic:"
 # Botocore retries throttling itself; PydanticAI does not retry model calls on top of it (CLAUDE.md).
-BEDROCK_CONFIG: Final = Config(retries={"mode": "adaptive", "max_attempts": 5}, connect_timeout=5)
+# A non-streaming Converse call with thinking and a 16k-token ceiling can run past botocore's 60 s default read timeout.
+BEDROCK_READ_TIMEOUT_SECONDS: Final = 300
+BEDROCK_CONFIG: Final = Config(
+    retries={"mode": "adaptive", "max_attempts": 5}, connect_timeout=5, read_timeout=BEDROCK_READ_TIMEOUT_SECONDS
+)
 MAX_TOKENS: Final = 16_000
 UNSUPPORTED_MODEL: Final = "Unsupported model {model!r}: use '{bedrock}<id>' or '{anthropic}<id>'."
 
