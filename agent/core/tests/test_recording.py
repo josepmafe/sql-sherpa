@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -332,3 +333,59 @@ async def test_a_copy_made_by_the_framework_shares_the_record(
     assert copied is not recording
     assert [e.sql for e in recording.executions] == ["select 1"]
     assert recording.sql_attempts == 1
+
+
+async def test_parallel_calls_of_different_purposes_keep_their_own_steps_when_progress_yields(
+    warehouse: FakeWarehouse,
+) -> None:
+    async def slow_progress(step: Step) -> None:
+        await asyncio.sleep(0.05)
+
+    recording = RecordingToolset(warehouse.toolset, on_progress=slow_progress)
+    await warehouse.call(recording, "get_context")
+
+    await asyncio.gather(
+        warehouse.call(recording, "describe_table", table="fct_orders"),
+        warehouse.call(recording, "search_values", table="dim_customers", column="country", term="spain"),
+    )
+    steps = await recording.finish()
+
+    assert [(s.step_id, s.name, [c.tool for c in s.tool_calls]) for s in steps] == [
+        ("s1", "scope", ["get_context"]),
+        ("s2", "schema", ["describe_table"]),
+        ("s3", "values", ["search_values"]),
+    ]
+
+
+async def test_a_recorder_without_a_progress_callback_works(warehouse: FakeWarehouse) -> None:
+    recording = RecordingToolset(warehouse.toolset)
+    await warehouse.call(recording, "get_context")
+    await warehouse.call(recording, "validate_sql", sql="select 1")
+
+    assert [s.name for s in await recording.finish()] == ["scope", "sql"]
+
+
+class TestSqlToolErrors:
+    async def test_a_validate_error_counts_as_an_attempt(
+        self, warehouse: FakeWarehouse, recording: RecordingToolset
+    ) -> None:
+        warehouse.set("validate_sql", RuntimeError("[unavailable] down"))
+
+        with pytest.raises(RuntimeError):
+            await warehouse.call(recording, "validate_sql", sql="select 1")
+
+        assert (recording.sql_attempts, recording.last_error) == (1, "[unavailable] down")
+
+    async def test_a_fourth_attempt_that_errors_raises_exhausted_chained_from_the_error(
+        self, warehouse: FakeWarehouse, recording: RecordingToolset
+    ) -> None:
+        boom = RuntimeError("[timeout] slow")
+        warehouse.set("validate_sql", validation("bad"), validation("bad"), validation("bad"), boom)
+        for n in range(3):
+            await warehouse.call(recording, "validate_sql", sql=f"select {n}")
+
+        with pytest.raises(SqlAttemptsExhausted) as raised:
+            await warehouse.call(recording, "validate_sql", sql="select 3")
+
+        assert raised.value.__cause__ is boom
+        assert (raised.value.last_sql, raised.value.last_error) == ("select 3", "[timeout] slow")

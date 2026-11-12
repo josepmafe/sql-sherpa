@@ -60,7 +60,9 @@ class RecordingToolset(WrapperToolset[Any]):
     """Wraps the MCP toolset for one run. The record lives in `self._record`, which a copy made by PydanticAI's
     `for_run` shares with this instance, so it survives the framework re-wrapping the toolset."""
 
-    def __init__(self, wrapped: AbstractToolset[Any], *, on_progress: Callable[[Step], Awaitable[None]] | None) -> None:
+    def __init__(
+        self, wrapped: AbstractToolset[Any], *, on_progress: Callable[[Step], Awaitable[None]] | None = None
+    ) -> None:
         super().__init__(wrapped)
         self._on_progress = on_progress
         self._record = _Record()
@@ -163,21 +165,24 @@ class RecordingToolset(WrapperToolset[Any]):
         return SqlAttemptsExhausted(self._record.last_sql, self._record.last_error)
 
     async def _add_call(self, name: str, arguments: dict[str, Any], summary: str) -> None:
+        # All state changes happen before the first await: on_progress may yield to a parallel tool call.
         step_name = STEP_OF_TOOL[name]
-        if self._record.open_name != step_name:
-            await self._complete_open_step()
-            self._record.open_name = step_name
+        completed = self._record.complete_open_step() if self._record.open_name != step_name else None
+        self._record.open_name = step_name
         self._record.open_calls.append(ToolCall(tool=name, arguments=arguments, summary=summary))
+        await self._report(completed)
 
     async def _complete_open_step(self) -> None:
-        if not self._record.open_calls:
-            return
-        step = self._record.open_step()
-        self._record.completed.append(step)
-        self._record.open_calls = []
-        self._record.open_name = None
-        if self._on_progress is not None:
+        await self._report(self._record.complete_open_step())
+
+    async def _report(self, step: Step | None) -> None:
+        if step is not None and self._on_progress is not None:
             await self._on_progress(step)
+
+
+def plan_tools(toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
+    """The toolset `plan` runs with: `run_sql` is not offered at all (§5.1)."""
+    return toolset.filtered(lambda ctx, tool_def: tool_def.name != RUN_SQL)
 
 
 class _Record:
@@ -197,10 +202,14 @@ class _Record:
         assert self.open_name is not None
         return Step(step_id=f"s{len(self.completed) + 1}", name=self.open_name, tool_calls=tuple(self.open_calls))
 
-
-def plan_tools(toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
-    """The toolset `plan` runs with: `run_sql` is not offered at all (§5.1)."""
-    return toolset.filtered(lambda ctx, tool_def: tool_def.name != RUN_SQL)
+    def complete_open_step(self) -> Step | None:
+        if not self.open_calls:
+            return None
+        step = self.open_step()
+        self.completed.append(step)
+        self.open_calls = []
+        self.open_name = None
+        return step
 
 
 def _mapping(tool: str, result: Any) -> Mapping[str, Any]:
