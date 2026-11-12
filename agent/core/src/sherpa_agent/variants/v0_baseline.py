@@ -69,8 +69,8 @@ SCOPE_TEMPLATE = (
     "- notes: {notes}"
 )
 CORRECTIONS_HEADER = (
-    "Corrections from the user. They are facts you must use, they override your own reading of the question, "
-    "and each applies to the whole run:\n"
+    "Corrections from the user. They are facts you must use, they override the defaults below and your own reading "
+    "of the question, and each applies to the whole run:\n"
 )
 DEFAULTS = (
     "Defaults, never ask the user about these and record them as assumptions with grounded_by default:\n"
@@ -99,6 +99,7 @@ CONVENTIONS = (
     '- `as_of_date` is "today".\n'
     "- Match names case-insensitively with `lower(column) = 'literal'`."
 )
+RECORD_AS_CORRECTION = "(record it with grounded_by correction)"
 PLAN_TASK = (
     "Your task is to plan the question, not to answer it: you cannot run queries. Look up the metrics, tables, "
     "columns and values you need, write one SQL query, and run it through validate_sql until it passes. Return "
@@ -116,7 +117,7 @@ ANSWER_TASK = (
 PLAN_INSTRUCTIONS = "\n\n".join(
     ["{role}", "{corrections}{defaults}", CLARIFY_OR_REFUSE, DERIVED_FIGURES, CONVENTIONS, PLAN_TASK]
 )
-ANSWER_INSTRUCTIONS = "\n\n".join(["{role}", DEFAULTS, DERIVED_FIGURES, CONVENTIONS, ANSWER_TASK])
+ANSWER_INSTRUCTIONS = "\n\n".join(["{role}", "{corrections}{defaults}", DERIVED_FIGURES, CONVENTIONS, ANSWER_TASK])
 
 
 class ItemOut(BaseModel):
@@ -276,23 +277,25 @@ class _Scope(BaseModel):
 
 
 def _plan_instructions(corrections: Sequence[Correction], scope: _Scope) -> str:
-    block = ""
-    if corrections:
-        block = CORRECTIONS_HEADER + "\n".join(f"- {_correction_line(c)}" for c in corrections) + "\n\n"
-    return PLAN_INSTRUCTIONS.format(role=f"{ROLE}\n\n{scope.text()}", corrections=block, defaults=DEFAULTS)
+    return PLAN_INSTRUCTIONS.format(
+        role=f"{ROLE}\n\n{scope.text()}", corrections=_corrections_block(corrections), defaults=DEFAULTS
+    )
+
+
+def _corrections_block(corrections: Sequence[Correction]) -> str:
+    if not corrections:
+        return ""
+    return CORRECTIONS_HEADER + "\n".join(f"- {_correction_line(c)}" for c in corrections) + "\n\n"
 
 
 def _correction_line(correction: Correction) -> str:
     match correction.action, correction.original:
         case "replace", target if target is not None:
-            return (
-                f"replace {target.kind} '{target.value}' with '{correction.value}' "
-                "(record it with grounded_by correction)"
-            )
+            return f"replace {target.kind} '{target.value}' with '{correction.value}' {RECORD_AS_CORRECTION}"
         case "remove", target if target is not None:
             return f"do not apply {target.kind} '{target.value}'"
         case _:
-            return correction.value or ""
+            return f"{correction.value} {RECORD_AS_CORRECTION}"
 
 
 def _model_settings(ctx: VariantContext) -> ModelSettings:
@@ -305,7 +308,9 @@ def _answer_agent(
     agent: Agent[None, AnswerOut] = Agent(
         ctx.model_for(ctx.settings.model_default),
         output_type=OUTPUT_MODE(AnswerOut),
-        instructions=ANSWER_INSTRUCTIONS.format(role=f"{ROLE}\n\n{scope.text()}"),
+        instructions=ANSWER_INSTRUCTIONS.format(
+            role=f"{ROLE}\n\n{scope.text()}", corrections=_corrections_block(draft.corrections), defaults=DEFAULTS
+        ),
         toolsets=[recorder],
         model_settings=_model_settings(ctx),
         retries={"tools": TOOL_RETRIES, "output": OUTPUT_RETRIES},

@@ -28,19 +28,19 @@ from sherpa_agent.variants.v0_baseline import V0Baseline
 from sherpa_mcp.tools import WarehouseContext
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sherpa_agent.settings import AgentSettings
 
 pytestmark = pytest.mark.anyio
 
 
-def make_draft(sql: str = SQL, *items: InterpretationItem) -> Draft:
+def make_draft(sql: str = SQL, *items: InterpretationItem, corrections: Sequence[Correction] = ()) -> Draft:
     return Draft(
         outcome="draft",
         draft_id="d1",
         question=QUESTION,
-        corrections=(),
+        corrections=tuple(corrections),
         interpretation=Interpretation(items=items),
         sql=sql,
         steps=(),
@@ -364,7 +364,52 @@ class TestCorrections:
 
         await V0Baseline().plan(QUESTION, [correction], make_ctx(script))
 
-        assert "\n- only count paid orders\n" in (script.requests[0][1].instructions or "")
+        assert "\n- only count paid orders (record it with grounded_by correction)\n" in (
+            script.requests[0][1].instructions or ""
+        )
+
+    async def test_the_header_says_corrections_override_the_defaults(
+        self, make_ctx: Callable[..., VariantContext]
+    ) -> None:
+        correction = Correction(action="free_text", original=None, value="only count paid orders")
+        script = Script(tool("validate_sql", sql=SQL), plan_draft(SQL, item("metric", "net_revenue", "default")))
+
+        await V0Baseline().plan(QUESTION, [correction], make_ctx(script))
+
+        instructions = script.requests[0][1].instructions or ""
+        assert "they override the defaults below and your own reading of the question" in instructions
+        assert instructions.index("Corrections from the user") < instructions.index("Defaults, never ask")
+
+    async def test_the_answer_step_is_given_the_drafts_corrections_ahead_of_the_defaults(
+        self, make_ctx: Callable[..., VariantContext]
+    ) -> None:
+        corrections = [
+            Correction(
+                action="replace",
+                original=CorrectionTarget(kind="metric", value="net_revenue"),
+                value="gross_revenue",
+            ),
+            Correction(action="free_text", original=None, value="only count paid orders"),
+        ]
+        script = Script(tool("run_sql", sql=SQL), answer_out("The value is 1"))
+
+        await V0Baseline().answer(make_draft(corrections=corrections), make_ctx(script))
+
+        instructions = script.requests[0][1].instructions or ""
+        replace_line = "- replace metric 'net_revenue' with 'gross_revenue' (record it with grounded_by correction)"
+        assert replace_line in instructions
+        assert "\n- only count paid orders (record it with grounded_by correction)\n" in instructions
+        assert "override the defaults below" in instructions
+        assert instructions.index(replace_line) < instructions.index("Defaults, never ask")
+
+    async def test_the_answer_step_without_corrections_has_no_corrections_block(
+        self, make_ctx: Callable[..., VariantContext]
+    ) -> None:
+        script = Script(tool("run_sql", sql=SQL), answer_out("The value is 1"))
+
+        await V0Baseline().answer(make_draft(), make_ctx(script))
+
+        assert "Corrections" not in (script.requests[0][1].instructions or "")
 
     async def test_no_corrections_means_no_corrections_block(self, make_ctx: Callable[..., VariantContext]) -> None:
         script = Script(tool("validate_sql", sql=SQL), plan_draft(SQL, item("metric", "net_revenue", "default")))
