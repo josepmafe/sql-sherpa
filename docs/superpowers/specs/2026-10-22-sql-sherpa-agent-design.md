@@ -224,8 +224,8 @@ RunStats: variant, usage, latency_ms, cost_eur, tool_calls, sql_attempts, trace_
     - a value in the result rows, within rounding (±0.5 in the last shown digit; percentages also tried ×100)
     - a magnitude-rounded form of a result value ("1.2M", "about 3,400"), within a relative 5%
     - `returned_rows`, or a count of distinct values in a result column
-    - a date or date part (year, month, day, quarter number) appearing in the result, the question, the interpretation's `time_range`, or `as_of_date`
-    - a number present in the question
+    - a date or date part (year, month, day, quarter number) appearing in the result, the question, the interpretation's `time_range` or a correction's value; the parts of `as_of_date` count only when the answer writes the date as a date: its four-digit year, or a day, month or quarter written with a month name ("31 December", "December 31", "Dec 2025"), as an ISO date or year-month ("2025-12-31", "2025-12"), or as the as_of_date's quarter with the Q prefix ("Q4"). A bare 4, 12 or 31 that matches only `as_of_date` fails
+    - a number present in the question or in the value of a correction (a `replace` or free-text correction; not the replaced original and not a removal)
   - Digit runs inside a text cell (such as a hash) are neither numbers in the answer nor result values for this check.
 - After 2 validator retries (`output_retries = 2`) the run ends as `Failed(reason="answer could not be verified against results")`.
 

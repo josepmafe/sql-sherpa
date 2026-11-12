@@ -553,4 +553,17 @@ docker-compose.yml      # + jaeger profile; mcp gets SHERPA_CONTAINER_OTLP_ENDPO
   - `cases.jsonl` moves to `.sql-sherpa/evals/runs/<run>/`; `report.md` and `meta.json` stay committed
   - `.gitignore`, the two eval guides and the tests follow
 - **The first baseline:** the report committed, `FINDINGS.md` created, the budget re-set to 1.5× the baseline's p99, and one trace across the agent and the MCP server checked in Jaeger.
+- **Numbers check:**
+  - check the numbers in `caveats` with the same guard, with `get_context`'s `notes` and `does_not_cover` text added as accepted text, tuned on the baseline
+  - measure how often an answer passes only through a date part (monthly or daily series), and decide whether all date parts should need a date context
+- **Deferred from the 3a panel:**
+  - a validator that each `replace` correction yields an item with `grounded_by correction` (and that a `remove` leaves no item equal to the original)
+  - `model_settings` sets `thinking=effort` for Bedrock (PydanticAI 2.68's unified setting also fills `output_config.effort`); correct spec §2's "Bedrock settings have no effort field" sentence once verified
+  - the eval answerer records the `Failed` reason, so the report separates "answer not verified" from SQL failures
+- **Remaining 3a panel minors:**
+  - map `OutputTokenLimitExceeded`, `IncompleteToolCall` and `ContentFilterError` to `Failed` once a live run shows what is raised
+  - cache the boto3 client per model string
+  - `force_flush` timeouts
+  - the ninth-tool `KeyError` in `STEP_OF_TOOL` (agent-design-9)
+  - the draft trust boundary and `REPO_ROOT` for ui-5
 - **`FINDINGS.md`** notes that several gold cases are one substitution away from a few-shot example's SQL, so they partly measure example retrieval.
