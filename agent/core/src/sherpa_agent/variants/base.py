@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Final, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import NativeOutput
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from sherpa_agent.outcomes import AnswerOutcome, Correction, Draft, PlanOutcome, Step
+from sherpa_agent.recording import RecordingToolset
 from sherpa_agent.settings import AgentSettings
 
 # The one switch for how structured output is requested; the mode is verified against Bedrock in agent-design-3b.
@@ -33,6 +34,9 @@ class VariantContext(BaseModel):
     model_for: Callable[[str], Model]
     usage: RunUsage
     on_progress: Callable[[Step], Awaitable[None]] | None = None
+    # A variant adds the recorder of each agent run it makes, so the service can read the run's tool calls and SQL
+    # attempts, also when the run ends in an error.
+    recorders: list[RecordingToolset] = Field(default_factory=list)
 
     def usage_limits(self) -> UsageLimits:
         """The limits of one agent run: the tool calls count from where the shared usage stands (§5.3)."""

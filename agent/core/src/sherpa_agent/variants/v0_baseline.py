@@ -170,6 +170,7 @@ class V0Baseline:
 
     async def plan(self, question: str, corrections: Sequence[Correction], ctx: VariantContext) -> PlanOutcome:
         recorder = RecordingToolset(ctx.toolset, on_progress=ctx.on_progress)
+        ctx.recorders.append(recorder)
         async with ctx.toolset:
             scope = await _scope(ctx)
             result = await self._run_plan(question, corrections, ctx, recorder, scope)
@@ -229,6 +230,7 @@ class V0Baseline:
 
     async def answer(self, draft: Draft, ctx: VariantContext) -> AnswerOutcome:
         recorder = RecordingToolset(ctx.toolset)
+        ctx.recorders.append(recorder)
         async with ctx.toolset:
             scope = await _scope(ctx)
             agent = _answer_agent(draft, ctx, recorder, scope)
