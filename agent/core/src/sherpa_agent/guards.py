@@ -43,7 +43,9 @@ MINUS_SIGNS: Final = ("-", "\u2212")
 NO_SUCH_EXECUTION: Final = "no successful run_sql has execution_id {execution_id}"
 NOT_THE_LAST_EXECUTION: Final = "{execution_id} is not the last query you ran; describe the result of {last_id}"
 UNVERIFIED_NUMBERS: Final = (
-    "these numbers are not in the result: {numbers}; compute derived figures in SQL and run it again"
+    "these numbers are not in the result: {numbers}. Quote a number as it appears in the result, with its sign (a "
+    'decrease keeps its minus sign); round only with a hedge such as "about"; compute any derived figure (share, '
+    "difference, growth) in SQL and run it again"
 )
 NOT_VALIDATED: Final = "validate the SQL you return with validate_sql"
 NOT_THE_VALIDATED_SQL: Final = "return exactly the SQL that last passed validate_sql"
@@ -131,7 +133,10 @@ class _Reference:
 
     def __init__(self, execution: Execution, *, question: str, time_range: Sequence[str], as_of_date: date) -> None:
         self._values = _numeric_cells(execution)
-        self._counts = {Decimal(execution.returned_rows), *_distinct_counts(execution)}
+        # A count over a truncated result is not a total (§5.3), so it is not a number the answer may state.
+        self._counts = (
+            set() if execution.truncated else {Decimal(execution.returned_rows), *_distinct_counts(execution)}
+        )
         self._date_parts = _date_parts(_date_cells(execution), question, *time_range, as_of_date.isoformat())
         self._question = {
             (figure.value * figure.scale, figure.percent) for figure in _figures(question) if figure.value is not None

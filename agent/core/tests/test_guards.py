@@ -413,6 +413,32 @@ class TestNumbersCheck:
 
         assert unverified("Total is 99,999.", execution) == ["99,999"]
 
+    def test_a_truncated_result_does_not_make_its_row_count_a_total(self) -> None:
+        rows = tuple((f"p{n}",) for n in range(100))
+        truncated = Execution(
+            execution_id="ex-1",
+            sql="select 1",
+            columns=("product",),
+            column_types=("text",),
+            rows=rows,
+            returned_rows=100,
+            truncated=True,
+        )
+        complete = truncated.model_copy(update={"truncated": False})
+
+        assert unverified("100 products have never been ordered.", truncated, question="q") == ["100"]
+        assert unverified("100 products have never been ordered.", complete, question="q") == []
+
+    def test_a_truncated_result_does_not_make_its_distinct_counts_totals(self) -> None:
+        rows = (("ES", 10), ("ES", 10), ("FR", 20), ("DE", 20), ("IT", 30), ("NL", 30), ("ES", 40))
+        truncated = make_execution(columns=("country", "orders"), column_types=("text", "int8"), rows=rows)
+        complete = truncated.model_copy(update={"truncated": False})
+        truncated = truncated.model_copy(update={"truncated": True})
+
+        assert unverified("Sales cover 5 countries.", truncated, question="q") == ["5"]
+        assert unverified("Sales cover 5 countries.", complete, question="q") == []
+        assert unverified("Spain has 10 orders.", truncated, question="q") == []
+
     def test_empty_result_allows_only_zero_rows_and_question_and_dates(self) -> None:
         execution = make_execution(rows=())
 
@@ -426,10 +452,14 @@ class TestNumbersCheck:
         assert unverified("Segment A9 grew.") == ["9"]
         assert unverified("Segment 9A grew.") == ["9"]
 
-    def test_retry_message_lists_the_numbers(self) -> None:
-        assert numbers_message(["1.3M", "+12%"]) == (
-            "these numbers are not in the result: 1.3M, +12%; compute derived figures in SQL and run it again"
-        )
+    def test_retry_message_lists_the_numbers_and_names_the_accepted_forms(self) -> None:
+        message = numbers_message(["1.3M", "+12%"])
+
+        assert message.startswith("these numbers are not in the result: 1.3M, +12%.")
+        assert "as it appears in the result, with its sign" in message
+        assert "minus sign" in message
+        assert 'round only with a hedge such as "about"' in message
+        assert "compute any derived figure (share, difference, growth) in SQL" in message
 
     def test_bn_mn_and_a_spaced_percent(self) -> None:
         assert unverified("About 1.18bn and 1.18mn.", single_value("1180000000"), question="q") == ["1.18mn"]
