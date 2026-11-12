@@ -4,7 +4,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 import pytest
-from sherpa_agent.guards import check_draft_sql, check_execution_reference, unverified_numbers
+from sherpa_agent.guards import check_draft_sql, check_execution_reference, numbers_message, unverified_numbers
 from sherpa_agent.recording import Execution
 
 if TYPE_CHECKING:
@@ -176,9 +176,35 @@ class TestNumbersCheck:
         assert unverified("It was 1.9 and 1,500.", execution) == ["1.9", "1,500"]
 
     def test_text_cell_is_removed_only_when_it_stands_alone(self) -> None:
-        execution = make_execution(columns=("code",), column_types=("text",), rows=(("12",), ("x",)))
+        execution = make_execution(columns=("code",), column_types=("text",), rows=(("12345",), ("x",)))
 
-        assert unverified("Code 12 and 125 and 3.12.", execution) == ["125", "3.12"]
+        assert unverified("Code 12345 and 123456 and 3.12345.", execution) == ["123456", "3.12345"]
+
+    def test_short_numeric_text_cells_do_not_launder_figures(self) -> None:
+        execution = make_execution(columns=("code",), column_types=("text",), rows=(("1",), ("42",), ("2024",)))
+
+        assert unverified("Revenue 42 thousand.", execution, question="q") == ["42 thousand"]
+        assert unverified("Growth was 42%.", execution, question="q") == ["42%"]
+        assert unverified("Change of -42.", execution, question="q") == ["-42"]
+        assert unverified("Down 42k.", execution, question="q") == ["42k"]
+        assert unverified("It happened in 2024.", execution, question="q") == ["2024"]
+
+    def test_a_long_numeric_text_cell_is_not_a_scaled_or_signed_figure_either(self) -> None:
+        execution = make_execution(columns=("code",), column_types=("text",), rows=(("88123",), ("x",)))
+
+        assert unverified("Code 88123.", execution) == []
+        assert unverified("Revenue 88123 thousand and -88123 and 88123%.", execution) == [
+            "88123 thousand",
+            "-88123",
+            "88123%",
+        ]
+
+    def test_an_abbreviated_hash_is_still_inside_the_cell(self) -> None:
+        assert unverified("Customer 9be4a3f9… spent 1,500.") == ["1,500"]
+        assert unverified("Customer 9be4a3f9c1d7 spent 5,230.") == []
+        assert unverified("Customer 9BE4A3F9... spent 5,230.") == []
+        assert unverified("The hash ends in 3021.") == ["3021"]
+        assert unverified("Customer 9be4a3f0… spent 5,230.") != []
 
     @pytest.mark.parametrize(
         ("text", "passes"),
@@ -208,14 +234,37 @@ class TestNumbersCheck:
         assert unverified("April: 950,002.") == ["950,002"]
         assert unverified("April: 950,000.6.") == ["950,000.6"]
 
-    def test_plain_numbers_get_the_five_percent_only_when_they_are_rounded(self) -> None:
-        execution = single_value("3412")
+    @pytest.mark.parametrize("marker", ["about", "About", "around", "roughly", "approximately", "nearly", "almost"])
+    def test_a_hedged_plain_integer_gets_the_five_percent(self, marker: str) -> None:
+        assert unverified(f"{marker} 5,200 orders.", question="q") == []
+        assert unverified(f"{marker} 4,100 orders.", question="q") == []
+        assert unverified(f"{marker} 5,600 orders.", question="q") == ["5,600"]
 
-        assert unverified("About 3,400 orders.", execution) == []
-        assert unverified("About 3,450 orders.", execution) == ["3,450"]
-        assert unverified("About 3,500 orders.", execution) == []
-        assert unverified("About 3,600 orders.", execution) == ["3,600"]
-        assert unverified("About 3,200 orders.", execution) == ["3,200"]
+    @pytest.mark.parametrize("marker", ["~", "≈", "~ ", "about €", "about EUR "])
+    def test_other_hedges(self, marker: str) -> None:
+        assert unverified(f"{marker}4,100 orders.", question="q") == []
+
+    @pytest.mark.parametrize(
+        ("text", "flagged"),
+        [
+            ("exactly 5,000 orders.", "5,000"),
+            ("5,400 orders.", "5,400"),
+            ("over 5,400 orders.", "5,400"),
+            ("about, 5,400 orders.", "5,400"),
+        ],
+    )
+    def test_an_unhedged_plain_integer_gets_only_the_rounding(self, text: str, flagged: str) -> None:
+        assert unverified(text, question="q") == [flagged]
+
+    def test_unhedged_four_thousand_against_4101_is_flagged(self) -> None:
+        assert unverified("Orders were 4,000.", question="q") == ["4,000"]
+
+    def test_a_hedge_must_come_right_before_the_figure(self) -> None:
+        assert unverified("About two things: 5,400 orders.", question="q") == ["5,400"]
+
+    def test_a_hedge_does_not_widen_a_decimal_or_a_percent(self) -> None:
+        assert unverified("About 5,230.4 orders.", question="q") == ["5,230.4"]
+        assert unverified("About 25% conversion.", question="q") == ["25%"]
 
     def test_percentages_use_the_ratio_times_100_within_rounding_only(self) -> None:
         assert unverified("Conversion was 24.2%.") == []
@@ -376,6 +425,18 @@ class TestNumbersCheck:
     def test_numbers_glued_to_words_are_still_checked(self) -> None:
         assert unverified("Segment A9 grew.") == ["9"]
         assert unverified("Segment 9A grew.") == ["9"]
+
+    def test_retry_message_lists_the_numbers(self) -> None:
+        assert numbers_message(["1.3M", "+12%"]) == (
+            "these numbers are not in the result: 1.3M, +12%; compute derived figures in SQL and run it again"
+        )
+
+    def test_bn_mn_and_a_spaced_percent(self) -> None:
+        assert unverified("About 1.18bn and 1.18mn.", single_value("1180000000"), question="q") == ["1.18mn"]
+        assert unverified("About 1.18mn.", single_value("1180000"), question="q") == []
+        assert unverified("Conversion was 24.2 %.") == []
+        assert unverified("Conversion was 25 %.") == ["25 %"]
+        assert unverified("It was 1.18 bn.", single_value("1180000000"), question="q") == ["1.18"]
 
     def test_magnitude_words_and_letters(self) -> None:
         execution = single_value("2500000")

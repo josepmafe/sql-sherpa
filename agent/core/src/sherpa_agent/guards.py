@@ -18,13 +18,20 @@ if TYPE_CHECKING:
 
 MAGNITUDE_TOLERANCE: Final = Decimal("0.05")  # §5.2: magnitude-rounded forms are within a relative 5%
 HALF_UNIT: Final = Decimal("0.5")  # §5.2: within rounding is +-0.5 in the last shown digit
-ROUNDED_MULTIPLE: Final = 100  # a plain integer counts as a rounded form ("about 3,400") from two trailing zeros
+# §5.2: a plain integer gets the relative 5% only when hedged ("about 3,400"); the suffix forms ("1.2M") always do
+HEDGE: Final = re.compile(
+    r"(?:about|around|roughly|approximately|nearly|almost|~|\u2248)\s*(?:\u20ac|eur\b)?\s*$", re.I
+)
+MIN_UNQUOTED_DIGITS: Final = 5  # a digits-only text cell of fewer digits is a number the answer must verify
+MIN_ABBREVIATED_HASH: Final = 6  # letters-and-digits tokens at least this long inside a text cell are the cell
 PERCENT_FACTOR: Final = Decimal(100)  # §5.2: percentages are also tried x100
 NUMERIC_TYPE_PREFIXES: Final = ("int", "numeric", "float")  # int2/int4/int8/integer, numeric, float4/float8/float
 DATE_TYPE_PREFIXES: Final = ("date", "timestamp")
 QUARTER_MONTHS: Final = 3
 MAGNITUDES: Final = {
     "k": Decimal(10) ** 3,
+    "mn": Decimal(10) ** 6,
+    "bn": Decimal(10) ** 9,
     "m": Decimal(10) ** 6,
     "b": Decimal(10) ** 9,
     "thousand": Decimal(10) ** 3,
@@ -35,6 +42,9 @@ MINUS_SIGNS: Final = ("-", "\u2212")
 
 NO_SUCH_EXECUTION: Final = "no successful run_sql has execution_id {execution_id}"
 NOT_THE_LAST_EXECUTION: Final = "{execution_id} is not the last query you ran; describe the result of {last_id}"
+UNVERIFIED_NUMBERS: Final = (
+    "these numbers are not in the result: {numbers}; compute derived figures in SQL and run it again"
+)
 NOT_VALIDATED: Final = "validate the SQL you return with validate_sql"
 NOT_THE_VALIDATED_SQL: Final = "return exactly the SQL that last passed validate_sql"
 
@@ -47,8 +57,8 @@ FIGURE: Final = re.compile(
     (?:(?<![\w.,])(?P<sign>[+\-\u2212])(?=\d))?
     (?P<body>\d[\d.,]*\d|\d)
     (?P<exponent>[eE][+\-]?\d+)?
-    (?P<magnitude>\s?(?:thousand|million|billion)\b|[kKmMbB](?![A-Za-z]))?
-    (?P<percent>%|\s?percent\b)?
+    (?P<magnitude>\s?(?:thousand|million|billion)\b|(?:bn|mn|[kKmMbB])(?![A-Za-z]))?
+    (?P<percent>\s?%|\s?percent\b)?
     """,
     re.VERBOSE | re.IGNORECASE,
 )
@@ -57,7 +67,8 @@ GROUPED_NUMBER: Final = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 ISO_DATE: Final = re.compile(r"(\d{4})-(\d{2})(?:-(\d{2}))?")
 MONTHS: Final = range(1, 13)
 DAYS: Final = range(1, 32)
-SPACES: Final = re.compile(r"\s+")
+SCALE_OR_PERCENT: Final = r"\s?(?:%|(?:percent|thousand|million|billion|bn|mn|[kKmMbB])\b)"
+ABBREVIATION_TOKEN: Final = re.compile(r"[A-Za-z0-9]+")
 # A single-quoted literal or a double-quoted identifier (a doubled quote escapes itself), or a run of whitespace.
 SQL_QUOTED_OR_SPACE: Final = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|\s+""")
 
@@ -72,7 +83,7 @@ class Figure(BaseModel):
     shown_decimals: int
     scale: Decimal
     percent: bool
-    plain_rounded: bool
+    hedged: bool
 
 
 def check_execution_reference(execution_id: str, executions: Sequence[Execution]) -> str | None:
@@ -92,6 +103,10 @@ def check_draft_sql(sql: str, last_validated_sql: str | None) -> str | None:
     return None
 
 
+def numbers_message(numbers: Sequence[str]) -> str:
+    return UNVERIFIED_NUMBERS.format(numbers=", ".join(numbers))
+
+
 def unverified_numbers(
     answer_text: str, execution: Execution, *, question: str, time_range: Sequence[str], as_of_date: date
 ) -> list[str]:
@@ -99,8 +114,9 @@ def unverified_numbers(
 
     Choices where the spec leaves room, all on the strict side: a sign must match the result value's sign; "," in
     groups of three is the only thousands separator ("1.180.000", "1 180 000", "1,18" are not numbers we accept);
-    scientific notation is refused; the 5% tolerance applies to suffix forms ("1.2M") and to plain integers with two
-    trailing zeros ("3,400"), so "949,999" must match within rounding; percentages never match counts or dates.
+    scientific notation is refused; the 5% tolerance applies to suffix forms ("1.2M") and to plain integers right
+    after a hedge ("about 3,400"), so an unhedged "949,999" must match within rounding; percentages never match
+    counts or dates.
     """
     reference = _Reference(execution, question=question, time_range=time_range, as_of_date=as_of_date)
     unverified: list[str] = []
@@ -146,7 +162,7 @@ class _Reference:
         assert figure.value is not None
         shown = figure.value * figure.scale
         rounding = HALF_UNIT * Decimal(10) ** -figure.shown_decimals * figure.scale
-        relative = figure.scale != 1 or figure.plain_rounded
+        relative = figure.scale != 1 or figure.hedged
         for value in self._values:
             for candidate in (value, value * PERCENT_FACTOR) if figure.percent else (value,):
                 gap = abs(shown - candidate)
@@ -165,37 +181,52 @@ def _figure(match: re.Match[str]) -> Figure:
     magnitude = (match["magnitude"] or "").strip().lower()
     percent = match["percent"] is not None
     if match["exponent"] or not (PLAIN_NUMBER.fullmatch(body) or GROUPED_NUMBER.fullmatch(body)):
-        return Figure(raw=raw, value=None, shown_decimals=0, scale=Decimal(1), percent=percent, plain_rounded=False)
+        return Figure(raw=raw, value=None, shown_decimals=0, scale=Decimal(1), percent=percent, hedged=False)
     digits = body.replace(",", "")
     value = Decimal(digits)
     if match["sign"] in MINUS_SIGNS:
         value = -value
     decimals = len(digits.partition(".")[2])
-    integer = value == value.to_integral_value()
     return Figure(
         raw=raw,
         value=value,
         shown_decimals=decimals,
         scale=MAGNITUDES.get(magnitude, Decimal(1)),
         percent=percent,
-        plain_rounded=not magnitude and decimals == 0 and integer and int(value) % ROUNDED_MULTIPLE == 0,
+        hedged=not magnitude and not percent and decimals == 0 and bool(HEDGE.search(match.string[: match.start()])),
     )
 
 
 def _without_text_cells(answer_text: str, execution: Execution) -> str:
-    """Digit runs inside a text cell are no numbers (§5.2). Only a cell standing alone is removed, so the
-    digits of a longer number ("1.9" next to a cell "1") are never eaten."""
+    """Digit runs inside a text cell are no numbers (§5.2). A cell is removed only when it stands alone: not touching
+    a word, a decimal point or a sign/currency, and not followed by a scale or percent, so a cell "42" cannot launder
+    "42%" or "42 thousand". A digits-only cell shorter than 5 digits is not removed at all (it may be a year or a
+    count the answer must verify). Abbreviated hashes ("9be4a3f9…") count as inside their cell."""
     cells = {
         cell
         for row in execution.rows
         for cell, column_type in zip(row, execution.column_types, strict=False)
-        if isinstance(cell, str) and not _is_numeric(column_type) and any(char.isdigit() for char in cell)
+        if isinstance(cell, str) and not _is_numeric(column_type) and _quotable(cell)
     }
     for cell in sorted(cells, key=len, reverse=True):
-        left = r"(?<![\w.,])" if re.match(r"\w", cell) else ""
-        right = r"(?!\w)(?![.,]\d)" if re.search(r"\w$", cell) else ""
+        left = r"(?<![\w.,+\-\u2212\u20ac$\u00a3])" if re.match(r"\w", cell) else ""
+        right = rf"(?!\w)(?![.,]\d)(?!{SCALE_OR_PERCENT})" if re.search(r"\w$", cell) else ""
         answer_text = re.sub(f"{left}{re.escape(cell)}{right}", " ", answer_text)
-    return answer_text
+    lowered = [cell.lower() for cell in cells]
+    return ABBREVIATION_TOKEN.sub(
+        lambda match: " " if _is_abbreviated_hash(match[0], lowered) else match[0], answer_text
+    )
+
+
+def _quotable(cell: str) -> bool:
+    if not any(char.isdigit() for char in cell):
+        return False
+    return not cell.isdigit() or len(cell) >= MIN_UNQUOTED_DIGITS
+
+
+def _is_abbreviated_hash(token: str, lowered_cells: list[str]) -> bool:
+    mixed = any(char.isdigit() for char in token) and any(char.isalpha() for char in token)
+    return mixed and len(token) >= MIN_ABBREVIATED_HASH and any(token.lower() in cell for cell in lowered_cells)
 
 
 def _numeric_cells(execution: Execution) -> list[Decimal]:
