@@ -5,20 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
+from sherpa_agent.outcomes import ModelUsage
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sherpa_evals.cases import GoldCase, GoldSet
     from sherpa_evals.settings import EvalSettings
-
-
-class ModelUsage(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    model: str
-    input_tokens: int
-    output_tokens: int
 
 
 class AttemptStats(BaseModel):
