@@ -23,5 +23,10 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
 def settings() -> AgentSettings:
     return AgentSettings(_env_file=None)  # type: ignore[call-arg]
