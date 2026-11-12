@@ -32,6 +32,7 @@ from sherpa_agent.variants.base import OUTPUT_MODE, OUTPUT_RETRIES, VariantConte
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pydantic_ai import AgentRunResult
     from pydantic_ai.settings import ModelSettings
 
     from sherpa_agent.outcomes import AnswerOutcome, Correction, PlanOutcome
@@ -46,13 +47,20 @@ STEP_OF_GROUNDING: Final[dict[GroundedBy, StepName]] = {
     "default": "scope",
     "correction": "scope",
 }
+TOOL_RETRIES: Final = 4  # §5.3: above the SQL-attempt limit, so the framework never ends a run first
 SQL_REVISION_REASON: Final = "the answer step ran different SQL from the approved draft"
 
 # Prompt sections, in the order the plan prompt shows them (spec §5.1, §5.3).
 ROLE = (
     "You are SQL Sherpa, an analyst for a synthetic e-commerce data warehouse (Postgres, the `marts` schema). "
-    "You only read data: you never write, and you only use the tools you are given. "
-    "Call get_context first: it tells you what the warehouse covers, what it does not cover and `as_of_date`."
+    "You only read data: you never write, and you only use the tools you are given."
+)
+SCOPE_TEMPLATE = (
+    "Warehouse scope (from get_context):\n"
+    "- as_of_date: {as_of_date}\n"
+    "- covers: {covers}\n"
+    "- does not cover: {does_not_cover}\n"
+    "- notes: {notes}"
 )
 CORRECTIONS_HEADER = (
     "Corrections from the user. They are facts you must use, they override your own reading of the question, "
@@ -102,7 +110,7 @@ ANSWER_TASK = (
 PLAN_INSTRUCTIONS = "\n\n".join(
     ["{role}", "{corrections}{defaults}", CLARIFY_OR_REFUSE, DERIVED_FIGURES, CONVENTIONS, PLAN_TASK]
 )
-ANSWER_INSTRUCTIONS = "\n\n".join([ROLE, DEFAULTS, DERIVED_FIGURES, CONVENTIONS, ANSWER_TASK])
+ANSWER_INSTRUCTIONS = "\n\n".join(["{role}", DEFAULTS, DERIVED_FIGURES, CONVENTIONS, ANSWER_TASK])
 
 
 class ItemOut(BaseModel):
@@ -162,26 +170,9 @@ class V0Baseline:
 
     async def plan(self, question: str, corrections: Sequence[Correction], ctx: VariantContext) -> PlanOutcome:
         recorder = RecordingToolset(ctx.toolset, on_progress=ctx.on_progress)
-        agent: Agent[None, PlanResult] = Agent(
-            ctx.model_for(ctx.settings.model_default),
-            output_type=OUTPUT_MODE([PlanDraftOut, ClarifyOut, UnanswerableOut]),
-            instructions=_plan_instructions(corrections),
-            toolsets=[plan_tools(recorder)],
-            model_settings=_model_settings(ctx),
-            retries={"output": OUTPUT_RETRIES},
-        )
-
-        @agent.output_validator
-        def check_sql(
-            output: PlanDraftOut | ClarifyOut | UnanswerableOut,
-        ) -> PlanDraftOut | ClarifyOut | UnanswerableOut:
-            if isinstance(output, PlanDraftOut) and (
-                problem := check_draft_sql(output.sql, recorder.last_validated_sql)
-            ):
-                raise ModelRetry(problem)
-            return output
-
-        result = await agent.run(question, usage=ctx.usage, usage_limits=ctx.usage_limits())
+        async with ctx.toolset:
+            scope = await _scope(ctx)
+            result = await self._run_plan(question, corrections, ctx, recorder, scope)
         steps = await recorder.finish()
         match result.output:
             case PlanDraftOut() as drafted:
@@ -191,7 +182,7 @@ class V0Baseline:
                     question=question,
                     corrections=tuple(corrections),
                     interpretation=_interpretation(drafted.items, steps),
-                    sql=drafted.sql,
+                    sql=recorder.last_validated_sql or drafted.sql,
                     steps=steps,
                     usage=_snapshot(ctx),
                 )
@@ -209,11 +200,38 @@ class V0Baseline:
                     outcome="unanswerable", reason=refusal.reason, closest_supported=refusal.closest_supported
                 )
 
+    async def _run_plan(
+        self,
+        question: str,
+        corrections: Sequence[Correction],
+        ctx: VariantContext,
+        recorder: RecordingToolset,
+        scope: _Scope,
+    ) -> AgentRunResult[PlanResult]:
+        agent: Agent[None, PlanResult] = Agent(
+            ctx.model_for(ctx.settings.model_default),
+            output_type=OUTPUT_MODE([PlanDraftOut, ClarifyOut, UnanswerableOut]),
+            instructions=_plan_instructions(corrections, scope),
+            toolsets=[plan_tools(recorder)],
+            model_settings=_model_settings(ctx),
+            retries={"tools": TOOL_RETRIES, "output": OUTPUT_RETRIES},
+        )
+
+        @agent.output_validator
+        def check_sql(output: PlanResult) -> PlanResult:
+            if isinstance(output, PlanDraftOut) and (
+                problem := check_draft_sql(output.sql, recorder.last_validated_sql)
+            ):
+                raise ModelRetry(problem)
+            return output
+
+        return await agent.run(question, usage=ctx.usage, usage_limits=ctx.usage_limits())
+
     async def answer(self, draft: Draft, ctx: VariantContext) -> AnswerOutcome:
         recorder = RecordingToolset(ctx.toolset)
         async with ctx.toolset:
-            as_of_date = await _as_of_date(ctx)
-            agent = _answer_agent(draft, ctx, recorder, as_of_date)
+            scope = await _scope(ctx)
+            agent = _answer_agent(draft, ctx, recorder, scope)
             result = await agent.run(_answer_prompt(draft), usage=ctx.usage, usage_limits=ctx.usage_limits())
         await recorder.finish()
         execution = next(e for e in recorder.executions if e.execution_id == result.output.execution_id)
@@ -236,13 +254,24 @@ class _Scope(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     as_of_date: date
+    covers: tuple[str, ...]
+    does_not_cover: tuple[str, ...]
+    notes: tuple[str, ...]
+
+    def text(self) -> str:
+        return SCOPE_TEMPLATE.format(
+            as_of_date=self.as_of_date.isoformat(),
+            covers="; ".join(self.covers) or "-",
+            does_not_cover="; ".join(self.does_not_cover) or "-",
+            notes="; ".join(self.notes) or "-",
+        )
 
 
-def _plan_instructions(corrections: Sequence[Correction]) -> str:
+def _plan_instructions(corrections: Sequence[Correction], scope: _Scope) -> str:
     block = ""
     if corrections:
         block = CORRECTIONS_HEADER + "\n".join(f"- {_correction_line(c)}" for c in corrections) + "\n\n"
-    return PLAN_INSTRUCTIONS.format(role=ROLE, corrections=block, defaults=DEFAULTS)
+    return PLAN_INSTRUCTIONS.format(role=f"{ROLE}\n\n{scope.text()}", corrections=block, defaults=DEFAULTS)
 
 
 def _correction_line(correction: Correction) -> str:
@@ -263,15 +292,15 @@ def _model_settings(ctx: VariantContext) -> ModelSettings:
 
 
 def _answer_agent(
-    draft: Draft, ctx: VariantContext, recorder: RecordingToolset, as_of_date: date
+    draft: Draft, ctx: VariantContext, recorder: RecordingToolset, scope: _Scope
 ) -> Agent[None, AnswerOut]:
     agent: Agent[None, AnswerOut] = Agent(
         ctx.model_for(ctx.settings.model_default),
         output_type=OUTPUT_MODE(AnswerOut),
-        instructions=ANSWER_INSTRUCTIONS,
+        instructions=ANSWER_INSTRUCTIONS.format(role=f"{ROLE}\n\n{scope.text()}"),
         toolsets=[recorder],
         model_settings=_model_settings(ctx),
-        retries={"output": OUTPUT_RETRIES},
+        retries={"tools": TOOL_RETRIES, "output": OUTPUT_RETRIES},
     )
     time_range = [item.value for item in draft.interpretation.items if item.kind == "time_range"]
 
@@ -281,7 +310,7 @@ def _answer_agent(
             raise ModelRetry(problem)
         execution = next(e for e in recorder.executions if e.execution_id == output.execution_id)
         unverified = unverified_numbers(
-            output.answer_text, execution, question=draft.question, time_range=time_range, as_of_date=as_of_date
+            output.answer_text, execution, question=draft.question, time_range=time_range, as_of_date=scope.as_of_date
         )
         if unverified:
             raise ModelRetry(numbers_message(unverified))
@@ -290,12 +319,12 @@ def _answer_agent(
     return agent
 
 
-async def _as_of_date(ctx: VariantContext) -> date:
-    """One direct call, not one of the model's: the numbers check must not depend on what the model asked for."""
+async def _scope(ctx: VariantContext) -> _Scope:
+    """One direct call, not one of the model's: the prompt and the numbers check must not depend on what it asked."""
     run_ctx = RunContext(deps=None, model=ctx.model_for(ctx.settings.model_default), usage=ctx.usage)
     tools = await ctx.toolset.get_tools(run_ctx)
     scope = await ctx.toolset.call_tool(GET_CONTEXT, {}, run_ctx, tools[GET_CONTEXT])
-    return _Scope.model_validate(scope).as_of_date
+    return _Scope.model_validate(scope)
 
 
 def _answer_prompt(draft: Draft) -> str:

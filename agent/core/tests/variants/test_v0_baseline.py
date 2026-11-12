@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from fakes import AS_OF_DATE, FakeWarehouse, sql_result
-from pydantic_ai import Agent, NativeOutput
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -24,8 +25,9 @@ from sherpa_agent.outcomes import (
     Unanswerable,
     UsageSnapshot,
 )
-from sherpa_agent.variants import OUTPUT_MODE, VARIANTS, VariantContext
+from sherpa_agent.variants import VARIANTS, VariantContext
 from sherpa_agent.variants.v0_baseline import V0Baseline
+from sherpa_mcp.tools import WarehouseContext
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -139,10 +141,6 @@ def test_the_baseline_is_registered_under_its_name() -> None:
     assert VARIANTS["v0_baseline"].name == "v0_baseline"
 
 
-def test_the_output_mode_is_native_output() -> None:
-    assert OUTPUT_MODE is NativeOutput
-
-
 class TestPlan:
     async def test_plan_never_calls_run_sql(
         self, make_ctx: Callable[..., VariantContext], warehouse: FakeWarehouse
@@ -173,6 +171,33 @@ class TestPlan:
         assert NOT_THE_VALIDATED_SQL in script.messages_text(2)
         assert isinstance(outcome, Draft)
         assert outcome.sql == "select 1"
+
+    async def test_draft_carries_the_validated_sql_exactly_as_validated(
+        self, make_ctx: Callable[..., VariantContext]
+    ) -> None:
+        script = Script(
+            tool("validate_sql", sql="select 1;"), plan_draft("select 1", item("metric", "net_revenue", "default"))
+        )
+
+        outcome = await V0Baseline().plan(QUESTION, [], make_ctx(script))
+
+        assert isinstance(outcome, Draft)
+        assert outcome.sql == "select 1;"
+
+    async def test_calls_to_an_unknown_tool_do_not_end_the_run_within_the_spec_retries(
+        self, make_ctx: Callable[..., VariantContext]
+    ) -> None:
+        script = Script(
+            tool("no_such_tool"),
+            tool("no_such_tool"),
+            tool("run_sql", sql=SQL),
+            tool("validate_sql", sql=SQL),
+            plan_draft(SQL, item("metric", "net_revenue", "default")),
+        )
+
+        outcome = await V0Baseline().plan(QUESTION, [], make_ctx(script))
+
+        assert isinstance(outcome, Draft)
 
     async def test_draft_without_any_validation_is_sent_back(self, make_ctx: Callable[..., VariantContext]) -> None:
         script = Script(
@@ -314,6 +339,53 @@ class TestPlan:
         assert isinstance(outcome, Unanswerable)
         assert outcome.reason == "inventory is not in the warehouse"
         assert outcome.closest_supported == "sales by product"
+
+
+def scope_with_gap(warehouse: FakeWarehouse) -> None:
+    warehouse.set(
+        "get_context",
+        WarehouseContext(
+            as_of_date=dt.date(2024, 6, 30),
+            first_order_date=dt.date(2024, 1, 1),
+            domains=("sales",),
+            covers=("orders",),
+            does_not_cover=("inventory levels",),
+            notes=("refunds are net of tax",),
+        ),
+    )
+
+
+class TestScopeInPrompt:
+    async def test_plan_instructions_carry_the_warehouse_scope_without_a_model_call(
+        self, make_ctx: Callable[..., VariantContext], warehouse: FakeWarehouse
+    ) -> None:
+        scope_with_gap(warehouse)
+        script = Script(tool("validate_sql", sql=SQL), plan_draft(SQL, item("metric", "net_revenue", "default")))
+        ctx = make_ctx(script)
+
+        outcome = await V0Baseline().plan(QUESTION, [], ctx)
+
+        instructions = script.requests[0][1].instructions or ""
+        for text in ("2024-06-30", "inventory levels", "orders", "refunds are net of tax"):
+            assert text in instructions
+        assert "Call get_context" not in instructions
+        assert ctx.usage.tool_calls == 1  # validate_sql only: the scope was not the model's call
+        assert isinstance(outcome, Draft)
+        assert [s.name for s in outcome.steps] == ["sql"]
+
+    async def test_answer_instructions_carry_the_scope_from_one_get_context_call(
+        self, make_ctx: Callable[..., VariantContext], warehouse: FakeWarehouse
+    ) -> None:
+        scope_with_gap(warehouse)
+        script = Script(tool("run_sql", sql=SQL), answer_out("As of 2024-06-30 the value is 1"))
+
+        outcome = await V0Baseline().answer(make_draft(), make_ctx(script))
+
+        instructions = script.requests[0][1].instructions or ""
+        assert "2024-06-30" in instructions
+        assert "inventory levels" in instructions
+        assert isinstance(outcome, Answered)  # 2024 / 06 / 30 are known date parts from that same call
+        assert len(warehouse.calls_of("get_context")) == 1
 
 
 class TestCorrections:

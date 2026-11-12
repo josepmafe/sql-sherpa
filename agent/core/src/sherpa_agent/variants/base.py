@@ -23,7 +23,8 @@ TOTAL_TOKENS_LIMIT: Final = 400_000  # §5.3: tokens per question, cumulative
 
 
 class VariantContext(BaseModel):
-    """One question's run environment. `usage` is shared by every agent run of the question."""
+    """One question's run environment. `usage` is shared by every agent run of the question: for `answer` it must
+    already include `draft.usage`."""
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
