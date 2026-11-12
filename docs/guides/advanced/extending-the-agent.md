@@ -24,7 +24,7 @@ Tests need no network and no database. `tests/fakes.py` has `FakeWarehouse`, a t
 
 ## 1. Add a variant
 
-A variant is one technique added to the baseline (agent spec §9). Files, in order:
+A variant is one technique added to the baseline (agent spec §5.4). Files, in order:
 
 1. **`variants/<name>.py`:** a class with `name: str`, `async plan(question, corrections, ctx)` and `async answer(draft, ctx)`, matching `Variant`. Build every agent run from the context: `ctx.model_for(...)` for the model, `ctx.toolset` wrapped in a `RecordingToolset` that you append to `ctx.recorders`, and `ctx.usage` with `ctx.usage_limits()` passed to `Agent.run`. That gives the run the shared budget and the stats. Leave `stats` unset on the outcomes you return; `AgentService` fills it in.
 2. **`variants/__init__.py`:** add the instance to `VARIANTS`.
