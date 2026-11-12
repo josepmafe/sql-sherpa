@@ -11,6 +11,7 @@ requires-python = ">=3.12,<3.13"
 [project.scripts]
 sherpa-generate = "sherpa_generator.cli:app"
 sherpa-mcp = "sherpa_mcp.server:main"
+sherpa = "sherpa_agent.cli:app"
 
 [dependency-groups]
 dev = [
