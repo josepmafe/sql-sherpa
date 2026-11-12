@@ -14,6 +14,8 @@ from builders import (
     make_stats,
     make_unanswerable,
 )
+from mcp.shared.exceptions import MCPError
+from mcp.types import CONNECTION_CLOSED, INVALID_PARAMS, REQUEST_TIMEOUT
 from pydantic import TypeAdapter
 from pydantic_ai.toolsets import FunctionToolset
 from sherpa_agent import AgentError, cli
@@ -321,7 +323,41 @@ class FailsToStart(FunctionToolset[None]):
         raise RuntimeError("Client failed to connect: Connection closed\n" + "traceback line\n" * 5)
 
 
+class StdioServerExits(FunctionToolset[None]):
+    """What the client raises over stdio when the server exits during `initialize` (Postgres down)."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    async def __aenter__(self) -> StdioServerExits:
+        raise self._error
+
+
 class TestToolServerStartup:
+    @pytest.mark.parametrize("code", [CONNECTION_CLOSED, REQUEST_TIMEOUT], ids=["connection-closed", "timeout"])
+    def test_a_stdio_server_that_exits_during_initialize_is_a_clean_message_and_exit_1(
+        self, monkeypatch: pytest.MonkeyPatch, code: int
+    ) -> None:
+        toolset = StdioServerExits(MCPError(code, "Connection closed"))
+        monkeypatch.setattr(cli, "load_settings", lambda: AgentSettings(_env_file=None))  # type: ignore[call-arg]
+        monkeypatch.setattr(cli, "mcp_toolset", lambda settings: toolset)
+
+        result = runner.invoke(app, ["ask", "q"])
+
+        assert result.exit_code == EXIT_FAILED
+        assert "error: tool server unavailable: Connection closed" in result.stderr
+        assert "Traceback" not in result.output
+
+    def test_an_mcp_error_that_is_not_the_session_ending_is_not_hidden(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        toolset = StdioServerExits(MCPError(INVALID_PARAMS, "bad"))
+        monkeypatch.setattr(cli, "load_settings", lambda: AgentSettings(_env_file=None))  # type: ignore[call-arg]
+        monkeypatch.setattr(cli, "mcp_toolset", lambda settings: toolset)
+
+        result = runner.invoke(app, ["ask", "q"])
+
+        assert isinstance(result.exception, MCPError)
+
     def test_a_tool_server_that_does_not_start_is_a_clean_message_and_exit_1(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

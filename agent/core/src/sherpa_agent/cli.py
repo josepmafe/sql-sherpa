@@ -10,6 +10,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Final, Protocol
 
 import typer
+from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 from rich.console import Console
 from rich.text import Text
@@ -18,6 +19,7 @@ from sherpa_mcp.telemetry import configure
 from sherpa_agent import AgentError
 from sherpa_agent.outcomes import Answered, Correction, Draft, Failed, NeedsClarification, Unanswerable
 from sherpa_agent.prices import PRICES_PATH, Prices
+from sherpa_agent.recording import session_gone
 from sherpa_agent.render import render_draft, render_outcome, render_progress
 from sherpa_agent.service import SERVICE_NAME, AgentService, mcp_toolset
 from sherpa_agent.settings import AgentSettings
@@ -190,8 +192,9 @@ async def open_service(settings: AgentSettings) -> AsyncIterator[AgentRun]:
     async with AsyncExitStack() as stack:
         try:
             await stack.enter_async_context(toolset)
-        except RuntimeError as error:
-            if not str(error).startswith(CONNECT_FAILED_PREFIX):
+        except (RuntimeError, MCPError) as error:
+            # Over HTTP the client says it failed to connect; over stdio the exiting server closes the session.
+            if not (str(error).startswith(CONNECT_FAILED_PREFIX) or session_gone(error)):
                 raise
             detail = (str(error).splitlines() or [""])[0]
             raise AgentError(TOOL_SERVER_UNAVAILABLE.format(detail=detail)) from error

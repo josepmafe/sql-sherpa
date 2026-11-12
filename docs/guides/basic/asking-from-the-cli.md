@@ -88,7 +88,7 @@ SHERPA_TRACE_URL_TEMPLATE=http://127.0.0.1:16686/trace/{trace_id}
 docker compose --profile jaeger up -d jaeger    # UI at http://127.0.0.1:16686
 ```
 
-The footer's `trace:` then prints a link that opens the run: a `sherpa.plan` or `sherpa.answer` span with the model calls and the MCP tool calls under it. Without the template the footer prints the bare trace id. Jaeger keeps traces in memory, so they are gone when it stops. For the compose `mcp` service set `SHERPA_CONTAINER_OTLP_ENDPOINT=http://jaeger:4318`. The agent's spans hold the prompts, the SQL, the result rows and the database's error text (the MCP server's spans keep query text out), so stop Jaeger when you are not tracing: `docker compose --profile jaeger stop jaeger`.
+The footer's `trace:` then prints a link that opens the run: a `sherpa.plan` or `sherpa.answer` span with the model calls and the MCP tool calls under it. Without the template the footer prints the bare trace id. Jaeger keeps traces in memory, so they are gone when it stops. For the compose `mcp` service set `SHERPA_CONTAINER_OTLP_ENDPOINT=http://jaeger:4318`. The agent's spans hold the prompts, the SQL, the result rows and the database's error text (the MCP server's spans hold query text only in the `explain` statement of `validate_sql`), so stop Jaeger when you are not tracing: `docker compose --profile jaeger stop jaeger`.
 
 ## When something goes wrong
 
@@ -100,12 +100,12 @@ A failed run prints `Failed: <reason>` and exits 1.
 | `Failed: model provider rejected the request: <status>` | Bedrock refused the request itself (`403` not authorised for the model, `400` an invalid field or model ID), which a retry will not fix. Read the full error on stderr, then check the model ID, `SHERPA_EFFORT_DEFAULT` and the account's access to the model |
 | `Failed: tool calls kept failing` | A tool returned an error more often than its retry limit allows. The stderr line names the tool; ask again, or check the MCP server |
 | `Failed: warehouse context unavailable: ...` | `get_context` could not read the dbt artifacts; the message is the server's. Run `make build-prod` |
-| `Failed: tool server unavailable` | The MCP server stopped or could not start. Over stdio check `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`) and `docker compose up -d --wait postgres`; over HTTP check that `make mcp-dev` or the `mcp` service is up |
+| `Failed: tool server unavailable` | The MCP server went away or did not answer within 30 s while the question was running. Check the server (`make mcp-dev` or the `mcp` service, or Postgres) and ask again |
 | `Failed: budget exceeded` | The question used more than 15 tool calls in an agent, 40 model requests or 400k tokens. Ask something narrower, or split the question |
 | `Failed: sql attempts exhausted` | A fourth SQL attempt was needed after three failed (a failed `validate_sql` or `run_sql` counts), so the run ended; `Last error` and `Last SQL` show the last one. Name the table or column in the question, or use `--confirm` and correct the plan |
 | `Failed: plan could not be validated` | The model kept returning a draft that broke a rule (SQL not validated, or not the validated SQL). Run again; if it repeats, make the question more specific |
 | `Failed: answer could not be verified against results` | The answer text held a number the result does not support, so it was not shown. Run again, or read the table directly |
-| `error: tool server unavailable: Client failed to connect: ...` | The stdio MCP server could not start (it gives up after 15 s without Postgres), so the command stopped before asking. Run `make mcp-dev` in another shell to see why (usually Postgres is down or the `SHERPA_AGENT_*` login is wrong), or `docker compose up -d --wait postgres` |
+| `error: tool server unavailable: ...` (`Connection closed` over stdio, `Client failed to connect` over HTTP) | The MCP server could not start, so the command stopped before asking. Over stdio it gives up after 15 s without Postgres: check `.env` (`SHERPA_DB_*`, `SHERPA_AGENT_*`) and `docker compose up -d --wait postgres`. Over HTTP check that `make mcp-dev` or the `mcp` service is up |
 | `error: invalid configuration: ...` | A required `.env` value is missing (`SHERPA_DB_HOST`, `SHERPA_DB_PORT`, `SHERPA_DB_NAME`, `SHERPA_AGENT_USER`, `SHERPA_AGENT_PASSWORD`); the agent reads `.env` from the directory you run it in, so run from the repository root |
 | `error: unknown variant ...` | `--variant` is not a key of `VARIANTS`; the message lists the valid names |
 | Footer says `cost unknown` | `agent/core/prices.yaml` has no entry for the model ID ([Extending the gold set](../advanced/extending-the-gold-set.md#prices)) |

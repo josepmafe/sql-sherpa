@@ -68,7 +68,7 @@ Two switches change how the model is called: `OUTPUT_MODE` in `variants/base.py`
 
 ## Traces
 
-`AgentService` opens a `sherpa.plan` or `sherpa.answer` span per call and sets run statistics as attributes (`_annotate`: counts, latency, tokens, cost; no SQL or rows). PydanticAI's own model and tool spans nest under it and record prompts, tool arguments and tool results, so the SQL, the result rows and the database's error text are in the trace; the MCP server's spans keep query text out. A new attribute of ours follows the `_annotate` rule: nothing from the database or the environment. The MCP server's spans join when the stdio server gets `OTEL_EXPORTER_OTLP_ENDPOINT` (`server_env`).
+`AgentService` opens a `sherpa.plan` or `sherpa.answer` span per call and sets run statistics as attributes (`_annotate`: counts, latency, tokens, cost; no SQL or rows). PydanticAI's own model and tool spans nest under it and record prompts, tool arguments and tool results, so the SQL, the result rows and the database's error text are in the trace; the MCP server's spans carry no query text except the `db.statement` of `validate_sql`'s `explain`. A new attribute of ours follows the `_annotate` rule: nothing from the database or the environment. The MCP server's spans join when the stdio server gets `OTEL_EXPORTER_OTLP_ENDPOINT` (`server_env`).
 
 ## When something goes wrong
 

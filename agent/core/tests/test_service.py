@@ -516,6 +516,17 @@ class TestFailureMapping:
         assert failed.stats is not None
         assert failed.stats.sql_attempts == 0
 
+    async def test_a_session_that_ends_inside_an_exception_group_is_tool_server_unavailable(
+        self, make_service: Callable[..., AgentService], warehouse: FakeWarehouse
+    ) -> None:
+        retry = ModelRetry("the server went away")  # what MCPToolset raises for a grouped protocol error
+        retry.__cause__ = ExceptionGroup("task group", [ExceptionGroup("inner", [MCPError(CONNECTION_CLOSED, "gone")])])
+        warehouse.set("validate_sql", retry)
+
+        outcome = await make_service(Script(tool("validate_sql", sql=SQL))).plan(QUESTION)
+
+        await self.assert_failed(outcome, "tool server unavailable")
+
     async def test_a_tool_error_that_is_not_the_session_ending_stays_a_retry(
         self, make_service: Callable[..., AgentService], warehouse: FakeWarehouse
     ) -> None:

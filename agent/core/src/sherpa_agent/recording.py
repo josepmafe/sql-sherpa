@@ -9,6 +9,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import CONNECTION_CLOSED, REQUEST_TIMEOUT
 from pydantic import BaseModel, ConfigDict, JsonValue
 from pydantic_ai import ModelRetry
+from pydantic_ai.mcp import MCPError as PydanticAiMCPError
 from pydantic_ai.toolsets import WrapperToolset
 
 from sherpa_agent import AgentError
@@ -94,7 +95,7 @@ class RecordingToolset(WrapperToolset[Any]):
         except Exception as error:
             if gone := tool_server_gone(error):
                 if name == RUN_SQL:
-                    self._record.attempts -= 1  # the call never reached the database
+                    self._record.attempts -= 1  # the run ends here; a timeout may come after the statement ran
                 raise gone from error
             message = str(error)
             await self._add_call(name, tool_args, f"failed: {_first_line(message)}")
@@ -200,9 +201,20 @@ class RecordingToolset(WrapperToolset[Any]):
 def tool_server_gone(error: BaseException) -> ToolServerUnavailable | None:
     """MCPToolset turns an MCPError into a `ModelRetry` caused by it; one that says the session ended is not a retry."""
     cause = error.__cause__
-    if isinstance(error, ModelRetry) and isinstance(cause, MCPError) and cause.code in SESSION_GONE_CODES:
+    if isinstance(error, ModelRetry) and cause is not None and session_gone(cause):
         return ToolServerUnavailable(str(cause))
     return None
+
+
+def session_gone(error: BaseException) -> bool:
+    """An MCP error (the SDK's or PydanticAI's) that says the session ended or timed out, also inside task groups."""
+    match error:
+        case MCPError() | PydanticAiMCPError():
+            return error.code in SESSION_GONE_CODES
+        case BaseExceptionGroup():
+            return any(session_gone(member) for member in error.exceptions)
+        case _:
+            return False
 
 
 def plan_tools(toolset: AbstractToolset[Any]) -> AbstractToolset[Any]:
