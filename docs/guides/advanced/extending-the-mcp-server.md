@@ -8,12 +8,13 @@ Code is in `agent/mcp-server/src/sherpa_mcp/`; tests in `agent/mcp-server/tests/
 
 | File | Holds |
 |---|---|
-| `server.py` | `build_server` (registers the eight tools and their descriptions), `main` (logging, Logfire, startup check, transport) |
+| `server.py` | `build_server` (registers the eight tools and their descriptions), `main` (logging, OpenTelemetry, startup check, transport) |
 | `tools.py` | `WarehouseTools` (one method per tool), the frozen output models, the scope texts `DOMAIN_SUBJECTS` (one phrase per `meta.domain`, `marketing_web` included), `DOES_NOT_COVER`, `NOTES` |
 | `sql_guard.py` | `SqlGuard`, `ALLOWED_FUNCTIONS`, the hint maps, the `[guard:<rule>]` codes; pure |
 | `catalog.py` | `MartCatalogLoader`, `MartCatalog`, built from `manifest.json` and `catalog.json` |
 | `database.py` | `AgentDatabase`: pool, read-only transactions, timeout, row, cell and result caps, error codes |
 | `examples.py`, `examples.yaml` | The few-shot index and its data |
+| `telemetry.py` | `configure(service_name, otlp_endpoint)`: the tracer provider, shared with the agent; an OTLP exporter only when an endpoint is set |
 | `settings.py` | `McpSettings`, the only place that reads configuration |
 
 ## Test layers

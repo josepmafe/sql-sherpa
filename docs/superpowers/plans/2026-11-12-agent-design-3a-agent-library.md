@@ -113,12 +113,13 @@ agent/core/
     models.py           # build_model(model_string, settings): Bedrock with our botocore config, or Anthropic
     recording.py        # RecordingToolset: records, steps, SQL attempts
     guards.py           # execution reference, numbers check, validated draft SQL (pure)
-    variants/__init__.py      # Variant protocol, VariantContext, VARIANTS
+    variants/__init__.py      # VARIANTS (re-exports Variant, VariantContext, OUTPUT_MODE)
+    variants/base.py          # VariantContext, Variant, OUTPUT_MODE and the limit constants
     variants/v0_baseline.py   # prompts, output types, plan and answer
     service.py          # AgentService
     render.py, cli.py   # sherpa ask
   prices.yaml           # moved from agent/evals/
-  tests/                # mirrors the package
+  tests/                # mirrors the package; fakes.py (FakeWarehouse toolset), scripts.py (Script, a FunctionModel), builders.py
 agent/evals/src/sherpa_evals/  # imports Prices from sherpa_agent; PRICES_PATH follows the file
 docker-compose.yml      # + jaeger profile; mcp gets SHERPA_CONTAINER_OTLP_ENDPOINT
 .env.example, pyproject.toml

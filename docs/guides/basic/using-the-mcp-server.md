@@ -99,6 +99,6 @@ Errors start with a code: `[guard:<rule>]` (the hint after the `;` says what to 
 - **A sqlglot upgrade is a guard change.** It is pinned exactly; bump it only with a run of the guard's hostile-input tests.
 - **The data's own caveats** are in `get_context`'s notes.
 
-## Tracing with Logfire
+## Tracing with OpenTelemetry and Jaeger
 
-The server sends traces to Logfire when `LOGFIRE_TOKEN` is set in `.env`, and exports nothing otherwise. Get a write token at [logfire.pydantic.dev](https://logfire.pydantic.dev). A trace holds one `tools/call <tool>` span per call (never the arguments) and a `sherpa.guard` span per checked query (outcome, tables, `execution_id`, rule; never the SQL). `validate_sql`'s `EXPLAIN` records its text, so a literal in a validated query is in the trace.
+The server exports OpenTelemetry spans over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in `.env`, and exports nothing otherwise (it has no console exporter, because stdout carries the stdio stream). To see them, start Jaeger with `docker compose --profile jaeger up -d jaeger` (UI at `http://127.0.0.1:16686`), set `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318` for `make mcp-dev` and `SHERPA_CONTAINER_OTLP_ENDPOINT=http://jaeger:4318` for the compose `mcp` service (the commented lines of `.env.example`). A trace holds one `tools/call <tool>` span per call (never the arguments) and a `sherpa.guard` span per checked query (outcome, tables, `execution_id`, rule; never the SQL). `validate_sql`'s `EXPLAIN` records its text, so a literal in a validated query is in the trace.

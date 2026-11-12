@@ -233,7 +233,7 @@ RunStats: variant, usage, latency_ms, cost_eur, tool_calls, sql_attempts, trace_
 
 | Situation | Behaviour |
 |---|---|
-| Bedrock throttling / 5xx | botocore adaptive retries, `max_attempts = 5`; then `Failed(reason="model provider unavailable: …")` |
+| Bedrock throttling / 5xx | botocore adaptive retries, `max_attempts = 5` (botocore counts that as 5 retries: 6 attempts in all); then `Failed(reason="model provider unavailable: …")` |
 | SQL error from `validate_sql` / `run_sql` | Returned to the model as a tool error; counts as one SQL attempt |
 | SQL timeout | Tool error with a hint; counts as one SQL attempt |
 | SQL attempts > 3 | `Failed` with `last_sql` and `last_error`. The RecordingToolset counts attempts (`validate_sql` failures + `run_sql` calls) and raises a run-ending error on the 4th. PydanticAI's MCP toolset `max_retries` is set **explicitly** to 4, so the framework's own retry limit (default 1) never ends a run before this rule does. |
