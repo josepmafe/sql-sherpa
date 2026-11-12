@@ -355,9 +355,50 @@ class TestNumbersCheck:
         execution = single_value("1", "int8")
 
         assert unverified("Since 2024-11-15.", execution, question="What happened on 2024-11-15?") == []
-        assert unverified("As of 2025-06-30, Q2.", execution) == []
+        assert unverified("As of 2025-06-30, Q2.", execution) == []  # written as a date; Q2 is the time range's too
         assert unverified("In March 2025.", execution) == []
         assert unverified("In 2026.", execution) == ["2026"]
+
+    def test_as_of_date_parts_count_only_when_written_as_a_date(self) -> None:
+        execution = single_value("517", "int8")
+
+        def check(text: str) -> list[str]:
+            return unverified_numbers(text, execution, question="q", time_range=(), as_of_date=date(2025, 12, 31))
+
+        assert check("12 of them were new and 31 churned, 4 came back; 517 in all.") == ["12", "31", "4"]
+        assert check("As of 31 December 2025, 517 customers ordered.") == []
+        assert check("In 2025 there were 517 customers.") == []
+
+    @pytest.mark.parametrize(
+        "written",
+        ["31 December", "December 31", "31st of December", "Dec 31, 2025", "Dec 2025", "2025-12-31", "2025-12", "Q4"],
+    )
+    def test_each_way_of_writing_the_as_of_date_is_accepted(self, written: str) -> None:
+        execution = single_value("517", "int8")
+
+        flagged = unverified_numbers(
+            f"As of {written}, 517 customers ordered.",
+            execution,
+            question="q",
+            time_range=(),
+            as_of_date=date(2025, 12, 31),
+        )
+
+        assert flagged == []
+
+    @pytest.mark.parametrize("written", ["31 January", "30 December", "Q3", "the 4th quarter", "2024-12-31", "12/31"])
+    def test_other_dates_and_unprefixed_parts_are_not_the_as_of_date(self, written: str) -> None:
+        execution = single_value("517", "int8")
+
+        flagged = unverified_numbers(
+            f"On {written} 517 customers ordered.",
+            execution,
+            question="q",
+            time_range=(),
+            as_of_date=date(2025, 12, 31),
+        )
+
+        assert flagged != []
 
     def test_a_timestamp_cell_contributes_its_date_parts(self) -> None:
         execution = make_execution(

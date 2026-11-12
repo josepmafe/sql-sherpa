@@ -525,6 +525,41 @@ class TestAnswer:
         assert isinstance(outcome, Answered)
         assert warehouse.calls_of("get_context") == [{}]
 
+    async def test_a_free_text_correction_value_is_question_text_for_the_numbers_check(
+        self, make_ctx: Callable[..., VariantContext]
+    ) -> None:
+        correction = Correction(action="free_text", original=None, value="large means over €500")
+        draft = make_draft(corrections=[correction])
+        draft = draft.model_copy(update={"question": "How many large orders in March 2025?"})
+        script = Script(tool("run_sql", sql=SQL), answer_out("There were 1 orders over €500 in March 2025."))
+
+        assert isinstance(await V0Baseline().answer(draft, make_ctx(script)), Answered)
+
+    async def test_a_replace_correction_value_is_question_text(self, make_ctx: Callable[..., VariantContext]) -> None:
+        correction = Correction(
+            action="replace", original=CorrectionTarget(kind="filter", value="amount > 100"), value="amount > 500"
+        )
+        script = Script(tool("run_sql", sql=SQL), answer_out("There were 1 orders over 500."))
+
+        assert isinstance(await V0Baseline().answer(make_draft(corrections=[correction]), make_ctx(script)), Answered)
+
+    @pytest.mark.parametrize("number", ["100", "777"])
+    async def test_a_number_only_in_a_removed_original_or_an_interpretation_item_is_still_flagged(
+        self, make_ctx: Callable[..., VariantContext], number: str
+    ) -> None:
+        removed = Correction(
+            action="remove", original=CorrectionTarget(kind="filter", value="amount > 100"), value=None
+        )
+        replaced = Correction(
+            action="replace", original=CorrectionTarget(kind="filter", value="amount > 777"), value="amount > 500"
+        )
+        filter_item = InterpretationItem(kind="filter", value="amount > 777", step_id="s1", grounded_by="literal")
+        draft = make_draft(SQL, filter_item, corrections=[removed, replaced])
+        script = Script(tool("run_sql", sql=SQL), answer_out(f"There were {number} orders."))
+
+        with pytest.raises(UnexpectedModelBehavior):
+            await V0Baseline().answer(draft, make_ctx(script))
+
     @pytest.mark.parametrize(("items", "passes"), [((time_range_item("2019"),), True), ((), False)])
     async def test_time_range_values_of_the_draft_are_known_dates(
         self, make_ctx: Callable[..., VariantContext], items: tuple[InterpretationItem, ...], passes: bool

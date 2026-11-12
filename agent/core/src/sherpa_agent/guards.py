@@ -28,6 +28,23 @@ PERCENT_FACTOR: Final = Decimal(100)  # §5.2: percentages are also tried x100
 NUMERIC_TYPE_PREFIXES: Final = ("int", "numeric", "float")  # int2/int4/int8/integer, numeric, float4/float8/float
 DATE_TYPE_PREFIXES: Final = ("date", "timestamp")
 QUARTER_MONTHS: Final = 3
+# §5.2: the as_of_date's own parts (its year, month, day, quarter) are accepted only when the answer writes the date as
+# a date. The names a month is written with, by month number.
+MONTH_NAMES: Final = (
+    ("January", "Jan"),
+    ("February", "Feb"),
+    ("March", "Mar"),
+    ("April", "Apr"),
+    ("May",),
+    ("June", "Jun"),
+    ("July", "Jul"),
+    ("August", "Aug"),
+    ("September", "Sept", "Sep"),
+    ("October", "Oct"),
+    ("November", "Nov"),
+    ("December", "Dec"),
+)
+ORDINAL_SUFFIX: Final = r"(?:st|nd|rd|th)?"
 MAGNITUDES: Final = {
     "k": Decimal(10) ** 3,
     "mn": Decimal(10) ** 6,
@@ -86,6 +103,8 @@ class Figure(BaseModel):
     scale: Decimal
     percent: bool
     hedged: bool
+    start: int
+    end: int
 
 
 def check_execution_reference(execution_id: str, executions: Sequence[Execution]) -> str | None:
@@ -116,14 +135,18 @@ def unverified_numbers(
 
     Choices where the spec leaves room, all on the strict side: a sign must match the result value's sign; "," in
     groups of three is the only thousands separator ("1.180.000", "1 180 000", "1,18" are not numbers we accept);
-    scientific notation is refused; the 5% tolerance applies to suffix forms ("1.2M") and to plain integers right
-    after a hedge ("about 3,400"), so an unhedged "949,999" must match within rounding; percentages never match
-    counts or dates.
+    scientific notation is refused; the as_of_date's year is accepted bare, its other parts only inside a date written
+    as such ("31 December", "Dec 2025", "2025-12-31", "2025-12", "Q4"); the 5% tolerance applies to suffix
+    forms ("1.2M") and to plain integers right after a hedge ("about 3,400"), so an unhedged "949,999" must match
+    within rounding; percentages never match counts or dates.
     """
-    reference = _Reference(execution, question=question, time_range=time_range, as_of_date=as_of_date)
+    reference = _Reference(execution, question=question, time_range=time_range, as_of_year=as_of_date.year)
+    text = _without_text_cells(answer_text, execution)
+    written_dates = _written_as_of_dates(text, as_of_date)
     unverified: list[str] = []
-    for figure in _figures(_without_text_cells(answer_text, execution)):
-        if not reference.accepts(figure) and figure.raw not in unverified:
+    for figure in _figures(text):
+        within_date = any(start <= figure.start and figure.end <= end for start, end in written_dates)
+        if not (within_date or reference.accepts(figure)) and figure.raw not in unverified:
             unverified.append(figure.raw)
     return unverified
 
@@ -131,13 +154,14 @@ def unverified_numbers(
 class _Reference:
     """What the answer's numbers may be: result values, counts, date parts, and the question's numbers."""
 
-    def __init__(self, execution: Execution, *, question: str, time_range: Sequence[str], as_of_date: date) -> None:
+    def __init__(self, execution: Execution, *, question: str, time_range: Sequence[str], as_of_year: int) -> None:
         self._values = _numeric_cells(execution)
         # A count over a truncated result is not a total (§5.3), so it is not a number the answer may state.
         self._counts = (
             set() if execution.truncated else {Decimal(execution.returned_rows), *_distinct_counts(execution)}
         )
-        self._date_parts = _date_parts(_date_cells(execution), question, *time_range, as_of_date.isoformat())
+        self._date_parts = _date_parts(_date_cells(execution), question, *time_range)
+        self._as_of_year = Decimal(as_of_year)
         self._question = {
             (figure.value * figure.scale, figure.percent) for figure in _figures(question) if figure.value is not None
         }
@@ -153,6 +177,8 @@ class _Reference:
             return False
         scaled = figure.value * figure.scale
         if (scaled, figure.percent) in self._question:
+            return True
+        if scaled == self._as_of_year and not figure.percent and figure.scale == 1 and figure.raw.isdigit():
             return True
         if figure.percent:
             return self._near_a_result_value(figure)
@@ -176,6 +202,21 @@ class _Reference:
         return False
 
 
+def _written_as_of_dates(text: str, as_of_date: date) -> list[tuple[int, int]]:
+    """The spans of `text` that write the as_of_date as a date: ISO ("2025-12-31", "2025-12"), day and month name
+    ("31 December", "December 31, 2025", "Dec 2025") or the quarter with its Q prefix ("Q4")."""
+    year, month, day = as_of_date.year, as_of_date.month, as_of_date.day
+    names = "|".join(MONTH_NAMES[month - 1])
+    quarter = (month - 1) // QUARTER_MONTHS + 1
+    patterns = (
+        rf"(?<!\d){year:04d}-{month:02d}(?:-{day:02d})?(?!\d)",
+        rf"\b{day}{ORDINAL_SUFFIX}\s+(?:of\s+)?(?:{names})\b(?:\.?,?\s+{year})?",
+        rf"\b(?:{names})\b\.?(?:\s+{day}{ORDINAL_SUFFIX}\b)?(?:,?\s+{year}\b)?",
+        rf"\bQ{quarter}\b",
+    )
+    return [m.span() for pattern in patterns for m in re.finditer(pattern, text, re.IGNORECASE)]
+
+
 def _figures(text: str) -> list[Figure]:
     return [_figure(match) for match in FIGURE.finditer(text)]
 
@@ -186,7 +227,16 @@ def _figure(match: re.Match[str]) -> Figure:
     magnitude = (match["magnitude"] or "").strip().lower()
     percent = match["percent"] is not None
     if match["exponent"] or not (PLAIN_NUMBER.fullmatch(body) or GROUPED_NUMBER.fullmatch(body)):
-        return Figure(raw=raw, value=None, shown_decimals=0, scale=Decimal(1), percent=percent, hedged=False)
+        return Figure(
+            raw=raw,
+            value=None,
+            shown_decimals=0,
+            scale=Decimal(1),
+            percent=percent,
+            hedged=False,
+            start=match.start(),
+            end=match.end(),
+        )
     digits = body.replace(",", "")
     value = Decimal(digits)
     if match["sign"] in MINUS_SIGNS:
@@ -199,6 +249,8 @@ def _figure(match: re.Match[str]) -> Figure:
         scale=MAGNITUDES.get(magnitude, Decimal(1)),
         percent=percent,
         hedged=not magnitude and not percent and decimals == 0 and bool(HEDGE.search(match.string[: match.start()])),
+        start=match.start(),
+        end=match.end(),
     )
 
 

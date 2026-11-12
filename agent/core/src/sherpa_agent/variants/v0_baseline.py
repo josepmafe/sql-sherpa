@@ -316,6 +316,7 @@ def _answer_agent(
         retries={"tools": TOOL_RETRIES, "output": OUTPUT_RETRIES},
     )
     time_range = [item.value for item in draft.interpretation.items if item.kind == "time_range"]
+    question_text = _question_text(draft)
 
     @agent.output_validator
     def check_numbers(output: AnswerOut) -> AnswerOut:
@@ -323,7 +324,7 @@ def _answer_agent(
             raise ModelRetry(problem)
         execution = next(e for e in recorder.executions if e.execution_id == output.execution_id)
         unverified = unverified_numbers(
-            output.answer_text, execution, question=draft.question, time_range=time_range, as_of_date=scope.as_of_date
+            output.answer_text, execution, question=question_text, time_range=time_range, as_of_date=scope.as_of_date
         )
         if unverified:
             raise ModelRetry(numbers_message(unverified))
@@ -343,6 +344,13 @@ async def _scope(ctx: VariantContext) -> _Scope:
             raise gone from refusal
         raise WarehouseContextUnavailable(str(refusal)) from refusal
     return _Scope.model_validate(scope)
+
+
+def _question_text(draft: Draft) -> str:
+    """What the numbers check treats as the question's own numbers (§5.2): the question and what the user's
+    corrections put in (a replace's or free text's value; not the replaced original, not a removal)."""
+    values = [c.value for c in draft.corrections if c.action in ("replace", "free_text") and c.value]
+    return "\n".join([draft.question, *values])
 
 
 def _answer_prompt(draft: Draft) -> str:
