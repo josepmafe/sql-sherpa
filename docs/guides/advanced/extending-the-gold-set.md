@@ -14,7 +14,7 @@ Code is in `agent/evals/src/sherpa_evals/`; tests in `agent/evals/tests/`, rough
 | `answerers.py` | `Answerer`, `Attempt`, `AttemptStats`, `ModelUsage`, the `oracle`, the `ANSWERERS` registry |
 | `report.py` | `Prices` (`Prices.load` reads `prices.yaml`), `CaseRecord`, `render_report` (pure), `previous_run`, `write_run` |
 | `run.py` | The CLI and `run_cases`, which scores the cases it is given |
-| `agent/evals/` | `cases.yaml`, `REVIEW_PROMPT.md`, `prices.yaml`, `runs/` |
+| `agent/evals/` | `cases.yaml`, `REVIEW_PROMPT.md`, `runs/` |
 
 `make test` runs the default tests. The ones that read `sherpa_eval` are `warehouse`: `uv run --env-file .env pytest agent/evals/tests -m warehouse` (needs `make eval-db`).
 
@@ -73,7 +73,7 @@ To add a mutation: write `def my_mutation(sql: str) -> str` in `mutants.py` (par
 
 ## Prices
 
-`agent/evals/prices.yaml` lists EUR per million input and output tokens per Bedrock model ID. A model that is not in it makes the cost of a run unknown ("cost unknown (no price for <model>)"), never 0. The values in the file are placeholders until the owner checks them against the Bedrock on-demand price list for `eu-central-1` and the ECB reference rate of the day. To update them, change the numbers, then the header comment with the date, the rate and the source figures in USD. To add a model, add an entry under `models:` with the ID exactly as the variant reports it in `ModelUsage.model`.
+`agent/core/prices.yaml` lists EUR per million input and output tokens per Bedrock model ID. A model that is not in it makes the cost of a run unknown ("cost unknown (no price for <model>)"), never 0. The values in the file are placeholders until the owner checks them against the Bedrock on-demand price list for `eu-central-1` and the ECB reference rate of the day. To update them, change the numbers, then the header comment with the date, the rate and the source figures in USD. To add a model, add an entry under `models:` with the ID exactly as the variant reports it in `ModelUsage.model`.
 
 ## Adding an `Answerer`
 

@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import call
 
 import pytest
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import QueryResult, WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
@@ -19,7 +23,7 @@ if TYPE_CHECKING:
     from unittest.mock import Mock
 
     import psycopg
-    from logfire.testing import CaptureLogfire
+    from opentelemetry.sdk.trace import ReadableSpan
     from sherpa_mcp.database import AgentDatabase
 
 METRICS = (
@@ -29,6 +33,8 @@ METRICS = (
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 PII_LITERAL = "leak@example.com"
+# not a substring of any uuid or hex id: "q" and "z" are not hex digits
+QUERY_LITERAL = "qz41"
 HOSTILE_SQL = f"select email from marts.dim_customers where email = '{PII_LITERAL}'; drop table marts.fct_orders"
 NO_MATCH_HINT = (
     "no stored value has a similarity of 0.2 or more and none contains the term as a word; try a sibling column, "
@@ -327,42 +333,63 @@ class TestWarehouseTools:
             tools.run_sql("drop table marts.fct_orders")
 
 
+class TestSpansJson:
+    def test_ignores_the_random_resource_id(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider(resource=Resource({"service.instance.id": f"9163-{QUERY_LITERAL}-9f71"}))
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        with provider.get_tracer("test").start_as_current_span("sherpa.guard", attributes={"ok": True}):
+            pass
+
+        dumped = str(_spans_json(exporter.get_finished_spans()))
+
+        assert QUERY_LITERAL not in dumped
+        assert "sherpa.guard" in dumped
+
+
 @pytest.mark.warehouse
 class TestGuardTracing:
-    def test_rejection_is_traced_without_the_sql(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+    def test_rejection_is_traced_without_the_sql(
+        self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
+    ) -> None:
         with pytest.raises(WarehouseToolError):
             tools.run_sql(HOSTILE_SQL)
 
-        spans = capfire.exporter.exported_spans_as_dict()
+        spans = span_exporter.get_finished_spans()
         guard = _only_span(spans, "sherpa.guard")
-        assert guard["attributes"]["tool"] == "run_sql"
-        assert guard["attributes"]["ok"] is False
-        assert guard["attributes"]["error_count"] == 1
-        assert guard["attributes"]["execution_id"] == hashlib.sha256(HOSTILE_SQL.encode()).hexdigest()[:16]
-        rejected = _only_span(spans, "guard rejected")
-        assert rejected["attributes"]["rule"] == "statement_count"
-        assert rejected["attributes"]["error_count"] == 1
-        assert PII_LITERAL not in str(spans)
-        assert "drop table" not in str(spans)
+        assert guard.attributes is not None
+        assert guard.attributes["tool"] == "run_sql"
+        assert guard.attributes["ok"] is False
+        assert guard.attributes["error_count"] == 1
+        assert guard.attributes["rule"] == "statement_count"
+        assert guard.attributes["execution_id"] == hashlib.sha256(HOSTILE_SQL.encode()).hexdigest()[:16]
+        assert PII_LITERAL not in str(_spans_json(spans))
+        assert "drop table" not in str(_spans_json(spans))
 
-    def test_rejection_rule_comes_from_the_error_code(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
+    def test_rejection_rule_comes_from_the_error_code(
+        self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
+    ) -> None:
         tools.validate_sql("select pg_sleep(1) from marts.fct_orders")
 
-        rejected = _only_span(capfire.exporter.exported_spans_as_dict(), "guard rejected")
-        assert rejected["attributes"]["rule"] == "function"
+        guard = _only_span(span_exporter.get_finished_spans(), "sherpa.guard")
+        assert guard.attributes is not None
+        assert guard.attributes["rule"] == "function"
 
-    def test_accepted_query_is_traced_with_its_marts(self, tools: WarehouseTools, capfire: CaptureLogfire) -> None:
-        tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")
+    def test_accepted_query_is_traced_with_its_marts(
+        self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
+    ) -> None:
+        tools.validate_sql(f"select count(*) from marts.fct_orders where order_id::text <> '{QUERY_LITERAL}'")
 
-        spans = capfire.exporter.exported_spans_as_dict()
+        spans = span_exporter.get_finished_spans()
         guard = _only_span(spans, "sherpa.guard")
-        assert guard["attributes"]["tool"] == "validate_sql"
-        assert guard["attributes"]["ok"] is True
-        assert guard["attributes"]["error_count"] == 0
-        assert json.loads(guard["attributes"]["tables"]) == ["marts.fct_orders"]  # Logfire sends tuples as JSON
-        assert "execution_id" not in guard["attributes"]
-        assert not [span for span in spans if span["name"] == "guard rejected"]
-        assert "41" not in str([span["attributes"] for span in spans if span["name"] == "sherpa.guard"])
+        assert guard.attributes is not None
+        assert guard.attributes["tool"] == "validate_sql"
+        assert guard.attributes["ok"] is True
+        assert guard.attributes["error_count"] == 0
+        assert guard.attributes["tables"] == ("marts.fct_orders",)
+        assert "execution_id" not in guard.attributes
+        assert "rule" not in guard.attributes
+        assert QUERY_LITERAL not in str(_spans_json(spans))
 
 
 class TestGetContext:
@@ -797,10 +824,19 @@ class TestToolsWithoutArtifacts:
         assert len(tools.get_examples("net revenue by month", k=2).examples) == 2
 
 
-def _only_span(spans: list[dict[str, Any]], name: str) -> dict[str, Any]:
-    matching = [span for span in spans if span["name"] == name]
-    assert len(matching) == 1, [span["name"] for span in spans]
+def _only_span(spans: Sequence[ReadableSpan], name: str) -> ReadableSpan:
+    matching = [span for span in spans if span.name == name]
+    assert len(matching) == 1, [span.name for span in spans]
     return matching[0]
+
+
+def _spans_json(spans: Sequence[ReadableSpan]) -> list[str]:
+    # names, attributes, events and status only: the Resource carries a random service.instance.id
+    parts = []
+    for span in spans:
+        document = json.loads(span.to_json())
+        parts.append(json.dumps({key: document[key] for key in ("name", "attributes", "events", "status")}))
+    return parts
 
 
 def _result(

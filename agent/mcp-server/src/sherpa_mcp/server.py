@@ -1,7 +1,7 @@
 """The `sherpa-mcp` server: the eight warehouse tools over stdio or Streamable HTTP (agent spec §3, §4.1, §6).
 
-stdout carries the stdio JSON-RPC stream, so nothing here may write to it: logging goes to stderr and Logfire runs
-without its console exporter.
+stdout carries the stdio JSON-RPC stream, so nothing here may write to it: logging goes to stderr and OpenTelemetry has
+no console exporter.
 """
 
 import logging
@@ -11,12 +11,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Final
 
-import logfire
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from opentelemetry import trace
+from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 from pydantic import Field
 
+from sherpa_mcp import telemetry
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import AgentDatabase, WarehouseToolError
 from sherpa_mcp.examples import MAX_K, MIN_K, ExampleIndex
@@ -192,11 +194,10 @@ def build_server(tools: WarehouseTools) -> MCPServer:
 
 def main() -> None:
     configure_logging()
-    logfire.configure(service_name=SERVICE_NAME, console=False, send_to_logfire="if-token-present")
-    # Named: without an argument Logfire instruments every psycopg it finds, and dbt brings psycopg2 to the same venv.
-    # Before the pool opens its first connection.
-    logfire.instrument_psycopg("psycopg")
     settings = McpSettings()  # type: ignore[call-arg]  # fields come from the environment / .env
+    telemetry.configure(SERVICE_NAME, settings.otel_exporter_otlp_endpoint)
+    # Before the pool opens its first connection.
+    PsycopgInstrumentor().instrument()
     # On stderr only: the model's error messages never carry a host path.
     logger.info("reading the dbt artifacts from %s", settings.dbt_target_path.resolve())
     database = AgentDatabase(settings)
@@ -265,8 +266,9 @@ def _tool_errors(tool: str) -> Iterator[None]:
         yield
     except WarehouseToolError as error:
         raise ToolError(str(error)) from error
-    except Exception:
-        logfire.exception("tool {tool} raised an unexpected exception", tool=tool)
+    except Exception as error:
+        logger.error("tool %s raised an unexpected exception", tool)  # the SDK logs the traceback
+        trace.get_current_span().record_exception(error)
         raise
 
 

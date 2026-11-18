@@ -8,10 +8,10 @@ SQL Sherpa is a **toy project held to production standards**: a synthetic e-comm
 - **Spec compliance:** the specs win over the plans. If a plan conflicts with a spec, follow the spec and say so. Deviate from a spec only when the owner explicitly asks, and then update the spec once the task is done.
 - **Agent spec:** `docs/superpowers/specs/2026-10-22-sql-sherpa-agent-design.md`. Relies only on the interface in the data platform spec §11.
 - **UI spec:** `docs/superpowers/specs/2026-10-24-sql-sherpa-ui-design.md`. The web app (Home, Ask, Explorer, Lineage). Relies on the data platform spec §11 and the agent spec's `plan`/`answer` contract (§5.1).
-- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-6` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`), data-platform-3 (`2026-10-25-data-platform-3-time.md`), data-platform-4 (`2026-10-30-data-platform-4-marketing-governance-ci.md`), agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`), agent-design-2 (`2026-11-03-agent-design-2-gold-set-and-evals.md`), ui-1 (`2026-10-24-ui-1-shell-and-explorer.md`), ui-2 (`2026-10-26-ui-2-lineage.md`), ui-3 (`2026-10-27-ui-3-column-lineage.md`) and ui-4 (`2026-11-02-ui-4-home.md`) are done. Current plan: agent-design-3 (baseline), to be planned.
+- **Milestones and plans:** the data platform is built in milestones `data-platform-1` … `data-platform-5`, the agent in `agent-design-1` … `agent-design-9`, and the UI in `ui-1` … `ui-6` (each spec's milestones section). Each milestone has one plan in `docs/superpowers/plans/`, named `<date>-data-platform-<n>-<name>.md`, `<date>-agent-design-<n>-<name>.md` or `<date>-ui-<n>-<name>.md`. A plan is written **just before** its milestone is built, never all upfront. data-platform-1 (`2026-10-22-data-platform-1-foundation.md`), data-platform-2 (`2026-10-23-data-platform-2-core-marts.md`), data-platform-3 (`2026-10-25-data-platform-3-time.md`), data-platform-4 (`2026-10-30-data-platform-4-marketing-governance-ci.md`), agent-design-1 (`2026-10-24-agent-design-1-mcp-server.md`), agent-design-2 (`2026-11-03-agent-design-2-gold-set-and-evals.md`), ui-1 (`2026-10-24-ui-1-shell-and-explorer.md`), ui-2 (`2026-10-26-ui-2-lineage.md`), ui-3 (`2026-10-27-ui-3-column-lineage.md`) and ui-4 (`2026-11-02-ui-4-home.md`) are done. agent-design-3 (baseline) has two parts: 3a, the agent library, `sherpa ask` and traces in Jaeger (`2026-11-12-agent-design-3a-agent-library.md`), is done; the current plan is 3b (the baseline measured), to be planned.
 - **Sequencing:**
   1. data-platform-1 → data-platform-2 (defines the agent-facing interface).
-  2. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-4 once agent-design-1 exists (all four are built); ui-5 (Ask) after agent-design-3; ui-6 (one-command demo) after ui-5.
+  2. agent-design-1 to agent-design-3 alongside data-platform-3; ui-1 to ui-4 once agent-design-1 exists (all four are built); ui-5 (Ask) after agent-design-3b; ui-6 (one-command demo) after ui-5.
   3. agent-design-4 (gold set batch 2) → agent-design-5 to agent-design-8; data-platform-5 → agent-design-9.
 - **Every plan ends with a documentation task**, and writing a plan includes writing it. The task does two things:
   - **Checks `CLAUDE.md` and `README.md`** against what the milestone changed (commands, layout, status, conventions) and updates them.
@@ -85,6 +85,9 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 - **Evals** (plain commands, on the frozen `sherpa_eval` database; [running the evals](docs/guides/basic/running-the-evals.md)):
   - `uv run --env-file .env python -m sherpa_evals.run --check-gold [--case <id>]` checks the gold cases against the eval database.
   - `uv run --env-file .env python -m sherpa_evals.run --variant oracle [--category <c>] [--case <id>] [--repeat 1] [--concurrency 4]` scores a variant on the accepted cases and writes `agent/evals/runs/<timestamp>-<variant>/` (`report.md` and `meta.json` are committed, `cases.jsonl` is not). `--concurrency` counts cases in flight and is at most 12.
+- **Agent** ([asking from the CLI](docs/guides/basic/asking-from-the-cli.md); plain commands, they need Bedrock credentials):
+  - `uv run sherpa ask "<question>" [--variant <name>] [--confirm] [--json]` plans, answers and prints the result with its interpretation, SQL and a cost and trace footer. Exit codes: 0 answered, 1 failed, 3 clarify, 4 unanswerable, 5 aborted. `--json` prints only the final outcome on stdout.
+  - `docker compose --profile jaeger up -d jaeger` starts the optional trace backend (UI at `http://127.0.0.1:16686`); with `OTEL_EXPORTER_OTLP_ENDPOINT` set in `.env` the agent and the host-side MCP server export spans to it.
 - **Dev loops:**
   - `make mcp-dev` runs the MCP server on the host over HTTP (`http://127.0.0.1:8765/mcp`).
   - `make ui-dev` runs the API with reload plus the Vite dev server, which proxies `/api` to it, on `SHERPA_UI_PORT` (default 8090). Stop the compose `ui` service first, or pass `SHERPA_UI_PORT=8092`. It needs `cd ui/frontend && npm ci` once (Node 22+), like `make lint` and `make e2e`.
@@ -94,7 +97,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
 - **Repository layout, grouped by spec:**
   - `data-platform/`: `postgres/` (`init/` runs once on a new volume; `roles.sql` and `large_objects.sql` hold the SQL that it and `make up` share), `generator/`, `dbt/`, `scripts/` (`backfill.py` for `make backfill`, `check_docs_coverage.py`), and `tests/` for tests that span the generator and dbt (`dbt/`, `scripts/`) and the SQL tests of `postgres/`.
-  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, with the pane toolkit in `src/components/panes/`; `tests/` for Vitest and `e2e/` for Playwright), `parity/` (`sort_filter_cases.json`, the sort/filter case file that pytest and Vitest both run) and the `Dockerfile`; `agent/evals/` (the `sherpa_evals` package: `cases.yaml`, `REVIEW_PROMPT.md`, `prices.yaml`, `runs/`) exists; `agent/core/` appears with its first milestone.
+  - `agent/mcp-server/` (the `sherpa_mcp` package) exists; `ui/` has `backend/` (the `sherpa_ui` package), `frontend/` (React + TypeScript + Vite; `src/`, with the pane toolkit in `src/components/panes/`; `tests/` for Vitest and `e2e/` for Playwright), `parity/` (`sort_filter_cases.json`, the sort/filter case file that pytest and Vitest both run) and the `Dockerfile`; `agent/evals/` (the `sherpa_evals` package: `cases.yaml`, `REVIEW_PROMPT.md`, `runs/`) exists; `agent/core/` (the `sherpa_agent` package: `variants/`, `prices.yaml`) exists.
   - `.github/workflows/ci.yml` is the pull-request gate.
   - Every Python component is `<component>/src/<package>/` plus its own `tests/`.
   - A component's Dockerfile sits next to its code, and the root `docker-compose.yml` wires the services together.
@@ -126,7 +129,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
   - MCP server: `sql_guard`, the `examples` ranking and the `catalog` parsing are pure; `tools`, `database` and the file reads of the `catalog` loader and of `ExampleIndex.from_yaml` do the I/O
   - UI backend: `readonly/sort_filter`, the `catalog_service` mapping, `lineage/manifest_graph`, `lineage/selector`, `lineage/node_status`, `lineage/column_lineage` and `home/figures` are pure; `home/data_status` (reads `sources.json`), `home/home_service`, `readonly/query_runner`, `build/build_status`, `lineage/manifest_loader`, `lineage/node_sql`, `lineage/column_lineage_loader`, `lineage/lineage_service` and the `api/` routers do the I/O
   - evals: `compare` and `cases` are pure, and so are the oracle answerer and `report.render_report` (the file reads `GoldSet.load` and `Prices.load` do the I/O); `warehouse` and `run` do the I/O (`report.previous_run` and `write_run` read and write the run directories)
-  - agent: `guards` and `outcomes` are pure; variants orchestrate
+  - agent: `outcomes`, `guards` and `render` are pure; `recording`, `service`, `models` and `cli` do the I/O; variants orchestrate
 - One package per component (`sherpa_generator`, `sherpa_mcp`, `sherpa_ui`, `sherpa_agent`), each with its own `settings.py` (pydantic-settings, `frozen=True`, env prefix `SHERPA_`). Read configuration only through it; never call `os.environ` elsewhere.
 - Module-level `UPPER_CASE` constants for every tunable value (rates, limits, thresholds), with the spec section in a comment where it comes from the spec. No magic numbers inside logic.
 - **Prefer classes over collections of functions.** Behaviour that shares dependencies, configuration or state, or forms one responsibility, lives in a class whose constructor takes those dependencies. Examples: `SqlGuard(catalog)`, `Simulator(db, seed=…, scale=…, today=…)`, `ResultComparator`, one class per variant. Two exceptions stay module-level functions: tiny stateless utilities with no shared context (e.g. `stable_int`), and entry points that frameworks require as functions (Typer commands, MCP tool handlers, which delegate to a class). Don't write namespace-only classes made of `@staticmethod`s.
@@ -150,7 +153,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
 
 ### Logging and output
 - Stdlib `logging` only: `logger = logging.getLogger(__name__)` per module, with `%`-style arguments (`logger.info("wrote %d rows", n)`, not f-strings). No `print()` outside CLI output (Typer/Rich) and helper scripts (`data-platform/scripts/`).
-- **The MCP server never writes to stdout** (it carries the JSON-RPC stream): logs go to stderr, and Logfire runs with `console=False`.
+- **The MCP server never writes to stdout** (it carries the JSON-RPC stream): logs go to stderr, and OpenTelemetry has no console exporter.
 
 ### Formatting
 - ruff format; line length 120 (prompt strings in agent modules may exceed it).
@@ -208,7 +211,7 @@ A Make target exists only for a multi-step workflow, a command with non-obvious 
   - Never compare a tool's output with the constant it returns.
   - Timing tests keep a 2× margin or patch the clock.
   - When dbt is bumped, refresh the fixture manifest from a real build.
-- Agent tests use PydanticAI `TestModel`/`FunctionModel` with no network; use `AsyncMock` for async collaborators.
+- Agent tests (`agent/core/tests/`) use PydanticAI `TestModel`/`FunctionModel` and the fake toolset in `agent/core/tests/fakes.py` with no network; use `AsyncMock` for async collaborators. A limit test asserts what we pass (`UsageLimits`, the botocore config), not PydanticAI's enforcement.
 - UI tests come in three layers: backend pytest (`ui/backend/tests/`, `warehouse` for the ones that need the real marts), frontend Vitest + Testing Library with mocked API responses (`cd ui/frontend && npm test`), and Playwright against the compose stack (`make e2e`).
 - Markers:
   - `integration`: needs Postgres. A test that needs only Postgres and the `sherpa_agent` role (no marts) is `integration`, not `warehouse`, so it runs in the default suite; slow subprocess tests of the MCP server stay `warehouse`

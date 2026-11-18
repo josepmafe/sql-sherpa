@@ -20,9 +20,9 @@ from sherpa_mcp.tools import WarehouseTools
 from starlette.requests import Request
 
 if TYPE_CHECKING:
-    from logfire.testing import CaptureLogfire
     from mcp import StdioServerParameters
     from mcp.types import CallToolResult
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 TOOL_NAMES = {
     *("get_context", "list_tables", "describe_table", "search_values"),
@@ -81,21 +81,24 @@ class TestBuildServer:
         assert "hunter2" not in _text(result)
         assert "10.0.0.1" not in _text(result)
 
-    async def test_each_tool_call_is_a_span_without_arguments_or_error_text(self, capfire: CaptureLogfire) -> None:
+    async def test_each_tool_call_is_a_span_without_arguments_or_error_text(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
         tools = create_autospec(WarehouseTools, instance=True)
         tools.run_sql.side_effect = WarehouseToolError("[guard:write] must be a SELECT query: 'leak@x.com'")
 
         async with Client(build_server(tools)) as client:
             await client.call_tool("run_sql", {"sql": "delete from marts.dim_customers where email = 'leak@x.com'"})
 
-        spans = capfire.exporter.exported_spans_as_dict()
-        (call,) = [span for span in spans if span["name"] == "tools/call run_sql"]
-        assert call["attributes"]["gen_ai.tool.name"] == "run_sql"
-        assert call["attributes"]["error.type"] == "tool_error"
-        assert "leak@x.com" not in json.dumps(spans, default=str)
+        spans = span_exporter.get_finished_spans()
+        (call,) = [span for span in spans if span.name == "tools/call run_sql"]
+        assert call.attributes is not None
+        assert call.attributes["gen_ai.tool.name"] == "run_sql"
+        assert call.attributes["error.type"] == "tool_error"
+        assert "leak@x.com" not in json.dumps([span.to_json() for span in spans], default=str)
 
     async def test_unexpected_error_is_recorded_server_side(
-        self, caplog: pytest.LogCaptureFixture, capfire: CaptureLogfire
+        self, caplog: pytest.LogCaptureFixture, span_exporter: InMemorySpanExporter
     ) -> None:
         tools = create_autospec(WarehouseTools, instance=True)
         tools.run_sql.side_effect = RuntimeError("boom secret")
@@ -114,12 +117,9 @@ class TestBuildServer:
         assert "Traceback" in caplog.text
         assert "RuntimeError: boom secret" in caplog.text
         events = [
-            event
-            for span in capfire.exporter.exported_spans_as_dict()
-            for event in span.get("events", [])
-            if event["name"] == "exception"
+            event for span in span_exporter.get_finished_spans() for event in span.events if event.name == "exception"
         ]
-        assert [event["attributes"]["exception.message"] for event in events] == ["boom secret"]
+        assert [(event.attributes or {})["exception.message"] for event in events] == ["boom secret"]
 
     async def test_tool_error_text_stays_out_of_the_server_log(self, caplog: pytest.LogCaptureFixture) -> None:
         tools = create_autospec(WarehouseTools, instance=True)

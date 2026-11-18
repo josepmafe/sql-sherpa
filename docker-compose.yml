@@ -48,7 +48,7 @@ services:
       SHERPA_DBT_TARGET_PATH: /app/dbt/target-prod
       SHERPA_MCP_POOL_SIZE: ${SHERPA_MCP_POOL_SIZE:-4}
       # Optional: empty means no export.
-      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${SHERPA_CONTAINER_OTLP_ENDPOINT:-}
     volumes:
       # The dbt folder, not target-prod itself: Docker would create a missing target-prod as an empty root-owned
       # directory, and a target-prod deleted and rebuilt on the host would leave the container on a stale mount.
@@ -101,6 +101,16 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # Optional trace backend, off by default: `docker compose --profile jaeger up -d jaeger`, UI at
+  # http://127.0.0.1:16686. In-memory storage: traces are gone when it stops.
+  jaeger:
+    image: jaegertracing/jaeger:2.23.0
+    profiles: [jaeger]
+    ports:
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:16686:16686"
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EVALS_ROOT = Path(__file__).resolve().parents[2]
 CASES_PATH = EVALS_ROOT / "cases.yaml"
-PRICES_PATH = EVALS_ROOT / "prices.yaml"
 RUNS_DIR = EVALS_ROOT / "runs"
 
 

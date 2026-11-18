@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import sqlglot
 import typer
+from sherpa_agent.prices import PRICES_PATH, Prices
 from sherpa_mcp.catalog import MARTS_SCHEMA, CatalogUnavailable, MartCatalogLoader
 from sherpa_mcp.examples import ExampleIndex
 from sherpa_mcp.server import EXAMPLES_PATH
@@ -22,8 +23,8 @@ from sqlglot.errors import SqlglotError
 from sherpa_evals.answerers import ANSWERERS
 from sherpa_evals.cases import GoldSet
 from sherpa_evals.compare import compare
-from sherpa_evals.report import CaseRecord, Prices, RunMeta, previous_run, render_report, write_run
-from sherpa_evals.settings import CASES_PATH, PRICES_PATH, RUNS_DIR, EvalSettings
+from sherpa_evals.report import CaseRecord, RunMeta, previous_run, render_report, write_run
+from sherpa_evals.settings import CASES_PATH, RUNS_DIR, EvalSettings
 from sherpa_evals.warehouse import (
     EvalDatabase,
     EvalSqlError,

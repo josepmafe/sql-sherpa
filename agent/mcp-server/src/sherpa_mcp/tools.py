@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import logging
 import re
 from typing import TYPE_CHECKING, Final
 
-import logfire
+from opentelemetry import trace
 from psycopg import sql
 from pydantic import BaseModel, ConfigDict
 
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from sherpa_mcp.database import AgentDatabase
     from sherpa_mcp.examples import ExampleIndex
     from sherpa_mcp.sql_guard import GuardResult
+
+logger = logging.getLogger(__name__)
 
 SAMPLE_ROWS: Final = 3
 MIN_LIMIT: Final = 1
@@ -373,16 +376,16 @@ class WarehouseTools:
     def _guard(tool: str, executed: str, catalog: MartCatalog, execution_id: str | None = None) -> GuardResult:
         """Run the guard inside a `sherpa.guard` span (agent spec §6). Never the SQL or the error texts on the trace:
         both can carry literals, and literals can be PII."""
-        with logfire.span(GUARD_SPAN, tool=tool) as span:
+        with trace.get_tracer(__name__).start_as_current_span(GUARD_SPAN, attributes={"tool": tool}) as span:
             # Built per call from the catalog of this call, so its marts always match the ones it checks against.
             guard = SqlGuard(catalog.visible_marts()).check(executed)
-            span.set_attributes({"ok": guard.ok, "error_count": len(guard.errors), "tables": guard.tables})
+            span.set_attributes({"ok": guard.ok, "error_count": len(guard.errors), "tables": list(guard.tables)})
             if execution_id is not None:
                 span.set_attribute("execution_id", execution_id)
             if not guard.ok:
-                logfire.info(
-                    "guard rejected", tool=tool, error_count=len(guard.errors), rule=_rule_class(guard.errors[0])
-                )
+                rule = _rule_class(guard.errors[0])
+                span.set_attribute("rule", rule)
+                logger.info("guard rejected: tool=%s error_count=%d rule=%s", tool, len(guard.errors), rule)
 
         return guard
 

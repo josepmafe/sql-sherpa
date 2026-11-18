@@ -101,15 +101,15 @@ browser ──HTTP/SSE──► ui (FastAPI + static) ──► Postgres marts  
                          │      │
                          │      └── dbt artifacts: target-prod/ mounted read-only
                          └── sherpa_agent (in-process) ──MCP over HTTP──► mcp ──► Postgres marts (sherpa_agent)
-                                         └── Bedrock (internet) · Logfire (internet, optional)
+                                         └── Bedrock (internet) · an OTLP backend (optional)
 ```
 
-- **Services:** `postgres` (data platform), `mcp` (agent spec, HTTP transport), **`ui`** on `127.0.0.1:${SHERPA_UI_PORT:-8090}`. Port 8090 avoids `dbt docs serve`'s default of 8080. `phoenix` is the agent spec's optional profile.
+- **Services:** `postgres` (data platform), `mcp` (agent spec, HTTP transport), **`ui`** on `127.0.0.1:${SHERPA_UI_PORT:-8090}`. Port 8090 avoids `dbt docs serve`'s default of 8080. `jaeger` is the agent spec's optional profile (traces).
 - **The agent runs inside the `ui` backend** as a library (`sherpa_agent`'s `plan`/`answer`, agent spec §5) and reaches the `mcp` service over Streamable HTTP at `http://mcp:8765/mcp`, the compose service name, not 127.0.0.1. This is the "several client processes" case that the agent spec's HTTP transport exists for.
 - **Model credentials inside the container:**
   - The host's `~/.aws` is mounted **read-only** into `ui`, with `AWS_PROFILE` and `AWS_REGION` passed through from `.env`.
   - A corporate proxy's CA bundle, if `.env` sets `SSL_CERT_FILE` / `AWS_CA_BUNDLE`, is mounted read-only at the same path.
-  - `LOGFIRE_TOKEN` comes from `.env`.
+  - The container exports spans to `SHERPA_CONTAINER_OTLP_ENDPOINT` when `.env` sets it (agent spec §10).
   - Nothing credential-related is baked into the image or committed. `make ui-dev` runs the backend on the host instead, using the host's credentials directly.
 - **dbt artifacts:** `data-platform/dbt/target-prod/` is mounted read-only. The UI reads `manifest.json` and `catalog.json` from it (`make build-prod` regenerates `catalog.json` after every build), and `sources.json` for freshness (only `dbt source freshness` writes it).
   - **Build status comes from the database, not the files:** the `ops.dbt_run_results` audit table (data platform spec §8, "Added by ui-1"). The UI reads the latest invocation with `target_name = 'prod'`, `command = 'build'` and `is_full_run`. The table is needed because dbt rewrites `target-prod/run_results.json` on every compiling command, so the file can't say what the last full build did.
@@ -291,7 +291,7 @@ A **Bar / Line / Table only** switch overrides the default. It is greyed out whe
 - **Model unavailable:** the model call failed to connect, or health reports the model `unavailable` (§3). Ask is disabled with an explanation and a retry button, and the other screens keep working.
 - **Tool server unavailable:** health reports `mcp` down. Same treatment, with its own message.
 
-**Trace link:** built from `SHERPA_UI_TRACE_URL_TEMPLATE` (with `{trace_id}`), set for Logfire cloud or local Phoenix. Without it, the footer shows the trace id with a copy button.
+**Trace link:** built from `SHERPA_UI_TRACE_URL_TEMPLATE` (with `{trace_id}`), for example the local Jaeger's `http://127.0.0.1:16686/trace/{trace_id}`. Without it, the footer shows the trace id with a copy button.
 
 **History** (browser storage, §7): questions, each with its runs. A run stores its corrections, the **whole draft** (interpretation, steps, SQL), the **final SQL** (the draft's, or the revised SQL when `sql_revision` is set), the outcome type and the time. Result rows and answer text are not stored.
 
@@ -401,11 +401,11 @@ Browser storage never holds result rows; results are always re-fetched (criteria
 | `SHERPA_UI_STATEMENT_TIMEOUT_S` | `30` | Per-query timeout, in whole seconds (at least 1) |
 | `SHERPA_UI_ROW_CAP` | `1000` | Rows returned per query |
 | `SHERPA_UI_DRAFT_TTL_MINUTES` | `60` | How long Ask drafts are kept |
-| `SHERPA_UI_TRACE_URL_TEMPLATE` | — | e.g. a Logfire or Phoenix URL with `{trace_id}` |
+| `SHERPA_UI_TRACE_URL_TEMPLATE` | — | e.g. the local Jaeger's `http://127.0.0.1:16686/trace/{trace_id}` |
 | `SHERPA_UI_DBT_TARGET_PATH` | `/app/dbt/target-prod` (in the container) | Mounted artifacts |
 | `MCP_HTTP_URL` | `http://mcp:8765/mcp` (in the container) | The agent's tool server |
 
-The container also receives `AWS_PROFILE`, `AWS_REGION`, `LOGFIRE_TOKEN`, `ANTHROPIC_API_KEY` and `SHERPA_MODEL_DEFAULT` (for the demo's Anthropic-API option, §3) and, when set, `SSL_CERT_FILE` / `AWS_CA_BUNDLE` (§3).
+The container also receives `AWS_PROFILE`, `AWS_REGION`, `SHERPA_CONTAINER_OTLP_ENDPOINT`, `ANTHROPIC_API_KEY` and `SHERPA_MODEL_DEFAULT` (for the demo's Anthropic-API option, §3) and, when set, `SSL_CERT_FILE` / `AWS_CA_BUNDLE` (§3).
 
 ---
 
@@ -419,7 +419,7 @@ Each milestone has one plan, `docs/superpowers/plans/<date>-ui-<n>-<name>.md`, a
 | **ui-2 — Lineage** | Lineage endpoints and selector subset, the graph, node panel, run-status overlay, "Failing only" | ui-1 | Table-path and domain e2e flows; the selector subset matches `dbt ls` and rejects an unsupported form; a failing test in the prod build shows its node red and appears under "Failing only" |
 | **ui-3 — Column lineage** | The schema-band layout, the node panel below the graph, column lineage (the sqlglot-based builder, `columns=true` and the column-focus endpoint), expandable nodes with column rows and the column focus | ui-2 | Focusing `fct_orders.net_revenue` highlights exactly its hand-checked upstream source columns; selecting a node never resizes the graph; every model column has a kind, and the e2e check of the bands passes (raw → seeds → staging → snapshots → intermediate → marts) |
 | **ui-4 — Home** | `home_queries.yaml`, `HomeService`, the data-problems box and footer, Home screen (all but the Ask box), the `sherpa_home` exposure | ui-2 (the failing-tests link) | Every tile equals a direct SQL check in the e2e test; after `make advance DAYS=1 && make build-prod`, a refresh changes `as_of_date` and the tiles (criterion 2); the build time and node count in the data-status footer match the latest full prod build in `ops.dbt_run_results` |
-| **ui-5 — Ask** | Home's Ask box, the two small Home fixes in §13 that sit in the code it edits (the Black Friday highlight on a partial week, the freshness runtime-error wording), Ask endpoints with SSE, chart rules, draft/corrections/answer screens, history with re-runs, trace links, model-health tracking and the offline compose override | ui-1, agent-design-3 | The Ask backend tests pass with agent fakes; the `live` e2e flow (question → draft → one correction → re-plan → Show results) passes once against Bedrock; the offline compose check shows "model unavailable" within seconds while the other screens work |
+| **ui-5 — Ask** | Home's Ask box, the two small Home fixes in §13 that sit in the code it edits (the Black Friday highlight on a partial week, the freshness runtime-error wording), Ask endpoints with SSE, chart rules, draft/corrections/answer screens, history with re-runs, trace links, model-health tracking and the offline compose override | ui-1, agent-design-3b | The Ask backend tests pass with agent fakes; the `live` e2e flow (question → draft → one correction → re-plan → Show results) passes once against Bedrock; the offline compose check shows "model unavailable" within seconds while the other screens work |
 | **ui-6 — One-command demo** | `data-platform/bootstrap/` (Dockerfile + entrypoint), the compose `demo` profile, the health banner's "warehouse being built" state, the README "Try it" section | ui-5 | On a clean clone with only Docker: `cp .env.example .env && docker compose --profile demo up -d` brings up a working product (Home shows numbers, Explorer runs a query, Lineage shows the graph, Ask shows "model unavailable" without credentials); a second `up` finishes `bootstrap` in seconds; with a host-built warehouse, `bootstrap` changes nothing (`ops.dbt_run_results` gains no rows) |
 
 ---

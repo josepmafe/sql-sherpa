@@ -10,7 +10,7 @@ The answers can be trusted because of the platform underneath: one documented, t
 
 It is a learning project held to production standards: a realistic synthetic e-commerce business, dbt Core features used the way practitioners use them, and an agent where observability and evaluation come first. All data is synthetic.
 
-> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), data-platform-4 (Marketing, governance and CI), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage), ui-3 (column lineage), ui-4 (Home) and agent-design-2 (gold set and evals) are built. agent-design-3 (baseline agent) is next. Each spec's milestones section lists the rest.
+> **Status:** data-platform-1 (Foundation), data-platform-2 (Core marts), data-platform-3 (Time), data-platform-4 (Marketing, governance and CI), agent-design-1 (MCP server), ui-1 (shell and Explorer), ui-2 (Lineage), ui-3 (column lineage), ui-4 (Home), agent-design-2 (gold set and evals) and agent-design-3a (the agent library, `sherpa ask` and traces in Jaeger) are built. agent-design-3b (the baseline measured) is next. Each spec's milestones section lists the rest.
 
 ## How it works
 
@@ -45,9 +45,9 @@ Tools arrive with the milestone that first needs them. Those marked *planned* ar
 |---|---|
 | Data | PostgreSQL 16 (Docker), Python 3.12 + Faker |
 | Transformation | dbt Core + dbt-postgres, dbt_utils, dbt_expectations; MetricFlow *planned* |
-| Agent | the MCP Python SDK; PydanticAI and Claude on Amazon Bedrock *planned* |
+| Agent | the MCP Python SDK; PydanticAI and Claude on Amazon Bedrock |
 | Web app | React + TypeScript + Vite, Mantine, CodeMirror, TanStack Query and Table, FastAPI, React Flow, ELK |
-| Observability & evals | Pydantic Logfire (OpenTelemetry); the execution-accuracy eval runner (`sherpa_evals`, on the frozen `sherpa_eval` database) |
+| Observability & evals | OpenTelemetry (Jaeger locally); the execution-accuracy eval runner (`sherpa_evals`, on the frozen `sherpa_eval` database) |
 | Tooling | uv, ruff, mypy, sqlfluff, ESLint, pre-commit, GitHub Actions |
 
 ## Quickstart
@@ -70,6 +70,7 @@ From there:
   - CI runs on every pull request: a tiny-data dbt build with warnings as errors, then lint, tests and the frontend tests ([CI guide](docs/guides/advanced/ci.md)).
   - For frontend work, run `cd ui/frontend && npm ci` once (Node 22+).
   - `CLAUDE.md` lists every Make target.
+- **Ask from the command line:** `uv run sherpa ask "<question>"` needs AWS credentials for Bedrock ([guide](docs/guides/basic/asking-from-the-cli.md)).
 - **Add days:** `make advance DAYS=<n>`, then `make build-prod`.
 - **One shared warehouse:** every checkout and git worktree uses the same Docker volume (`sherpa_pgdata`), so `make reset` anywhere resets it for all of them.
 
@@ -97,6 +98,7 @@ data-platform/
   tests/           tests spanning the generator and dbt (seeds, reader access to the marts, scripts) and the roles' SQL (`postgres/`)
 agent/
   mcp-server/      the read-only MCP server (Python package `sherpa_mcp`, its tests and Dockerfile)
+  core/            the agent library and the `sherpa ask` CLI (Python package `sherpa_agent`, its tests and `prices.yaml`)
   evals/           the gold set (`cases.yaml`), the eval runner (Python package `sherpa_evals`, its tests) and the committed run reports
 ui/
   backend/         the web app's API (Python package `sherpa_ui`, its tests)
@@ -122,6 +124,7 @@ docs/
 - [Building the warehouse](docs/guides/basic/building-the-warehouse.md): dev and prod, the layers, `make slim`, keeping it current (incremental models, price history, `--full-refresh`, `dbt retry`), running dbt directly, the docs, failing tests and the eval database
 - [Querying the marts](docs/guides/basic/querying-the-marts.md): what each mart answers (sales, customers, products, web sessions, campaigns and ad spend, leads), which revenue to use, example queries, traps and fuzzy search
 - [Using the MCP server](docs/guides/basic/using-the-mcp-server.md): starting it, connecting clients, the eight tools, PII, limitations and tracing
+- [Asking from the command line](docs/guides/basic/asking-from-the-cli.md): `sherpa ask` with its flags, reading the answer, interpretation and footer, `--confirm`, exit codes, traces in Jaeger and the failure messages
 - [Running the evals](docs/guides/basic/running-the-evals.md): checking the gold set, scoring a variant, reading a report, where the records live and what the errors mean
 - [Using Home](docs/guides/basic/using-home.md): the five tiles with their windows and change rules, the weekly trend, the data-problems box and footer, and what each "no data" or "unavailable" message means
 - [Using the Explorer](docs/guides/basic/using-the-explorer.md): the catalog tree, the resizable panes, worksheets, running, sorting and filtering, and what it won't let you do
@@ -132,6 +135,7 @@ docs/
 - [Extending the source data model](docs/guides/advanced/extending-the-source-data-model.md): new columns, tables, enum values and realism rules, and keeping the generator deterministic
 - [Adding or changing a mart](docs/guides/advanced/adding-or-changing-a-mart.md): new columns and marts, metric definitions, trigram indexes, custom tests, intermediate models and incremental models
 - [Extending the MCP server](docs/guides/advanced/extending-the-mcp-server.md): a new tool, an allowed SQL function, guard hints, a sqlglot upgrade, few-shot examples, and new marts
+- [Extending the agent](docs/guides/advanced/extending-the-agent.md): a new variant, the prompt, a guard, the limits and where they are set, with the tests that pin each
 - [CI: the pull-request gate](docs/guides/advanced/ci.md): what the gate runs and why, reproducing a failing step locally, and adding a check
 - [Extending the gold set](docs/guides/advanced/extending-the-gold-set.md): the case schema and drafting rules, the review workflow, `gold_version` and `dataset_version`, the negative control, prices and adding an answerer
 - [Extending the UI](docs/guides/advanced/extending-the-ui.md): a new endpoint, a new screen, a pane, a Home tile, the layout metrics, a test definition, a selector atom, a node status or a column kind, where the read-only rules live, and the three test layers
