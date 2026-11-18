@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import call
 
 import pytest
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sherpa_mcp.catalog import MartCatalogLoader
 from sherpa_mcp.database import QueryResult, WarehouseToolError
 from sherpa_mcp.examples import ExampleIndex
@@ -20,7 +24,6 @@ if TYPE_CHECKING:
 
     import psycopg
     from opentelemetry.sdk.trace import ReadableSpan
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from sherpa_mcp.database import AgentDatabase
 
 METRICS = (
@@ -30,6 +33,8 @@ METRICS = (
 )
 SIMILARITY_FLOOR = 0.2  # pg_trgm.similarity_threshold set by the tool
 PII_LITERAL = "leak@example.com"
+# not a substring of any uuid or hex id: "q" and "z" are not hex digits
+QUERY_LITERAL = "qz41"
 HOSTILE_SQL = f"select email from marts.dim_customers where email = '{PII_LITERAL}'; drop table marts.fct_orders"
 NO_MATCH_HINT = (
     "no stored value has a similarity of 0.2 or more and none contains the term as a word; try a sibling column, "
@@ -328,6 +333,20 @@ class TestWarehouseTools:
             tools.run_sql("drop table marts.fct_orders")
 
 
+class TestSpansJson:
+    def test_ignores_the_random_resource_id(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider(resource=Resource({"service.instance.id": f"9163-{QUERY_LITERAL}-9f71"}))
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        with provider.get_tracer("test").start_as_current_span("sherpa.guard", attributes={"ok": True}):
+            pass
+
+        dumped = str(_spans_json(exporter.get_finished_spans()))
+
+        assert QUERY_LITERAL not in dumped
+        assert "sherpa.guard" in dumped
+
+
 @pytest.mark.warehouse
 class TestGuardTracing:
     def test_rejection_is_traced_without_the_sql(
@@ -359,7 +378,7 @@ class TestGuardTracing:
     def test_accepted_query_is_traced_with_its_marts(
         self, tools: WarehouseTools, span_exporter: InMemorySpanExporter
     ) -> None:
-        tools.validate_sql("select count(*) from marts.fct_orders where order_id > 41")
+        tools.validate_sql(f"select count(*) from marts.fct_orders where order_id::text <> '{QUERY_LITERAL}'")
 
         spans = span_exporter.get_finished_spans()
         guard = _only_span(spans, "sherpa.guard")
@@ -370,7 +389,7 @@ class TestGuardTracing:
         assert guard.attributes["tables"] == ("marts.fct_orders",)
         assert "execution_id" not in guard.attributes
         assert "rule" not in guard.attributes
-        assert "41" not in str(_spans_json(spans))
+        assert QUERY_LITERAL not in str(_spans_json(spans))
 
 
 class TestGetContext:
@@ -812,7 +831,12 @@ def _only_span(spans: Sequence[ReadableSpan], name: str) -> ReadableSpan:
 
 
 def _spans_json(spans: Sequence[ReadableSpan]) -> list[str]:
-    return [span.to_json() for span in spans]
+    # names, attributes, events and status only: the Resource carries a random service.instance.id
+    parts = []
+    for span in spans:
+        document = json.loads(span.to_json())
+        parts.append(json.dumps({key: document[key] for key in ("name", "attributes", "events", "status")}))
+    return parts
 
 
 def _result(
