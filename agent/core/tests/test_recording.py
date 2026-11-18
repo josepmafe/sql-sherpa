@@ -350,11 +350,13 @@ async def test_parallel_calls_of_different_purposes_keep_their_own_steps_when_pr
     )
     steps = await recording.finish()
 
-    assert [(s.step_id, s.name, [c.tool for c in s.tool_calls]) for s in steps] == [
-        ("s1", "scope", ["get_context"]),
-        ("s2", "schema", ["describe_table"]),
-        ("s3", "values", ["search_values"]),
-    ]
+    # The two parallel calls finish in either order; each must still close its own step, never one merged step.
+    assert (steps[0].step_id, steps[0].name, [c.tool for c in steps[0].tool_calls]) == ("s1", "scope", ["get_context"])
+    assert [s.step_id for s in steps[1:]] == ["s2", "s3"]
+    assert {(s.name, tuple(c.tool for c in s.tool_calls)) for s in steps[1:]} == {
+        ("schema", ("describe_table",)),
+        ("values", ("search_values",)),
+    }
 
 
 async def test_a_recorder_without_a_progress_callback_works(warehouse: FakeWarehouse) -> None:
